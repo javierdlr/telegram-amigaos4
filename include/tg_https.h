@@ -37,6 +37,22 @@ tg_https_status tg_https_get(const char *host, const char *port, const char *pat
                              unsigned long error_buffer_size);
 
 /**
+ * Performs a minimal HTTP/1.0 POST over TLS.
+ *
+ * content_type and body are copied into the request before sending.
+ * response_buffer is caller-owned and receives a NUL-terminated full HTTP
+ * response. Certificate validation is platform-dependent and currently not
+ * complete on all targets.
+ */
+tg_https_status tg_https_post(const char *host, const char *port, const char *path,
+                              const char *content_type, const char *body,
+                              unsigned long body_length, char *response_buffer,
+                              unsigned long response_buffer_size,
+                              unsigned long *response_length, tg_tls_status *tls_status,
+                              tg_net_status *net_status, char *error_buffer,
+                              unsigned long error_buffer_size);
+
+/**
  * Returns a static string for status. The caller must not free it.
  */
 const char *tg_https_status_name(tg_https_status status);

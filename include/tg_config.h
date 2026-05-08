@@ -37,6 +37,7 @@ typedef struct tg_config {
     int show_help;
     int run_net_test;
     int run_http_test;
+    int run_http_post_self_test;
     int run_https_test;
     int run_json_test;
     int run_telegram_json_test;

@@ -60,7 +60,7 @@ Initial core modules:
 - `tg_config`: minimal command-line argument parsing
 - `tg_bot`: Bot API orchestration helpers
 - `tg_log`: portable logging delegated to the platform layer
-- `tg_http`: minimal HTTP/1.0 over `tg_net`, plus response parsing
+- `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
 - `tg_json`: minimal top-level JSON field lookup for Telegram-style responses
 - `tg_net`: portable TCP API with an initial MorphOS implementation
 - `tg_telegram`: Telegram API response envelope parsing
@@ -113,6 +113,8 @@ Current options:
                       Test DNS resolution and TCP connection
     --http-test <host> <port> <path>
                       Test TCP connect/send/recv with HTTP/1.0
+    --http-post-self-test
+                      Run built-in HTTP POST request builder sample
     --https-test <host> <port> <path>
                       Test TLS connect/send/recv with HTTP/1.0
     --json-test <json> <field>

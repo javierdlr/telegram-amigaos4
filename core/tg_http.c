@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "tg_http.h"
@@ -14,23 +15,146 @@ static void tg_http_clear_error(char *error_buffer, unsigned long error_buffer_s
     }
 }
 
-static tg_http_status tg_http_build_get_request(const char *host, const char *path,
-                                                char *request, unsigned long request_size,
-                                                unsigned long *request_length)
+static tg_http_status tg_http_append_bytes(char *request, unsigned long request_size,
+                                           unsigned long *position,
+                                           const char *data, unsigned long data_length)
 {
-    unsigned long needed;
-
-    needed = (unsigned long)strlen(host) + (unsigned long)strlen(path) + 43;
-    if (needed >= request_size) {
+    if (*position >= request_size || data_length >= request_size - *position) {
         return TG_HTTP_REQUEST_TOO_LARGE;
     }
 
-    strcpy(request, "GET ");
-    strcat(request, path);
-    strcat(request, " HTTP/1.0\r\nHost: ");
-    strcat(request, host);
-    strcat(request, "\r\nConnection: close\r\n\r\n");
-    *request_length = (unsigned long)strlen(request);
+    memcpy(request + *position, data, data_length);
+    *position += data_length;
+    request[*position] = '\0';
+    return TG_HTTP_OK;
+}
+
+static tg_http_status tg_http_append_text(char *request, unsigned long request_size,
+                                          unsigned long *position, const char *text)
+{
+    return tg_http_append_bytes(request, request_size, position,
+                                text, (unsigned long)strlen(text));
+}
+
+tg_http_status tg_http_build_get_request(const char *host, const char *path,
+                                         char *request, unsigned long request_size,
+                                         unsigned long *request_length)
+{
+    unsigned long position;
+    tg_http_status status;
+
+    if (request_length != 0) {
+        *request_length = 0;
+    }
+    if (request != 0 && request_size > 0) {
+        request[0] = '\0';
+    }
+    if (host == 0 || path == 0 || request == 0 || request_size == 0 ||
+        request_length == 0) {
+        return TG_HTTP_INVALID_ARGUMENT;
+    }
+
+    position = 0;
+    status = tg_http_append_text(request, request_size, &position, "GET ");
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position, path);
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position,
+                                 " HTTP/1.0\r\nHost: ");
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position, host);
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position,
+                                 "\r\nConnection: close\r\n\r\n");
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+
+    *request_length = position;
+    return TG_HTTP_OK;
+}
+
+tg_http_status tg_http_build_post_request(const char *host, const char *path,
+                                          const char *content_type,
+                                          const char *body, unsigned long body_length,
+                                          char *request, unsigned long request_size,
+                                          unsigned long *request_length)
+{
+    char length_text[32];
+    unsigned long position;
+    tg_http_status status;
+
+    if (request_length != 0) {
+        *request_length = 0;
+    }
+    if (request != 0 && request_size > 0) {
+        request[0] = '\0';
+    }
+    if (host == 0 || path == 0 || content_type == 0 || request == 0 ||
+        request_size == 0 || request_length == 0 ||
+        (body == 0 && body_length > 0)) {
+        return TG_HTTP_INVALID_ARGUMENT;
+    }
+
+    sprintf(length_text, "%lu", body_length);
+
+    position = 0;
+    status = tg_http_append_text(request, request_size, &position, "POST ");
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position, path);
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position,
+                                 " HTTP/1.0\r\nHost: ");
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position, host);
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position,
+                                 "\r\nContent-Type: ");
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position, content_type);
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position,
+                                 "\r\nContent-Length: ");
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position, length_text);
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    status = tg_http_append_text(request, request_size, &position,
+                                 "\r\nConnection: close\r\n\r\n");
+    if (status != TG_HTTP_OK) {
+        return status;
+    }
+    if (body_length > 0) {
+        status = tg_http_append_bytes(request, request_size, &position, body, body_length);
+        if (status != TG_HTTP_OK) {
+            return status;
+        }
+    }
+
+    *request_length = position;
     return TG_HTTP_OK;
 }
 
@@ -39,89 +163,21 @@ static int tg_http_is_digit(char c)
     return c >= '0' && c <= '9';
 }
 
-static int tg_http_find_line_end(const char *data, unsigned long data_length,
-                                 unsigned long start, unsigned long *line_end,
-                                 unsigned long *next_line)
-{
-    unsigned long i;
-
-    i = start;
-    while (i < data_length) {
-        if (data[i] == '\n') {
-            if (i > start && data[i - 1] == '\r') {
-                *line_end = i - 1;
-            } else {
-                *line_end = i;
-            }
-            *next_line = i + 1;
-            return 1;
-        }
-        ++i;
-    }
-
-    return 0;
-}
-
-static int tg_http_find_header_end(const char *data, unsigned long data_length,
-                                   unsigned long *header_end, unsigned long *body_start)
-{
-    unsigned long i;
-
-    i = 0;
-    while (i + 3 < data_length) {
-        if (data[i] == '\r' && data[i + 1] == '\n' &&
-            data[i + 2] == '\r' && data[i + 3] == '\n') {
-            *header_end = i;
-            *body_start = i + 4;
-            return 1;
-        }
-        ++i;
-    }
-
-    i = 0;
-    while (i + 1 < data_length) {
-        if (data[i] == '\n' && data[i + 1] == '\n') {
-            *header_end = i;
-            *body_start = i + 2;
-            return 1;
-        }
-        ++i;
-    }
-
-    return 0;
-}
-
-tg_http_status tg_http_get(const char *host, const char *port, const char *path,
-                           char *response_buffer, unsigned long response_buffer_size,
-                           unsigned long *response_length, tg_net_status *net_status,
-                           char *error_buffer, unsigned long error_buffer_size)
+static tg_http_status tg_http_send_request(const char *host, const char *port,
+                                           const char *request,
+                                           unsigned long request_length,
+                                           char *response_buffer,
+                                           unsigned long response_buffer_size,
+                                           unsigned long *response_length,
+                                           tg_net_status *net_status,
+                                           char *error_buffer,
+                                           unsigned long error_buffer_size)
 {
     tg_net_connection connection;
-    tg_http_status http_status;
     tg_net_status local_net_status;
-    char request[512];
-    unsigned long request_length;
     unsigned long total_sent;
     unsigned long bytes_done;
     unsigned long total_received;
-
-    if (response_length != 0) {
-        *response_length = 0;
-    }
-    if (net_status != 0) {
-        *net_status = TG_NET_OK;
-    }
-    tg_http_clear_error(error_buffer, error_buffer_size);
-
-    if (host == 0 || port == 0 || path == 0 || response_buffer == 0 ||
-        response_buffer_size < 2 || response_length == 0) {
-        return TG_HTTP_INVALID_ARGUMENT;
-    }
-
-    http_status = tg_http_build_get_request(host, path, request, sizeof(request), &request_length);
-    if (http_status != TG_HTTP_OK) {
-        return http_status;
-    }
 
     local_net_status = tg_net_connect(&connection, host, port, error_buffer, error_buffer_size);
     if (local_net_status != TG_NET_OK) {
@@ -185,6 +241,129 @@ tg_http_status tg_http_get(const char *host, const char *port, const char *path,
     }
 
     return TG_HTTP_OK;
+}
+
+static int tg_http_find_line_end(const char *data, unsigned long data_length,
+                                 unsigned long start, unsigned long *line_end,
+                                 unsigned long *next_line)
+{
+    unsigned long i;
+
+    i = start;
+    while (i < data_length) {
+        if (data[i] == '\n') {
+            if (i > start && data[i - 1] == '\r') {
+                *line_end = i - 1;
+            } else {
+                *line_end = i;
+            }
+            *next_line = i + 1;
+            return 1;
+        }
+        ++i;
+    }
+
+    return 0;
+}
+
+static int tg_http_find_header_end(const char *data, unsigned long data_length,
+                                   unsigned long *header_end, unsigned long *body_start)
+{
+    unsigned long i;
+
+    i = 0;
+    while (i + 3 < data_length) {
+        if (data[i] == '\r' && data[i + 1] == '\n' &&
+            data[i + 2] == '\r' && data[i + 3] == '\n') {
+            *header_end = i;
+            *body_start = i + 4;
+            return 1;
+        }
+        ++i;
+    }
+
+    i = 0;
+    while (i + 1 < data_length) {
+        if (data[i] == '\n' && data[i + 1] == '\n') {
+            *header_end = i;
+            *body_start = i + 2;
+            return 1;
+        }
+        ++i;
+    }
+
+    return 0;
+}
+
+tg_http_status tg_http_get(const char *host, const char *port, const char *path,
+                           char *response_buffer, unsigned long response_buffer_size,
+                           unsigned long *response_length, tg_net_status *net_status,
+                           char *error_buffer, unsigned long error_buffer_size)
+{
+    tg_http_status http_status;
+    char request[512];
+    unsigned long request_length;
+
+    if (response_length != 0) {
+        *response_length = 0;
+    }
+    if (net_status != 0) {
+        *net_status = TG_NET_OK;
+    }
+    tg_http_clear_error(error_buffer, error_buffer_size);
+
+    if (host == 0 || port == 0 || path == 0 || response_buffer == 0 ||
+        response_buffer_size < 2 || response_length == 0) {
+        return TG_HTTP_INVALID_ARGUMENT;
+    }
+
+    http_status = tg_http_build_get_request(host, path, request, sizeof(request), &request_length);
+    if (http_status != TG_HTTP_OK) {
+        return http_status;
+    }
+
+    return tg_http_send_request(host, port, request, request_length,
+                                response_buffer, response_buffer_size,
+                                response_length, net_status, error_buffer,
+                                error_buffer_size);
+}
+
+tg_http_status tg_http_post(const char *host, const char *port, const char *path,
+                            const char *content_type, const char *body,
+                            unsigned long body_length, char *response_buffer,
+                            unsigned long response_buffer_size,
+                            unsigned long *response_length, tg_net_status *net_status,
+                            char *error_buffer, unsigned long error_buffer_size)
+{
+    tg_http_status http_status;
+    char request[2048];
+    unsigned long request_length;
+
+    if (response_length != 0) {
+        *response_length = 0;
+    }
+    if (net_status != 0) {
+        *net_status = TG_NET_OK;
+    }
+    tg_http_clear_error(error_buffer, error_buffer_size);
+
+    if (host == 0 || port == 0 || path == 0 || content_type == 0 ||
+        response_buffer == 0 || response_buffer_size < 2 ||
+        response_length == 0 || (body == 0 && body_length > 0)) {
+        return TG_HTTP_INVALID_ARGUMENT;
+    }
+
+    http_status = tg_http_build_post_request(host, path, content_type,
+                                             body, body_length, request,
+                                             sizeof(request), &request_length);
+    if (http_status != TG_HTTP_OK) {
+        return http_status;
+    }
+
+    return tg_http_send_request(host, port, request, request_length,
+                                response_buffer, response_buffer_size,
+                                response_length, net_status, error_buffer,
+                                error_buffer_size);
 }
 
 tg_http_parse_status tg_http_parse_response(const char *response, unsigned long response_length,

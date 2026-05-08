@@ -114,6 +114,45 @@ static int tg_run_https_test(const tg_config *config)
     return 0;
 }
 
+static int tg_run_http_post_self_test(void)
+{
+    static const char body[] = "{\"chat_id\":123,\"text\":\"Hello from Amiga\"}";
+    char request[512];
+    char length_header[64];
+    unsigned long request_length;
+    unsigned long body_length;
+    tg_http_status http_status;
+
+    body_length = (unsigned long)strlen(body);
+    http_status = tg_http_build_post_request("api.telegram.org",
+                                             "/botTOKEN/sendMessage",
+                                             "application/json",
+                                             body, body_length,
+                                             request, sizeof(request),
+                                             &request_length);
+    if (http_status != TG_HTTP_OK) {
+        printf("http post self-test: failed: %s\n", tg_http_status_name(http_status));
+        return 2;
+    }
+
+    sprintf(length_header, "Content-Length: %lu\r\n", body_length);
+    if (strncmp(request, "POST /botTOKEN/sendMessage HTTP/1.0\r\n",
+                strlen("POST /botTOKEN/sendMessage HTTP/1.0\r\n")) != 0 ||
+        strstr(request, "Host: api.telegram.org\r\n") == 0 ||
+        strstr(request, "Content-Type: application/json\r\n") == 0 ||
+        strstr(request, length_header) == 0 ||
+        request_length < body_length ||
+        strcmp(request + request_length - body_length, body) != 0) {
+        puts("http post self-test: failed: request mismatch");
+        printf("%s\n", request);
+        return 2;
+    }
+
+    printf("http post self-test: ok request, %lu bytes\n", request_length);
+    printf("http post body: %s\n", request + request_length - body_length);
+    return 0;
+}
+
 static int tg_run_json_test(const tg_config *config)
 {
     tg_json_status json_status;
@@ -401,6 +440,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_http_test) {
         return tg_run_http_test(&config);
+    }
+
+    if (config.run_http_post_self_test) {
+        return tg_run_http_post_self_test();
     }
 
     if (config.run_https_test) {

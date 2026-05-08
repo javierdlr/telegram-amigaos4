@@ -53,6 +53,31 @@ typedef struct tg_http_response {
 } tg_http_response;
 
 /**
+ * Builds a minimal HTTP/1.0 GET request in a caller-owned buffer.
+ *
+ * request_length receives the byte count to send, excluding the trailing NUL
+ * added for diagnostics. If request_size is not large enough,
+ * TG_HTTP_REQUEST_TOO_LARGE is returned.
+ */
+tg_http_status tg_http_build_get_request(const char *host, const char *path,
+                                         char *request, unsigned long request_size,
+                                         unsigned long *request_length);
+
+/**
+ * Builds a minimal HTTP/1.0 POST request in a caller-owned buffer.
+ *
+ * body is copied into request after the header block. body may be NULL only
+ * when body_length is zero. request_length receives the exact byte count to
+ * send, excluding the diagnostic trailing NUL. If request_size is not large
+ * enough, TG_HTTP_REQUEST_TOO_LARGE is returned.
+ */
+tg_http_status tg_http_build_post_request(const char *host, const char *path,
+                                          const char *content_type,
+                                          const char *body, unsigned long body_length,
+                                          char *request, unsigned long request_size,
+                                          unsigned long *request_length);
+
+/**
  * Performs a minimal HTTP/1.0 GET over TCP.
  *
  * response_buffer is caller-owned and receives a NUL-terminated full HTTP
@@ -64,6 +89,21 @@ tg_http_status tg_http_get(const char *host, const char *port, const char *path,
                            char *response_buffer, unsigned long response_buffer_size,
                            unsigned long *response_length, tg_net_status *net_status,
                            char *error_buffer, unsigned long error_buffer_size);
+
+/**
+ * Performs a minimal HTTP/1.0 POST over TCP.
+ *
+ * content_type and body are copied into the request before sending. The caller
+ * owns response_buffer and receives a NUL-terminated full HTTP response. If
+ * response_buffer_size is not large enough, TG_HTTP_RESPONSE_TOO_LARGE is
+ * returned.
+ */
+tg_http_status tg_http_post(const char *host, const char *port, const char *path,
+                            const char *content_type, const char *body,
+                            unsigned long body_length, char *response_buffer,
+                            unsigned long response_buffer_size,
+                            unsigned long *response_length, tg_net_status *net_status,
+                            char *error_buffer, unsigned long error_buffer_size);
 
 /**
  * Parses a complete HTTP response already stored in memory.

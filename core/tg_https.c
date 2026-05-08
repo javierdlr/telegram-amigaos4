@@ -5,65 +5,36 @@
 
 #include <string.h>
 
+#include "tg_http.h"
 #include "tg_https.h"
 
-static tg_https_status tg_https_build_get_request(const char *host, const char *path,
-                                                  char *request, unsigned long request_size,
-                                                  unsigned long *request_length)
+static tg_https_status tg_https_from_http_status(tg_http_status status)
 {
-    unsigned long needed;
-
-    needed = (unsigned long)strlen(host) + (unsigned long)strlen(path) + 43;
-    if (needed >= request_size) {
+    if (status == TG_HTTP_OK) {
+        return TG_HTTPS_OK;
+    }
+    if (status == TG_HTTP_REQUEST_TOO_LARGE) {
         return TG_HTTPS_REQUEST_TOO_LARGE;
     }
-
-    strcpy(request, "GET ");
-    strcat(request, path);
-    strcat(request, " HTTP/1.0\r\nHost: ");
-    strcat(request, host);
-    strcat(request, "\r\nConnection: close\r\n\r\n");
-    *request_length = (unsigned long)strlen(request);
-    return TG_HTTPS_OK;
+    return TG_HTTPS_INVALID_ARGUMENT;
 }
 
-tg_https_status tg_https_get(const char *host, const char *port, const char *path,
-                             char *response_buffer, unsigned long response_buffer_size,
-                             unsigned long *response_length, tg_tls_status *tls_status,
-                             tg_net_status *net_status, char *error_buffer,
-                             unsigned long error_buffer_size)
+static tg_https_status tg_https_send_request(const char *host, const char *port,
+                                             const char *request,
+                                             unsigned long request_length,
+                                             char *response_buffer,
+                                             unsigned long response_buffer_size,
+                                             unsigned long *response_length,
+                                             tg_tls_status *tls_status,
+                                             tg_net_status *net_status,
+                                             char *error_buffer,
+                                             unsigned long error_buffer_size)
 {
     tg_tls_connection connection;
-    tg_https_status https_status;
     tg_tls_status local_tls_status;
-    char request[512];
-    unsigned long request_length;
     unsigned long total_sent;
     unsigned long bytes_done;
     unsigned long total_received;
-
-    if (response_length != 0) {
-        *response_length = 0;
-    }
-    if (tls_status != 0) {
-        *tls_status = TG_TLS_OK;
-    }
-    if (net_status != 0) {
-        *net_status = TG_NET_OK;
-    }
-    if (error_buffer != 0 && error_buffer_size > 0) {
-        error_buffer[0] = '\0';
-    }
-
-    if (host == 0 || port == 0 || path == 0 || response_buffer == 0 ||
-        response_buffer_size < 2 || response_length == 0) {
-        return TG_HTTPS_INVALID_ARGUMENT;
-    }
-
-    https_status = tg_https_build_get_request(host, path, request, sizeof(request), &request_length);
-    if (https_status != TG_HTTPS_OK) {
-        return https_status;
-    }
 
     local_tls_status = tg_tls_connect(&connection, host, port, net_status,
                                       error_buffer, error_buffer_size);
@@ -121,6 +92,94 @@ tg_https_status tg_https_get(const char *host, const char *port, const char *pat
     }
 
     return TG_HTTPS_OK;
+}
+
+tg_https_status tg_https_get(const char *host, const char *port, const char *path,
+                             char *response_buffer, unsigned long response_buffer_size,
+                             unsigned long *response_length, tg_tls_status *tls_status,
+                             tg_net_status *net_status, char *error_buffer,
+                             unsigned long error_buffer_size)
+{
+    tg_http_status http_status;
+    tg_https_status https_status;
+    char request[512];
+    unsigned long request_length;
+
+    if (response_length != 0) {
+        *response_length = 0;
+    }
+    if (tls_status != 0) {
+        *tls_status = TG_TLS_OK;
+    }
+    if (net_status != 0) {
+        *net_status = TG_NET_OK;
+    }
+    if (error_buffer != 0 && error_buffer_size > 0) {
+        error_buffer[0] = '\0';
+    }
+
+    if (host == 0 || port == 0 || path == 0 || response_buffer == 0 ||
+        response_buffer_size < 2 || response_length == 0) {
+        return TG_HTTPS_INVALID_ARGUMENT;
+    }
+
+    http_status = tg_http_build_get_request(host, path, request,
+                                            sizeof(request), &request_length);
+    https_status = tg_https_from_http_status(http_status);
+    if (https_status != TG_HTTPS_OK) {
+        return https_status;
+    }
+
+    return tg_https_send_request(host, port, request, request_length,
+                                 response_buffer, response_buffer_size,
+                                 response_length, tls_status, net_status,
+                                 error_buffer, error_buffer_size);
+}
+
+tg_https_status tg_https_post(const char *host, const char *port, const char *path,
+                              const char *content_type, const char *body,
+                              unsigned long body_length, char *response_buffer,
+                              unsigned long response_buffer_size,
+                              unsigned long *response_length, tg_tls_status *tls_status,
+                              tg_net_status *net_status, char *error_buffer,
+                              unsigned long error_buffer_size)
+{
+    tg_http_status http_status;
+    tg_https_status https_status;
+    char request[2048];
+    unsigned long request_length;
+
+    if (response_length != 0) {
+        *response_length = 0;
+    }
+    if (tls_status != 0) {
+        *tls_status = TG_TLS_OK;
+    }
+    if (net_status != 0) {
+        *net_status = TG_NET_OK;
+    }
+    if (error_buffer != 0 && error_buffer_size > 0) {
+        error_buffer[0] = '\0';
+    }
+
+    if (host == 0 || port == 0 || path == 0 || content_type == 0 ||
+        response_buffer == 0 || response_buffer_size < 2 ||
+        response_length == 0 || (body == 0 && body_length > 0)) {
+        return TG_HTTPS_INVALID_ARGUMENT;
+    }
+
+    http_status = tg_http_build_post_request(host, path, content_type,
+                                             body, body_length, request,
+                                             sizeof(request), &request_length);
+    https_status = tg_https_from_http_status(http_status);
+    if (https_status != TG_HTTPS_OK) {
+        return https_status;
+    }
+
+    return tg_https_send_request(host, port, request, request_length,
+                                 response_buffer, response_buffer_size,
+                                 response_length, tls_status, net_status,
+                                 error_buffer, error_buffer_size);
 }
 
 const char *tg_https_status_name(tg_https_status status)
