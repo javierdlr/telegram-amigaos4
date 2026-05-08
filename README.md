@@ -37,7 +37,7 @@ ssh kaffeine@192.168.0.9 'System:Development/gg/bin/make -C Work:Dev/telegram-am
 Flow Studio su MorphOS:
 
 - `default.sprj` e' il progetto Flow Studio auto-caricabile.
-- `telegram-amiga.xprj` e `telegram-amiga.xpjr` sono copie apribili manualmente dal requester progetto.
+- `telegram-amiga.xprj` e' apribile manualmente dal requester progetto.
 - Apri un file sorgente da `Work:Dev/telegram-amiga` oppure avvia Flow Studio con `PROJECT=Work:Dev/telegram-amiga/default.sprj`.
 - Il build usa `System:Development/gg/bin/make -f Makefile.morphos all`.
 
