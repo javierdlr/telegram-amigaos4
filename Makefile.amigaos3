@@ -3,13 +3,13 @@
 CC ?= vc
 CFLAGS ?= +aos68k -O2 -Iinclude
 TARGET ?= build/telegram-test
-SRC := src/main.c core/tg_app.c platforms/amigaos3/tg_platform_amigaos3.c
+SRC := src/main.c core/tg_app.c core/tg_config.c core/tg_log.c platforms/amigaos3/tg_platform_amigaos3.c
 
 .PHONY: all clean
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) include/tg_app.h include/tg_platform.h
+$(TARGET): $(SRC) include/tg_app.h include/tg_config.h include/tg_log.h include/tg_platform.h
 	$(CC) $(CFLAGS) -o $@ $(SRC)
 
 clean:

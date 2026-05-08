@@ -6,6 +6,7 @@
 #define TG_PLATFORM_H
 
 const char *tg_platform_name(void);
-void tg_platform_log(const char *message);
+const char *tg_platform_default_data_dir(void);
+void tg_platform_log(const char *level, const char *message);
 
 #endif

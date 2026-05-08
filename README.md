@@ -9,6 +9,11 @@ Bootstrap minimale per un futuro client Telegram cross-platform:
 - `platforms/*/`: adattatori specifici per sistema
 - `src/main.c`: entry point sottile
 
+Moduli core iniziali:
+
+- `tg_config`: parsing minimale degli argomenti
+- `tg_log`: logging portabile delegato alla piattaforma
+
 Target iniziali:
 
 - MorphOS: attivo e verificato
@@ -26,6 +31,15 @@ Build remoto dal Mac:
 
 ```sh
 ssh kaffeine@192.168.0.9 'System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos run'
+```
+
+Opzioni attuali:
+
+```text
+-h, --help            Mostra l'help
+-v, --verbose         Abilita log debug
+-q, --quiet           Mostra solo warning ed errori
+    --data-dir <path> Imposta la directory dati
 ```
 
 Nota: via BebboSSH la shell remota non mantiene sempre il PATH AmigaDOS, quindi il Makefile usa percorsi assoluti verso il MorphOS SDK.

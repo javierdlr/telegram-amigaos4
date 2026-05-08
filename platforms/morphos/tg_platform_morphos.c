@@ -11,7 +11,12 @@ const char *tg_platform_name(void)
     return "MorphOS";
 }
 
-void tg_platform_log(const char *message)
+const char *tg_platform_default_data_dir(void)
 {
-    printf("[morphos] %s\n", message);
+    return "PROGDIR:";
+}
+
+void tg_platform_log(const char *level, const char *message)
+{
+    printf("[morphos:%s] %s\n", level, message);
 }

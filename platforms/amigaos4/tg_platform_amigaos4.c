@@ -11,7 +11,12 @@ const char *tg_platform_name(void)
     return "AmigaOS 4";
 }
 
-void tg_platform_log(const char *message)
+const char *tg_platform_default_data_dir(void)
 {
-    printf("[amigaos4] %s\n", message);
+    return "PROGDIR:";
+}
+
+void tg_platform_log(const char *level, const char *message)
+{
+    printf("[amigaos4:%s] %s\n", level, message);
 }
