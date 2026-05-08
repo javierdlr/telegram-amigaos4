@@ -2,6 +2,8 @@
 
 Author: Michele Dipace <michele.dipace@kaffeine.net>
 
+License: MIT
+
 Bootstrap minimale per un futuro client Telegram cross-platform:
 
 - `core/`: logica portabile
@@ -70,3 +72,7 @@ Makefile previsti:
 - `Makefile.amigaos3`
 - `Makefile.amigaos4`
 - `Makefile.aros`
+
+## Licenza
+
+Questo progetto e' distribuito sotto licenza MIT. Vedi `LICENSE` per il testo completo.
