@@ -284,6 +284,44 @@ static int tg_run_telegram_http_self_test(void)
     return 0;
 }
 
+static int tg_run_telegram_token_file_path_test(const tg_config *config)
+{
+    tg_telegram_status telegram_status;
+    tg_file_status file_status;
+    char token[128];
+    char path[256];
+    unsigned long token_length;
+    unsigned long path_length;
+
+    telegram_status = tg_telegram_load_token_file(config->telegram_token_file_path,
+                                                  token, sizeof(token),
+                                                  &token_length, &file_status);
+    if (telegram_status != TG_TELEGRAM_OK) {
+        printf("telegram token file test: failed: %s", tg_telegram_status_name(telegram_status));
+        if (telegram_status == TG_TELEGRAM_FILE_ERROR) {
+            printf(" / %s", tg_file_status_name(file_status));
+        }
+        printf("\n");
+        return 2;
+    }
+
+    telegram_status = tg_telegram_build_bot_path(token,
+                                                 config->telegram_token_file_method,
+                                                 path, sizeof(path), &path_length);
+    if (telegram_status != TG_TELEGRAM_OK) {
+        printf("telegram token file path test: failed: %s\n",
+               tg_telegram_status_name(telegram_status));
+        return 2;
+    }
+
+    printf("telegram host: %s\n", tg_telegram_api_host());
+    printf("telegram method: %s\n", config->telegram_token_file_method);
+    printf("telegram token length: %lu\n", token_length);
+    printf("telegram path length: %lu\n", path_length);
+    printf("telegram path: <redacted>\n");
+    return 0;
+}
+
 int tg_app_run(int argc, char **argv)
 {
     tg_config config;
@@ -357,6 +395,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_http_self_test) {
         return tg_run_telegram_http_self_test();
+    }
+
+    if (config.run_telegram_token_file_path_test) {
+        return tg_run_telegram_token_file_path_test(&config);
     }
 
     return 0;

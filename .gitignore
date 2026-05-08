@@ -1,7 +1,12 @@
-# Author: Michele Dipace <michele.dipace@kaffeine.net>
+# Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+# SPDX-License-Identifier: MIT
 
 build/*
 !.gitkeep
+
+telegram-token.txt
+*.token
+*.token.txt
 
 *.o
 *.a

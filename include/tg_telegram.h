@@ -6,6 +6,7 @@
 #ifndef TG_TELEGRAM_H
 #define TG_TELEGRAM_H
 
+#include "tg_file.h"
 #include "tg_http.h"
 #include "tg_json.h"
 
@@ -25,7 +26,8 @@ typedef enum tg_telegram_status {
     TG_TELEGRAM_MISSING_OK = 3,
     TG_TELEGRAM_TYPE_MISMATCH = 4,
     TG_TELEGRAM_BUFFER_TOO_SMALL = 5,
-    TG_TELEGRAM_HTTP_PARSE_ERROR = 6
+    TG_TELEGRAM_HTTP_PARSE_ERROR = 6,
+    TG_TELEGRAM_FILE_ERROR = 7
 } tg_telegram_status;
 
 /**
@@ -75,6 +77,19 @@ tg_telegram_status tg_telegram_build_bot_path(const char *token, const char *met
                                               char *path_buffer,
                                               unsigned long path_buffer_size,
                                               unsigned long *path_length);
+
+/**
+ * Loads a bot token from a text file into caller-owned token_buffer.
+ *
+ * Leading and trailing spaces, tabs, CR and LF are removed. The resulting token
+ * is NUL-terminated and token_length excludes the terminator. The function does
+ * not allocate memory. file_status is optional and receives details when the
+ * return value is TG_TELEGRAM_FILE_ERROR.
+ */
+tg_telegram_status tg_telegram_load_token_file(const char *path, char *token_buffer,
+                                               unsigned long token_buffer_size,
+                                               unsigned long *token_length,
+                                               tg_file_status *file_status);
 
 /**
  * Parses Telegram's top-level JSON response envelope.

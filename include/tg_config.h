@@ -31,6 +31,8 @@ typedef struct tg_config {
     const char *telegram_json_test_input;
     const char *telegram_path_test_token;
     const char *telegram_path_test_method;
+    const char *telegram_token_file_path;
+    const char *telegram_token_file_method;
     tg_log_level log_level;
     int show_help;
     int run_net_test;
@@ -41,6 +43,7 @@ typedef struct tg_config {
     int run_telegram_json_self_test;
     int run_telegram_path_test;
     int run_telegram_http_self_test;
+    int run_telegram_token_file_path_test;
 } tg_config;
 
 /**

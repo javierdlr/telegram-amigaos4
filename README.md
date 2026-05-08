@@ -124,6 +124,8 @@ Current options:
                       Test Telegram Bot API path construction
     --telegram-http-self-test
                       Run built-in HTTP-to-Telegram parser samples
+    --telegram-token-file-path-test <file> <method>
+                      Load token file and test Bot API path construction
 ```
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be

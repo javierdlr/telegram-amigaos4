@@ -12,6 +12,11 @@ const char *tg_telegram_api_host(void)
     return "api.telegram.org";
 }
 
+static int tg_telegram_is_token_space(char c)
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
 tg_telegram_status tg_telegram_build_bot_path(const char *token, const char *method,
                                               char *path_buffer,
                                               unsigned long path_buffer_size,
@@ -48,6 +53,58 @@ tg_telegram_status tg_telegram_build_bot_path(const char *token, const char *met
     strcat(path_buffer, method);
     *path_length = needed;
 
+    return TG_TELEGRAM_OK;
+}
+
+tg_telegram_status tg_telegram_load_token_file(const char *path, char *token_buffer,
+                                               unsigned long token_buffer_size,
+                                               unsigned long *token_length,
+                                               tg_file_status *file_status)
+{
+    tg_file_status local_file_status;
+    unsigned long raw_length;
+    unsigned long start;
+    unsigned long end;
+    unsigned long trimmed_length;
+
+    if (token_length != 0) {
+        *token_length = 0;
+    }
+    if (file_status != 0) {
+        *file_status = TG_FILE_OK;
+    }
+    if (path == 0 || token_buffer == 0 || token_buffer_size == 0 ||
+        token_length == 0) {
+        return TG_TELEGRAM_INVALID_ARGUMENT;
+    }
+
+    local_file_status = tg_file_read_text(path, token_buffer, token_buffer_size, &raw_length);
+    if (local_file_status != TG_FILE_OK) {
+        if (file_status != 0) {
+            *file_status = local_file_status;
+        }
+        return TG_TELEGRAM_FILE_ERROR;
+    }
+
+    start = 0;
+    while (start < raw_length && tg_telegram_is_token_space(token_buffer[start])) {
+        ++start;
+    }
+    end = raw_length;
+    while (end > start && tg_telegram_is_token_space(token_buffer[end - 1])) {
+        --end;
+    }
+
+    trimmed_length = end - start;
+    if (trimmed_length == 0) {
+        token_buffer[0] = '\0';
+        return TG_TELEGRAM_INVALID_ARGUMENT;
+    }
+    if (start > 0) {
+        memmove(token_buffer, token_buffer + start, trimmed_length);
+    }
+    token_buffer[trimmed_length] = '\0';
+    *token_length = trimmed_length;
     return TG_TELEGRAM_OK;
 }
 
@@ -190,6 +247,8 @@ const char *tg_telegram_status_name(tg_telegram_status status)
         return "buffer-too-small";
     case TG_TELEGRAM_HTTP_PARSE_ERROR:
         return "http-parse-error";
+    case TG_TELEGRAM_FILE_ERROR:
+        return "file-error";
     default:
         return "unknown";
     }
