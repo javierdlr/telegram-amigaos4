@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "tg_app.h"
+#include "tg_bot.h"
 #include "tg_config.h"
 #include "tg_https.h"
 #include "tg_http.h"
@@ -322,6 +323,35 @@ static int tg_run_telegram_token_file_path_test(const tg_config *config)
     return 0;
 }
 
+static int tg_run_telegram_get_me_self_test(void)
+{
+    static const char get_me_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":true,\"result\":{\"id\":123456,\"is_bot\":true,\"first_name\":\"Telegram Amiga\"}}";
+    tg_bot_status bot_status;
+    tg_bot_call_result result;
+
+    bot_status = tg_bot_parse_get_me_http_response(get_me_response,
+                                                   (unsigned long)strlen(get_me_response),
+                                                   &result);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram getMe self-test: failed: %s", tg_bot_status_name(bot_status));
+        if (bot_status == TG_BOT_TELEGRAM_ERROR) {
+            printf(" / %s", tg_telegram_status_name(result.telegram_status));
+        }
+        printf("\n");
+        return 2;
+    }
+
+    puts("telegram getMe self-test: ok response");
+    printf("telegram http status: %d\n", result.response.http_status_code);
+    tg_print_telegram_response(&result.response.api);
+    return 0;
+}
+
 int tg_app_run(int argc, char **argv)
 {
     tg_config config;
@@ -399,6 +429,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_token_file_path_test) {
         return tg_run_telegram_token_file_path_test(&config);
+    }
+
+    if (config.run_telegram_get_me_self_test) {
+        return tg_run_telegram_get_me_self_test();
     }
 
     return 0;

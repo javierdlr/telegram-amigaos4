@@ -58,6 +58,7 @@ Minimal bootstrap:
 Initial core modules:
 
 - `tg_config`: minimal command-line argument parsing
+- `tg_bot`: Bot API orchestration helpers
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_http`: minimal HTTP/1.0 over `tg_net`, plus response parsing
 - `tg_json`: minimal top-level JSON field lookup for Telegram-style responses
@@ -126,6 +127,8 @@ Current options:
                       Run built-in HTTP-to-Telegram parser samples
     --telegram-token-file-path-test <file> <method>
                       Load token file and test Bot API path construction
+    --telegram-getme-self-test
+                      Run built-in Bot API getMe parser sample
 ```
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be

@@ -44,6 +44,7 @@ typedef struct tg_config {
     int run_telegram_path_test;
     int run_telegram_http_self_test;
     int run_telegram_token_file_path_test;
+    int run_telegram_get_me_self_test;
 } tg_config;
 
 /**
