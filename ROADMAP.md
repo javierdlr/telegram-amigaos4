@@ -2,49 +2,49 @@
 
 Author: Michele Dipace <michele.dipace@kaffeine.net>
 
-Telegram Amiga e' un progetto comunitario senza finalita' commerciali. La
-roadmap e' volutamente pragmatica: ogni fase deve produrre qualcosa di
-compilabile e verificabile su almeno una piattaforma Amiga-like reale.
+Telegram Amiga is a non-commercial community project. The roadmap is deliberately
+pragmatic: each phase should produce something that can be compiled and verified
+on at least one real Amiga-like platform.
 
-## Fase 1: base portabile
+## Phase 1: Portable Base
 
-- Struttura del progetto cross-platform
-- Build separati per MorphOS, AmigaOS 3.x, AmigaOS 4 e AROS
-- Logging e configurazione comuni
-- API TCP portabile
-- Test di rete da riga di comando
+- Cross-platform project structure
+- Separate builds for MorphOS, AmigaOS 3.x, AmigaOS 4 and AROS
+- Common logging and configuration
+- Portable TCP API
+- Command-line network tests
 
-## Fase 2: HTTP e TLS
+## Phase 2: HTTP and TLS
 
-- HTTP minimale sopra TCP
-- Backend TLS/HTTPS opzionale
-- Validazione certificati
-- Stabilizzazione di OpenSSL/AmiSSL su MorphOS
-- Scelta della libreria TLS piu' adatta per AmigaOS 3.x
+- Minimal HTTP over TCP
+- Optional TLS/HTTPS backend
+- Certificate validation
+- OpenSSL/AmiSSL stabilization on MorphOS
+- Selection of the most suitable TLS library for AmigaOS 3.x
 
-## Fase 3: API Telegram
+## Phase 3: Telegram API
 
-- Chiamate HTTPS verso Bot API o API Telegram adatte al target
-- Parsing JSON minimale
-- Gestione configurazione account/token
-- Primi test di ricezione messaggi
+- HTTPS calls to the Bot API or another Telegram API suitable for the target
+- Minimal JSON parsing
+- Account/token configuration handling
+- First message receive tests
 
-## Fase 4: interfaccia utente
+## Phase 4: User Interface
 
-- Interfaccia testuale iniziale per debug
-- Astrazione UI comune
-- Backend UI specifici per piattaforma
-- Esperienza nativa per MorphOS e AmigaOS dove possibile
+- Initial text interface for debugging
+- Common UI abstraction
+- Platform-specific UI backends
+- Native experience for MorphOS and AmigaOS where possible
 
-## Fase 5: client usabile
+## Phase 5: Usable Client
 
-- Lista chat o conversazioni supportate
-- Lettura e invio messaggi
-- Persistenza locale minima
-- Packaging per le piattaforme supportate
+- Supported chat or conversation list
+- Reading and sending messages
+- Minimal local persistence
+- Packaging for the supported platforms
 
-## Fuori scope iniziale
+## Initial Non-Goals
 
-- Cifratura end-to-end delle secret chat
-- Supporto completo a media pesanti
-- Compatibilita' totale con tutte le funzioni dei client Telegram moderni
+- End-to-end encryption for secret chats
+- Full support for heavy media
+- Complete compatibility with every feature of modern Telegram clients

@@ -2,64 +2,64 @@
 
 Author: Michele Dipace <michele.dipace@kaffeine.net>
 
-Grazie per l'interesse in Telegram Amiga. Il progetto nasce come regalo alla
-community Amiga e accetta contributi pratici, verificabili e compatibili con lo
-spirito cross-platform del repository.
+Thank you for your interest in Telegram Amiga. This project is a gift to the
+Amiga community and welcomes practical, verifiable contributions that fit the
+cross-platform spirit of the repository.
 
-## Principi
+## Principles
 
-- Mantieni il codice portabile nel layer `core/` quando possibile.
-- Isola le differenze di sistema sotto `platforms/<target>/`.
-- Preferisci piccoli passi compilabili a grandi riscritture.
-- Evita dipendenze difficili da reperire sui sistemi Amiga-like.
-- Documenta i test fatti, includendo piattaforma, toolchain e comando usato.
+- Keep portable code in the `core/` layer whenever possible.
+- Isolate system differences under `platforms/<target>/`.
+- Prefer small, buildable steps over large rewrites.
+- Avoid dependencies that are difficult to obtain on Amiga-like systems.
+- Document the tests you ran, including platform, toolchain and command.
 
-## Uso di agenti AI
+## AI Agent Usage
 
-Il progetto accetta contributi preparati anche con strumenti o agenti AI, purche'
-siano revisionati da una persona e accompagnati da test reali o riproducibili.
-Gli agenti sono considerati strumenti di supporto: il valore del contributo resta
-nella qualita' del codice, nella chiarezza della patch e nella verifica sui
-target Amiga-like.
+The project accepts contributions prepared with AI tools or AI agents, provided
+they are reviewed by a person and accompanied by real or reproducible tests. AI
+agents are treated as support tools: the value of a contribution remains in the
+quality of the code, the clarity of the patch and the verification on
+Amiga-like targets.
 
-Quando possibile, indica se una modifica e' stata provata tramite SSH su una
-macchina reale, su emulatore o solo con compilazione locale.
+When possible, state whether a change was tested through SSH on real hardware,
+on an emulator, or only through local compilation.
 
-## Target
+## Targets
 
-I target previsti sono:
+The planned targets are:
 
 - AmigaOS 3.x
 - MorphOS
 - AmigaOS 4
 - AROS
 
-Non e' necessario avere tutti i sistemi per contribuire, ma una modifica non
-dovrebbe rompere intenzionalmente gli altri target.
+You do not need to own every system to contribute, but a change should not
+intentionally break the other targets.
 
-## Build MorphOS
+## MorphOS Build
 
 ```text
 System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos all
 ```
 
-TLS/OpenSSL su MorphOS e' opzionale:
+TLS/OpenSSL on MorphOS is optional:
 
 ```text
 System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos ENABLE_TLS=1 all
 ```
 
-Usa `ENABLE_TLS=1` solo se l'ambiente OpenSSL/AmiSSL e' pronto e stabile.
+Use `ENABLE_TLS=1` only if the OpenSSL/AmiSSL environment is ready and stable.
 
-## Prima di proporre una patch
+## Before Proposing a Patch
 
-- Compila almeno il target che hai modificato.
-- Esegui il test piu' vicino alla modifica, per esempio `--net-test`,
-  `--http-test` o `--https-test`.
-- Mantieni le intestazioni autore/licenza esistenti.
-- Aggiorna `README.md` o `ROADMAP.md` se cambi comportamento o priorita'.
+- Build at least the target you changed.
+- Run the closest available test, for example `--net-test`, `--http-test` or
+  `--https-test`.
+- Keep the existing author/license headers.
+- Update `README.md` or `ROADMAP.md` if you change behavior or priorities.
 
-## Licenza
+## License
 
-Contribuendo al progetto accetti che il contributo sia distribuito sotto la
-licenza MIT del repository.
+By contributing to the project, you agree that your contribution is distributed
+under the repository's MIT License.

@@ -4,117 +4,124 @@ Author: Michele Dipace <michele.dipace@kaffeine.net>
 
 License: MIT
 
-Progetto comunitario senza finalita' commerciali, nato come regalo alla community
-Amiga per esplorare la possibilita' di un client Telegram moderno su sistemi
-Amiga-like.
+Telegram Amiga is a non-commercial community project, created as a gift to the
+Amiga community and as an exploration of what a modern Telegram client for
+Amiga-like systems could become.
 
-Stato attuale: bootstrap tecnico iniziale, non ancora un client Telegram
-utilizzabile.
+Current status: early technical bootstrap, not yet a usable Telegram client.
 
-## Obiettivo
+## Goal
 
-Costruire, un passo alla volta, un client Telegram cross-platform per:
+Build, one step at a time, a cross-platform Telegram client for:
 
 - AmigaOS 3.x
 - MorphOS
 - AmigaOS 4
 - AROS
 
-Il progetto privilegia codice portabile in C, backend separati per piattaforma e
-test incrementali su hardware o sistemi reali.
+The project favors portable C code, platform-specific backends and incremental
+testing on real hardware or real target systems.
 
-## Sviluppo con agenti AI
+## AI-Assisted Development
 
-Questo progetto viene portato avanti anche con l'aiuto di agenti AI, usati come
-strumenti di sviluppo assistito: analisi del codice, scrittura incrementale,
-refactoring, documentazione e preparazione dei test.
+This project is also developed with the help of AI agents, used as assisted
+development tools for code analysis, incremental implementation, refactoring,
+documentation and test preparation.
 
-L'obiettivo non e' sostituire l'esperienza della community Amiga, ma dimostrare
-che gli agenti AI possono diventare un supporto concreto anche per piattaforme
-storiche o di nicchia, dove tempo, documentazione, hardware e toolchain sono
-spesso risorse preziose.
+The goal is not to replace the experience of the Amiga community. The goal is to
+show that AI agents can become a practical support even for historical or niche
+platforms, where time, documentation, hardware and toolchains are often precious
+resources.
 
-Il flusso di lavoro usa un Mac come macchina di sviluppo principale. Le macchine
-Amiga-like reali o emulabili vengono rese raggiungibili sulla rete locale tramite
-SSH, per esempio con BebboSSH su AmigaOS o MorphOS. In questo modo l'agente puo'
-preparare il codice sul Mac, copiarlo sul sistema target, lanciare build e test,
-e riportare risultati concreti invece di lavorare solo in teoria.
+The workflow uses a Mac as the main development machine. Real or emulated
+Amiga-like systems are made reachable on the local network through SSH, for
+example with BebboSSH on AmigaOS or MorphOS. This lets the agent prepare code on
+the Mac, copy it to the target system, run builds and tests, and report concrete
+results instead of working only in theory.
 
-Questo repository vuole quindi essere anche un piccolo esperimento pubblico:
-capire se una collaborazione tra persone, hardware Amiga reale e agenti AI puo'
-aiutare a produrre nuovo software utile per la community.
+This repository is also a small public experiment: can collaboration between
+people, real Amiga hardware and AI agents help produce useful new software for
+the community?
 
-## Struttura
+## Structure
 
-Bootstrap minimale:
+Minimal bootstrap:
 
-- `core/`: logica portabile
-- `include/`: interfacce pubbliche interne
-- `platforms/*/`: adattatori specifici per sistema
-- `src/main.c`: entry point sottile
+- `core/`: portable logic
+- `include/`: internal public interfaces
+- `platforms/*/`: platform-specific adapters
+- `src/main.c`: thin entry point
 
-Moduli core iniziali:
+Initial core modules:
 
-- `tg_config`: parsing minimale degli argomenti
-- `tg_log`: logging portabile delegato alla piattaforma
-- `tg_http`: HTTP/1.0 minimale sopra `tg_net`
-- `tg_net`: API TCP portabile con implementazione MorphOS iniziale
-- `tg_tls`/`tg_https`: TLS/HTTPS minimale con backend MorphOS OpenSSL iniziale
+- `tg_config`: minimal command-line argument parsing
+- `tg_log`: portable logging delegated to the platform layer
+- `tg_http`: minimal HTTP/1.0 over `tg_net`
+- `tg_net`: portable TCP API with an initial MorphOS implementation
+- `tg_tls`/`tg_https`: minimal TLS/HTTPS with an initial MorphOS OpenSSL backend
 
-Nota TLS: il backend MorphOS iniziale usa OpenSSL/AmiSSL con SNI, ma la validazione dei certificati non e' ancora abilitata. Questo e' sufficiente per test di connettivita', non ancora per uso sicuro.
+TLS note: the initial MorphOS backend uses OpenSSL/AmiSSL with SNI, but
+certificate validation is not enabled yet. This is enough for connectivity
+tests, not yet for secure use.
 
-Target iniziali:
+Initial targets:
 
-- MorphOS: attivo e verificato
-- AmigaOS 3.x: stub pronto, toolchain da stabilizzare
-- AmigaOS 4: stub pronto, toolchain da installare
-- AROS: stub pronto, toolchain da installare
+- MorphOS: active and verified
+- AmigaOS 3.x: stub ready, toolchain to stabilize
+- AmigaOS 4: stub ready, toolchain to install
+- AROS: stub ready, toolchain to install
 
-Build su MorphOS:
+Build on MorphOS:
 
 ```text
 System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos run
 ```
 
-Build remoto dal Mac:
+Remote build from the Mac:
 
 ```sh
-ssh kaffeine@192.168.0.9 'System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos run'
+ssh user@<morphos-host> 'System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos run'
 ```
 
-Flow Studio su MorphOS:
+Flow Studio on MorphOS:
 
-- `default.sprj` e' il progetto Flow Studio auto-caricabile.
-- `telegram-amiga.xprj` e' apribile manualmente dal requester progetto.
-- Apri un file sorgente da `Work:Dev/telegram-amiga` oppure avvia Flow Studio con `PROJECT=Work:Dev/telegram-amiga/default.sprj`.
-- Il build usa `System:Development/gg/bin/make -f Makefile.morphos all`.
-- Se aprendo solo il progetto vedi solo `Build Rules`, esegui `execute Work:Dev/telegram-amiga/OpenTelegramAmiga.flow`: apre il progetto insieme ai sorgenti principali, cosi' il Project Lister ha un file C attivo da cui popolare Source/Header/Build.
-- `telegram-amiga.files` contiene la lista dei file principali del progetto.
+- `default.sprj` is the auto-loadable Flow Studio project.
+- `telegram-amiga.xprj` can be opened manually from the project requester.
+- Open a source file from `Work:Dev/telegram-amiga` or start Flow Studio with
+  `PROJECT=Work:Dev/telegram-amiga/default.sprj`.
+- The build uses `System:Development/gg/bin/make -f Makefile.morphos all`.
+- If opening only the project shows just `Build Rules`, run
+  `execute Work:Dev/telegram-amiga/OpenTelegramAmiga.flow`: it opens the project
+  together with the main source files, so the Project Lister has an active C
+  file from which it can populate Source/Header/Build.
+- `telegram-amiga.files` contains the list of the main project files.
 
-Opzioni attuali:
+Current options:
 
 ```text
--h, --help            Mostra l'help
--v, --verbose         Abilita log debug
--q, --quiet           Mostra solo warning ed errori
-    --data-dir <path> Imposta la directory dati
+-h, --help            Show help
+-v, --verbose         Enable debug logging
+-q, --quiet           Show warnings and errors only
+    --data-dir <path> Set application data directory
     --net-test <host> <port>
-                      Testa risoluzione DNS e connessione TCP
+                      Test DNS resolution and TCP connection
     --http-test <host> <port> <path>
-                      Testa connect/send/recv TCP con HTTP/1.0
+                      Test TCP connect/send/recv with HTTP/1.0
     --https-test <host> <port> <path>
-                      Testa connect/send/recv TLS con HTTP/1.0
+                      Test TLS connect/send/recv with HTTP/1.0
 ```
 
-Nota: via BebboSSH la shell remota non mantiene sempre il PATH AmigaDOS, quindi il Makefile usa percorsi assoluti verso il MorphOS SDK.
+Note: through BebboSSH, the remote shell does not always preserve the AmigaDOS
+PATH, so the Makefile uses absolute paths to the MorphOS SDK.
 
-Makefile previsti:
+Planned Makefiles:
 
 - `Makefile.morphos`
 - `Makefile.amigaos3`
 - `Makefile.amigaos4`
 - `Makefile.aros`
 
-## Licenza
+## License
 
-Questo progetto e' distribuito sotto licenza MIT. Vedi `LICENSE` per il testo completo.
+This project is distributed under the MIT License. See `LICENSE` for the full
+text.
