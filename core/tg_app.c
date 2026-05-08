@@ -449,6 +449,66 @@ static int tg_run_telegram_get_me(const tg_config *config)
     return 0;
 }
 
+static int tg_run_telegram_get_updates_self_test(void)
+{
+    static const char updates_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":true,\"result\":[{\"update_id\":1000,\"message\":{\"message_id\":1,\"chat\":{\"id\":123,\"type\":\"private\"},\"text\":\"hello\"}}]}";
+    tg_bot_status bot_status;
+    tg_bot_call_result result;
+
+    bot_status = tg_bot_parse_get_updates_http_response(updates_response,
+                                                        (unsigned long)strlen(updates_response),
+                                                        &result);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram getUpdates self-test: failed: %s",
+               tg_bot_status_name(bot_status));
+        if (bot_status == TG_BOT_TELEGRAM_ERROR) {
+            printf(" / %s", tg_telegram_status_name(result.telegram_status));
+        }
+        printf("\n");
+        return 2;
+    }
+
+    puts("telegram getUpdates self-test: ok response");
+    printf("telegram http status: %d\n", result.response.http_status_code);
+    tg_print_telegram_response(&result.response.api);
+    return 0;
+}
+
+static int tg_run_telegram_get_updates(const tg_config *config)
+{
+    tg_bot_status bot_status;
+    tg_bot_call_result result;
+    char error_buffer[256];
+    char http_buffer[16384];
+    unsigned long http_response_length;
+
+    bot_status = tg_bot_get_updates_from_token_file(
+        config->telegram_get_updates_token_file_path,
+        http_buffer, sizeof(http_buffer), &http_response_length, &result,
+        error_buffer, sizeof(error_buffer));
+    if (bot_status != TG_BOT_OK) {
+        tg_print_bot_error("telegram getUpdates", bot_status, &result, error_buffer);
+        return 2;
+    }
+
+    printf("telegram getUpdates: received %lu bytes\n", http_response_length);
+    printf("telegram http status: %d\n", result.response.http_status_code);
+    tg_print_telegram_response(&result.response.api);
+
+    if (result.response.http_status_code < 200 ||
+        result.response.http_status_code > 299 ||
+        !result.response.api.ok) {
+        return 2;
+    }
+
+    return 0;
+}
+
 static int tg_run_telegram_send_message_self_test(void)
 {
     static const char send_response[] =
@@ -617,6 +677,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_get_me) {
         return tg_run_telegram_get_me(&config);
+    }
+
+    if (config.run_telegram_get_updates_self_test) {
+        return tg_run_telegram_get_updates_self_test();
+    }
+
+    if (config.run_telegram_get_updates) {
+        return tg_run_telegram_get_updates(&config);
     }
 
     if (config.run_telegram_send_message_self_test) {

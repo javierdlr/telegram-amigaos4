@@ -62,6 +62,16 @@ tg_bot_status tg_bot_parse_get_me_http_response(const char *http_response,
                                                 tg_bot_call_result *result);
 
 /**
+ * Parses a complete HTTP response as the result of Telegram getUpdates.
+ *
+ * result->response.api.result is typically an array and remains a borrowed view
+ * into http_response. No update-specific parsing is done at this layer yet.
+ */
+tg_bot_status tg_bot_parse_get_updates_http_response(const char *http_response,
+                                                     unsigned long http_response_length,
+                                                     tg_bot_call_result *result);
+
+/**
  * Parses a complete HTTP response as the result of Telegram sendMessage.
  *
  * This function does not allocate memory. result->response contains borrowed
@@ -99,6 +109,21 @@ tg_bot_status tg_bot_get_me_from_token_file(const char *token_file_path,
                                             tg_bot_call_result *result,
                                             char *error_buffer,
                                             unsigned long error_buffer_size);
+
+/**
+ * Loads a token from file and performs getUpdates using HTTPS GET.
+ *
+ * http_buffer is caller-owned and receives the raw HTTP response. The token and
+ * generated request path are never printed by this function. The returned
+ * Telegram result is currently exposed as a raw borrowed JSON array.
+ */
+tg_bot_status tg_bot_get_updates_from_token_file(const char *token_file_path,
+                                                 char *http_buffer,
+                                                 unsigned long http_buffer_size,
+                                                 unsigned long *http_response_length,
+                                                 tg_bot_call_result *result,
+                                                 char *error_buffer,
+                                                 unsigned long error_buffer_size);
 
 /**
  * Loads a token from file and performs sendMessage using HTTPS POST.

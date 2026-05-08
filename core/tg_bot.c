@@ -142,6 +142,13 @@ tg_bot_status tg_bot_parse_get_me_http_response(const char *http_response,
     return tg_bot_parse_http_response(http_response, http_response_length, result);
 }
 
+tg_bot_status tg_bot_parse_get_updates_http_response(const char *http_response,
+                                                     unsigned long http_response_length,
+                                                     tg_bot_call_result *result)
+{
+    return tg_bot_parse_http_response(http_response, http_response_length, result);
+}
+
 tg_bot_status tg_bot_parse_send_message_http_response(const char *http_response,
                                                       unsigned long http_response_length,
                                                       tg_bot_call_result *result)
@@ -245,6 +252,62 @@ tg_bot_status tg_bot_get_me_from_token_file(const char *token_file_path,
     }
 
     return tg_bot_parse_get_me_http_response(http_buffer, *http_response_length, result);
+}
+
+tg_bot_status tg_bot_get_updates_from_token_file(const char *token_file_path,
+                                                 char *http_buffer,
+                                                 unsigned long http_buffer_size,
+                                                 unsigned long *http_response_length,
+                                                 tg_bot_call_result *result,
+                                                 char *error_buffer,
+                                                 unsigned long error_buffer_size)
+{
+    tg_telegram_status telegram_status;
+    tg_https_status https_status;
+    char token[128];
+    char path[256];
+    unsigned long token_length;
+    unsigned long path_length;
+
+    if (http_response_length != 0) {
+        *http_response_length = 0;
+    }
+    if (error_buffer != 0 && error_buffer_size > 0) {
+        error_buffer[0] = '\0';
+    }
+    if (token_file_path == 0 || http_buffer == 0 || http_buffer_size == 0 ||
+        http_response_length == 0 || result == 0) {
+        return TG_BOT_INVALID_ARGUMENT;
+    }
+
+    tg_bot_call_result_init(result);
+
+    telegram_status = tg_telegram_load_token_file(token_file_path, token, sizeof(token),
+                                                  &token_length, &result->file_status);
+    if (telegram_status != TG_TELEGRAM_OK) {
+        result->telegram_status = telegram_status;
+        return TG_BOT_TOKEN_ERROR;
+    }
+
+    telegram_status = tg_telegram_build_bot_path(token, "getUpdates", path, sizeof(path),
+                                                 &path_length);
+    if (telegram_status != TG_TELEGRAM_OK) {
+        result->telegram_status = telegram_status;
+        return TG_BOT_PATH_ERROR;
+    }
+
+    https_status = tg_https_get(tg_telegram_api_host(), "443", path,
+                                http_buffer, http_buffer_size,
+                                http_response_length, &result->tls_status,
+                                &result->net_status, error_buffer,
+                                error_buffer_size);
+    result->https_status = https_status;
+    if (https_status != TG_HTTPS_OK) {
+        return TG_BOT_HTTPS_ERROR;
+    }
+
+    return tg_bot_parse_get_updates_http_response(http_buffer, *http_response_length,
+                                                 result);
 }
 
 tg_bot_status tg_bot_send_message_from_token_file(const char *token_file_path,

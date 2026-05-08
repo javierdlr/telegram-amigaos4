@@ -27,6 +27,7 @@ void tg_config_init(tg_config *config)
     config->telegram_token_file_path = 0;
     config->telegram_token_file_method = 0;
     config->telegram_get_me_token_file_path = 0;
+    config->telegram_get_updates_token_file_path = 0;
     config->telegram_send_message_token_file_path = 0;
     config->telegram_send_message_chat_id = 0;
     config->telegram_send_message_text = 0;
@@ -44,6 +45,8 @@ void tg_config_init(tg_config *config)
     config->run_telegram_token_file_path_test = 0;
     config->run_telegram_get_me_self_test = 0;
     config->run_telegram_get_me = 0;
+    config->run_telegram_get_updates_self_test = 0;
+    config->run_telegram_get_updates = 0;
     config->run_telegram_send_message_self_test = 0;
     config->run_telegram_send_message = 0;
 }
@@ -137,6 +140,15 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_telegram_get_me = 1;
             config->telegram_get_me_token_file_path = argv[i + 1];
             ++i;
+        } else if (strcmp(argv[i], "--telegram-get-updates-self-test") == 0) {
+            config->run_telegram_get_updates_self_test = 1;
+        } else if (strcmp(argv[i], "--telegram-get-updates") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_telegram_get_updates = 1;
+            config->telegram_get_updates_token_file_path = argv[i + 1];
+            ++i;
         } else if (strcmp(argv[i], "--telegram-send-message-self-test") == 0) {
             config->run_telegram_send_message_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-send-message") == 0) {
@@ -189,6 +201,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run built-in Bot API getMe parser sample\n");
     fprintf(stream, "      --telegram-getme <file>\n");
     fprintf(stream, "                         Call Telegram getMe with token loaded from file\n");
+    fprintf(stream, "      --telegram-get-updates-self-test\n");
+    fprintf(stream, "                         Run built-in Bot API getUpdates parser sample\n");
+    fprintf(stream, "      --telegram-get-updates <file>\n");
+    fprintf(stream, "                         Call Telegram getUpdates with token loaded from file\n");
     fprintf(stream, "      --telegram-send-message-self-test\n");
     fprintf(stream, "                         Run built-in Bot API sendMessage parser sample\n");
     fprintf(stream, "      --telegram-send-message <file> <chat-id> <text>\n");

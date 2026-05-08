@@ -133,6 +133,10 @@ Current options:
                       Run built-in Bot API getMe parser sample
     --telegram-getme <file>
                       Call Telegram getMe with token loaded from file
+    --telegram-get-updates-self-test
+                      Run built-in Bot API getUpdates parser sample
+    --telegram-get-updates <file>
+                      Call Telegram getUpdates with token loaded from file
     --telegram-send-message-self-test
                       Run built-in Bot API sendMessage parser sample
     --telegram-send-message <file> <chat-id> <text>

@@ -69,6 +69,9 @@ static tg_https_status tg_https_send_request(const char *host, const char *port,
             break;
         }
         if (local_tls_status != TG_TLS_OK) {
+            if (total_received > 0) {
+                break;
+            }
             tg_tls_close(&connection);
             response_buffer[total_received] = '\0';
             *response_length = total_received;
