@@ -40,6 +40,7 @@ typedef struct tg_config {
     int run_telegram_json_test;
     int run_telegram_json_self_test;
     int run_telegram_path_test;
+    int run_telegram_http_self_test;
 } tg_config;
 
 /**

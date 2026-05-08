@@ -122,6 +122,8 @@ Current options:
                       Run built-in Telegram JSON parser samples
     --telegram-path-test <token> <method>
                       Test Telegram Bot API path construction
+    --telegram-http-self-test
+                      Run built-in HTTP-to-Telegram parser samples
 ```
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be

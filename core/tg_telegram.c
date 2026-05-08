@@ -64,6 +64,12 @@ static void tg_telegram_response_init(tg_telegram_response *response)
     response->result.bool_value = 0;
 }
 
+static void tg_telegram_http_response_init(tg_telegram_http_response *response)
+{
+    response->http_status_code = 0;
+    tg_telegram_response_init(&response->api);
+}
+
 static tg_telegram_status tg_telegram_set_json_status(tg_json_status status,
                                                       tg_json_status *json_status)
 {
@@ -129,6 +135,44 @@ tg_telegram_status tg_telegram_parse_response(const char *json, unsigned long js
     return TG_TELEGRAM_OK;
 }
 
+tg_telegram_status tg_telegram_parse_http_response(const char *http_response,
+                                                   unsigned long http_response_length,
+                                                   tg_telegram_http_response *response,
+                                                   tg_http_parse_status *http_parse_status,
+                                                   tg_json_status *json_status)
+{
+    tg_http_parse_status local_http_status;
+    tg_http_response parsed_http;
+    tg_telegram_status telegram_status;
+
+    if (http_parse_status != 0) {
+        *http_parse_status = TG_HTTP_PARSE_OK;
+    }
+    if (json_status != 0) {
+        *json_status = TG_JSON_OK;
+    }
+    if (response != 0) {
+        tg_telegram_http_response_init(response);
+    }
+    if (http_response == 0 || response == 0) {
+        return TG_TELEGRAM_INVALID_ARGUMENT;
+    }
+
+    local_http_status = tg_http_parse_response(http_response, http_response_length,
+                                               &parsed_http);
+    if (local_http_status != TG_HTTP_PARSE_OK) {
+        if (http_parse_status != 0) {
+            *http_parse_status = local_http_status;
+        }
+        return TG_TELEGRAM_HTTP_PARSE_ERROR;
+    }
+
+    response->http_status_code = parsed_http.status_code;
+    telegram_status = tg_telegram_parse_response(parsed_http.body, parsed_http.body_length,
+                                                 &response->api, json_status);
+    return telegram_status;
+}
+
 const char *tg_telegram_status_name(tg_telegram_status status)
 {
     switch (status) {
@@ -144,6 +188,8 @@ const char *tg_telegram_status_name(tg_telegram_status status)
         return "type-mismatch";
     case TG_TELEGRAM_BUFFER_TOO_SMALL:
         return "buffer-too-small";
+    case TG_TELEGRAM_HTTP_PARSE_ERROR:
+        return "http-parse-error";
     default:
         return "unknown";
     }

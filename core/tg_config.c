@@ -33,6 +33,7 @@ void tg_config_init(tg_config *config)
     config->run_telegram_json_test = 0;
     config->run_telegram_json_self_test = 0;
     config->run_telegram_path_test = 0;
+    config->run_telegram_http_self_test = 0;
 }
 
 int tg_config_parse(tg_config *config, int argc, char **argv)
@@ -103,6 +104,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_path_test_token = argv[i + 1];
             config->telegram_path_test_method = argv[i + 2];
             i += 2;
+        } else if (strcmp(argv[i], "--telegram-http-self-test") == 0) {
+            config->run_telegram_http_self_test = 1;
         } else {
             return 1;
         }
@@ -134,4 +137,6 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run built-in Telegram JSON parser samples\n");
     fprintf(stream, "      --telegram-path-test <token> <method>\n");
     fprintf(stream, "                         Test Telegram Bot API path construction\n");
+    fprintf(stream, "      --telegram-http-self-test\n");
+    fprintf(stream, "                         Run built-in HTTP-to-Telegram parser samples\n");
 }

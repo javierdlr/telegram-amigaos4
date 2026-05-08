@@ -228,6 +228,62 @@ static int tg_run_telegram_path_test(const tg_config *config)
     return 0;
 }
 
+static int tg_run_telegram_http_test_text(const char *http_response)
+{
+    tg_telegram_status telegram_status;
+    tg_telegram_http_response response;
+    tg_http_parse_status http_parse_status;
+    tg_json_status json_status;
+
+    telegram_status = tg_telegram_parse_http_response(http_response,
+                                                      (unsigned long)strlen(http_response),
+                                                      &response, &http_parse_status,
+                                                      &json_status);
+    if (telegram_status != TG_TELEGRAM_OK) {
+        printf("telegram http test: failed: %s", tg_telegram_status_name(telegram_status));
+        if (telegram_status == TG_TELEGRAM_HTTP_PARSE_ERROR) {
+            printf(" / %s", tg_http_parse_status_name(http_parse_status));
+        } else if (telegram_status == TG_TELEGRAM_JSON_ERROR ||
+                   telegram_status == TG_TELEGRAM_MISSING_OK) {
+            printf(" / %s", tg_json_status_name(json_status));
+        }
+        printf("\n");
+        return 2;
+    }
+
+    printf("telegram http status: %d\n", response.http_status_code);
+    tg_print_telegram_response(&response.api);
+    return 0;
+}
+
+static int tg_run_telegram_http_self_test(void)
+{
+    static const char ok_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":true,\"result\":{\"id\":123,\"is_bot\":true}}";
+    static const char error_response[] =
+        "HTTP/1.1 401 Unauthorized\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":false,\"description\":\"Unauthorized\"}";
+
+    puts("telegram http self-test: ok response");
+    if (tg_run_telegram_http_test_text(ok_response) != 0) {
+        return 2;
+    }
+
+    puts("telegram http self-test: error response");
+    if (tg_run_telegram_http_test_text(error_response) != 0) {
+        return 2;
+    }
+
+    return 0;
+}
+
 int tg_app_run(int argc, char **argv)
 {
     tg_config config;
@@ -297,6 +353,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_path_test) {
         return tg_run_telegram_path_test(&config);
+    }
+
+    if (config.run_telegram_http_self_test) {
+        return tg_run_telegram_http_self_test();
     }
 
     return 0;
