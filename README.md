@@ -13,7 +13,7 @@ Moduli core iniziali:
 
 - `tg_config`: parsing minimale degli argomenti
 - `tg_log`: logging portabile delegato alla piattaforma
-- `tg_net`: test rete portabile con implementazione MorphOS iniziale
+- `tg_net`: API TCP portabile con implementazione MorphOS iniziale
 
 Target iniziali:
 
@@ -43,6 +43,8 @@ Opzioni attuali:
     --data-dir <path> Imposta la directory dati
     --net-test <host> <port>
                       Testa risoluzione DNS e connessione TCP
+    --http-test <host> <port> <path>
+                      Testa connect/send/recv TCP con HTTP/1.0
 ```
 
 Nota: via BebboSSH la shell remota non mantiene sempre il PATH AmigaDOS, quindi il Makefile usa percorsi assoluti verso il MorphOS SDK.
