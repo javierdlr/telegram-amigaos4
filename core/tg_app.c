@@ -391,6 +391,57 @@ static int tg_run_telegram_get_me_self_test(void)
     return 0;
 }
 
+static int tg_run_telegram_get_me(const tg_config *config)
+{
+    tg_bot_status bot_status;
+    tg_bot_call_result result;
+    char error_buffer[256];
+    char http_buffer[8192];
+    unsigned long http_response_length;
+
+    bot_status = tg_bot_get_me_from_token_file(config->telegram_get_me_token_file_path,
+                                               http_buffer, sizeof(http_buffer),
+                                               &http_response_length, &result,
+                                               error_buffer, sizeof(error_buffer));
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram getMe: failed: %s", tg_bot_status_name(bot_status));
+        if (bot_status == TG_BOT_TOKEN_ERROR || bot_status == TG_BOT_PATH_ERROR ||
+            bot_status == TG_BOT_TELEGRAM_ERROR) {
+            printf(" / %s", tg_telegram_status_name(result.telegram_status));
+        }
+        if (bot_status == TG_BOT_TOKEN_ERROR &&
+            result.telegram_status == TG_TELEGRAM_FILE_ERROR) {
+            printf(" / %s", tg_file_status_name(result.file_status));
+        }
+        if (bot_status == TG_BOT_HTTPS_ERROR) {
+            printf(" / %s", tg_https_status_name(result.https_status));
+            if (result.https_status == TG_HTTPS_TLS_ERROR) {
+                printf(" / %s", tg_tls_status_name(result.tls_status));
+                if (result.tls_status == TG_TLS_NET_ERROR) {
+                    printf(" / %s", tg_net_status_name(result.net_status));
+                }
+            }
+        }
+        if (error_buffer[0] != '\0') {
+            printf(" (%s)", error_buffer);
+        }
+        printf("\n");
+        return 2;
+    }
+
+    printf("telegram getMe: received %lu bytes\n", http_response_length);
+    printf("telegram http status: %d\n", result.response.http_status_code);
+    tg_print_telegram_response(&result.response.api);
+
+    if (result.response.http_status_code < 200 ||
+        result.response.http_status_code > 299 ||
+        !result.response.api.ok) {
+        return 2;
+    }
+
+    return 0;
+}
+
 int tg_app_run(int argc, char **argv)
 {
     tg_config config;
@@ -476,6 +527,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_get_me_self_test) {
         return tg_run_telegram_get_me_self_test();
+    }
+
+    if (config.run_telegram_get_me) {
+        return tg_run_telegram_get_me(&config);
     }
 
     return 0;

@@ -131,6 +131,8 @@ Current options:
                       Load token file and test Bot API path construction
     --telegram-getme-self-test
                       Run built-in Bot API getMe parser sample
+    --telegram-getme <file>
+                      Call Telegram getMe with token loaded from file
 ```
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
