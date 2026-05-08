@@ -13,6 +13,7 @@ Moduli core iniziali:
 
 - `tg_config`: parsing minimale degli argomenti
 - `tg_log`: logging portabile delegato alla piattaforma
+- `tg_http`: HTTP/1.0 minimale sopra `tg_net`
 - `tg_net`: API TCP portabile con implementazione MorphOS iniziale
 
 Target iniziali:

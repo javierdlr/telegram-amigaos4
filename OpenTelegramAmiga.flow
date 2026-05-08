@@ -4,4 +4,4 @@
 ; Run this from Shell on MorphOS:
 ;   execute Work:Dev/telegram-amiga/OpenTelegramAmiga.flow
 
-System:Applications/FlowStudio/FlowStudio PROJECT=Work:Dev/telegram-amiga/telegram-amiga.xprj Work:Dev/telegram-amiga/src/main.c
+System:Applications/FlowStudio/FlowStudio PROJECT=Work:Dev/telegram-amiga/telegram-amiga.xprj Work:Dev/telegram-amiga/src/main.c Work:Dev/telegram-amiga/core/tg_http.c Work:Dev/telegram-amiga/include/tg_http.h
