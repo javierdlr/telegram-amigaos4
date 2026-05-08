@@ -33,6 +33,63 @@ static tg_http_status tg_http_build_get_request(const char *host, const char *pa
     return TG_HTTP_OK;
 }
 
+static int tg_http_is_digit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+static int tg_http_find_line_end(const char *data, unsigned long data_length,
+                                 unsigned long start, unsigned long *line_end,
+                                 unsigned long *next_line)
+{
+    unsigned long i;
+
+    i = start;
+    while (i < data_length) {
+        if (data[i] == '\n') {
+            if (i > start && data[i - 1] == '\r') {
+                *line_end = i - 1;
+            } else {
+                *line_end = i;
+            }
+            *next_line = i + 1;
+            return 1;
+        }
+        ++i;
+    }
+
+    return 0;
+}
+
+static int tg_http_find_header_end(const char *data, unsigned long data_length,
+                                   unsigned long *header_end, unsigned long *body_start)
+{
+    unsigned long i;
+
+    i = 0;
+    while (i + 3 < data_length) {
+        if (data[i] == '\r' && data[i + 1] == '\n' &&
+            data[i + 2] == '\r' && data[i + 3] == '\n') {
+            *header_end = i;
+            *body_start = i + 4;
+            return 1;
+        }
+        ++i;
+    }
+
+    i = 0;
+    while (i + 1 < data_length) {
+        if (data[i] == '\n' && data[i + 1] == '\n') {
+            *header_end = i;
+            *body_start = i + 2;
+            return 1;
+        }
+        ++i;
+    }
+
+    return 0;
+}
+
 tg_http_status tg_http_get(const char *host, const char *port, const char *path,
                            char *response_buffer, unsigned long response_buffer_size,
                            unsigned long *response_length, tg_net_status *net_status,
@@ -129,6 +186,77 @@ tg_http_status tg_http_get(const char *host, const char *port, const char *path,
     return TG_HTTP_OK;
 }
 
+tg_http_parse_status tg_http_parse_response(const char *response, unsigned long response_length,
+                                            tg_http_response *parsed_response)
+{
+    unsigned long line_end;
+    unsigned long next_line;
+    unsigned long header_end;
+    unsigned long body_start;
+    unsigned long status_pos;
+    unsigned long reason_start;
+    int status_code;
+
+    if (parsed_response != 0) {
+        parsed_response->status_code = 0;
+        parsed_response->reason = 0;
+        parsed_response->reason_length = 0;
+        parsed_response->headers = 0;
+        parsed_response->headers_length = 0;
+        parsed_response->body = 0;
+        parsed_response->body_length = 0;
+    }
+
+    if (response == 0 || parsed_response == 0) {
+        return TG_HTTP_PARSE_INVALID_ARGUMENT;
+    }
+
+    if (!tg_http_find_header_end(response, response_length, &header_end, &body_start)) {
+        return TG_HTTP_PARSE_INCOMPLETE;
+    }
+    if (!tg_http_find_line_end(response, response_length, 0, &line_end, &next_line)) {
+        return TG_HTTP_PARSE_INCOMPLETE;
+    }
+
+    if (line_end < 12 || strncmp(response, "HTTP/", 5) != 0) {
+        return TG_HTTP_PARSE_INVALID_RESPONSE;
+    }
+
+    status_pos = 5;
+    while (status_pos < line_end && response[status_pos] != ' ') {
+        ++status_pos;
+    }
+    while (status_pos < line_end && response[status_pos] == ' ') {
+        ++status_pos;
+    }
+
+    if (status_pos + 2 >= line_end ||
+        !tg_http_is_digit(response[status_pos]) ||
+        !tg_http_is_digit(response[status_pos + 1]) ||
+        !tg_http_is_digit(response[status_pos + 2])) {
+        return TG_HTTP_PARSE_INVALID_RESPONSE;
+    }
+
+    status_code = (response[status_pos] - '0') * 100;
+    status_code += (response[status_pos + 1] - '0') * 10;
+    status_code += response[status_pos + 2] - '0';
+
+    reason_start = status_pos + 3;
+    while (reason_start < line_end && response[reason_start] == ' ') {
+        ++reason_start;
+    }
+
+    parsed_response->status_code = status_code;
+    parsed_response->reason = response + reason_start;
+    parsed_response->reason_length = line_end - reason_start;
+    parsed_response->headers = response + next_line;
+    parsed_response->headers_length = header_end - next_line;
+    parsed_response->body = response + body_start;
+    parsed_response->body_length = response_length - body_start;
+
+    return TG_HTTP_PARSE_OK;
+}
+
 const char *tg_http_status_name(tg_http_status status)
 {
     switch (status) {
@@ -142,6 +270,22 @@ const char *tg_http_status_name(tg_http_status status)
         return "response-too-large";
     case TG_HTTP_NET_ERROR:
         return "net-error";
+    default:
+        return "unknown";
+    }
+}
+
+const char *tg_http_parse_status_name(tg_http_parse_status status)
+{
+    switch (status) {
+    case TG_HTTP_PARSE_OK:
+        return "ok";
+    case TG_HTTP_PARSE_INVALID_ARGUMENT:
+        return "invalid-argument";
+    case TG_HTTP_PARSE_INCOMPLETE:
+        return "incomplete";
+    case TG_HTTP_PARSE_INVALID_RESPONSE:
+        return "invalid-response";
     default:
         return "unknown";
     }

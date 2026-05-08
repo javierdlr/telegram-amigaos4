@@ -15,9 +15,11 @@
 static int tg_run_http_test(const tg_config *config)
 {
     tg_http_status http_status;
+    tg_http_parse_status parse_status;
+    tg_http_response parsed_response;
     tg_net_status net_status;
     char net_error[128];
-    char response[1024];
+    char response[2048];
     unsigned long response_len;
 
     http_status = tg_http_get(config->http_test_host, config->http_test_port,
@@ -38,17 +40,33 @@ static int tg_run_http_test(const tg_config *config)
     printf("http test: %s:%s%s ok, received %lu bytes\n",
            config->http_test_host, config->http_test_port,
            config->http_test_path, response_len);
-    printf("%s\n", response);
+
+    parse_status = tg_http_parse_response(response, response_len, &parsed_response);
+    if (parse_status != TG_HTTP_PARSE_OK) {
+        printf("http parse: failed: %s\n", tg_http_parse_status_name(parse_status));
+        printf("%s\n", response);
+        return 0;
+    }
+
+    printf("http status: %d", parsed_response.status_code);
+    if (parsed_response.reason_length > 0) {
+        printf(" %.*s", (int)parsed_response.reason_length, parsed_response.reason);
+    }
+    printf("\n");
+    printf("http body: %lu bytes\n", parsed_response.body_length);
+    printf("%.*s\n", (int)parsed_response.body_length, parsed_response.body);
     return 0;
 }
 
 static int tg_run_https_test(const tg_config *config)
 {
     tg_https_status https_status;
+    tg_http_parse_status parse_status;
+    tg_http_response parsed_response;
     tg_tls_status tls_status;
     tg_net_status net_status;
     char net_error[128];
-    char response[1024];
+    char response[2048];
     unsigned long response_len;
 
     https_status = tg_https_get(config->https_test_host, config->https_test_port,
@@ -73,7 +91,21 @@ static int tg_run_https_test(const tg_config *config)
     printf("https test: %s:%s%s ok, received %lu bytes\n",
            config->https_test_host, config->https_test_port,
            config->https_test_path, response_len);
-    printf("%s\n", response);
+
+    parse_status = tg_http_parse_response(response, response_len, &parsed_response);
+    if (parse_status != TG_HTTP_PARSE_OK) {
+        printf("https parse: failed: %s\n", tg_http_parse_status_name(parse_status));
+        printf("%s\n", response);
+        return 0;
+    }
+
+    printf("https status: %d", parsed_response.status_code);
+    if (parsed_response.reason_length > 0) {
+        printf(" %.*s", (int)parsed_response.reason_length, parsed_response.reason);
+    }
+    printf("\n");
+    printf("https body: %lu bytes\n", parsed_response.body_length);
+    printf("%.*s\n", (int)parsed_response.body_length, parsed_response.body);
     return 0;
 }
 

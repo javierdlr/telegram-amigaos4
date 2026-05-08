@@ -56,7 +56,7 @@ Initial core modules:
 
 - `tg_config`: minimal command-line argument parsing
 - `tg_log`: portable logging delegated to the platform layer
-- `tg_http`: minimal HTTP/1.0 over `tg_net`
+- `tg_http`: minimal HTTP/1.0 over `tg_net`, plus response parsing
 - `tg_net`: portable TCP API with an initial MorphOS implementation
 - `tg_tls`/`tg_https`: minimal TLS/HTTPS with an initial MorphOS OpenSSL backend
 
