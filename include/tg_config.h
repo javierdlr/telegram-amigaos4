@@ -11,8 +11,11 @@
 
 typedef struct tg_config {
     const char *data_dir;
+    const char *net_test_host;
+    const char *net_test_port;
     tg_log_level log_level;
     int show_help;
+    int run_net_test;
 } tg_config;
 
 void tg_config_init(tg_config *config);

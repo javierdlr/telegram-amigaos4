@@ -10,8 +10,11 @@
 void tg_config_init(tg_config *config)
 {
     config->data_dir = tg_platform_default_data_dir();
+    config->net_test_host = 0;
+    config->net_test_port = 0;
     config->log_level = TG_LOG_INFO;
     config->show_help = 0;
+    config->run_net_test = 0;
 }
 
 int tg_config_parse(tg_config *config, int argc, char **argv)
@@ -31,6 +34,14 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             }
             ++i;
             config->data_dir = argv[i];
+        } else if (strcmp(argv[i], "--net-test") == 0) {
+            if (i + 2 >= argc) {
+                return 1;
+            }
+            config->run_net_test = 1;
+            config->net_test_host = argv[i + 1];
+            config->net_test_port = argv[i + 2];
+            i += 2;
         } else {
             return 1;
         }
@@ -48,4 +59,6 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "  -v, --verbose         Enable debug logging\n");
     fprintf(stream, "  -q, --quiet           Show warnings and errors only\n");
     fprintf(stream, "      --data-dir <path> Set application data directory\n");
+    fprintf(stream, "      --net-test <host> <port>\n");
+    fprintf(stream, "                         Test DNS resolution and TCP connect\n");
 }
