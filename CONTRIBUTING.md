@@ -34,7 +34,7 @@ The planned targets are:
 
 - AmigaOS 3.x
 - MorphOS
-- AmigaOS 4
+- AmigaOS 4.x
 - AROS
 
 You do not need to own every system to contribute, but a change should not

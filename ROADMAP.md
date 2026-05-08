@@ -12,7 +12,7 @@ on at least one real Amiga-like platform.
 ## Phase 1: Portable Base
 
 - Cross-platform project structure
-- Separate builds for MorphOS, AmigaOS 3.x, AmigaOS 4 and AROS
+- Separate builds for MorphOS, AmigaOS 3.x, AmigaOS 4.x and AROS
 - Common logging and configuration
 - Portable TCP API
 - Command-line network tests

@@ -3,7 +3,53 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <string.h>
+
 #include "tg_telegram.h"
+
+const char *tg_telegram_api_host(void)
+{
+    return "api.telegram.org";
+}
+
+tg_telegram_status tg_telegram_build_bot_path(const char *token, const char *method,
+                                              char *path_buffer,
+                                              unsigned long path_buffer_size,
+                                              unsigned long *path_length)
+{
+    unsigned long token_length;
+    unsigned long method_length;
+    unsigned long needed;
+
+    if (path_length != 0) {
+        *path_length = 0;
+    }
+    if (token == 0 || method == 0 || path_buffer == 0 || path_length == 0 ||
+        token[0] == '\0' || method[0] == '\0') {
+        return TG_TELEGRAM_INVALID_ARGUMENT;
+    }
+
+    token_length = (unsigned long)strlen(token);
+    method_length = (unsigned long)strlen(method);
+    needed = token_length + method_length + 6;
+
+    if (needed + 1 > path_buffer_size) {
+        return TG_TELEGRAM_BUFFER_TOO_SMALL;
+    }
+
+    /*
+     * Official Bot API requests use:
+     *   https://api.telegram.org/bot<token>/METHOD_NAME
+     * This function builds only the path so the transport layer can stay generic.
+     */
+    strcpy(path_buffer, "/bot");
+    strcat(path_buffer, token);
+    strcat(path_buffer, "/");
+    strcat(path_buffer, method);
+    *path_length = needed;
+
+    return TG_TELEGRAM_OK;
+}
 
 static void tg_telegram_response_init(tg_telegram_response *response)
 {
@@ -96,6 +142,8 @@ const char *tg_telegram_status_name(tg_telegram_status status)
         return "missing-ok";
     case TG_TELEGRAM_TYPE_MISMATCH:
         return "type-mismatch";
+    case TG_TELEGRAM_BUFFER_TOO_SMALL:
+        return "buffer-too-small";
     default:
         return "unknown";
     }

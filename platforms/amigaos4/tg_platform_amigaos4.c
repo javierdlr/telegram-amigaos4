@@ -9,7 +9,7 @@
 
 const char *tg_platform_name(void)
 {
-    return "AmigaOS 4";
+    return "AmigaOS 4.x";
 }
 
 const char *tg_platform_default_data_dir(void)

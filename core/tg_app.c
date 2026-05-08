@@ -207,6 +207,27 @@ static int tg_run_telegram_json_self_test(void)
     return 0;
 }
 
+static int tg_run_telegram_path_test(const tg_config *config)
+{
+    tg_telegram_status telegram_status;
+    char path[256];
+    unsigned long path_length;
+
+    telegram_status = tg_telegram_build_bot_path(config->telegram_path_test_token,
+                                                 config->telegram_path_test_method,
+                                                 path, sizeof(path), &path_length);
+    if (telegram_status != TG_TELEGRAM_OK) {
+        printf("telegram path test: failed: %s\n",
+               tg_telegram_status_name(telegram_status));
+        return 2;
+    }
+
+    printf("telegram host: %s\n", tg_telegram_api_host());
+    printf("telegram path: %s\n", path);
+    printf("telegram path length: %lu\n", path_length);
+    return 0;
+}
+
 int tg_app_run(int argc, char **argv)
 {
     tg_config config;
@@ -272,6 +293,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_json_self_test) {
         return tg_run_telegram_json_self_test();
+    }
+
+    if (config.run_telegram_path_test) {
+        return tg_run_telegram_path_test(&config);
     }
 
     return 0;

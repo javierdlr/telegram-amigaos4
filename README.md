@@ -19,7 +19,7 @@ Build, one step at a time, a cross-platform Telegram client for:
 
 - AmigaOS 3.x
 - MorphOS
-- AmigaOS 4
+- AmigaOS 4.x
 - AROS
 
 The project favors portable C code, platform-specific backends and incremental
@@ -73,7 +73,7 @@ Initial targets:
 
 - MorphOS: active and verified
 - AmigaOS 3.x: stub ready, toolchain to stabilize
-- AmigaOS 4: stub ready, toolchain to install
+- AmigaOS 4.x: stub ready, toolchain to install
 - AROS: stub ready, toolchain to install
 
 Build on MorphOS:
@@ -120,7 +120,12 @@ Current options:
                       Test Telegram API response parsing
     --telegram-json-self-test
                       Run built-in Telegram JSON parser samples
+    --telegram-path-test <token> <method>
+                      Test Telegram Bot API path construction
 ```
+
+Use fake tokens for path tests and examples. Real Bot API tokens should not be
+committed, pasted into public issues or shared in logs.
 
 Note: through BebboSSH, the remote shell does not always preserve the AmigaDOS
 PATH, so the Makefile uses absolute paths to the MorphOS SDK.
