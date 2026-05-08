@@ -34,6 +34,12 @@ Build remoto dal Mac:
 ssh kaffeine@192.168.0.9 'System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos run'
 ```
 
+Flow Studio su MorphOS:
+
+- `default.sprj` e' il progetto Flow Studio auto-caricabile.
+- Apri un file sorgente da `Work:Dev/telegram-amiga` oppure avvia Flow Studio con `PROJECT=Work:Dev/telegram-amiga/default.sprj`.
+- Il build usa `System:Development/gg/bin/make -f Makefile.morphos all`.
+
 Opzioni attuali:
 
 ```text
