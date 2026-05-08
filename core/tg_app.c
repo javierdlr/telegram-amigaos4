@@ -14,6 +14,7 @@
 #include "tg_log.h"
 #include "tg_net.h"
 #include "tg_platform.h"
+#include "tg_telegram.h"
 
 static int tg_run_http_test(const tg_config *config)
 {
@@ -143,6 +144,69 @@ static int tg_run_json_test(const tg_config *config)
     return 0;
 }
 
+static void tg_print_telegram_response(const tg_telegram_response *response)
+{
+    printf("telegram ok: %s\n", response->ok ? "true" : "false");
+    if (response->has_description) {
+        printf("telegram description: %.*s\n",
+               (int)response->description_length, response->description);
+    }
+    if (response->has_result) {
+        printf("telegram result type: %s\n",
+               tg_json_value_type_name(response->result.type));
+        if (response->result.type != TG_JSON_VALUE_NULL &&
+            response->result.start != 0) {
+            printf("telegram result: %.*s\n",
+                   (int)response->result.length, response->result.start);
+        }
+    }
+}
+
+static int tg_run_telegram_json_test_text(const char *json)
+{
+    tg_telegram_status telegram_status;
+    tg_telegram_response response;
+    tg_json_status json_status;
+
+    telegram_status = tg_telegram_parse_response(json, (unsigned long)strlen(json),
+                                                 &response, &json_status);
+    if (telegram_status != TG_TELEGRAM_OK) {
+        printf("telegram json test: failed: %s", tg_telegram_status_name(telegram_status));
+        if (telegram_status == TG_TELEGRAM_JSON_ERROR ||
+            telegram_status == TG_TELEGRAM_MISSING_OK) {
+            printf(" / %s", tg_json_status_name(json_status));
+        }
+        printf("\n");
+        return 2;
+    }
+
+    tg_print_telegram_response(&response);
+    return 0;
+}
+
+static int tg_run_telegram_json_test(const tg_config *config)
+{
+    return tg_run_telegram_json_test_text(config->telegram_json_test_input);
+}
+
+static int tg_run_telegram_json_self_test(void)
+{
+    static const char ok_sample[] = "{\"ok\":true,\"result\":{\"id\":123,\"is_bot\":true}}";
+    static const char error_sample[] = "{\"ok\":false,\"description\":\"Unauthorized\"}";
+
+    puts("telegram json self-test: ok sample");
+    if (tg_run_telegram_json_test_text(ok_sample) != 0) {
+        return 2;
+    }
+
+    puts("telegram json self-test: error sample");
+    if (tg_run_telegram_json_test_text(error_sample) != 0) {
+        return 2;
+    }
+
+    return 0;
+}
+
 int tg_app_run(int argc, char **argv)
 {
     tg_config config;
@@ -200,6 +264,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_json_test) {
         return tg_run_json_test(&config);
+    }
+
+    if (config.run_telegram_json_test) {
+        return tg_run_telegram_json_test(&config);
+    }
+
+    if (config.run_telegram_json_self_test) {
+        return tg_run_telegram_json_self_test();
     }
 
     return 0;
