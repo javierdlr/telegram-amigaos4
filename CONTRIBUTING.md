@@ -14,6 +14,17 @@ spirito cross-platform del repository.
 - Evita dipendenze difficili da reperire sui sistemi Amiga-like.
 - Documenta i test fatti, includendo piattaforma, toolchain e comando usato.
 
+## Uso di agenti AI
+
+Il progetto accetta contributi preparati anche con strumenti o agenti AI, purche'
+siano revisionati da una persona e accompagnati da test reali o riproducibili.
+Gli agenti sono considerati strumenti di supporto: il valore del contributo resta
+nella qualita' del codice, nella chiarezza della patch e nella verifica sui
+target Amiga-like.
+
+Quando possibile, indica se una modifica e' stata provata tramite SSH su una
+macchina reale, su emulatore o solo con compilazione locale.
+
 ## Target
 
 I target previsti sono:

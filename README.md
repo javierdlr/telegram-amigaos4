@@ -23,6 +23,27 @@ Costruire, un passo alla volta, un client Telegram cross-platform per:
 Il progetto privilegia codice portabile in C, backend separati per piattaforma e
 test incrementali su hardware o sistemi reali.
 
+## Sviluppo con agenti AI
+
+Questo progetto viene portato avanti anche con l'aiuto di agenti AI, usati come
+strumenti di sviluppo assistito: analisi del codice, scrittura incrementale,
+refactoring, documentazione e preparazione dei test.
+
+L'obiettivo non e' sostituire l'esperienza della community Amiga, ma dimostrare
+che gli agenti AI possono diventare un supporto concreto anche per piattaforme
+storiche o di nicchia, dove tempo, documentazione, hardware e toolchain sono
+spesso risorse preziose.
+
+Il flusso di lavoro usa un Mac come macchina di sviluppo principale. Le macchine
+Amiga-like reali o emulabili vengono rese raggiungibili sulla rete locale tramite
+SSH, per esempio con BebboSSH su AmigaOS o MorphOS. In questo modo l'agente puo'
+preparare il codice sul Mac, copiarlo sul sistema target, lanciare build e test,
+e riportare risultati concreti invece di lavorare solo in teoria.
+
+Questo repository vuole quindi essere anche un piccolo esperimento pubblico:
+capire se una collaborazione tra persone, hardware Amiga reale e agenti AI puo'
+aiutare a produrre nuovo software utile per la community.
+
 ## Struttura
 
 Bootstrap minimale:
