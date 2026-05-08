@@ -15,6 +15,9 @@ Moduli core iniziali:
 - `tg_log`: logging portabile delegato alla piattaforma
 - `tg_http`: HTTP/1.0 minimale sopra `tg_net`
 - `tg_net`: API TCP portabile con implementazione MorphOS iniziale
+- `tg_tls`/`tg_https`: TLS/HTTPS minimale con backend MorphOS OpenSSL iniziale
+
+Nota TLS: il backend MorphOS iniziale usa OpenSSL/AmiSSL con SNI, ma la validazione dei certificati non e' ancora abilitata. Questo e' sufficiente per test di connettivita', non ancora per uso sicuro.
 
 Target iniziali:
 
@@ -55,6 +58,8 @@ Opzioni attuali:
                       Testa risoluzione DNS e connessione TCP
     --http-test <host> <port> <path>
                       Testa connect/send/recv TCP con HTTP/1.0
+    --https-test <host> <port> <path>
+                      Testa connect/send/recv TLS con HTTP/1.0
 ```
 
 Nota: via BebboSSH la shell remota non mantiene sempre il PATH AmigaDOS, quindi il Makefile usa percorsi assoluti verso il MorphOS SDK.

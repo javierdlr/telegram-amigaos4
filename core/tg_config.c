@@ -15,10 +15,14 @@ void tg_config_init(tg_config *config)
     config->http_test_host = 0;
     config->http_test_port = 0;
     config->http_test_path = 0;
+    config->https_test_host = 0;
+    config->https_test_port = 0;
+    config->https_test_path = 0;
     config->log_level = TG_LOG_INFO;
     config->show_help = 0;
     config->run_net_test = 0;
     config->run_http_test = 0;
+    config->run_https_test = 0;
 }
 
 int tg_config_parse(tg_config *config, int argc, char **argv)
@@ -55,6 +59,15 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->http_test_port = argv[i + 2];
             config->http_test_path = argv[i + 3];
             i += 3;
+        } else if (strcmp(argv[i], "--https-test") == 0) {
+            if (i + 3 >= argc) {
+                return 1;
+            }
+            config->run_https_test = 1;
+            config->https_test_host = argv[i + 1];
+            config->https_test_port = argv[i + 2];
+            config->https_test_path = argv[i + 3];
+            i += 3;
         } else {
             return 1;
         }
@@ -76,4 +89,6 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Test DNS resolution and TCP connect\n");
     fprintf(stream, "      --http-test <host> <port> <path>\n");
     fprintf(stream, "                         Test TCP send and receive with HTTP/1.0\n");
+    fprintf(stream, "      --https-test <host> <port> <path>\n");
+    fprintf(stream, "                         Test TLS send and receive with HTTP/1.0\n");
 }

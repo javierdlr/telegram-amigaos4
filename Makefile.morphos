@@ -2,15 +2,16 @@
 
 CC := System:Development/gg/bin/gcc
 CFLAGS := -Wall -Wextra -O2 -noixemul -Iinclude
+LDLIBS := -lssl -lcrypto
 TARGET := build/telegram-test
-SRC := src/main.c core/tg_app.c core/tg_config.c core/tg_http.c core/tg_log.c core/tg_net.c platforms/morphos/tg_platform_morphos.c
+SRC := src/main.c core/tg_app.c core/tg_config.c core/tg_http.c core/tg_https.c core/tg_log.c core/tg_net.c core/tg_tls.c platforms/morphos/tg_platform_morphos.c
 
 .PHONY: all clean run
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) include/tg_app.h include/tg_config.h include/tg_http.h include/tg_log.h include/tg_net.h include/tg_platform.h
-	$(CC) $(CFLAGS) -o $@ $(SRC)
+$(TARGET): $(SRC) include/tg_app.h include/tg_config.h include/tg_http.h include/tg_https.h include/tg_log.h include/tg_net.h include/tg_platform.h include/tg_tls.h
+	$(CC) $(CFLAGS) -o $@ $(SRC) $(LDLIBS)
 
 run: $(TARGET)
 	$(TARGET)

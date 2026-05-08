@@ -6,6 +6,7 @@
 
 #include "tg_app.h"
 #include "tg_config.h"
+#include "tg_https.h"
 #include "tg_http.h"
 #include "tg_log.h"
 #include "tg_net.h"
@@ -37,6 +38,41 @@ static int tg_run_http_test(const tg_config *config)
     printf("http test: %s:%s%s ok, received %lu bytes\n",
            config->http_test_host, config->http_test_port,
            config->http_test_path, response_len);
+    printf("%s\n", response);
+    return 0;
+}
+
+static int tg_run_https_test(const tg_config *config)
+{
+    tg_https_status https_status;
+    tg_tls_status tls_status;
+    tg_net_status net_status;
+    char net_error[128];
+    char response[1024];
+    unsigned long response_len;
+
+    https_status = tg_https_get(config->https_test_host, config->https_test_port,
+                                config->https_test_path, response, sizeof(response),
+                                &response_len, &tls_status, &net_status,
+                                net_error, sizeof(net_error));
+    if (https_status != TG_HTTPS_OK) {
+        printf("https test: failed: %s", tg_https_status_name(https_status));
+        if (https_status == TG_HTTPS_TLS_ERROR) {
+            printf(" / %s", tg_tls_status_name(tls_status));
+            if (tls_status == TG_TLS_NET_ERROR) {
+                printf(" / %s", tg_net_status_name(net_status));
+            }
+        }
+        if (net_error[0] != '\0') {
+            printf(" (%s)", net_error);
+        }
+        printf("\n");
+        return 2;
+    }
+
+    printf("https test: %s:%s%s ok, received %lu bytes\n",
+           config->https_test_host, config->https_test_port,
+           config->https_test_path, response_len);
     printf("%s\n", response);
     return 0;
 }
@@ -90,6 +126,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_http_test) {
         return tg_run_http_test(&config);
+    }
+
+    if (config.run_https_test) {
+        return tg_run_https_test(&config);
     }
 
     return 0;
