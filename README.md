@@ -40,6 +40,8 @@ Flow Studio su MorphOS:
 - `telegram-amiga.xprj` e' apribile manualmente dal requester progetto.
 - Apri un file sorgente da `Work:Dev/telegram-amiga` oppure avvia Flow Studio con `PROJECT=Work:Dev/telegram-amiga/default.sprj`.
 - Il build usa `System:Development/gg/bin/make -f Makefile.morphos all`.
+- Se aprendo solo il progetto vedi solo `Build Rules`, esegui `execute Work:Dev/telegram-amiga/OpenTelegramAmiga.flow`: apre il progetto insieme ai sorgenti principali, cosi' il Project Lister ha un file C attivo da cui popolare Source/Header/Build.
+- `telegram-amiga.files` contiene la lista dei file principali del progetto.
 
 Opzioni attuali:
 

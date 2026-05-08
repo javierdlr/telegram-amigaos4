@@ -1,0 +1,7 @@
+; Author: Michele Dipace <michele.dipace@kaffeine.net>
+;
+; MorphOS Flow Studio launcher.
+; Run this from Shell on MorphOS:
+;   execute Work:Dev/telegram-amiga/OpenTelegramAmiga.flow
+
+System:Applications/FlowStudio/FlowStudio PROJECT=Work:Dev/telegram-amiga/telegram-amiga.xprj Work:Dev/telegram-amiga/src/main.c
