@@ -3,11 +3,13 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 
 #include "tg_app.h"
 #include "tg_config.h"
 #include "tg_https.h"
 #include "tg_http.h"
+#include "tg_json.h"
 #include "tg_log.h"
 #include "tg_net.h"
 #include "tg_platform.h"
@@ -109,6 +111,37 @@ static int tg_run_https_test(const tg_config *config)
     return 0;
 }
 
+static int tg_run_json_test(const tg_config *config)
+{
+    tg_json_status json_status;
+    tg_json_value value;
+    unsigned long json_length;
+
+    json_length = (unsigned long)strlen(config->json_test_input);
+    json_status = tg_json_object_get(config->json_test_input, json_length,
+                                     config->json_test_field, &value);
+    if (json_status != TG_JSON_OK) {
+        printf("json test: failed: %s\n", tg_json_status_name(json_status));
+        return 2;
+    }
+
+    printf("json field: %s\n", config->json_test_field);
+    printf("json type: %s\n", tg_json_value_type_name(value.type));
+
+    if (value.type == TG_JSON_VALUE_BOOL) {
+        printf("json value: %s\n", value.bool_value ? "true" : "false");
+    } else if (value.type == TG_JSON_VALUE_STRING ||
+               value.type == TG_JSON_VALUE_NUMBER ||
+               value.type == TG_JSON_VALUE_OBJECT ||
+               value.type == TG_JSON_VALUE_ARRAY) {
+        printf("json value: %.*s\n", (int)value.length, value.start);
+    } else {
+        printf("json value: null\n");
+    }
+
+    return 0;
+}
+
 int tg_app_run(int argc, char **argv)
 {
     tg_config config;
@@ -162,6 +195,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_https_test) {
         return tg_run_https_test(&config);
+    }
+
+    if (config.run_json_test) {
+        return tg_run_json_test(&config);
     }
 
     return 0;

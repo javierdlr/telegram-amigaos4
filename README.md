@@ -57,6 +57,7 @@ Initial core modules:
 - `tg_config`: minimal command-line argument parsing
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_http`: minimal HTTP/1.0 over `tg_net`, plus response parsing
+- `tg_json`: minimal top-level JSON field lookup for Telegram-style responses
 - `tg_net`: portable TCP API with an initial MorphOS implementation
 - `tg_tls`/`tg_https`: minimal TLS/HTTPS with an initial MorphOS OpenSSL backend
 
@@ -109,6 +110,8 @@ Current options:
                       Test TCP connect/send/recv with HTTP/1.0
     --https-test <host> <port> <path>
                       Test TLS connect/send/recv with HTTP/1.0
+    --json-test <json> <field>
+                      Test top-level JSON field lookup
 ```
 
 Note: through BebboSSH, the remote shell does not always preserve the AmigaDOS

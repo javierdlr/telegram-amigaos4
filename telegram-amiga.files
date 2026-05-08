@@ -5,6 +5,7 @@ core/tg_app.c
 core/tg_config.c
 core/tg_http.c
 core/tg_https.c
+core/tg_json.c
 core/tg_log.c
 core/tg_net.c
 core/tg_tls.c
@@ -12,6 +13,7 @@ include/tg_app.h
 include/tg_config.h
 include/tg_http.h
 include/tg_https.h
+include/tg_json.h
 include/tg_log.h
 include/tg_net.h
 include/tg_platform.h

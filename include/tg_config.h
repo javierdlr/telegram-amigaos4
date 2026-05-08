@@ -19,11 +19,14 @@ typedef struct tg_config {
     const char *https_test_host;
     const char *https_test_port;
     const char *https_test_path;
+    const char *json_test_input;
+    const char *json_test_field;
     tg_log_level log_level;
     int show_help;
     int run_net_test;
     int run_http_test;
     int run_https_test;
+    int run_json_test;
 } tg_config;
 
 void tg_config_init(tg_config *config);
