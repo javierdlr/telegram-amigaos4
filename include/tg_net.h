@@ -6,6 +6,12 @@
 #ifndef TG_NET_H
 #define TG_NET_H
 
+/**
+ * TCP/network operation result.
+ *
+ * TG_NET_CLOSED means the peer closed the connection cleanly. TG_NET_UNSUPPORTED
+ * is returned by platform stubs that do not implement networking yet.
+ */
 typedef enum tg_net_status {
     TG_NET_OK = 0,
     TG_NET_INVALID_ARGUMENT = 1,
@@ -17,23 +23,67 @@ typedef enum tg_net_status {
     TG_NET_UNSUPPORTED = 7
 } tg_net_status;
 
+/**
+ * Portable connection handle.
+ *
+ * platform_handle is owned by the platform backend while is_open is non-zero.
+ * Callers should initialize with tg_net_connection_init() and close with
+ * tg_net_close().
+ */
 typedef struct tg_net_connection {
     long platform_handle;
     int is_open;
 } tg_net_connection;
 
+/**
+ * Resets a connection object to a closed state.
+ */
 void tg_net_connection_init(tg_net_connection *connection);
+
+/**
+ * Opens a TCP connection to host:port.
+ *
+ * error_buffer is caller-owned and optional; when provided, the platform may
+ * write a NUL-terminated diagnostic string. The connection must be closed with
+ * tg_net_close() after a successful return.
+ */
 tg_net_status tg_net_connect(tg_net_connection *connection, const char *host, const char *port,
                              char *error_buffer, unsigned long error_buffer_size);
+
+/**
+ * Sends up to byte_count bytes.
+ *
+ * bytes_sent is caller-owned and receives the actual number of bytes written.
+ * Short writes are possible and should be handled by the caller.
+ */
 tg_net_status tg_net_send(tg_net_connection *connection, const void *data,
                           unsigned long byte_count, unsigned long *bytes_sent,
                           char *error_buffer, unsigned long error_buffer_size);
+
+/**
+ * Receives up to buffer_size bytes into caller-owned buffer.
+ *
+ * bytes_received receives the actual number of bytes read. TG_NET_CLOSED means
+ * the remote peer closed the connection and no more data is available.
+ */
 tg_net_status tg_net_recv(tg_net_connection *connection, void *buffer,
                           unsigned long buffer_size, unsigned long *bytes_received,
                           char *error_buffer, unsigned long error_buffer_size);
+
+/**
+ * Closes an open connection. Safe to call on an already closed object.
+ */
 void tg_net_close(tg_net_connection *connection);
+
+/**
+ * Convenience helper that connects and immediately closes the TCP connection.
+ */
 tg_net_status tg_net_tcp_probe(const char *host, const char *port,
                                char *error_buffer, unsigned long error_buffer_size);
+
+/**
+ * Returns a static string for status. The caller must not free it.
+ */
 const char *tg_net_status_name(tg_net_status status);
 
 #endif

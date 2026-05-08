@@ -9,6 +9,12 @@
 #include "tg_net.h"
 #include "tg_tls.h"
 
+/**
+ * HTTPS transfer result.
+ *
+ * TG_HTTPS_TLS_ERROR means tls_status contains the TLS reason. If tls_status is
+ * TG_TLS_NET_ERROR, net_status contains the lower-level TCP reason.
+ */
 typedef enum tg_https_status {
     TG_HTTPS_OK = 0,
     TG_HTTPS_INVALID_ARGUMENT = 1,
@@ -17,11 +23,22 @@ typedef enum tg_https_status {
     TG_HTTPS_TLS_ERROR = 4
 } tg_https_status;
 
+/**
+ * Performs a minimal HTTP/1.0 GET over TLS.
+ *
+ * response_buffer is caller-owned and receives a NUL-terminated full HTTP
+ * response. response_length excludes the final NUL. Certificate validation is
+ * platform-dependent and currently not complete on all targets.
+ */
 tg_https_status tg_https_get(const char *host, const char *port, const char *path,
                              char *response_buffer, unsigned long response_buffer_size,
                              unsigned long *response_length, tg_tls_status *tls_status,
                              tg_net_status *net_status, char *error_buffer,
                              unsigned long error_buffer_size);
+
+/**
+ * Returns a static string for status. The caller must not free it.
+ */
 const char *tg_https_status_name(tg_https_status status);
 
 #endif

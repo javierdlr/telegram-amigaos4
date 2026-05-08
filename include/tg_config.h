@@ -10,6 +10,12 @@
 
 #include "tg_log.h"
 
+/**
+ * Parsed command-line configuration.
+ *
+ * String fields point directly into argv or static platform strings. The config
+ * object does not allocate or own those strings.
+ */
 typedef struct tg_config {
     const char *data_dir;
     const char *net_test_host;
@@ -36,8 +42,22 @@ typedef struct tg_config {
     int run_telegram_path_test;
 } tg_config;
 
+/**
+ * Initializes config with platform defaults and all test flags disabled.
+ */
 void tg_config_init(tg_config *config);
+
+/**
+ * Parses command-line options into config.
+ *
+ * No memory is allocated. String options are stored as pointers to argv values.
+ * Returns 0 on success and non-zero on invalid or incomplete arguments.
+ */
 int tg_config_parse(tg_config *config, int argc, char **argv);
+
+/**
+ * Prints supported command-line options to stream.
+ */
 void tg_config_print_usage(FILE *stream, const char *program_name);
 
 #endif
