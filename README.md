@@ -62,7 +62,7 @@ Initial core modules:
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
 - `tg_json`: minimal top-level JSON field lookup for Telegram-style responses
-- `tg_net`: portable TCP API with an initial MorphOS implementation
+- `tg_net`: portable TCP API with MorphOS and initial AmigaOS 3.x backends
 - `tg_telegram`: Telegram API response envelope parsing
 - `tg_tls`/`tg_https`: minimal TLS/HTTPS with an initial MorphOS OpenSSL backend
 
@@ -73,7 +73,7 @@ tests, not yet for secure use.
 Initial targets:
 
 - MorphOS: active and verified
-- AmigaOS 3.x: stub ready, toolchain to stabilize
+- AmigaOS 3.x: TCP/HTTP smoke test verified on real hardware with ixemul
 - AmigaOS 4.x: stub ready, toolchain to install
 - AROS: stub ready, toolchain to install
 
@@ -88,6 +88,18 @@ Remote build from the Mac:
 ```sh
 ssh user@<morphos-host> 'System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos run'
 ```
+
+Cross-build for AmigaOS 3.x from the Mac:
+
+```sh
+PATH=/path/to/m68k-amigaos-toolchain/bin:$PATH \
+make -f Makefile.amigaos3-gcc all
+```
+
+The AmigaOS 3.x GCC helper currently uses an ixemul-based build and `-O0`.
+This is intentional: the tested m68k GCC runtime is incomplete for default
+linking, and an optimized `-O2` build miscompiled one JSON escaping self-test on
+the tested setup.
 
 Flow Studio on MorphOS:
 
@@ -153,6 +165,7 @@ Planned Makefiles:
 
 - `Makefile.morphos`
 - `Makefile.amigaos3`
+- `Makefile.amigaos3-gcc`
 - `Makefile.amigaos4`
 - `Makefile.aros`
 
