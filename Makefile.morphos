@@ -1,0 +1,19 @@
+# Author: Michele Dipace <michele.dipace@kaffeine.net>
+
+CC := System:Development/gg/bin/gcc
+CFLAGS := -Wall -Wextra -O2 -noixemul -Iinclude
+TARGET := build/telegram-test
+SRC := src/main.c core/tg_app.c platforms/morphos/tg_platform_morphos.c
+
+.PHONY: all clean run
+
+all: $(TARGET)
+
+$(TARGET): $(SRC) include/tg_app.h include/tg_platform.h
+	$(CC) $(CFLAGS) -o $@ $(SRC)
+
+run: $(TARGET)
+	$(TARGET)
+
+clean:
+	delete >NIL: $(TARGET)

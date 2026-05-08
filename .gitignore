@@ -1,0 +1,12 @@
+# Author: Michele Dipace <michele.dipace@kaffeine.net>
+
+build/*
+!.gitkeep
+
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+.DS_Store

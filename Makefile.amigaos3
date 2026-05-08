@@ -1,0 +1,16 @@
+# Author: Michele Dipace <michele.dipace@kaffeine.net>
+
+CC ?= vc
+CFLAGS ?= +aos68k -O2 -Iinclude
+TARGET ?= build/telegram-test
+SRC := src/main.c core/tg_app.c platforms/amigaos3/tg_platform_amigaos3.c
+
+.PHONY: all clean
+
+all: $(TARGET)
+
+$(TARGET): $(SRC) include/tg_app.h include/tg_platform.h
+	$(CC) $(CFLAGS) -o $@ $(SRC)
+
+clean:
+	delete >NIL: $(TARGET)
