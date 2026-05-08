@@ -391,6 +391,34 @@ static int tg_run_telegram_get_me_self_test(void)
     return 0;
 }
 
+static void tg_print_bot_error(const char *label, tg_bot_status bot_status,
+                               const tg_bot_call_result *result,
+                               const char *error_buffer)
+{
+    printf("%s: failed: %s", label, tg_bot_status_name(bot_status));
+    if (bot_status == TG_BOT_TOKEN_ERROR || bot_status == TG_BOT_PATH_ERROR ||
+        bot_status == TG_BOT_TELEGRAM_ERROR) {
+        printf(" / %s", tg_telegram_status_name(result->telegram_status));
+    }
+    if (bot_status == TG_BOT_TOKEN_ERROR &&
+        result->telegram_status == TG_TELEGRAM_FILE_ERROR) {
+        printf(" / %s", tg_file_status_name(result->file_status));
+    }
+    if (bot_status == TG_BOT_HTTPS_ERROR) {
+        printf(" / %s", tg_https_status_name(result->https_status));
+        if (result->https_status == TG_HTTPS_TLS_ERROR) {
+            printf(" / %s", tg_tls_status_name(result->tls_status));
+            if (result->tls_status == TG_TLS_NET_ERROR) {
+                printf(" / %s", tg_net_status_name(result->net_status));
+            }
+        }
+    }
+    if (error_buffer != 0 && error_buffer[0] != '\0') {
+        printf(" (%s)", error_buffer);
+    }
+    printf("\n");
+}
+
 static int tg_run_telegram_get_me(const tg_config *config)
 {
     tg_bot_status bot_status;
@@ -404,32 +432,90 @@ static int tg_run_telegram_get_me(const tg_config *config)
                                                &http_response_length, &result,
                                                error_buffer, sizeof(error_buffer));
     if (bot_status != TG_BOT_OK) {
-        printf("telegram getMe: failed: %s", tg_bot_status_name(bot_status));
-        if (bot_status == TG_BOT_TOKEN_ERROR || bot_status == TG_BOT_PATH_ERROR ||
-            bot_status == TG_BOT_TELEGRAM_ERROR) {
+        tg_print_bot_error("telegram getMe", bot_status, &result, error_buffer);
+        return 2;
+    }
+
+    printf("telegram getMe: received %lu bytes\n", http_response_length);
+    printf("telegram http status: %d\n", result.response.http_status_code);
+    tg_print_telegram_response(&result.response.api);
+
+    if (result.response.http_status_code < 200 ||
+        result.response.http_status_code > 299 ||
+        !result.response.api.ok) {
+        return 2;
+    }
+
+    return 0;
+}
+
+static int tg_run_telegram_send_message_self_test(void)
+{
+    static const char send_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":true,\"result\":{\"message_id\":42,\"chat\":{\"id\":123},\"text\":\"Hello Amiga\"}}";
+    static const char text[] = "Hello \"Amiga\"\nBackslash \\";
+    tg_bot_status bot_status;
+    tg_bot_call_result result;
+    char body[256];
+    unsigned long body_length;
+
+    bot_status = tg_bot_build_send_message_body("123", text, body, sizeof(body),
+                                                &body_length);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram sendMessage self-test: body failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    if (strstr(body, "\"chat_id\":\"123\"") == 0 ||
+        strstr(body, "Hello \\\"Amiga\\\"\\nBackslash \\\\") == 0) {
+        puts("telegram sendMessage self-test: body mismatch");
+        printf("telegram sendMessage body: %s\n", body);
+        return 2;
+    }
+
+    bot_status = tg_bot_parse_send_message_http_response(send_response,
+                                                         (unsigned long)strlen(send_response),
+                                                         &result);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram sendMessage self-test: failed: %s",
+               tg_bot_status_name(bot_status));
+        if (bot_status == TG_BOT_TELEGRAM_ERROR) {
             printf(" / %s", tg_telegram_status_name(result.telegram_status));
-        }
-        if (bot_status == TG_BOT_TOKEN_ERROR &&
-            result.telegram_status == TG_TELEGRAM_FILE_ERROR) {
-            printf(" / %s", tg_file_status_name(result.file_status));
-        }
-        if (bot_status == TG_BOT_HTTPS_ERROR) {
-            printf(" / %s", tg_https_status_name(result.https_status));
-            if (result.https_status == TG_HTTPS_TLS_ERROR) {
-                printf(" / %s", tg_tls_status_name(result.tls_status));
-                if (result.tls_status == TG_TLS_NET_ERROR) {
-                    printf(" / %s", tg_net_status_name(result.net_status));
-                }
-            }
-        }
-        if (error_buffer[0] != '\0') {
-            printf(" (%s)", error_buffer);
         }
         printf("\n");
         return 2;
     }
 
-    printf("telegram getMe: received %lu bytes\n", http_response_length);
+    printf("telegram sendMessage self-test: ok body, %lu bytes\n", body_length);
+    printf("telegram http status: %d\n", result.response.http_status_code);
+    tg_print_telegram_response(&result.response.api);
+    return 0;
+}
+
+static int tg_run_telegram_send_message(const tg_config *config)
+{
+    tg_bot_status bot_status;
+    tg_bot_call_result result;
+    char error_buffer[256];
+    char http_buffer[8192];
+    unsigned long http_response_length;
+
+    bot_status = tg_bot_send_message_from_token_file(
+        config->telegram_send_message_token_file_path,
+        config->telegram_send_message_chat_id,
+        config->telegram_send_message_text,
+        http_buffer, sizeof(http_buffer), &http_response_length, &result,
+        error_buffer, sizeof(error_buffer));
+    if (bot_status != TG_BOT_OK) {
+        tg_print_bot_error("telegram sendMessage", bot_status, &result, error_buffer);
+        return 2;
+    }
+
+    printf("telegram sendMessage: received %lu bytes\n", http_response_length);
     printf("telegram http status: %d\n", result.response.http_status_code);
     tg_print_telegram_response(&result.response.api);
 
@@ -531,6 +617,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_get_me) {
         return tg_run_telegram_get_me(&config);
+    }
+
+    if (config.run_telegram_send_message_self_test) {
+        return tg_run_telegram_send_message_self_test();
+    }
+
+    if (config.run_telegram_send_message) {
+        return tg_run_telegram_send_message(&config);
     }
 
     return 0;

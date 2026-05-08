@@ -15,7 +15,8 @@
  * TELEGRAM_ERROR means the HTTP response was received but could not be parsed as
  * a Telegram response; telegram_status contains the lower-level reason.
  * HTTPS_ERROR means the live transport failed before a parseable HTTP response
- * was available.
+ * was available. BODY_ERROR means a request JSON body could not be built in the
+ * caller-provided or internal buffer.
  */
 typedef enum tg_bot_status {
     TG_BOT_OK = 0,
@@ -23,7 +24,8 @@ typedef enum tg_bot_status {
     TG_BOT_TOKEN_ERROR = 2,
     TG_BOT_PATH_ERROR = 3,
     TG_BOT_HTTPS_ERROR = 4,
-    TG_BOT_TELEGRAM_ERROR = 5
+    TG_BOT_TELEGRAM_ERROR = 5,
+    TG_BOT_BODY_ERROR = 6
 } tg_bot_status;
 
 /**
@@ -60,6 +62,30 @@ tg_bot_status tg_bot_parse_get_me_http_response(const char *http_response,
                                                 tg_bot_call_result *result);
 
 /**
+ * Parses a complete HTTP response as the result of Telegram sendMessage.
+ *
+ * This function does not allocate memory. result->response contains borrowed
+ * views into http_response, so the caller must keep http_response alive while
+ * using result.
+ */
+tg_bot_status tg_bot_parse_send_message_http_response(const char *http_response,
+                                                      unsigned long http_response_length,
+                                                      tg_bot_call_result *result);
+
+/**
+ * Builds a JSON body for Telegram sendMessage.
+ *
+ * chat_id and text are encoded as JSON strings, so numeric chat ids and
+ * @channel names both use the same path. body_buffer is caller-owned and
+ * receives a NUL-terminated JSON object. Returns TG_BOT_BODY_ERROR if the
+ * buffer is too small.
+ */
+tg_bot_status tg_bot_build_send_message_body(const char *chat_id, const char *text,
+                                             char *body_buffer,
+                                             unsigned long body_buffer_size,
+                                             unsigned long *body_length);
+
+/**
  * Loads a token from file and performs getMe using HTTPS GET.
  *
  * http_buffer is caller-owned and receives the raw HTTP response. This function
@@ -73,6 +99,23 @@ tg_bot_status tg_bot_get_me_from_token_file(const char *token_file_path,
                                             tg_bot_call_result *result,
                                             char *error_buffer,
                                             unsigned long error_buffer_size);
+
+/**
+ * Loads a token from file and performs sendMessage using HTTPS POST.
+ *
+ * The token and generated request path are never printed by this function.
+ * chat_id and text are copied into an internal JSON body buffer with JSON string
+ * escaping. http_buffer is caller-owned and receives the raw HTTP response.
+ */
+tg_bot_status tg_bot_send_message_from_token_file(const char *token_file_path,
+                                                  const char *chat_id,
+                                                  const char *text,
+                                                  char *http_buffer,
+                                                  unsigned long http_buffer_size,
+                                                  unsigned long *http_response_length,
+                                                  tg_bot_call_result *result,
+                                                  char *error_buffer,
+                                                  unsigned long error_buffer_size);
 
 /**
  * Returns a static string for status. The caller must not free it.

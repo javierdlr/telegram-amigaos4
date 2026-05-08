@@ -200,6 +200,9 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
     }
 
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, 0);
+#ifdef SSL_OP_IGNORE_UNEXPECTED_EOF
+    SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
+#endif
 
     ssl = SSL_new(ctx);
     if (ssl == 0) {

@@ -133,6 +133,10 @@ Current options:
                       Run built-in Bot API getMe parser sample
     --telegram-getme <file>
                       Call Telegram getMe with token loaded from file
+    --telegram-send-message-self-test
+                      Run built-in Bot API sendMessage parser sample
+    --telegram-send-message <file> <chat-id> <text>
+                      Send a Telegram message with token loaded from file
 ```
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
