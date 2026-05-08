@@ -1,6 +1,9 @@
-# Telegram Amiga
+<!--
+Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+SPDX-License-Identifier: MIT
+-->
 
-Author: Michele Dipace <michele.dipace@kaffeine.net>
+# Telegram Amiga
 
 License: MIT
 

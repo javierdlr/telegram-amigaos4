@@ -1,6 +1,9 @@
-# Contributing
+<!--
+Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+SPDX-License-Identifier: MIT
+-->
 
-Author: Michele Dipace <michele.dipace@kaffeine.net>
+# Contributing
 
 Thank you for your interest in Telegram Amiga. This project is a gift to the
 Amiga community and welcomes practical, verifiable contributions that fit the

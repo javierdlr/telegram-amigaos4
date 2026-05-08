@@ -1,5 +1,6 @@
 /*
- * Author: Michele Dipace <michele.dipace@kaffeine.net>
+ * Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef TG_HTTP_H

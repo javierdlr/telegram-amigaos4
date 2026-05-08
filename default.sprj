@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="ISO-8859-1" standalone="yes"?>
-<!-- Author: Michele Dipace <michele.dipace@kaffeine.net> -->
+<!--
+  Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+  SPDX-License-Identifier: MIT
+-->
 <FlowStudioProjectFile>
     <FileVersion major="0" minor="1"/>
     <Project>

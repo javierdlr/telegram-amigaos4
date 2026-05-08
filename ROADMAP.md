@@ -1,6 +1,9 @@
-# Roadmap
+<!--
+Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+SPDX-License-Identifier: MIT
+-->
 
-Author: Michele Dipace <michele.dipace@kaffeine.net>
+# Roadmap
 
 Telegram Amiga is a non-commercial community project. The roadmap is deliberately
 pragmatic: each phase should produce something that can be compiled and verified
