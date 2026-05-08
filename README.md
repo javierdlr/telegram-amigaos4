@@ -4,7 +4,28 @@ Author: Michele Dipace <michele.dipace@kaffeine.net>
 
 License: MIT
 
-Bootstrap minimale per un futuro client Telegram cross-platform:
+Progetto comunitario senza finalita' commerciali, nato come regalo alla community
+Amiga per esplorare la possibilita' di un client Telegram moderno su sistemi
+Amiga-like.
+
+Stato attuale: bootstrap tecnico iniziale, non ancora un client Telegram
+utilizzabile.
+
+## Obiettivo
+
+Costruire, un passo alla volta, un client Telegram cross-platform per:
+
+- AmigaOS 3.x
+- MorphOS
+- AmigaOS 4
+- AROS
+
+Il progetto privilegia codice portabile in C, backend separati per piattaforma e
+test incrementali su hardware o sistemi reali.
+
+## Struttura
+
+Bootstrap minimale:
 
 - `core/`: logica portabile
 - `include/`: interfacce pubbliche interne
