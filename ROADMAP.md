@@ -41,12 +41,17 @@ on at least one real Amiga-like platform.
   workflow. Current command-line inbox output already includes date/time,
   sender, message kind, compact summaries and optional append-only logs.
 - Add controlled send-message workflows without automatic replies by default.
-  Current command-line aliases support manual sends after reading a chat id.
+  Current command-line aliases support manual sends after reading a chat id or
+  by selecting a saved chat from the local chat list.
 - Add small local conversation state files once the receive/send command line
-  flows are stable. Current append-only inbox logs are the first step.
+  flows are stable. Current append-only inbox logs and one-line chat state are
+  the first step.
 - The first manual-client preview now exists as `telegram-session-default`,
   combining one receive pass, offset persistence, inbox logging and
   one-line-per-chat state without sending replies.
+- A bounded manual-client loop and simple saved-chat listing now exist through
+  `telegram-session-loop-default`, `telegram-chats` and
+  `telegram-send-chat-default`.
 - Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
   developed with community or hardware feedback.
 

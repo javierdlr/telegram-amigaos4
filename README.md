@@ -323,6 +323,12 @@ Current options:
                       Run one manual-client receive session
     --telegram-session-default <offset-file> <inbox-log> <chats-file>
                       Manual-client receive session with default token file
+    --telegram-session-loop <file> <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>
+                      Run bounded manual-client receive polling
+    --telegram-session-loop-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>
+                      Bounded manual-client polling with default token file
+    --telegram-chats <chats-file>
+                      List chats saved by manual-client sessions
     --telegram-echo-once-self-test
                       Run built-in one-shot echo flow sample
     --telegram-echo-once <file> [offset]
@@ -347,6 +353,10 @@ Current options:
                       Alias for --telegram-send-message
     --telegram-send-default <chat-id> <text>
                       Alias for --telegram-send-message-default
+    --telegram-send-chat <file> <chats-file> <index> <text>
+                      Send to a saved chat by 1-based list index
+    --telegram-send-chat-default <chats-file> <index> <text>
+                      Send to a saved chat index with default token file
 ```
 
 `getUpdates` prints the raw Telegram result and, when present, minimal summaries
@@ -420,7 +430,25 @@ state file. It does not send replies:
 telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log telegram-chats.txt
 ```
 
-For manual replies, prefer the explicit send command after reading the chat id:
+Use `telegram-session-loop-default` for a bounded manual-client receive loop:
+
+```text
+telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
+```
+
+List the saved chats:
+
+```text
+telegram-test --telegram-chats telegram-chats.txt
+```
+
+For manual replies, use the saved chat list when available:
+
+```text
+telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from Telegram Amiga"
+```
+
+The explicit chat-id send command is still available:
 
 ```text
 telegram-test --telegram-send-default <chat-id> "Hello from Telegram Amiga"

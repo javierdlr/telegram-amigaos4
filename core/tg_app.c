@@ -664,6 +664,209 @@ static int tg_update_chat_state_file(const char *path,
     return 0;
 }
 
+static int tg_copy_chat_field(const char *line, unsigned long line_length,
+                              unsigned long *position,
+                              char *buffer, unsigned long buffer_size)
+{
+    unsigned long output_pos;
+
+    if (line == 0 || position == 0 || buffer == 0 || buffer_size == 0) {
+        return 1;
+    }
+
+    output_pos = 0;
+    buffer[0] = '\0';
+    while (*position < line_length && line[*position] != '|') {
+        if (output_pos + 1 >= buffer_size) {
+            return 1;
+        }
+        buffer[output_pos] = line[*position];
+        ++output_pos;
+        ++(*position);
+    }
+    buffer[output_pos] = '\0';
+    if (*position < line_length && line[*position] == '|') {
+        ++(*position);
+    }
+    return 0;
+}
+
+static int tg_parse_chat_state_line(const char *line, unsigned long line_length,
+                                    char *chat_id, unsigned long chat_id_size,
+                                    char *sender, unsigned long sender_size,
+                                    char *date, unsigned long date_size,
+                                    char *text, unsigned long text_size)
+{
+    unsigned long position;
+
+    position = 0;
+    if (tg_copy_chat_field(line, line_length, &position,
+                           chat_id, chat_id_size) != 0 ||
+        tg_copy_chat_field(line, line_length, &position,
+                           sender, sender_size) != 0 ||
+        tg_copy_chat_field(line, line_length, &position,
+                           date, date_size) != 0 ||
+        tg_copy_chat_field(line, line_length, &position,
+                           text, text_size) != 0) {
+        return 1;
+    }
+    return chat_id[0] == '\0' ? 1 : 0;
+}
+
+static int tg_for_each_chat_line(const char *path,
+                                 int (*callback)(unsigned long index,
+                                                 const char *line,
+                                                 unsigned long line_length,
+                                                 void *context),
+                                 void *context)
+{
+    tg_file_status file_status;
+    char content[16384];
+    unsigned long content_length;
+    unsigned long input_pos;
+    unsigned long index;
+
+    if (path == 0 || path[0] == '\0' || callback == 0) {
+        return 2;
+    }
+
+    file_status = tg_file_read_text(path, content, sizeof(content),
+                                    &content_length);
+    if (file_status != TG_FILE_OK) {
+        printf("telegram chats: read failed: %s\n",
+               tg_file_status_name(file_status));
+        return 2;
+    }
+
+    input_pos = 0;
+    index = 1UL;
+    while (input_pos < content_length) {
+        unsigned long line_start;
+        unsigned long line_end;
+        unsigned long line_length;
+
+        line_start = input_pos;
+        line_end = line_start;
+        while (line_end < content_length &&
+               content[line_end] != '\n' &&
+               content[line_end] != '\r') {
+            ++line_end;
+        }
+        line_length = line_end - line_start;
+        if (line_length > 0) {
+            if (callback(index, content + line_start, line_length,
+                         context) != 0) {
+                return 2;
+            }
+            ++index;
+        }
+
+        input_pos = line_end;
+        while (input_pos < content_length &&
+               (content[input_pos] == '\n' || content[input_pos] == '\r')) {
+            ++input_pos;
+        }
+    }
+
+    if (index == 1UL) {
+        puts("telegram chats: none");
+    }
+    return 0;
+}
+
+static int tg_print_chat_line_callback(unsigned long index,
+                                       const char *line,
+                                       unsigned long line_length,
+                                       void *context)
+{
+    char chat_id[64];
+    char sender[128];
+    char date[64];
+    char text[512];
+
+    (void)context;
+    if (tg_parse_chat_state_line(line, line_length,
+                                 chat_id, sizeof(chat_id),
+                                 sender, sizeof(sender),
+                                 date, sizeof(date),
+                                 text, sizeof(text)) != 0) {
+        printf("%lu | <invalid chat state line>\n", index);
+        return 0;
+    }
+
+    printf("%lu | chat %s | %s | %s | last: %s\n",
+           index, chat_id, sender, date, text);
+    return 0;
+}
+
+typedef struct tg_find_chat_context {
+    unsigned long wanted_index;
+    int found;
+    char *chat_id;
+    unsigned long chat_id_size;
+} tg_find_chat_context;
+
+static int tg_find_chat_line_callback(unsigned long index,
+                                      const char *line,
+                                      unsigned long line_length,
+                                      void *context)
+{
+    tg_find_chat_context *find_context;
+    char chat_id[64];
+    char sender[128];
+    char date[64];
+    char text[512];
+
+    find_context = (tg_find_chat_context *)context;
+    if (find_context == 0 || index != find_context->wanted_index) {
+        return 0;
+    }
+    if (tg_parse_chat_state_line(line, line_length,
+                                 chat_id, sizeof(chat_id),
+                                 sender, sizeof(sender),
+                                 date, sizeof(date),
+                                 text, sizeof(text)) != 0) {
+        puts("telegram chats: selected line is invalid");
+        return 1;
+    }
+    if (strlen(chat_id) + 1 > find_context->chat_id_size) {
+        puts("telegram chats: selected chat id too long");
+        return 1;
+    }
+    strcpy(find_context->chat_id, chat_id);
+    find_context->found = 1;
+    return 0;
+}
+
+static int tg_find_chat_id_by_index(const char *path,
+                                    unsigned long wanted_index,
+                                    char *chat_id,
+                                    unsigned long chat_id_size)
+{
+    tg_find_chat_context context;
+    int rc;
+
+    if (wanted_index == 0 || chat_id == 0 || chat_id_size == 0) {
+        return 2;
+    }
+
+    chat_id[0] = '\0';
+    context.wanted_index = wanted_index;
+    context.found = 0;
+    context.chat_id = chat_id;
+    context.chat_id_size = chat_id_size;
+
+    rc = tg_for_each_chat_line(path, tg_find_chat_line_callback, &context);
+    if (rc != 0) {
+        return rc;
+    }
+    if (!context.found) {
+        printf("telegram chats: index not found: %lu\n", wanted_index);
+        return 2;
+    }
+    return 0;
+}
+
 static void tg_print_inbox_update_summary(const tg_bot_update_summary *update)
 {
     tg_json_status json_status;
@@ -2059,6 +2262,64 @@ static int tg_run_telegram_session_default(const tg_config *config)
         config->telegram_session_default_chat_state_file_path);
 }
 
+static int tg_run_telegram_session_loop_paths(const char *token_file_path,
+                                              const char *offset_file_path,
+                                              const char *inbox_log_file_path,
+                                              const char *chat_state_file_path,
+                                              const char *poll_seconds_text,
+                                              const char *max_iterations_text)
+{
+    puts("telegram manual session loop: receive only");
+    printf("telegram inbox log file: %s\n", inbox_log_file_path);
+    printf("telegram chat state file: %s\n", chat_state_file_path);
+    return tg_run_telegram_read_loop_paths(
+        token_file_path,
+        offset_file_path,
+        poll_seconds_text,
+        max_iterations_text,
+        TG_READ_OUTPUT_INBOX,
+        inbox_log_file_path,
+        chat_state_file_path);
+}
+
+static int tg_run_telegram_session_loop(const tg_config *config)
+{
+    return tg_run_telegram_session_loop_paths(
+        config->telegram_session_loop_token_file_path,
+        config->telegram_session_loop_offset_file_path,
+        config->telegram_session_loop_inbox_log_file_path,
+        config->telegram_session_loop_chat_state_file_path,
+        config->telegram_session_loop_poll_seconds,
+        config->telegram_session_loop_max_iterations);
+}
+
+static int tg_run_telegram_session_loop_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_session_loop_paths(
+        resolved_path,
+        config->telegram_session_loop_default_offset_file_path,
+        config->telegram_session_loop_default_inbox_log_file_path,
+        config->telegram_session_loop_default_chat_state_file_path,
+        config->telegram_session_loop_default_poll_seconds,
+        config->telegram_session_loop_default_max_iterations);
+}
+
+static int tg_run_telegram_chats(const tg_config *config)
+{
+    return tg_for_each_chat_line(config->telegram_chats_file_path,
+                                 tg_print_chat_line_callback, 0);
+}
+
 static int tg_run_telegram_echo_once_self_test(void)
 {
     static const char updates_response[] =
@@ -2615,6 +2876,56 @@ static int tg_run_telegram_send_message_default(const tg_config *config)
         config->telegram_send_message_default_text);
 }
 
+static int tg_run_telegram_send_chat_path(const char *token_file_path,
+                                          const char *chats_file_path,
+                                          const char *index_text,
+                                          const char *text)
+{
+    unsigned long index;
+    char chat_id[64];
+
+    if (tg_parse_decimal_ulong(index_text, &index) != 0 || index == 0UL) {
+        puts("telegram send chat: invalid chat index");
+        return 2;
+    }
+    if (tg_find_chat_id_by_index(chats_file_path, index,
+                                 chat_id, sizeof(chat_id)) != 0) {
+        return 2;
+    }
+
+    printf("telegram send chat index: %lu\n", index);
+    printf("telegram send chat id: %s\n", chat_id);
+    return tg_run_telegram_send_message_path(token_file_path, chat_id, text);
+}
+
+static int tg_run_telegram_send_chat(const tg_config *config)
+{
+    return tg_run_telegram_send_chat_path(
+        config->telegram_send_chat_token_file_path,
+        config->telegram_send_chat_file_path,
+        config->telegram_send_chat_index,
+        config->telegram_send_chat_text);
+}
+
+static int tg_run_telegram_send_chat_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_send_chat_path(
+        resolved_path,
+        config->telegram_send_chat_default_file_path,
+        config->telegram_send_chat_default_index,
+        config->telegram_send_chat_default_text);
+}
+
 int tg_app_run(int argc, char **argv)
 {
     tg_config config;
@@ -2778,6 +3089,18 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_session_default(&config);
     }
 
+    if (config.run_telegram_session_loop) {
+        return tg_run_telegram_session_loop(&config);
+    }
+
+    if (config.run_telegram_session_loop_default) {
+        return tg_run_telegram_session_loop_default(&config);
+    }
+
+    if (config.run_telegram_chats) {
+        return tg_run_telegram_chats(&config);
+    }
+
     if (config.run_telegram_echo_once_self_test) {
         return tg_run_telegram_echo_once_self_test();
     }
@@ -2816,6 +3139,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_send_message_default) {
         return tg_run_telegram_send_message_default(&config);
+    }
+
+    if (config.run_telegram_send_chat) {
+        return tg_run_telegram_send_chat(&config);
+    }
+
+    if (config.run_telegram_send_chat_default) {
+        return tg_run_telegram_send_chat_default(&config);
     }
 
     return 0;

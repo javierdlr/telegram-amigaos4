@@ -68,6 +68,18 @@ typedef struct tg_config {
     const char *telegram_session_default_offset_file_path;
     const char *telegram_session_default_inbox_log_file_path;
     const char *telegram_session_default_chat_state_file_path;
+    const char *telegram_session_loop_token_file_path;
+    const char *telegram_session_loop_offset_file_path;
+    const char *telegram_session_loop_inbox_log_file_path;
+    const char *telegram_session_loop_chat_state_file_path;
+    const char *telegram_session_loop_poll_seconds;
+    const char *telegram_session_loop_max_iterations;
+    const char *telegram_session_loop_default_offset_file_path;
+    const char *telegram_session_loop_default_inbox_log_file_path;
+    const char *telegram_session_loop_default_chat_state_file_path;
+    const char *telegram_session_loop_default_poll_seconds;
+    const char *telegram_session_loop_default_max_iterations;
+    const char *telegram_chats_file_path;
     const char *telegram_echo_once_token_file_path;
     const char *telegram_echo_once_offset;
     const char *telegram_echo_once_default_offset;
@@ -86,6 +98,13 @@ typedef struct tg_config {
     const char *telegram_send_message_text;
     const char *telegram_send_message_default_chat_id;
     const char *telegram_send_message_default_text;
+    const char *telegram_send_chat_token_file_path;
+    const char *telegram_send_chat_file_path;
+    const char *telegram_send_chat_index;
+    const char *telegram_send_chat_text;
+    const char *telegram_send_chat_default_file_path;
+    const char *telegram_send_chat_default_index;
+    const char *telegram_send_chat_default_text;
     tg_log_level log_level;
     int show_help;
     int run_net_test;
@@ -118,6 +137,9 @@ typedef struct tg_config {
     int run_telegram_inbox_loop_default;
     int run_telegram_session;
     int run_telegram_session_default;
+    int run_telegram_session_loop;
+    int run_telegram_session_loop_default;
+    int run_telegram_chats;
     int run_telegram_echo_once_self_test;
     int run_telegram_echo_once;
     int run_telegram_echo_once_default;
@@ -128,6 +150,8 @@ typedef struct tg_config {
     int run_telegram_send_message_self_test;
     int run_telegram_send_message;
     int run_telegram_send_message_default;
+    int run_telegram_send_chat;
+    int run_telegram_send_chat_default;
 } tg_config;
 
 /**
