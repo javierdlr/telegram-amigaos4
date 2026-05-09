@@ -21,6 +21,7 @@ The AmigaOS 3.x tester can:
 - call Telegram Bot API `getMe`, `getUpdates` and `sendMessage` when a token is
   provided;
 - run read-only stateful update checks;
+- run inbox-format receive-only update checks;
 - run one-shot, stateful batch or looped echo tests.
 
 Certificate validation is not enabled yet. Use this build only for supervised
@@ -108,6 +109,7 @@ Run offline parser and Bot API self-tests first:
 telegram-test --telegram-json-self-test
 telegram-test --telegram-get-updates-self-test
 telegram-test --telegram-read-once-state-self-test
+telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 ```
@@ -206,6 +208,17 @@ telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
 
 This polls every five seconds for at most ten iterations and never sends
 replies.
+
+Run a more readable receive-only inbox:
+
+```text
+telegram-test --telegram-inbox-default telegram-offset.txt
+telegram-test --telegram-inbox-loop-default telegram-offset.txt 5 10
+```
+
+Inbox output includes update id, chat id, sender name when available, decoded
+text and the next saved offset. It uses the same offset file as the read-only
+commands and never sends replies.
 
 Send a controlled message back:
 

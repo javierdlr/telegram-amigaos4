@@ -20,6 +20,11 @@
 
 #define TG_STATE_MAX_UPDATES 5UL
 
+typedef enum tg_read_output_mode {
+    TG_READ_OUTPUT_STATE = 0,
+    TG_READ_OUTPUT_INBOX = 1
+} tg_read_output_mode;
+
 static const char tg_default_token_file_name[] = "telegram-token.txt";
 
 static int tg_run_http_test(const tg_config *config)
@@ -237,6 +242,44 @@ static void tg_print_update_summary(const tg_bot_update_summary *update)
         }
     } else {
         puts("telegram update text: none");
+    }
+}
+
+static void tg_print_inbox_update_summary(const tg_bot_update_summary *update)
+{
+    tg_json_status json_status;
+    char decoded_text[512];
+    unsigned long decoded_length;
+
+    if (!update->has_update) {
+        puts("inbox: none");
+        return;
+    }
+
+    printf("inbox update: %s\n", update->update_id);
+    if (!update->has_message) {
+        puts("inbox message: none");
+        return;
+    }
+
+    printf("inbox chat: %s\n", update->chat_id);
+    if (update->has_sender_name) {
+        printf("inbox sender: %s\n", update->sender_name);
+    } else {
+        puts("inbox sender: unknown");
+    }
+    if (update->has_text) {
+        json_status = tg_json_string_decode(update->text, update->text_length,
+                                            decoded_text, sizeof(decoded_text),
+                                            &decoded_length);
+        if (json_status == TG_JSON_OK) {
+            printf("inbox text: %s\n", decoded_text);
+        } else {
+            printf("inbox text: <decode failed: %s>\n",
+                   tg_json_status_name(json_status));
+        }
+    } else {
+        puts("inbox text: <non-text or unsupported message>");
     }
 }
 
@@ -1116,7 +1159,8 @@ static int tg_run_telegram_read_once_state_self_test(void)
 }
 
 static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
-                                                 const char *offset_file_path)
+                                                 const char *offset_file_path,
+                                                 tg_read_output_mode output_mode)
 {
     tg_bot_status bot_status;
     tg_bot_call_result updates_result;
@@ -1132,10 +1176,18 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
     if (tg_load_offset_file(offset_file_path, offset, sizeof(offset)) != 0) {
         return 2;
     }
-    if (offset[0] != '\0') {
-        printf("telegram offset loaded: %s\n", offset);
+    if (output_mode == TG_READ_OUTPUT_INBOX) {
+        if (offset[0] != '\0') {
+            printf("inbox offset loaded: %s\n", offset);
+        } else {
+            puts("inbox offset loaded: none");
+        }
     } else {
-        puts("telegram offset loaded: none");
+        if (offset[0] != '\0') {
+            printf("telegram offset loaded: %s\n", offset);
+        } else {
+            puts("telegram offset loaded: none");
+        }
     }
 
     bot_status = tg_bot_get_updates_from_token_file_with_offset(
@@ -1167,16 +1219,29 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
         }
         if (!update.has_update) {
             if (index == 0) {
-                puts("telegram read once state: no update to process");
+                if (output_mode == TG_READ_OUTPUT_INBOX) {
+                    puts("inbox: no update to process");
+                } else {
+                    puts("telegram read once state: no update to process");
+                }
             } else {
-                printf("telegram read once state: processed %lu update(s)\n",
-                       processed_count);
+                if (output_mode == TG_READ_OUTPUT_INBOX) {
+                    printf("inbox processed: %lu update(s)\n", processed_count);
+                } else {
+                    printf("telegram read once state: processed %lu update(s)\n",
+                           processed_count);
+                }
             }
             return 0;
         }
 
-        printf("telegram read once state update index: %lu\n", index);
-        tg_print_update_summary(&update);
+        if (output_mode == TG_READ_OUTPUT_INBOX) {
+            printf("inbox item: %lu\n", index);
+            tg_print_inbox_update_summary(&update);
+        } else {
+            printf("telegram read once state update index: %lu\n", index);
+            tg_print_update_summary(&update);
+        }
 
         bot_status = tg_bot_update_next_offset(&update, next_offset,
                                                sizeof(next_offset));
@@ -1185,7 +1250,11 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
                    tg_bot_status_name(bot_status));
             return 2;
         }
-        printf("telegram next offset: %s\n", next_offset);
+        if (output_mode == TG_READ_OUTPUT_INBOX) {
+            printf("inbox next offset: %s\n", next_offset);
+        } else {
+            printf("telegram next offset: %s\n", next_offset);
+        }
         if (tg_save_offset_file(offset_file_path, next_offset) != 0) {
             return 2;
         }
@@ -1200,11 +1269,19 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
         return 2;
     }
     if (update.has_update) {
-        printf("telegram read once state: update limit reached: %lu\n",
-               TG_STATE_MAX_UPDATES);
+        if (output_mode == TG_READ_OUTPUT_INBOX) {
+            printf("inbox update limit reached: %lu\n", TG_STATE_MAX_UPDATES);
+        } else {
+            printf("telegram read once state: update limit reached: %lu\n",
+                   TG_STATE_MAX_UPDATES);
+        }
     }
-    printf("telegram read once state: processed %lu update(s)\n",
-           processed_count);
+    if (output_mode == TG_READ_OUTPUT_INBOX) {
+        printf("inbox processed: %lu update(s)\n", processed_count);
+    } else {
+        printf("telegram read once state: processed %lu update(s)\n",
+               processed_count);
+    }
     return 0;
 }
 
@@ -1212,7 +1289,8 @@ static int tg_run_telegram_read_once_state(const tg_config *config)
 {
     return tg_run_telegram_read_once_state_paths(
         config->telegram_read_once_state_token_file_path,
-        config->telegram_read_once_state_offset_file_path);
+        config->telegram_read_once_state_offset_file_path,
+        TG_READ_OUTPUT_STATE);
 }
 
 static int tg_run_telegram_read_once_state_default(const tg_config *config)
@@ -1229,13 +1307,15 @@ static int tg_run_telegram_read_once_state_default(const tg_config *config)
     printf("telegram token file: %s\n", resolved_path);
     return tg_run_telegram_read_once_state_paths(
         resolved_path,
-        config->telegram_read_once_state_default_offset_file_path);
+        config->telegram_read_once_state_default_offset_file_path,
+        TG_READ_OUTPUT_STATE);
 }
 
 static int tg_run_telegram_read_loop_paths(const char *token_file_path,
                                            const char *offset_file_path,
                                            const char *poll_seconds_text,
-                                           const char *max_iterations_text)
+                                           const char *max_iterations_text,
+                                           tg_read_output_mode output_mode)
 {
     unsigned long poll_seconds;
     unsigned long max_iterations;
@@ -1264,7 +1344,8 @@ static int tg_run_telegram_read_loop_paths(const char *token_file_path,
                iteration + 1UL, max_iterations);
         rc = tg_run_telegram_read_once_state_paths(
             token_file_path,
-            offset_file_path);
+            offset_file_path,
+            output_mode);
         if (rc != 0) {
             return rc;
         }
@@ -1283,7 +1364,8 @@ static int tg_run_telegram_read_loop(const tg_config *config)
         config->telegram_read_loop_token_file_path,
         config->telegram_read_loop_offset_file_path,
         config->telegram_read_loop_poll_seconds,
-        config->telegram_read_loop_max_iterations);
+        config->telegram_read_loop_max_iterations,
+        TG_READ_OUTPUT_STATE);
 }
 
 static int tg_run_telegram_read_loop_default(const tg_config *config)
@@ -1302,7 +1384,123 @@ static int tg_run_telegram_read_loop_default(const tg_config *config)
         resolved_path,
         config->telegram_read_loop_default_offset_file_path,
         config->telegram_read_loop_default_poll_seconds,
-        config->telegram_read_loop_default_max_iterations);
+        config->telegram_read_loop_default_max_iterations,
+        TG_READ_OUTPUT_STATE);
+}
+
+static int tg_run_telegram_inbox(const tg_config *config)
+{
+    return tg_run_telegram_read_once_state_paths(
+        config->telegram_inbox_token_file_path,
+        config->telegram_inbox_offset_file_path,
+        TG_READ_OUTPUT_INBOX);
+}
+
+static int tg_run_telegram_inbox_self_test(void)
+{
+    static const char updates_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":true,\"result\":["
+        "{\"update_id\":300,\"message\":{\"message_id\":1,"
+        "\"from\":{\"id\":42,\"first_name\":\"Michele\",\"username\":\"kaffeine\"},"
+        "\"chat\":{\"id\":123,\"type\":\"private\"},"
+        "\"text\":\"Inbox \\\"test\\\"\\nLine\"}}"
+        "]}";
+    static const char expected_text[] = "Inbox \"test\"\nLine";
+    tg_bot_status bot_status;
+    tg_json_status json_status;
+    tg_bot_call_result result;
+    tg_bot_update_summary update;
+    char next_offset[32];
+    char decoded_text[128];
+    unsigned long decoded_length;
+
+    bot_status = tg_bot_parse_get_updates_http_response(
+        updates_response, (unsigned long)strlen(updates_response), &result);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram inbox self-test: getUpdates failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    bot_status = tg_bot_get_updates_at(&result, 0, &update);
+    if (bot_status != TG_BOT_OK || !update.has_update ||
+        !update.has_message || !update.has_sender_name ||
+        strcmp(update.sender_name, "kaffeine") != 0 || !update.has_text) {
+        printf("telegram inbox self-test: update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    json_status = tg_json_string_decode(update.text, update.text_length,
+                                        decoded_text, sizeof(decoded_text),
+                                        &decoded_length);
+    if (json_status != TG_JSON_OK || strcmp(decoded_text, expected_text) != 0) {
+        printf("telegram inbox self-test: text decode failed: %s\n",
+               tg_json_status_name(json_status));
+        return 2;
+    }
+    bot_status = tg_bot_update_next_offset(&update, next_offset,
+                                           sizeof(next_offset));
+    if (bot_status != TG_BOT_OK || strcmp(next_offset, "301") != 0) {
+        printf("telegram inbox self-test: offset failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+
+    tg_print_inbox_update_summary(&update);
+    printf("inbox next offset: %s\n", next_offset);
+    puts("telegram inbox self-test: ok");
+    return 0;
+}
+
+static int tg_run_telegram_inbox_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_read_once_state_paths(
+        resolved_path,
+        config->telegram_inbox_default_offset_file_path,
+        TG_READ_OUTPUT_INBOX);
+}
+
+static int tg_run_telegram_inbox_loop(const tg_config *config)
+{
+    return tg_run_telegram_read_loop_paths(
+        config->telegram_inbox_loop_token_file_path,
+        config->telegram_inbox_loop_offset_file_path,
+        config->telegram_inbox_loop_poll_seconds,
+        config->telegram_inbox_loop_max_iterations,
+        TG_READ_OUTPUT_INBOX);
+}
+
+static int tg_run_telegram_inbox_loop_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_read_loop_paths(
+        resolved_path,
+        config->telegram_inbox_loop_default_offset_file_path,
+        config->telegram_inbox_loop_default_poll_seconds,
+        config->telegram_inbox_loop_default_max_iterations,
+        TG_READ_OUTPUT_INBOX);
 }
 
 static int tg_run_telegram_echo_once_self_test(void)
@@ -1994,6 +2192,26 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_read_loop_default) {
         return tg_run_telegram_read_loop_default(&config);
+    }
+
+    if (config.run_telegram_inbox_self_test) {
+        return tg_run_telegram_inbox_self_test();
+    }
+
+    if (config.run_telegram_inbox) {
+        return tg_run_telegram_inbox(&config);
+    }
+
+    if (config.run_telegram_inbox_default) {
+        return tg_run_telegram_inbox_default(&config);
+    }
+
+    if (config.run_telegram_inbox_loop) {
+        return tg_run_telegram_inbox_loop(&config);
+    }
+
+    if (config.run_telegram_inbox_loop_default) {
+        return tg_run_telegram_inbox_loop_default(&config);
     }
 
     if (config.run_telegram_echo_once_self_test) {

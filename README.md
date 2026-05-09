@@ -109,6 +109,8 @@ Initial core modules:
   `getUpdates` response and save the offset without sending replies.
 - A bounded read loop can repeat the stateful read flow with caller-chosen
   polling seconds and a maximum iteration count.
+- An inbox read command prints pending updates in a more human-readable format
+  while reusing the same persistent offset handling and never sending replies.
 - A stateful echo batch can process up to five pending updates from one
   `getUpdates` response, saving the offset after each handled update.
 - A bounded echo loop can repeat the stateful batch flow with caller-chosen
@@ -124,7 +126,7 @@ connectivity tests, not yet for secure use.
 
 Initial targets:
 
-- MorphOS: active and verified
+- MorphOS: TLS, `getMe` and read-only polling verified on real hardware
 - AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS,
   Telegram `getMe` and `sendMessage` verified on Vampire/AmiKit with AmiSSL v5
 - AmigaOS 4.x: stub ready, toolchain to install
@@ -138,9 +140,10 @@ System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos ru
 ```
 
 The default MorphOS build has TLS disabled and is suitable for offline
-self-tests. Build with `ENABLE_TLS=1` only when OpenSSL headers/libraries are
-available and you want live HTTPS tests. See `docs/MORPHOS_TESTER.md` for
-target-side test instructions.
+self-tests. The public MorphOS tester package is built with `ENABLE_TLS=1`,
+using OpenSSL, and has passed live `preflight`, `getMe` and read-only polling
+on real MorphOS. See `docs/MORPHOS_TESTER.md` for target-side test
+instructions.
 
 Remote build from the Mac:
 
@@ -300,6 +303,16 @@ Current options:
                       Run bounded stateful read polling
     --telegram-read-loop-default <offset-file> <poll-seconds> <max-iterations>
                       Run bounded stateful read polling with default token file
+    --telegram-inbox-self-test
+                      Run built-in inbox-format update sample
+    --telegram-inbox <file> <offset-file>
+                      Print pending updates in inbox format and save offset
+    --telegram-inbox-default <offset-file>
+                      Inbox read using the default token file
+    --telegram-inbox-loop <file> <offset-file> <poll-seconds> <max-iterations>
+                      Run bounded inbox polling
+    --telegram-inbox-loop-default <offset-file> <poll-seconds> <max-iterations>
+                      Run bounded inbox polling with default token file
     --telegram-echo-once-self-test
                       Run built-in one-shot echo flow sample
     --telegram-echo-once <file> [offset]
@@ -340,6 +353,7 @@ telegram-test --help
 telegram-test --telegram-json-self-test
 telegram-test --telegram-get-updates-self-test
 telegram-test --telegram-read-once-state-self-test
+telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 ```
@@ -361,6 +375,10 @@ each update and does not send replies.
 Use `telegram-read-loop` when you want bounded receive-only polling. It reuses
 the same persistent offset file as `telegram-read-once-state`, sleeps between
 iterations when `poll-seconds` is greater than zero, and never sends replies.
+
+Use `telegram-inbox` or `telegram-inbox-loop` when you want the same safe
+receive-only behavior with output shaped for reading messages. It prints update
+id, chat id, sender name when available, decoded text and the saved next offset.
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.

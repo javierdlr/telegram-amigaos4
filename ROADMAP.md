@@ -31,6 +31,18 @@ on at least one real Amiga-like platform.
 - Minimal JSON parsing
 - Account/token configuration handling
 - First message receive tests
+- Inbox-format receive-only polling with persistent offsets
+
+## Near-Term Technical Milestones
+
+- Keep MorphOS and AmigaOS 3.x at the same verified level: TLS preflight,
+  `getMe`, receive-only polling and offset persistence.
+- Improve inbox output into the first practical text-reading workflow.
+- Add controlled send-message workflows without automatic replies by default.
+- Add small local conversation state files once the receive/send command line
+  flows are stable.
+- Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
+  developed with community or hardware feedback.
 
 ## Phase 4: User Interface
 

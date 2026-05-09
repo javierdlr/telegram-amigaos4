@@ -158,9 +158,11 @@ void tg_bot_update_summary_init(tg_bot_update_summary *update)
     }
     update->has_update = 0;
     update->has_message = 0;
+    update->has_sender_name = 0;
     update->has_text = 0;
     update->update_id[0] = '\0';
     update->chat_id[0] = '\0';
+    update->sender_name[0] = '\0';
     update->text = 0;
     update->text_length = 0;
 }
@@ -193,6 +195,7 @@ tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
     tg_json_value selected_update;
     tg_json_value message;
     tg_json_value chat;
+    tg_json_value from;
     tg_json_value text;
     unsigned long copied_length;
 
@@ -249,6 +252,27 @@ tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
                                                  &copied_length);
     if (json_status != TG_JSON_OK) {
         return TG_BOT_UPDATE_ERROR;
+    }
+
+    json_status = tg_json_object_get(message.start, message.length, "from", &from);
+    if (json_status == TG_JSON_OK && from.type == TG_JSON_VALUE_OBJECT) {
+        json_status = tg_json_object_get_string_copy(from.start, from.length,
+                                                     "username",
+                                                     update->sender_name,
+                                                     sizeof(update->sender_name),
+                                                     &copied_length);
+        if (json_status == TG_JSON_OK) {
+            update->has_sender_name = 1;
+        } else if (json_status == TG_JSON_NOT_FOUND) {
+            json_status = tg_json_object_get_string_copy(from.start, from.length,
+                                                         "first_name",
+                                                         update->sender_name,
+                                                         sizeof(update->sender_name),
+                                                         &copied_length);
+            if (json_status == TG_JSON_OK) {
+                update->has_sender_name = 1;
+            }
+        }
     }
 
     json_status = tg_json_object_get(message.start, message.length, "text", &text);

@@ -42,6 +42,16 @@ void tg_config_init(tg_config *config)
     config->telegram_read_loop_default_offset_file_path = 0;
     config->telegram_read_loop_default_poll_seconds = 0;
     config->telegram_read_loop_default_max_iterations = 0;
+    config->telegram_inbox_token_file_path = 0;
+    config->telegram_inbox_offset_file_path = 0;
+    config->telegram_inbox_default_offset_file_path = 0;
+    config->telegram_inbox_loop_token_file_path = 0;
+    config->telegram_inbox_loop_offset_file_path = 0;
+    config->telegram_inbox_loop_poll_seconds = 0;
+    config->telegram_inbox_loop_max_iterations = 0;
+    config->telegram_inbox_loop_default_offset_file_path = 0;
+    config->telegram_inbox_loop_default_poll_seconds = 0;
+    config->telegram_inbox_loop_default_max_iterations = 0;
     config->telegram_echo_once_token_file_path = 0;
     config->telegram_echo_once_offset = 0;
     config->telegram_echo_once_default_offset = 0;
@@ -85,6 +95,11 @@ void tg_config_init(tg_config *config)
     config->run_telegram_read_once_state_default = 0;
     config->run_telegram_read_loop = 0;
     config->run_telegram_read_loop_default = 0;
+    config->run_telegram_inbox_self_test = 0;
+    config->run_telegram_inbox = 0;
+    config->run_telegram_inbox_default = 0;
+    config->run_telegram_inbox_loop = 0;
+    config->run_telegram_inbox_loop_default = 0;
     config->run_telegram_echo_once_self_test = 0;
     config->run_telegram_echo_once = 0;
     config->run_telegram_echo_once_default = 0;
@@ -258,6 +273,42 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_read_loop_default_poll_seconds = argv[i + 2];
             config->telegram_read_loop_default_max_iterations = argv[i + 3];
             i += 3;
+        } else if (strcmp(argv[i], "--telegram-inbox-self-test") == 0) {
+            config->run_telegram_inbox_self_test = 1;
+        } else if (strcmp(argv[i], "--telegram-inbox") == 0) {
+            if (i + 2 >= argc) {
+                return 1;
+            }
+            config->run_telegram_inbox = 1;
+            config->telegram_inbox_token_file_path = argv[i + 1];
+            config->telegram_inbox_offset_file_path = argv[i + 2];
+            i += 2;
+        } else if (strcmp(argv[i], "--telegram-inbox-default") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_telegram_inbox_default = 1;
+            config->telegram_inbox_default_offset_file_path = argv[i + 1];
+            ++i;
+        } else if (strcmp(argv[i], "--telegram-inbox-loop") == 0) {
+            if (i + 4 >= argc) {
+                return 1;
+            }
+            config->run_telegram_inbox_loop = 1;
+            config->telegram_inbox_loop_token_file_path = argv[i + 1];
+            config->telegram_inbox_loop_offset_file_path = argv[i + 2];
+            config->telegram_inbox_loop_poll_seconds = argv[i + 3];
+            config->telegram_inbox_loop_max_iterations = argv[i + 4];
+            i += 4;
+        } else if (strcmp(argv[i], "--telegram-inbox-loop-default") == 0) {
+            if (i + 3 >= argc) {
+                return 1;
+            }
+            config->run_telegram_inbox_loop_default = 1;
+            config->telegram_inbox_loop_default_offset_file_path = argv[i + 1];
+            config->telegram_inbox_loop_default_poll_seconds = argv[i + 2];
+            config->telegram_inbox_loop_default_max_iterations = argv[i + 3];
+            i += 3;
         } else if (strcmp(argv[i], "--telegram-echo-once-self-test") == 0) {
             config->run_telegram_echo_once_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-echo-once") == 0) {
@@ -395,6 +446,16 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run bounded stateful read polling\n");
     fprintf(stream, "      --telegram-read-loop-default <offset-file> <poll-seconds> <max-iterations>\n");
     fprintf(stream, "                         Run bounded read polling with default token file\n");
+    fprintf(stream, "      --telegram-inbox-self-test\n");
+    fprintf(stream, "                         Run built-in inbox-format update sample\n");
+    fprintf(stream, "      --telegram-inbox <file> <offset-file>\n");
+    fprintf(stream, "                         Print pending updates in inbox format and save offset\n");
+    fprintf(stream, "      --telegram-inbox-default <offset-file>\n");
+    fprintf(stream, "                         Inbox read using the default token file\n");
+    fprintf(stream, "      --telegram-inbox-loop <file> <offset-file> <poll-seconds> <max-iterations>\n");
+    fprintf(stream, "                         Run bounded inbox polling\n");
+    fprintf(stream, "      --telegram-inbox-loop-default <offset-file> <poll-seconds> <max-iterations>\n");
+    fprintf(stream, "                         Run bounded inbox polling with default token file\n");
     fprintf(stream, "      --telegram-echo-once-self-test\n");
     fprintf(stream, "                         Run built-in one-shot echo flow sample\n");
     fprintf(stream, "      --telegram-echo-once <file> [offset]\n");

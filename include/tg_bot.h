@@ -51,16 +51,19 @@ typedef struct tg_bot_call_result {
  * Minimal summary of one Telegram update.
  *
  * update_id and chat_id are copied into fixed caller-visible buffers because
- * callers commonly need to store/print them. text is a borrowed raw JSON string
- * view into the HTTP response buffer; call tg_json_string_decode() before
- * presenting or reusing it as user-visible text.
+ * callers commonly need to store/print them. sender_name is decoded copied
+ * text from message.from.username or message.from.first_name when present.
+ * text is a borrowed raw JSON string view into the HTTP response buffer; call
+ * tg_json_string_decode() before presenting or reusing it as user-visible text.
  */
 typedef struct tg_bot_update_summary {
     int has_update;
     int has_message;
+    int has_sender_name;
     int has_text;
     char update_id[32];
     char chat_id[32];
+    char sender_name[128];
     const char *text;
     unsigned long text_length;
 } tg_bot_update_summary;

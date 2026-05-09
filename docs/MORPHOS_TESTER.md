@@ -7,8 +7,8 @@ SPDX-License-Identifier: MIT
 
 This document describes how to build and run the current MorphOS diagnostic
 tester. It is not a usable Telegram client yet. It is a pre-alpha technical
-build for checking startup, local parsers, Bot API response handling and,
-optionally, HTTPS reachability when a TLS-enabled build is used.
+build for checking startup, local parsers, Bot API response handling and HTTPS
+reachability when a TLS-enabled build is used.
 
 ## Current Scope
 
@@ -19,7 +19,8 @@ The MorphOS tester can:
 - parse Telegram Bot API `getMe`, `getUpdates` and `sendMessage` samples;
 - run read-only and echo state self-tests;
 - with a TLS-enabled build, call real Telegram Bot API commands when a token is
-  provided.
+  provided;
+- print pending updates in inbox format without sending replies.
 
 Certificate validation is not enabled yet. Use this build only for supervised
 testing with test bots and disposable tokens.
@@ -30,7 +31,7 @@ The tested MorphOS build currently requires:
 
 - MorphOS with the GG development environment for source builds;
 - a working TCP/IP stack;
-- OpenSSL development/runtime libraries only for `ENABLE_TLS=1` builds;
+- OpenSSL development/runtime libraries for `ENABLE_TLS=1` builds;
 - a real or test Telegram bot token only for live Bot API commands.
 
 ## Build On MorphOS
@@ -41,7 +42,8 @@ From the project drawer:
 System:Development/gg/bin/make -f Makefile.morphos clean all
 ```
 
-The default build has TLS disabled and is suitable for offline self-tests.
+The default source build has TLS disabled and is suitable for offline self-tests.
+The public MorphOS tester package is built with TLS enabled.
 
 To build the TLS-enabled tester:
 
@@ -50,7 +52,8 @@ System:Development/gg/bin/make -f Makefile.morphos clean all ENABLE_TLS=1
 ```
 
 If OpenSSL headers or libraries are missing, keep `ENABLE_TLS=0` and report the
-MorphOS/OpenSSL setup details.
+MorphOS/OpenSSL setup details. On the tested MorphOS machine, `ENABLE_TLS=1`
+successfully reached Telegram over HTTPS.
 
 ## Create A Package From The Mac
 
@@ -72,6 +75,7 @@ Run these commands before any live token test:
 telegram-test --telegram-json-self-test
 telegram-test --telegram-get-updates-self-test
 telegram-test --telegram-read-once-state-self-test
+telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 ```
@@ -101,7 +105,7 @@ with BotFather using `/revoke` and create a new one.
 
 ## Live Tests
 
-Only use these with a TLS-enabled build:
+Use these with a TLS-enabled build:
 
 ```text
 telegram-test --telegram-preflight
@@ -109,10 +113,13 @@ telegram-test --telegram-getme-default
 telegram-test --telegram-get-updates-default
 telegram-test --telegram-read-once-state-default telegram-offset.txt
 telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
+telegram-test --telegram-inbox-default telegram-offset.txt
+telegram-test --telegram-inbox-loop-default telegram-offset.txt 5 10
 ```
 
 For receive tests, send a message to the bot from Telegram before running the
-command.
+command. The inbox commands are receive-only: they print update id, chat id,
+sender name when available, decoded text and the next saved offset.
 
 ## Reporting Results
 
