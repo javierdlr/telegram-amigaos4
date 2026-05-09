@@ -72,6 +72,17 @@ void tg_config_init(tg_config *config)
     config->telegram_session_loop_default_chat_state_file_path = 0;
     config->telegram_session_loop_default_poll_seconds = 0;
     config->telegram_session_loop_default_max_iterations = 0;
+    config->telegram_manual_client_token_file_path = 0;
+    config->telegram_manual_client_offset_file_path = 0;
+    config->telegram_manual_client_inbox_log_file_path = 0;
+    config->telegram_manual_client_chat_state_file_path = 0;
+    config->telegram_manual_client_poll_seconds = 0;
+    config->telegram_manual_client_max_iterations = 0;
+    config->telegram_manual_client_default_offset_file_path = 0;
+    config->telegram_manual_client_default_inbox_log_file_path = 0;
+    config->telegram_manual_client_default_chat_state_file_path = 0;
+    config->telegram_manual_client_default_poll_seconds = 0;
+    config->telegram_manual_client_default_max_iterations = 0;
     config->telegram_chats_file_path = 0;
     config->telegram_echo_once_token_file_path = 0;
     config->telegram_echo_once_offset = 0;
@@ -132,6 +143,8 @@ void tg_config_init(tg_config *config)
     config->run_telegram_session_default = 0;
     config->run_telegram_session_loop = 0;
     config->run_telegram_session_loop_default = 0;
+    config->run_telegram_manual_client = 0;
+    config->run_telegram_manual_client_default = 0;
     config->run_telegram_chats = 0;
     config->run_telegram_echo_once_self_test = 0;
     config->run_telegram_echo_once = 0;
@@ -398,6 +411,29 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_session_loop_default_poll_seconds = argv[i + 4];
             config->telegram_session_loop_default_max_iterations = argv[i + 5];
             i += 5;
+        } else if (strcmp(argv[i], "--telegram-manual-client") == 0) {
+            if (i + 6 >= argc) {
+                return 1;
+            }
+            config->run_telegram_manual_client = 1;
+            config->telegram_manual_client_token_file_path = argv[i + 1];
+            config->telegram_manual_client_offset_file_path = argv[i + 2];
+            config->telegram_manual_client_inbox_log_file_path = argv[i + 3];
+            config->telegram_manual_client_chat_state_file_path = argv[i + 4];
+            config->telegram_manual_client_poll_seconds = argv[i + 5];
+            config->telegram_manual_client_max_iterations = argv[i + 6];
+            i += 6;
+        } else if (strcmp(argv[i], "--telegram-manual-client-default") == 0) {
+            if (i + 5 >= argc) {
+                return 1;
+            }
+            config->run_telegram_manual_client_default = 1;
+            config->telegram_manual_client_default_offset_file_path = argv[i + 1];
+            config->telegram_manual_client_default_inbox_log_file_path = argv[i + 2];
+            config->telegram_manual_client_default_chat_state_file_path = argv[i + 3];
+            config->telegram_manual_client_default_poll_seconds = argv[i + 4];
+            config->telegram_manual_client_default_max_iterations = argv[i + 5];
+            i += 5;
         } else if (strcmp(argv[i], "--telegram-chats") == 0) {
             if (i + 1 >= argc) {
                 return 1;
@@ -585,6 +621,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run bounded manual-client receive polling\n");
     fprintf(stream, "      --telegram-session-loop-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>\n");
     fprintf(stream, "                         Bounded manual-client polling with default token file\n");
+    fprintf(stream, "      --telegram-manual-client <file> <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>\n");
+    fprintf(stream, "                         Poll read-only updates, then list saved chats\n");
+    fprintf(stream, "      --telegram-manual-client-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>\n");
+    fprintf(stream, "                         Manual-client preview with default token file\n");
     fprintf(stream, "      --telegram-chats <chats-file>\n");
     fprintf(stream, "                         List chats saved by manual-client sessions\n");
     fprintf(stream, "      --telegram-echo-once-self-test\n");

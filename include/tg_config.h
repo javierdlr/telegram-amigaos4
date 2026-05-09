@@ -79,6 +79,17 @@ typedef struct tg_config {
     const char *telegram_session_loop_default_chat_state_file_path;
     const char *telegram_session_loop_default_poll_seconds;
     const char *telegram_session_loop_default_max_iterations;
+    const char *telegram_manual_client_token_file_path;
+    const char *telegram_manual_client_offset_file_path;
+    const char *telegram_manual_client_inbox_log_file_path;
+    const char *telegram_manual_client_chat_state_file_path;
+    const char *telegram_manual_client_poll_seconds;
+    const char *telegram_manual_client_max_iterations;
+    const char *telegram_manual_client_default_offset_file_path;
+    const char *telegram_manual_client_default_inbox_log_file_path;
+    const char *telegram_manual_client_default_chat_state_file_path;
+    const char *telegram_manual_client_default_poll_seconds;
+    const char *telegram_manual_client_default_max_iterations;
     const char *telegram_chats_file_path;
     const char *telegram_echo_once_token_file_path;
     const char *telegram_echo_once_offset;
@@ -139,6 +150,8 @@ typedef struct tg_config {
     int run_telegram_session_default;
     int run_telegram_session_loop;
     int run_telegram_session_loop_default;
+    int run_telegram_manual_client;
+    int run_telegram_manual_client_default;
     int run_telegram_chats;
     int run_telegram_echo_once_self_test;
     int run_telegram_echo_once;

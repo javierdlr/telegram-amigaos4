@@ -218,6 +218,7 @@ telegram-test --telegram-inbox-loop-default telegram-offset.txt 5 10
 telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default telegram-offset.txt 5 10
 telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log telegram-chats.txt
 telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
+telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
 ```
 
 Inbox output includes update id, chat id, sender name when available, decoded
@@ -234,7 +235,12 @@ updates once, saves the next offset, appends readable inbox lines and updates
 ```
 
 Use `telegram-session-loop-default` for a bounded receive-only manual session
-loop. List saved chats with:
+loop. Use `telegram-manual-client-default` for the current single-command text
+preview: it performs bounded receive-only polling, updates the inbox/chat files
+and then prints the saved chat list. It still never sends messages
+automatically.
+
+List saved chats with:
 
 ```text
 telegram-test --telegram-chats telegram-chats.txt

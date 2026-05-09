@@ -718,7 +718,8 @@ static int tg_for_each_chat_line(const char *path,
                                                  const char *line,
                                                  unsigned long line_length,
                                                  void *context),
-                                 void *context)
+                                 void *context,
+                                 int missing_ok)
 {
     tg_file_status file_status;
     char content[16384];
@@ -733,6 +734,10 @@ static int tg_for_each_chat_line(const char *path,
     file_status = tg_file_read_text(path, content, sizeof(content),
                                     &content_length);
     if (file_status != TG_FILE_OK) {
+        if (missing_ok && file_status == TG_FILE_OPEN_FAILED) {
+            puts("telegram chats: none");
+            return 0;
+        }
         printf("telegram chats: read failed: %s\n",
                tg_file_status_name(file_status));
         return 2;
@@ -856,7 +861,7 @@ static int tg_find_chat_id_by_index(const char *path,
     context.chat_id = chat_id;
     context.chat_id_size = chat_id_size;
 
-    rc = tg_for_each_chat_line(path, tg_find_chat_line_callback, &context);
+    rc = tg_for_each_chat_line(path, tg_find_chat_line_callback, &context, 0);
     if (rc != 0) {
         return rc;
     }
@@ -2317,7 +2322,64 @@ static int tg_run_telegram_session_loop_default(const tg_config *config)
 static int tg_run_telegram_chats(const tg_config *config)
 {
     return tg_for_each_chat_line(config->telegram_chats_file_path,
-                                 tg_print_chat_line_callback, 0);
+                                 tg_print_chat_line_callback, 0, 0);
+}
+
+static int tg_run_telegram_manual_client_paths(const char *token_file_path,
+                                               const char *offset_file_path,
+                                               const char *inbox_log_file_path,
+                                               const char *chat_state_file_path,
+                                               const char *poll_seconds_text,
+                                               const char *max_iterations_text)
+{
+    int rc;
+
+    puts("telegram manual client: receive-only preview");
+    rc = tg_run_telegram_session_loop_paths(token_file_path,
+                                            offset_file_path,
+                                            inbox_log_file_path,
+                                            chat_state_file_path,
+                                            poll_seconds_text,
+                                            max_iterations_text);
+    if (rc != 0) {
+        return rc;
+    }
+
+    puts("telegram manual client chats:");
+    return tg_for_each_chat_line(chat_state_file_path,
+                                 tg_print_chat_line_callback, 0, 1);
+}
+
+static int tg_run_telegram_manual_client(const tg_config *config)
+{
+    return tg_run_telegram_manual_client_paths(
+        config->telegram_manual_client_token_file_path,
+        config->telegram_manual_client_offset_file_path,
+        config->telegram_manual_client_inbox_log_file_path,
+        config->telegram_manual_client_chat_state_file_path,
+        config->telegram_manual_client_poll_seconds,
+        config->telegram_manual_client_max_iterations);
+}
+
+static int tg_run_telegram_manual_client_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_manual_client_paths(
+        resolved_path,
+        config->telegram_manual_client_default_offset_file_path,
+        config->telegram_manual_client_default_inbox_log_file_path,
+        config->telegram_manual_client_default_chat_state_file_path,
+        config->telegram_manual_client_default_poll_seconds,
+        config->telegram_manual_client_default_max_iterations);
 }
 
 static int tg_run_telegram_echo_once_self_test(void)
@@ -3095,6 +3157,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_session_loop_default) {
         return tg_run_telegram_session_loop_default(&config);
+    }
+
+    if (config.run_telegram_manual_client) {
+        return tg_run_telegram_manual_client(&config);
+    }
+
+    if (config.run_telegram_manual_client_default) {
+        return tg_run_telegram_manual_client_default(&config);
     }
 
     if (config.run_telegram_chats) {

@@ -52,6 +52,9 @@ on at least one real Amiga-like platform.
 - A bounded manual-client loop and simple saved-chat listing now exist through
   `telegram-session-loop-default`, `telegram-chats` and
   `telegram-send-chat-default`.
+- A first single-command text preview now exists as
+  `telegram-manual-client-default`: it polls read-only updates, updates local
+  inbox/chat files and prints the saved chat list without automatic sends.
 - Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
   developed with community or hardware feedback.
 

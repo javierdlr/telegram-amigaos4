@@ -327,6 +327,10 @@ Current options:
                       Run bounded manual-client receive polling
     --telegram-session-loop-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>
                       Bounded manual-client polling with default token file
+    --telegram-manual-client <file> <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>
+                      Poll read-only updates, then list saved chats
+    --telegram-manual-client-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>
+                      Manual-client preview with default token file
     --telegram-chats <chats-file>
                       List chats saved by manual-client sessions
     --telegram-echo-once-self-test
@@ -434,6 +438,14 @@ Use `telegram-session-loop-default` for a bounded manual-client receive loop:
 
 ```text
 telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
+```
+
+Use `telegram-manual-client-default` for the current single-command text preview.
+It performs the same bounded receive-only polling and then prints the saved chat
+list. It still never sends messages automatically:
+
+```text
+telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
 ```
 
 List the saved chats:
