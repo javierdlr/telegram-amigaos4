@@ -107,6 +107,8 @@ Initial core modules:
   decoded before displaying or echoing text.
 - A stateful read batch can print up to five pending updates from one
   `getUpdates` response and save the offset without sending replies.
+- A bounded read loop can repeat the stateful read flow with caller-chosen
+  polling seconds and a maximum iteration count.
 - A stateful echo batch can process up to five pending updates from one
   `getUpdates` response, saving the offset after each handled update.
 - A bounded echo loop can repeat the stateful batch flow with caller-chosen
@@ -272,6 +274,10 @@ Current options:
                       Read pending updates and save a persistent offset
     --telegram-read-once-state-default <offset-file>
                       Stateful read pending updates with default token file
+    --telegram-read-loop <file> <offset-file> <poll-seconds> <max-iterations>
+                      Run bounded stateful read polling
+    --telegram-read-loop-default <offset-file> <poll-seconds> <max-iterations>
+                      Run bounded stateful read polling with default token file
     --telegram-echo-once-self-test
                       Run built-in one-shot echo flow sample
     --telegram-echo-once <file> [offset]
@@ -330,6 +336,10 @@ Use `telegram-read-once-state` when you only want to receive and mark pending
 updates as processed. It prints decoded message text, saves the offset after
 each update and does not send replies.
 
+Use `telegram-read-loop` when you want bounded receive-only polling. It reuses
+the same persistent offset file as `telegram-read-once-state`, sleeps between
+iterations when `poll-seconds` is greater than zero, and never sends replies.
+
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.
 
@@ -349,6 +359,8 @@ between iterations when `poll-seconds` is greater than zero, and stops after
 `max-iterations` or on the first error. Each iteration may process up to five
 pending updates. The accepted limits are
 `poll-seconds <= 3600` and `1 <= max-iterations <= 10000`.
+
+The same limits apply to `telegram-read-loop`.
 
 Note: through BebboSSH, the remote shell does not always preserve the AmigaDOS
 PATH, so the Makefile uses absolute paths to the MorphOS SDK.

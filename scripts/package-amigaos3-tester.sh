@@ -77,6 +77,7 @@ Useful commands:
   telegram-test --telegram-getme-default
   telegram-test --telegram-get-updates-default
   telegram-test --telegram-read-once-state-default telegram-offset.txt
+  telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
   telegram-test --telegram-send-message-default <chat-id> "Hello from AmigaOS 3.x"
   telegram-test --telegram-echo-once-state-default telegram-offset.txt
   telegram-test --telegram-echo-loop-default telegram-offset.txt 5 10

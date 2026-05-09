@@ -35,6 +35,13 @@ void tg_config_init(tg_config *config)
     config->telegram_read_once_state_token_file_path = 0;
     config->telegram_read_once_state_offset_file_path = 0;
     config->telegram_read_once_state_default_offset_file_path = 0;
+    config->telegram_read_loop_token_file_path = 0;
+    config->telegram_read_loop_offset_file_path = 0;
+    config->telegram_read_loop_poll_seconds = 0;
+    config->telegram_read_loop_max_iterations = 0;
+    config->telegram_read_loop_default_offset_file_path = 0;
+    config->telegram_read_loop_default_poll_seconds = 0;
+    config->telegram_read_loop_default_max_iterations = 0;
     config->telegram_echo_once_token_file_path = 0;
     config->telegram_echo_once_offset = 0;
     config->telegram_echo_once_default_offset = 0;
@@ -76,6 +83,8 @@ void tg_config_init(tg_config *config)
     config->run_telegram_read_once_state_self_test = 0;
     config->run_telegram_read_once_state = 0;
     config->run_telegram_read_once_state_default = 0;
+    config->run_telegram_read_loop = 0;
+    config->run_telegram_read_loop_default = 0;
     config->run_telegram_echo_once_self_test = 0;
     config->run_telegram_echo_once = 0;
     config->run_telegram_echo_once_default = 0;
@@ -230,6 +239,25 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_telegram_read_once_state_default = 1;
             config->telegram_read_once_state_default_offset_file_path = argv[i + 1];
             ++i;
+        } else if (strcmp(argv[i], "--telegram-read-loop") == 0) {
+            if (i + 4 >= argc) {
+                return 1;
+            }
+            config->run_telegram_read_loop = 1;
+            config->telegram_read_loop_token_file_path = argv[i + 1];
+            config->telegram_read_loop_offset_file_path = argv[i + 2];
+            config->telegram_read_loop_poll_seconds = argv[i + 3];
+            config->telegram_read_loop_max_iterations = argv[i + 4];
+            i += 4;
+        } else if (strcmp(argv[i], "--telegram-read-loop-default") == 0) {
+            if (i + 3 >= argc) {
+                return 1;
+            }
+            config->run_telegram_read_loop_default = 1;
+            config->telegram_read_loop_default_offset_file_path = argv[i + 1];
+            config->telegram_read_loop_default_poll_seconds = argv[i + 2];
+            config->telegram_read_loop_default_max_iterations = argv[i + 3];
+            i += 3;
         } else if (strcmp(argv[i], "--telegram-echo-once-self-test") == 0) {
             config->run_telegram_echo_once_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-echo-once") == 0) {
@@ -363,6 +391,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Read pending updates and save a persistent offset\n");
     fprintf(stream, "      --telegram-read-once-state-default <offset-file>\n");
     fprintf(stream, "                         Stateful read pending updates with default token file\n");
+    fprintf(stream, "      --telegram-read-loop <file> <offset-file> <poll-seconds> <max-iterations>\n");
+    fprintf(stream, "                         Run bounded stateful read polling\n");
+    fprintf(stream, "      --telegram-read-loop-default <offset-file> <poll-seconds> <max-iterations>\n");
+    fprintf(stream, "                         Run bounded read polling with default token file\n");
     fprintf(stream, "      --telegram-echo-once-self-test\n");
     fprintf(stream, "                         Run built-in one-shot echo flow sample\n");
     fprintf(stream, "      --telegram-echo-once <file> [offset]\n");

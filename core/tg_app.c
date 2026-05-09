@@ -1232,6 +1232,79 @@ static int tg_run_telegram_read_once_state_default(const tg_config *config)
         config->telegram_read_once_state_default_offset_file_path);
 }
 
+static int tg_run_telegram_read_loop_paths(const char *token_file_path,
+                                           const char *offset_file_path,
+                                           const char *poll_seconds_text,
+                                           const char *max_iterations_text)
+{
+    unsigned long poll_seconds;
+    unsigned long max_iterations;
+    unsigned long iteration;
+    int rc;
+
+    if (tg_parse_decimal_ulong(poll_seconds_text, &poll_seconds) != 0) {
+        puts("telegram read loop: invalid poll seconds");
+        return 2;
+    }
+    if (tg_parse_decimal_ulong(max_iterations_text, &max_iterations) != 0) {
+        puts("telegram read loop: invalid max iterations");
+        return 2;
+    }
+    if (poll_seconds > 3600UL) {
+        puts("telegram read loop: poll seconds must be <= 3600");
+        return 2;
+    }
+    if (max_iterations == 0UL || max_iterations > 10000UL) {
+        puts("telegram read loop: max iterations must be between 1 and 10000");
+        return 2;
+    }
+
+    for (iteration = 0; iteration < max_iterations; ++iteration) {
+        printf("telegram read loop iteration: %lu/%lu\n",
+               iteration + 1UL, max_iterations);
+        rc = tg_run_telegram_read_once_state_paths(
+            token_file_path,
+            offset_file_path);
+        if (rc != 0) {
+            return rc;
+        }
+        if (iteration + 1UL < max_iterations && poll_seconds > 0UL) {
+            printf("telegram read loop sleep: %lu seconds\n", poll_seconds);
+            tg_platform_sleep_seconds(poll_seconds);
+        }
+    }
+
+    return 0;
+}
+
+static int tg_run_telegram_read_loop(const tg_config *config)
+{
+    return tg_run_telegram_read_loop_paths(
+        config->telegram_read_loop_token_file_path,
+        config->telegram_read_loop_offset_file_path,
+        config->telegram_read_loop_poll_seconds,
+        config->telegram_read_loop_max_iterations);
+}
+
+static int tg_run_telegram_read_loop_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_read_loop_paths(
+        resolved_path,
+        config->telegram_read_loop_default_offset_file_path,
+        config->telegram_read_loop_default_poll_seconds,
+        config->telegram_read_loop_default_max_iterations);
+}
+
 static int tg_run_telegram_echo_once_self_test(void)
 {
     static const char updates_response[] =
@@ -1913,6 +1986,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_read_once_state_default) {
         return tg_run_telegram_read_once_state_default(&config);
+    }
+
+    if (config.run_telegram_read_loop) {
+        return tg_run_telegram_read_loop(&config);
+    }
+
+    if (config.run_telegram_read_loop_default) {
+        return tg_run_telegram_read_loop_default(&config);
     }
 
     if (config.run_telegram_echo_once_self_test) {

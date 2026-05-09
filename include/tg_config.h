@@ -42,6 +42,13 @@ typedef struct tg_config {
     const char *telegram_read_once_state_token_file_path;
     const char *telegram_read_once_state_offset_file_path;
     const char *telegram_read_once_state_default_offset_file_path;
+    const char *telegram_read_loop_token_file_path;
+    const char *telegram_read_loop_offset_file_path;
+    const char *telegram_read_loop_poll_seconds;
+    const char *telegram_read_loop_max_iterations;
+    const char *telegram_read_loop_default_offset_file_path;
+    const char *telegram_read_loop_default_poll_seconds;
+    const char *telegram_read_loop_default_max_iterations;
     const char *telegram_echo_once_token_file_path;
     const char *telegram_echo_once_offset;
     const char *telegram_echo_once_default_offset;
@@ -83,6 +90,8 @@ typedef struct tg_config {
     int run_telegram_read_once_state_self_test;
     int run_telegram_read_once_state;
     int run_telegram_read_once_state_default;
+    int run_telegram_read_loop;
+    int run_telegram_read_loop_default;
     int run_telegram_echo_once_self_test;
     int run_telegram_echo_once;
     int run_telegram_echo_once_default;

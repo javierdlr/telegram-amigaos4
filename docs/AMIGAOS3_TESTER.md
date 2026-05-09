@@ -194,6 +194,15 @@ telegram-test --telegram-read-once-state-default telegram-offset.txt
 This is the safest first receive test. It prints decoded message text and saves
 `telegram-offset.txt` after each processed update.
 
+Run bounded receive-only polling:
+
+```text
+telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
+```
+
+This polls every five seconds for at most ten iterations and never sends
+replies.
+
 Send a controlled message back:
 
 ```text
