@@ -89,7 +89,8 @@ tg_bot_status tg_bot_parse_get_me_http_response(const char *http_response,
  * Parses a complete HTTP response as the result of Telegram getUpdates.
  *
  * result->response.api.result is typically an array and remains a borrowed view
- * into http_response. No update-specific parsing is done at this layer yet.
+ * into http_response. Use tg_bot_get_updates_at() to extract individual update
+ * summaries from that array.
  */
 tg_bot_status tg_bot_parse_get_updates_http_response(const char *http_response,
                                                      unsigned long http_response_length,
@@ -103,6 +104,16 @@ tg_bot_status tg_bot_parse_get_updates_http_response(const char *http_response,
  */
 tg_bot_status tg_bot_get_updates_first(const tg_bot_call_result *result,
                                        tg_bot_update_summary *update);
+
+/**
+ * Extracts one update summary from a parsed getUpdates response by index.
+ *
+ * Empty arrays or out-of-range indexes return TG_BOT_OK with has_update == 0.
+ * The text view remains borrowed from the original HTTP response buffer.
+ */
+tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
+                                    unsigned long index,
+                                    tg_bot_update_summary *update);
 
 /**
  * Builds the next getUpdates offset from update->update_id.

@@ -182,8 +182,15 @@ tg_bot_status tg_bot_parse_get_updates_http_response(const char *http_response,
 tg_bot_status tg_bot_get_updates_first(const tg_bot_call_result *result,
                                        tg_bot_update_summary *update)
 {
+    return tg_bot_get_updates_at(result, 0, update);
+}
+
+tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
+                                    unsigned long index,
+                                    tg_bot_update_summary *update)
+{
     tg_json_status json_status;
-    tg_json_value first_update;
+    tg_json_value selected_update;
     tg_json_value message;
     tg_json_value chat;
     tg_json_value text;
@@ -200,26 +207,29 @@ tg_bot_status tg_bot_get_updates_first(const tg_bot_call_result *result,
         return TG_BOT_UPDATE_ERROR;
     }
 
-    json_status = tg_json_array_first(result->response.api.result.start,
-                                      result->response.api.result.length,
-                                      &first_update);
+    json_status = tg_json_array_get(result->response.api.result.start,
+                                    result->response.api.result.length,
+                                    index, &selected_update);
     if (json_status == TG_JSON_NOT_FOUND) {
         return TG_BOT_OK;
     }
-    if (json_status != TG_JSON_OK || first_update.type != TG_JSON_VALUE_OBJECT) {
+    if (json_status != TG_JSON_OK ||
+        selected_update.type != TG_JSON_VALUE_OBJECT) {
         return TG_BOT_UPDATE_ERROR;
     }
 
     update->has_update = 1;
-    json_status = tg_json_object_get_number_copy(first_update.start, first_update.length,
-                                                 "update_id", update->update_id,
+    json_status = tg_json_object_get_number_copy(selected_update.start,
+                                                 selected_update.length,
+                                                 "update_id",
+                                                 update->update_id,
                                                  sizeof(update->update_id),
                                                  &copied_length);
     if (json_status != TG_JSON_OK) {
         return TG_BOT_UPDATE_ERROR;
     }
 
-    json_status = tg_json_object_get(first_update.start, first_update.length,
+    json_status = tg_json_object_get(selected_update.start, selected_update.length,
                                      "message", &message);
     if (json_status == TG_JSON_NOT_FOUND) {
         return TG_BOT_OK;

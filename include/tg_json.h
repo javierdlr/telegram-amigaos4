@@ -72,6 +72,16 @@ tg_json_status tg_json_array_first(const char *array_json, unsigned long array_j
                                    tg_json_value *value);
 
 /**
+ * Looks up an element in a JSON array by zero-based index.
+ *
+ * array_json is caller-owned and must contain a complete JSON array. The
+ * returned value is a borrowed view into array_json. TG_JSON_NOT_FOUND means the
+ * array is valid but does not contain the requested index.
+ */
+tg_json_status tg_json_array_get(const char *array_json, unsigned long array_json_length,
+                                 unsigned long index, tg_json_value *value);
+
+/**
  * Looks up a top-level boolean field.
  *
  * Returns TG_JSON_TYPE_MISMATCH when the field exists but is not true/false.

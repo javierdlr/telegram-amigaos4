@@ -360,8 +360,15 @@ tg_json_status tg_json_object_get(const char *json, unsigned long json_length,
 tg_json_status tg_json_array_first(const char *array_json, unsigned long array_json_length,
                                    tg_json_value *value)
 {
+    return tg_json_array_get(array_json, array_json_length, 0, value);
+}
+
+tg_json_status tg_json_array_get(const char *array_json, unsigned long array_json_length,
+                                 unsigned long index, tg_json_value *value)
+{
     unsigned long pos;
     unsigned long next_pos;
+    unsigned long current_index;
 
     if (value != 0) {
         value->type = TG_JSON_VALUE_NULL;
@@ -385,7 +392,30 @@ tg_json_status tg_json_array_first(const char *array_json, unsigned long array_j
         return TG_JSON_NOT_FOUND;
     }
 
-    return tg_json_scan_value(array_json, array_json_length, pos, value, &next_pos);
+    current_index = 0;
+    for (;;) {
+        tg_json_status status;
+
+        status = tg_json_scan_value(array_json, array_json_length, pos, value,
+                                    &next_pos);
+        if (status != TG_JSON_OK) {
+            return status;
+        }
+        if (current_index == index) {
+            return TG_JSON_OK;
+        }
+
+        pos = next_pos;
+        tg_json_skip_ws(array_json, array_json_length, &pos);
+        if (pos < array_json_length && array_json[pos] == ',') {
+            ++pos;
+            ++current_index;
+        } else if (pos < array_json_length && array_json[pos] == ']') {
+            return TG_JSON_NOT_FOUND;
+        } else {
+            return TG_JSON_INVALID_JSON;
+        }
+    }
 }
 
 tg_json_status tg_json_object_get_bool(const char *json, unsigned long json_length,

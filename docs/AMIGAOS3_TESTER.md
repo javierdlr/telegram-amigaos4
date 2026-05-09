@@ -132,7 +132,8 @@ After sending a message to the bot from Telegram, read updates:
 telegram-test --telegram-get-updates-default
 ```
 
-The output should include the update id, chat id and text for the first update.
+The output should include the update id, chat id and text. When several updates
+are pending, the tester prints summaries for up to the first five.
 
 Send a controlled message back:
 

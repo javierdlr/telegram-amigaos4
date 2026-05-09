@@ -69,7 +69,7 @@ Initial core modules:
 - `tg_tls`/`tg_https`: minimal TLS/HTTPS with MorphOS OpenSSL and optional
   AmigaOS 3.x AmiSSL backends
 - Bot API `getMe`, `getUpdates` and `sendMessage` helpers; `getUpdates` can
-  extract the first update id, chat id and text from the returned array.
+  extract update ids, chat ids and text from the returned array.
 - A one-shot echo command can read one update, print the next offset and send an
   `Echo: ...` reply when the update contains text. JSON string escapes are
   decoded before displaying or echoing text.
@@ -224,10 +224,11 @@ Current options:
                       Send a Telegram message with default token file
 ```
 
-`getUpdates` prints the raw Telegram result and, when present, a minimal first
-update summary:
+`getUpdates` prints the raw Telegram result and, when present, minimal summaries
+for up to the first five updates:
 
 ```text
+telegram update index: 0
 telegram update id: 64052626
 telegram update chat id: 148319454
 telegram update text: /start

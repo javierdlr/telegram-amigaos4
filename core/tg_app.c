@@ -842,7 +842,10 @@ static int tg_run_telegram_get_updates_self_test(void)
         "Content-Type: application/json\r\n"
         "Connection: close\r\n"
         "\r\n"
-        "{\"ok\":true,\"result\":[{\"update_id\":1000,\"message\":{\"message_id\":1,\"chat\":{\"id\":123,\"type\":\"private\"},\"text\":\"hello\"}}]}";
+        "{\"ok\":true,\"result\":["
+        "{\"update_id\":1000,\"message\":{\"message_id\":1,\"chat\":{\"id\":123,\"type\":\"private\"},\"text\":\"hello\"}},"
+        "{\"update_id\":1001,\"message\":{\"message_id\":2,\"chat\":{\"id\":456,\"type\":\"private\"},\"text\":\"second\"}}"
+        "]}";
     static const char empty_updates_response[] =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: application/json\r\n"
@@ -878,6 +881,23 @@ static int tg_run_telegram_get_updates_self_test(void)
     }
     tg_print_update_summary(&update);
 
+    bot_status = tg_bot_get_updates_at(&result, 1, &update);
+    if (bot_status != TG_BOT_OK || !update.has_update ||
+        strcmp(update.update_id, "1001") != 0 ||
+        strcmp(update.chat_id, "456") != 0) {
+        printf("telegram getUpdates self-test: second update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    tg_print_update_summary(&update);
+
+    bot_status = tg_bot_get_updates_at(&result, 2, &update);
+    if (bot_status != TG_BOT_OK || update.has_update) {
+        printf("telegram getUpdates self-test: end update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+
     bot_status = tg_bot_parse_get_updates_http_response(
         empty_updates_response,
         (unsigned long)strlen(empty_updates_response),
@@ -897,12 +917,40 @@ static int tg_run_telegram_get_updates_self_test(void)
     return 0;
 }
 
+static int tg_print_get_updates_summaries(const tg_bot_call_result *result,
+                                          unsigned long max_updates)
+{
+    tg_bot_status bot_status;
+    tg_bot_update_summary update;
+    unsigned long index;
+
+    for (index = 0; index < max_updates; ++index) {
+        bot_status = tg_bot_get_updates_at(result, index, &update);
+        if (bot_status != TG_BOT_OK) {
+            printf("telegram getUpdates: update failed: %s\n",
+                   tg_bot_status_name(bot_status));
+            return 2;
+        }
+        if (!update.has_update) {
+            if (index == 0) {
+                puts("telegram update: none");
+            }
+            return 0;
+        }
+        printf("telegram update index: %lu\n", index);
+        tg_print_update_summary(&update);
+    }
+
+    printf("telegram getUpdates: summary limited to %lu updates\n",
+           max_updates);
+    return 0;
+}
+
 static int tg_run_telegram_get_updates_paths(const char *token_file_path,
                                              const char *offset)
 {
     tg_bot_status bot_status;
     tg_bot_call_result result;
-    tg_bot_update_summary update;
     char error_buffer[256];
     char http_buffer[16384];
     unsigned long http_response_length;
@@ -924,13 +972,9 @@ static int tg_run_telegram_get_updates_paths(const char *token_file_path,
     if (result.response.http_status_code >= 200 &&
         result.response.http_status_code <= 299 &&
         result.response.api.ok) {
-        bot_status = tg_bot_get_updates_first(&result, &update);
-        if (bot_status != TG_BOT_OK) {
-            printf("telegram getUpdates: update failed: %s\n",
-                   tg_bot_status_name(bot_status));
+        if (tg_print_get_updates_summaries(&result, 5) != 0) {
             return 2;
         }
-        tg_print_update_summary(&update);
     }
 
     if (result.response.http_status_code < 200 ||
