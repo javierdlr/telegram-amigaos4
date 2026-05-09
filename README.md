@@ -94,8 +94,8 @@ Initial targets:
 - AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS,
   Telegram `getMe` and `sendMessage` verified on Vampire/AmiKit with AmiSSL v5
 - AmigaOS 4.x: stub ready, toolchain to install
-- AROS: native build reported working by the community; networking/TLS backend
-  is still a stub
+- AROS: native build and offline self-tests reported working by the community
+  on AROS One 32-bit and 64-bit; networking/TLS backend is still a stub
 
 Build on MorphOS:
 
@@ -124,6 +124,10 @@ make -f Makefile.aros CC=i386-aros-gcc all
 Current AROS builds are useful for offline core tests. Network, HTTPS and live
 Telegram commands still report unsupported until the AROS platform backend is
 implemented.
+
+Community feedback so far: AROS One 32-bit has AmiSSL available, while AROS
+One 64-bit currently does not. A future AROS HTTPS backend will likely need to
+treat 32-bit and 64-bit separately.
 
 If AROS `make` reports `Clock skew detected`, check the system date/time or
 refresh the unpacked source file timestamps. This can happen when archives are
