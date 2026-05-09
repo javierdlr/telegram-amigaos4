@@ -11,6 +11,7 @@
 void tg_config_init(tg_config *config)
 {
     config->data_dir = tg_platform_default_data_dir();
+    config->token_file_path_override = 0;
     config->net_test_host = 0;
     config->net_test_port = 0;
     config->http_test_host = 0;
@@ -26,20 +27,29 @@ void tg_config_init(tg_config *config)
     config->telegram_path_test_method = 0;
     config->telegram_token_file_path = 0;
     config->telegram_token_file_method = 0;
+    config->telegram_default_token_file_method = 0;
     config->telegram_get_me_token_file_path = 0;
     config->telegram_get_updates_token_file_path = 0;
     config->telegram_get_updates_offset = 0;
+    config->telegram_get_updates_default_offset = 0;
     config->telegram_echo_once_token_file_path = 0;
     config->telegram_echo_once_offset = 0;
+    config->telegram_echo_once_default_offset = 0;
     config->telegram_echo_once_state_token_file_path = 0;
     config->telegram_echo_once_state_offset_file_path = 0;
+    config->telegram_echo_once_state_default_offset_file_path = 0;
     config->telegram_echo_loop_token_file_path = 0;
     config->telegram_echo_loop_offset_file_path = 0;
     config->telegram_echo_loop_poll_seconds = 0;
     config->telegram_echo_loop_max_iterations = 0;
+    config->telegram_echo_loop_default_offset_file_path = 0;
+    config->telegram_echo_loop_default_poll_seconds = 0;
+    config->telegram_echo_loop_default_max_iterations = 0;
     config->telegram_send_message_token_file_path = 0;
     config->telegram_send_message_chat_id = 0;
     config->telegram_send_message_text = 0;
+    config->telegram_send_message_default_chat_id = 0;
+    config->telegram_send_message_default_text = 0;
     config->log_level = TG_LOG_INFO;
     config->show_help = 0;
     config->run_net_test = 0;
@@ -52,16 +62,23 @@ void tg_config_init(tg_config *config)
     config->run_telegram_path_test = 0;
     config->run_telegram_http_self_test = 0;
     config->run_telegram_token_file_path_test = 0;
+    config->run_telegram_default_token_file_path_test = 0;
     config->run_telegram_get_me_self_test = 0;
     config->run_telegram_get_me = 0;
+    config->run_telegram_get_me_default = 0;
     config->run_telegram_get_updates_self_test = 0;
     config->run_telegram_get_updates = 0;
+    config->run_telegram_get_updates_default = 0;
     config->run_telegram_echo_once_self_test = 0;
     config->run_telegram_echo_once = 0;
+    config->run_telegram_echo_once_default = 0;
     config->run_telegram_echo_once_state = 0;
+    config->run_telegram_echo_once_state_default = 0;
     config->run_telegram_echo_loop = 0;
+    config->run_telegram_echo_loop_default = 0;
     config->run_telegram_send_message_self_test = 0;
     config->run_telegram_send_message = 0;
+    config->run_telegram_send_message_default = 0;
 }
 
 int tg_config_parse(tg_config *config, int argc, char **argv)
@@ -81,6 +98,12 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             }
             ++i;
             config->data_dir = argv[i];
+        } else if (strcmp(argv[i], "--token-file") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            ++i;
+            config->token_file_path_override = argv[i];
         } else if (strcmp(argv[i], "--net-test") == 0) {
             if (i + 2 >= argc) {
                 return 1;
@@ -144,6 +167,13 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_token_file_path = argv[i + 1];
             config->telegram_token_file_method = argv[i + 2];
             i += 2;
+        } else if (strcmp(argv[i], "--telegram-default-token-file-path-test") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_telegram_default_token_file_path_test = 1;
+            config->telegram_default_token_file_method = argv[i + 1];
+            ++i;
         } else if (strcmp(argv[i], "--telegram-getme-self-test") == 0) {
             config->run_telegram_get_me_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-getme") == 0) {
@@ -153,6 +183,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_telegram_get_me = 1;
             config->telegram_get_me_token_file_path = argv[i + 1];
             ++i;
+        } else if (strcmp(argv[i], "--telegram-getme-default") == 0) {
+            config->run_telegram_get_me_default = 1;
         } else if (strcmp(argv[i], "--telegram-get-updates-self-test") == 0) {
             config->run_telegram_get_updates_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-get-updates") == 0) {
@@ -164,6 +196,12 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             ++i;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 config->telegram_get_updates_offset = argv[i + 1];
+                ++i;
+            }
+        } else if (strcmp(argv[i], "--telegram-get-updates-default") == 0) {
+            config->run_telegram_get_updates_default = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_get_updates_default_offset = argv[i + 1];
                 ++i;
             }
         } else if (strcmp(argv[i], "--telegram-echo-once-self-test") == 0) {
@@ -179,6 +217,12 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
                 config->telegram_echo_once_offset = argv[i + 1];
                 ++i;
             }
+        } else if (strcmp(argv[i], "--telegram-echo-once-default") == 0) {
+            config->run_telegram_echo_once_default = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_echo_once_default_offset = argv[i + 1];
+                ++i;
+            }
         } else if (strcmp(argv[i], "--telegram-echo-once-state") == 0) {
             if (i + 2 >= argc) {
                 return 1;
@@ -187,6 +231,13 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_echo_once_state_token_file_path = argv[i + 1];
             config->telegram_echo_once_state_offset_file_path = argv[i + 2];
             i += 2;
+        } else if (strcmp(argv[i], "--telegram-echo-once-state-default") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_telegram_echo_once_state_default = 1;
+            config->telegram_echo_once_state_default_offset_file_path = argv[i + 1];
+            ++i;
         } else if (strcmp(argv[i], "--telegram-echo-loop") == 0) {
             if (i + 4 >= argc) {
                 return 1;
@@ -197,6 +248,15 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_echo_loop_poll_seconds = argv[i + 3];
             config->telegram_echo_loop_max_iterations = argv[i + 4];
             i += 4;
+        } else if (strcmp(argv[i], "--telegram-echo-loop-default") == 0) {
+            if (i + 3 >= argc) {
+                return 1;
+            }
+            config->run_telegram_echo_loop_default = 1;
+            config->telegram_echo_loop_default_offset_file_path = argv[i + 1];
+            config->telegram_echo_loop_default_poll_seconds = argv[i + 2];
+            config->telegram_echo_loop_default_max_iterations = argv[i + 3];
+            i += 3;
         } else if (strcmp(argv[i], "--telegram-send-message-self-test") == 0) {
             config->run_telegram_send_message_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-send-message") == 0) {
@@ -208,6 +268,14 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_send_message_chat_id = argv[i + 2];
             config->telegram_send_message_text = argv[i + 3];
             i += 3;
+        } else if (strcmp(argv[i], "--telegram-send-message-default") == 0) {
+            if (i + 2 >= argc) {
+                return 1;
+            }
+            config->run_telegram_send_message_default = 1;
+            config->telegram_send_message_default_chat_id = argv[i + 1];
+            config->telegram_send_message_default_text = argv[i + 2];
+            i += 2;
         } else {
             return 1;
         }
@@ -225,6 +293,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "  -v, --verbose         Enable debug logging\n");
     fprintf(stream, "  -q, --quiet           Show warnings and errors only\n");
     fprintf(stream, "      --data-dir <path> Set application data directory\n");
+    fprintf(stream, "      --token-file <path>\n");
+    fprintf(stream, "                         Override default Telegram token file\n");
     fprintf(stream, "      --net-test <host> <port>\n");
     fprintf(stream, "                         Test DNS resolution and TCP connect\n");
     fprintf(stream, "      --http-test <host> <port> <path>\n");
@@ -245,24 +315,38 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run built-in HTTP-to-Telegram parser samples\n");
     fprintf(stream, "      --telegram-token-file-path-test <file> <method>\n");
     fprintf(stream, "                         Load token file and test Bot API path construction\n");
+    fprintf(stream, "      --telegram-default-token-file-path-test <method>\n");
+    fprintf(stream, "                         Load default token file and test Bot API path construction\n");
     fprintf(stream, "      --telegram-getme-self-test\n");
     fprintf(stream, "                         Run built-in Bot API getMe parser sample\n");
     fprintf(stream, "      --telegram-getme <file>\n");
     fprintf(stream, "                         Call Telegram getMe with token loaded from file\n");
+    fprintf(stream, "      --telegram-getme-default\n");
+    fprintf(stream, "                         Call Telegram getMe with default token file\n");
     fprintf(stream, "      --telegram-get-updates-self-test\n");
     fprintf(stream, "                         Run built-in Bot API getUpdates parser sample\n");
     fprintf(stream, "      --telegram-get-updates <file> [offset]\n");
     fprintf(stream, "                         Call Telegram getUpdates with optional offset\n");
+    fprintf(stream, "      --telegram-get-updates-default [offset]\n");
+    fprintf(stream, "                         Call Telegram getUpdates with default token file\n");
     fprintf(stream, "      --telegram-echo-once-self-test\n");
     fprintf(stream, "                         Run built-in one-shot echo flow sample\n");
     fprintf(stream, "      --telegram-echo-once <file> [offset]\n");
     fprintf(stream, "                         Read one update and echo its text back\n");
+    fprintf(stream, "      --telegram-echo-once-default [offset]\n");
+    fprintf(stream, "                         Echo one update using the default token file\n");
     fprintf(stream, "      --telegram-echo-once-state <file> <offset-file>\n");
     fprintf(stream, "                         Echo one update using a persistent offset file\n");
+    fprintf(stream, "      --telegram-echo-once-state-default <offset-file>\n");
+    fprintf(stream, "                         Stateful echo one update with default token file\n");
     fprintf(stream, "      --telegram-echo-loop <file> <offset-file> <poll-seconds> <max-iterations>\n");
     fprintf(stream, "                         Run bounded stateful echo polling\n");
+    fprintf(stream, "      --telegram-echo-loop-default <offset-file> <poll-seconds> <max-iterations>\n");
+    fprintf(stream, "                         Run bounded echo polling with default token file\n");
     fprintf(stream, "      --telegram-send-message-self-test\n");
     fprintf(stream, "                         Run built-in Bot API sendMessage parser sample\n");
     fprintf(stream, "      --telegram-send-message <file> <chat-id> <text>\n");
     fprintf(stream, "                         Send a Telegram message with token loaded from file\n");
+    fprintf(stream, "      --telegram-send-message-default <chat-id> <text>\n");
+    fprintf(stream, "                         Send a Telegram message with default token file\n");
 }

@@ -73,6 +73,8 @@ Initial core modules:
   decoded before displaying or echoing text.
 - A bounded echo loop can repeat the stateful one-shot flow with caller-chosen
   polling seconds and a maximum iteration count.
+- Default-token command variants can load `telegram-token.txt` from the active
+  data directory, or from a path supplied with `--token-file`.
 
 TLS note: the current MorphOS and AmigaOS 3.x backends use OpenSSL/AmiSSL with
 SNI, but certificate validation is not enabled yet. This is enough for
@@ -147,6 +149,8 @@ Current options:
 -v, --verbose         Enable debug logging
 -q, --quiet           Show warnings and errors only
     --data-dir <path> Set application data directory
+    --token-file <path>
+                      Override default Telegram token file
     --net-test <host> <port>
                       Test DNS resolution and TCP connection
     --http-test <host> <port> <path>
@@ -167,26 +171,40 @@ Current options:
                       Run built-in HTTP-to-Telegram parser samples
     --telegram-token-file-path-test <file> <method>
                       Load token file and test Bot API path construction
+    --telegram-default-token-file-path-test <method>
+                      Load default token file and test Bot API path construction
     --telegram-getme-self-test
                       Run built-in Bot API getMe parser sample
     --telegram-getme <file>
                       Call Telegram getMe with token loaded from file
+    --telegram-getme-default
+                      Call Telegram getMe with default token file
     --telegram-get-updates-self-test
                       Run built-in Bot API getUpdates parser sample
     --telegram-get-updates <file> [offset]
                       Call Telegram getUpdates with optional offset
+    --telegram-get-updates-default [offset]
+                      Call Telegram getUpdates with default token file
     --telegram-echo-once-self-test
                       Run built-in one-shot echo flow sample
     --telegram-echo-once <file> [offset]
                       Read one update and echo its text back
+    --telegram-echo-once-default [offset]
+                      Echo one update using the default token file
     --telegram-echo-once-state <file> <offset-file>
                       Echo one update using a persistent offset file
+    --telegram-echo-once-state-default <offset-file>
+                      Stateful echo one update with default token file
     --telegram-echo-loop <file> <offset-file> <poll-seconds> <max-iterations>
                       Run bounded stateful echo polling
+    --telegram-echo-loop-default <offset-file> <poll-seconds> <max-iterations>
+                      Run bounded stateful echo polling with default token file
     --telegram-send-message-self-test
                       Run built-in Bot API sendMessage parser sample
     --telegram-send-message <file> <chat-id> <text>
                       Send a Telegram message with token loaded from file
+    --telegram-send-message-default <chat-id> <text>
+                      Send a Telegram message with default token file
 ```
 
 `getUpdates` prints the raw Telegram result and, when present, a minimal first
@@ -209,6 +227,11 @@ successful send or after deliberately skipping a non-text update.
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.
+
+Commands ending in `-default` load the token from `telegram-token.txt` inside
+the active data directory. With the default AmigaOS-style data directory this is
+`PROGDIR:telegram-token.txt`; on Unix-like paths a slash is inserted when
+needed. `--token-file <path>` overrides that computed path.
 
 `telegram-echo-loop` is deliberately bounded rather than daemon-style. It
 reuses the same persistent offset file as `telegram-echo-once-state`, sleeps

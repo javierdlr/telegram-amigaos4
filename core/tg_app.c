@@ -18,6 +18,8 @@
 #include "tg_platform.h"
 #include "tg_telegram.h"
 
+static const char tg_default_token_file_name[] = "telegram-token.txt";
+
 static int tg_run_http_test(const tg_config *config)
 {
     tg_http_status http_status;
@@ -332,6 +334,68 @@ static void tg_trim_ascii_space(char *text)
     text[length] = '\0';
 }
 
+static int tg_build_data_file_path(const char *data_dir, const char *file_name,
+                                   char *buffer, unsigned long buffer_size)
+{
+    unsigned long data_dir_length;
+    unsigned long file_name_length;
+    unsigned long separator_length;
+    char last_char;
+
+    if (file_name == 0 || file_name[0] == '\0' ||
+        buffer == 0 || buffer_size == 0) {
+        return 1;
+    }
+
+    if (data_dir == 0) {
+        data_dir = "";
+    }
+
+    data_dir_length = (unsigned long)strlen(data_dir);
+    file_name_length = (unsigned long)strlen(file_name);
+    separator_length = 0;
+
+    if (data_dir_length > 0) {
+        last_char = data_dir[data_dir_length - 1];
+        if (last_char != ':' && last_char != '/' && last_char != '\\') {
+            separator_length = 1;
+        }
+    }
+
+    if (data_dir_length + separator_length + file_name_length + 1 > buffer_size) {
+        return 1;
+    }
+
+    if (data_dir_length > 0) {
+        memcpy(buffer, data_dir, data_dir_length);
+    }
+    if (separator_length > 0) {
+        buffer[data_dir_length] = '/';
+    }
+    memcpy(buffer + data_dir_length + separator_length,
+           file_name, file_name_length);
+    buffer[data_dir_length + separator_length + file_name_length] = '\0';
+    return 0;
+}
+
+static const char *tg_default_token_file_path(const tg_config *config,
+                                             char *buffer,
+                                             unsigned long buffer_size)
+{
+    if (config->token_file_path_override != 0 &&
+        config->token_file_path_override[0] != '\0') {
+        return config->token_file_path_override;
+    }
+
+    if (tg_build_data_file_path(config->data_dir, tg_default_token_file_name,
+                                buffer, buffer_size) != 0) {
+        puts("telegram token file: default path too long");
+        return 0;
+    }
+
+    return buffer;
+}
+
 static int tg_load_offset_file(const char *path, char *offset,
                                unsigned long offset_size)
 {
@@ -552,6 +616,26 @@ static int tg_run_telegram_token_file_path_test(const tg_config *config)
     return 0;
 }
 
+static int tg_run_telegram_default_token_file_path_test(const tg_config *config)
+{
+    tg_config local_config;
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    local_config = *config;
+    local_config.telegram_token_file_path = resolved_path;
+    local_config.telegram_token_file_method =
+        config->telegram_default_token_file_method;
+    return tg_run_telegram_token_file_path_test(&local_config);
+}
+
 static int tg_run_telegram_get_me_self_test(void)
 {
     static const char get_me_response[] =
@@ -609,7 +693,7 @@ static void tg_print_bot_error(const char *label, tg_bot_status bot_status,
     printf("\n");
 }
 
-static int tg_run_telegram_get_me(const tg_config *config)
+static int tg_run_telegram_get_me_path(const char *token_file_path)
 {
     tg_bot_status bot_status;
     tg_bot_call_result result;
@@ -617,7 +701,7 @@ static int tg_run_telegram_get_me(const tg_config *config)
     char http_buffer[8192];
     unsigned long http_response_length;
 
-    bot_status = tg_bot_get_me_from_token_file(config->telegram_get_me_token_file_path,
+    bot_status = tg_bot_get_me_from_token_file(token_file_path,
                                                http_buffer, sizeof(http_buffer),
                                                &http_response_length, &result,
                                                error_buffer, sizeof(error_buffer));
@@ -637,6 +721,26 @@ static int tg_run_telegram_get_me(const tg_config *config)
     }
 
     return 0;
+}
+
+static int tg_run_telegram_get_me(const tg_config *config)
+{
+    return tg_run_telegram_get_me_path(config->telegram_get_me_token_file_path);
+}
+
+static int tg_run_telegram_get_me_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_get_me_path(resolved_path);
 }
 
 static int tg_run_telegram_get_updates_self_test(void)
@@ -701,7 +805,8 @@ static int tg_run_telegram_get_updates_self_test(void)
     return 0;
 }
 
-static int tg_run_telegram_get_updates(const tg_config *config)
+static int tg_run_telegram_get_updates_paths(const char *token_file_path,
+                                             const char *offset)
 {
     tg_bot_status bot_status;
     tg_bot_call_result result;
@@ -711,8 +816,8 @@ static int tg_run_telegram_get_updates(const tg_config *config)
     unsigned long http_response_length;
 
     bot_status = tg_bot_get_updates_from_token_file_with_offset(
-        config->telegram_get_updates_token_file_path,
-        config->telegram_get_updates_offset,
+        token_file_path,
+        offset,
         http_buffer, sizeof(http_buffer), &http_response_length, &result,
         error_buffer, sizeof(error_buffer));
     if (bot_status != TG_BOT_OK) {
@@ -743,6 +848,29 @@ static int tg_run_telegram_get_updates(const tg_config *config)
     }
 
     return 0;
+}
+
+static int tg_run_telegram_get_updates(const tg_config *config)
+{
+    return tg_run_telegram_get_updates_paths(
+        config->telegram_get_updates_token_file_path,
+        config->telegram_get_updates_offset);
+}
+
+static int tg_run_telegram_get_updates_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_get_updates_paths(
+        resolved_path, config->telegram_get_updates_default_offset);
 }
 
 static int tg_run_telegram_echo_once_self_test(void)
@@ -816,7 +944,8 @@ static int tg_run_telegram_echo_once_self_test(void)
     return 0;
 }
 
-static int tg_run_telegram_echo_once(const tg_config *config)
+static int tg_run_telegram_echo_once_paths(const char *token_file_path,
+                                           const char *offset)
 {
     tg_bot_status bot_status;
     tg_bot_call_result result;
@@ -830,8 +959,8 @@ static int tg_run_telegram_echo_once(const tg_config *config)
     unsigned long send_response_length;
 
     bot_status = tg_bot_get_updates_from_token_file_with_offset(
-        config->telegram_echo_once_token_file_path,
-        config->telegram_echo_once_offset,
+        token_file_path,
+        offset,
         http_buffer, sizeof(http_buffer), &http_response_length, &result,
         error_buffer, sizeof(error_buffer));
     if (bot_status != TG_BOT_OK) {
@@ -878,7 +1007,7 @@ static int tg_run_telegram_echo_once(const tg_config *config)
     }
 
     bot_status = tg_bot_send_message_from_token_file(
-        config->telegram_echo_once_token_file_path,
+        token_file_path,
         update.chat_id, echo_text,
         send_buffer, sizeof(send_buffer), &send_response_length, &result,
         error_buffer, sizeof(error_buffer));
@@ -899,6 +1028,29 @@ static int tg_run_telegram_echo_once(const tg_config *config)
     }
 
     return 0;
+}
+
+static int tg_run_telegram_echo_once(const tg_config *config)
+{
+    return tg_run_telegram_echo_once_paths(
+        config->telegram_echo_once_token_file_path,
+        config->telegram_echo_once_offset);
+}
+
+static int tg_run_telegram_echo_once_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_echo_once_paths(
+        resolved_path, config->telegram_echo_once_default_offset);
 }
 
 static int tg_run_telegram_echo_once_state_paths(const char *token_file_path,
@@ -1004,20 +1156,38 @@ static int tg_run_telegram_echo_once_state(const tg_config *config)
         config->telegram_echo_once_state_offset_file_path);
 }
 
-static int tg_run_telegram_echo_loop(const tg_config *config)
+static int tg_run_telegram_echo_once_state_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_echo_once_state_paths(
+        resolved_path,
+        config->telegram_echo_once_state_default_offset_file_path);
+}
+
+static int tg_run_telegram_echo_loop_paths(const char *token_file_path,
+                                           const char *offset_file_path,
+                                           const char *poll_seconds_text,
+                                           const char *max_iterations_text)
 {
     unsigned long poll_seconds;
     unsigned long max_iterations;
     unsigned long iteration;
     int rc;
 
-    if (tg_parse_decimal_ulong(config->telegram_echo_loop_poll_seconds,
-                               &poll_seconds) != 0) {
+    if (tg_parse_decimal_ulong(poll_seconds_text, &poll_seconds) != 0) {
         puts("telegram echo loop: invalid poll seconds");
         return 2;
     }
-    if (tg_parse_decimal_ulong(config->telegram_echo_loop_max_iterations,
-                               &max_iterations) != 0) {
+    if (tg_parse_decimal_ulong(max_iterations_text, &max_iterations) != 0) {
         puts("telegram echo loop: invalid max iterations");
         return 2;
     }
@@ -1034,8 +1204,8 @@ static int tg_run_telegram_echo_loop(const tg_config *config)
         printf("telegram echo loop iteration: %lu/%lu\n",
                iteration + 1UL, max_iterations);
         rc = tg_run_telegram_echo_once_state_paths(
-            config->telegram_echo_loop_token_file_path,
-            config->telegram_echo_loop_offset_file_path);
+            token_file_path,
+            offset_file_path);
         if (rc != 0) {
             return rc;
         }
@@ -1046,6 +1216,34 @@ static int tg_run_telegram_echo_loop(const tg_config *config)
     }
 
     return 0;
+}
+
+static int tg_run_telegram_echo_loop(const tg_config *config)
+{
+    return tg_run_telegram_echo_loop_paths(
+        config->telegram_echo_loop_token_file_path,
+        config->telegram_echo_loop_offset_file_path,
+        config->telegram_echo_loop_poll_seconds,
+        config->telegram_echo_loop_max_iterations);
+}
+
+static int tg_run_telegram_echo_loop_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_echo_loop_paths(
+        resolved_path,
+        config->telegram_echo_loop_default_offset_file_path,
+        config->telegram_echo_loop_default_poll_seconds,
+        config->telegram_echo_loop_default_max_iterations);
 }
 
 static int tg_run_telegram_send_message_self_test(void)
@@ -1095,7 +1293,9 @@ static int tg_run_telegram_send_message_self_test(void)
     return 0;
 }
 
-static int tg_run_telegram_send_message(const tg_config *config)
+static int tg_run_telegram_send_message_path(const char *token_file_path,
+                                             const char *chat_id,
+                                             const char *text)
 {
     tg_bot_status bot_status;
     tg_bot_call_result result;
@@ -1104,9 +1304,9 @@ static int tg_run_telegram_send_message(const tg_config *config)
     unsigned long http_response_length;
 
     bot_status = tg_bot_send_message_from_token_file(
-        config->telegram_send_message_token_file_path,
-        config->telegram_send_message_chat_id,
-        config->telegram_send_message_text,
+        token_file_path,
+        chat_id,
+        text,
         http_buffer, sizeof(http_buffer), &http_response_length, &result,
         error_buffer, sizeof(error_buffer));
     if (bot_status != TG_BOT_OK) {
@@ -1125,6 +1325,32 @@ static int tg_run_telegram_send_message(const tg_config *config)
     }
 
     return 0;
+}
+
+static int tg_run_telegram_send_message(const tg_config *config)
+{
+    return tg_run_telegram_send_message_path(
+        config->telegram_send_message_token_file_path,
+        config->telegram_send_message_chat_id,
+        config->telegram_send_message_text);
+}
+
+static int tg_run_telegram_send_message_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_send_message_path(
+        resolved_path,
+        config->telegram_send_message_default_chat_id,
+        config->telegram_send_message_default_text);
 }
 
 int tg_app_run(int argc, char **argv)
@@ -1210,12 +1436,20 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_token_file_path_test(&config);
     }
 
+    if (config.run_telegram_default_token_file_path_test) {
+        return tg_run_telegram_default_token_file_path_test(&config);
+    }
+
     if (config.run_telegram_get_me_self_test) {
         return tg_run_telegram_get_me_self_test();
     }
 
     if (config.run_telegram_get_me) {
         return tg_run_telegram_get_me(&config);
+    }
+
+    if (config.run_telegram_get_me_default) {
+        return tg_run_telegram_get_me_default(&config);
     }
 
     if (config.run_telegram_get_updates_self_test) {
@@ -1226,6 +1460,10 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_get_updates(&config);
     }
 
+    if (config.run_telegram_get_updates_default) {
+        return tg_run_telegram_get_updates_default(&config);
+    }
+
     if (config.run_telegram_echo_once_self_test) {
         return tg_run_telegram_echo_once_self_test();
     }
@@ -1234,12 +1472,24 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_echo_once(&config);
     }
 
+    if (config.run_telegram_echo_once_default) {
+        return tg_run_telegram_echo_once_default(&config);
+    }
+
     if (config.run_telegram_echo_once_state) {
         return tg_run_telegram_echo_once_state(&config);
     }
 
+    if (config.run_telegram_echo_once_state_default) {
+        return tg_run_telegram_echo_once_state_default(&config);
+    }
+
     if (config.run_telegram_echo_loop) {
         return tg_run_telegram_echo_loop(&config);
+    }
+
+    if (config.run_telegram_echo_loop_default) {
+        return tg_run_telegram_echo_loop_default(&config);
     }
 
     if (config.run_telegram_send_message_self_test) {
@@ -1248,6 +1498,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_send_message) {
         return tg_run_telegram_send_message(&config);
+    }
+
+    if (config.run_telegram_send_message_default) {
+        return tg_run_telegram_send_message_default(&config);
     }
 
     return 0;
