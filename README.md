@@ -64,7 +64,8 @@ Initial core modules:
 - `tg_json`: minimal top-level JSON field lookup plus JSON string escape decoding
 - `tg_net`: portable TCP API with MorphOS and initial AmigaOS 3.x backends
 - `tg_telegram`: Telegram API response envelope parsing
-- `tg_tls`/`tg_https`: minimal TLS/HTTPS with an initial MorphOS OpenSSL backend
+- `tg_tls`/`tg_https`: minimal TLS/HTTPS with MorphOS OpenSSL and optional
+  AmigaOS 3.x AmiSSL backends
 - Bot API `getMe`, `getUpdates` and `sendMessage` helpers; `getUpdates` can
   extract the first update id, chat id and text from the returned array.
 - A one-shot echo command can read one update, print the next offset and send an
@@ -73,14 +74,15 @@ Initial core modules:
 - A bounded echo loop can repeat the stateful one-shot flow with caller-chosen
   polling seconds and a maximum iteration count.
 
-TLS note: the initial MorphOS backend uses OpenSSL/AmiSSL with SNI, but
-certificate validation is not enabled yet. This is enough for connectivity
-tests, not yet for secure use.
+TLS note: the current MorphOS and AmigaOS 3.x backends use OpenSSL/AmiSSL with
+SNI, but certificate validation is not enabled yet. This is enough for
+connectivity tests, not yet for secure use.
 
 Initial targets:
 
 - MorphOS: active and verified
-- AmigaOS 3.x: TCP/HTTP smoke test verified on real hardware with ixemul
+- AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS and
+  Telegram `getMe` verified on Vampire/AmiKit with AmiSSL v5
 - AmigaOS 4.x: stub ready, toolchain to install
 - AROS: stub ready, toolchain to install
 
@@ -107,6 +109,23 @@ The AmigaOS 3.x GCC helper currently uses an ixemul-based build and `-O0`.
 This is intentional: the tested m68k GCC runtime is incomplete for default
 linking, and an optimized `-O2` build miscompiled one JSON escaping self-test on
 the tested setup.
+
+Optional AmigaOS 3.x HTTPS/AmiSSL build:
+
+```sh
+PATH=/path/to/m68k-amigaos-toolchain/bin:$PATH \
+make -f Makefile.amigaos3-gcc \
+  ENABLE_AMISSL=1 \
+  AMISSL_SDK=/path/to/AmiSSL/Developer \
+  TARGET=build/amigaos3/telegram-test-amissl
+```
+
+The AmiSSL build needs AmiSSL v5 installed on the target system, with
+`AmiSSL:` assigned to the AmiSSL install directory and `LIBS:` extended with
+`AmiSSL:Libs`. On AmigaOS 3.x/Vampire, choose the AmiSSL `68020/030/040/080`
+library variant. If an older `amisslmaster.library` is already resident after
+an upgrade, reboot or run `Avail FLUSH` before testing so `OpenLibrary()` sees
+the newer master.
 
 Flow Studio on MorphOS:
 
