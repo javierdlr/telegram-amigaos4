@@ -92,7 +92,8 @@ Initial targets:
 - AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS,
   Telegram `getMe` and `sendMessage` verified on Vampire/AmiKit with AmiSSL v5
 - AmigaOS 4.x: stub ready, toolchain to install
-- AROS: stub ready, toolchain to install
+- AROS: native build reported working by the community; networking/TLS backend
+  is still a stub
 
 Build on MorphOS:
 
@@ -105,6 +106,22 @@ Remote build from the Mac:
 ```sh
 ssh user@<morphos-host> 'System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos run'
 ```
+
+Build on native AROS:
+
+```text
+make -f Makefile.aros all
+```
+
+The AROS Makefile uses native `gcc` by default. Cross-builds can override it:
+
+```sh
+make -f Makefile.aros CC=i386-aros-gcc all
+```
+
+Current AROS builds are useful for offline core tests. Network, HTTPS and live
+Telegram commands still report unsupported until the AROS platform backend is
+implemented.
 
 Cross-build for AmigaOS 3.x from the Mac:
 
@@ -236,6 +253,17 @@ telegram update index: 0
 telegram update id: 64052626
 telegram update chat id: 148319454
 telegram update text: /start
+```
+
+Useful commands for a first offline run on AROS or another target without a
+network backend:
+
+```text
+telegram-test --help
+telegram-test --telegram-json-self-test
+telegram-test --telegram-get-updates-self-test
+telegram-test --telegram-echo-once-self-test
+telegram-test --telegram-send-message-self-test
 ```
 
 `telegram-echo-once` is intentionally not a permanent loop. Run it again with
