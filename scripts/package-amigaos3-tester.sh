@@ -48,6 +48,9 @@ Build: $COMMIT_ID
 This is not a usable Telegram client yet. It is a diagnostic tester for
 AmigaOS 3.x with ixemul and AmiSSL v5.
 
+On 68060 systems, use the AmiSSL 68060 library variant. On Vampire or 68080
+systems, use the AmiSSL 68020/030/040/080 library variant.
+
 Minimum supervised test:
 
   Execute RunAmigaOS3Preflight
@@ -62,8 +65,14 @@ contain only the bot token. Never publish the token or screenshots that show it.
 
 Useful commands:
 
+  telegram-test --telegram-json-self-test
+  telegram-test --telegram-get-updates-self-test
+  telegram-test --telegram-read-once-state-self-test
+  telegram-test --telegram-echo-once-self-test
+  telegram-test --telegram-send-message-self-test
   telegram-test --telegram-getme-default
   telegram-test --telegram-get-updates-default
+  telegram-test --telegram-read-once-state-default telegram-offset.txt
   telegram-test --telegram-send-message-default <chat-id> "Hello from AmigaOS 3.x"
   telegram-test --telegram-echo-once-state-default telegram-offset.txt
   telegram-test --telegram-echo-loop-default telegram-offset.txt 5 10

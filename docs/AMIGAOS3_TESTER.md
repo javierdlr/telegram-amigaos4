@@ -36,9 +36,10 @@ The tested AmigaOS 3.x build currently requires:
 - enough stack for TLS work, for example `Stack 65536`;
 - a real or test Telegram bot token only for Bot API commands.
 
-On Vampire or 68080-class systems, use the AmiSSL 68020/030/040/080 library
-variant. If AmiSSL libraries were upgraded or changed while the system was
-running, reboot or run `Avail FLUSH` before testing.
+On 68060 systems, use the AmiSSL `68060` library variant. On Vampire or
+68080-class systems, use the AmiSSL `68020/030/040/080` library variant. If
+AmiSSL libraries were upgraded or changed while the system was running, reboot
+or run `Avail FLUSH` before testing.
 
 ## Build From The Mac
 
