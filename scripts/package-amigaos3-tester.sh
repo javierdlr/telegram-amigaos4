@@ -63,6 +63,10 @@ Expected successful HTTPS result:
 For Bot API tests, create telegram-token.txt in this drawer. The file must
 contain only the bot token. Never publish the token or screenshots that show it.
 
+To create a test bot, open Telegram, talk to @BotFather, send /newbot, choose a
+display name and a username ending in bot, then copy the token into
+telegram-token.txt. If the token is exposed, revoke it with BotFather /revoke.
+
 Useful commands:
 
   telegram-test --telegram-json-self-test

@@ -135,17 +135,30 @@ a token and does not call a Bot API method.
 
 ## Add A Bot Token
 
+Create a dedicated test bot before running live Bot API commands:
+
+1. Open Telegram on a phone or desktop.
+2. Search for `@BotFather`.
+3. Send `/newbot`.
+4. Choose a display name, for example `Telegram Amiga Test`.
+5. Choose a username ending in `bot`, for example `MyAmigaTestBot`.
+6. BotFather will return a token such as
+   `123456789:REPLACE_WITH_REAL_SECRET`.
+
 Create `telegram-token.txt` in the same drawer as `telegram-test`. Do not post
 this file, do not commit it and do not paste the token in public logs.
 
 You can create the file with your preferred Amiga text editor. It must contain
-only one line:
+only one line, with no leading or trailing spaces:
 
 ```text
 123456:REPLACE_WITH_REAL_BOT_TOKEN
 ```
 
 The default commands read this file through `PROGDIR:telegram-token.txt`.
+
+If a token is ever exposed in a screenshot, public log or forum post, revoke it
+with BotFather using `/revoke` and create a new one.
 
 ## Bot API Smoke Tests
 
@@ -157,7 +170,13 @@ telegram-test --telegram-getme-default
 
 A valid token should return HTTP 200 and `telegram ok: true`.
 
-After sending a message to the bot from Telegram, read updates:
+Send a message to the bot from Telegram on your phone or desktop, for example:
+
+```text
+hello from phone
+```
+
+Then read updates on AmigaOS:
 
 ```text
 telegram-test --telegram-get-updates-default
@@ -180,6 +199,8 @@ Send a controlled message back:
 ```text
 telegram-test --telegram-send-message-default <chat-id> "Hello from AmigaOS 3.x"
 ```
+
+Use the `chat id` printed by `getUpdates` or `read-once-state`.
 
 Run one stateful echo batch:
 
