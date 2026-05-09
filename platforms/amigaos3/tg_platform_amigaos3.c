@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #if defined(__amigaos3__)
 #include <netdb.h>
@@ -29,6 +30,28 @@ const char *tg_platform_default_data_dir(void)
 void tg_platform_log(const char *level, const char *message)
 {
     printf("[amigaos3:%s] %s\n", level, message);
+}
+
+void tg_platform_sleep_seconds(unsigned long seconds)
+{
+#if defined(__amigaos3__)
+    if (seconds > 0) {
+        sleep(seconds);
+    }
+#else
+    time_t start;
+
+    if (seconds == 0) {
+        return;
+    }
+
+    start = time(0);
+    if (start == (time_t)-1) {
+        return;
+    }
+    while ((unsigned long)(time(0) - start) < seconds) {
+    }
+#endif
 }
 
 #if defined(__amigaos3__)

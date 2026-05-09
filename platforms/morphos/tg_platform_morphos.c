@@ -39,6 +39,13 @@ void tg_platform_log(const char *level, const char *message)
     printf("[morphos:%s] %s\n", level, message);
 }
 
+void tg_platform_sleep_seconds(unsigned long seconds)
+{
+    if (seconds > 0) {
+        sleep(seconds);
+    }
+}
+
 static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer_size,
                                   const char *message)
 {

@@ -33,6 +33,10 @@ void tg_config_init(tg_config *config)
     config->telegram_echo_once_offset = 0;
     config->telegram_echo_once_state_token_file_path = 0;
     config->telegram_echo_once_state_offset_file_path = 0;
+    config->telegram_echo_loop_token_file_path = 0;
+    config->telegram_echo_loop_offset_file_path = 0;
+    config->telegram_echo_loop_poll_seconds = 0;
+    config->telegram_echo_loop_max_iterations = 0;
     config->telegram_send_message_token_file_path = 0;
     config->telegram_send_message_chat_id = 0;
     config->telegram_send_message_text = 0;
@@ -55,6 +59,7 @@ void tg_config_init(tg_config *config)
     config->run_telegram_echo_once_self_test = 0;
     config->run_telegram_echo_once = 0;
     config->run_telegram_echo_once_state = 0;
+    config->run_telegram_echo_loop = 0;
     config->run_telegram_send_message_self_test = 0;
     config->run_telegram_send_message = 0;
 }
@@ -182,6 +187,16 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_echo_once_state_token_file_path = argv[i + 1];
             config->telegram_echo_once_state_offset_file_path = argv[i + 2];
             i += 2;
+        } else if (strcmp(argv[i], "--telegram-echo-loop") == 0) {
+            if (i + 4 >= argc) {
+                return 1;
+            }
+            config->run_telegram_echo_loop = 1;
+            config->telegram_echo_loop_token_file_path = argv[i + 1];
+            config->telegram_echo_loop_offset_file_path = argv[i + 2];
+            config->telegram_echo_loop_poll_seconds = argv[i + 3];
+            config->telegram_echo_loop_max_iterations = argv[i + 4];
+            i += 4;
         } else if (strcmp(argv[i], "--telegram-send-message-self-test") == 0) {
             config->run_telegram_send_message_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-send-message") == 0) {
@@ -244,6 +259,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Read one update and echo its text back\n");
     fprintf(stream, "      --telegram-echo-once-state <file> <offset-file>\n");
     fprintf(stream, "                         Echo one update using a persistent offset file\n");
+    fprintf(stream, "      --telegram-echo-loop <file> <offset-file> <poll-seconds> <max-iterations>\n");
+    fprintf(stream, "                         Run bounded stateful echo polling\n");
     fprintf(stream, "      --telegram-send-message-self-test\n");
     fprintf(stream, "                         Run built-in Bot API sendMessage parser sample\n");
     fprintf(stream, "      --telegram-send-message <file> <chat-id> <text>\n");

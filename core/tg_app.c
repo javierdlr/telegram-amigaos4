@@ -4,6 +4,7 @@
  */
 
 #include <stdio.h>
+#include <limits.h>
 #include <string.h>
 
 #include "tg_app.h"
@@ -258,6 +259,29 @@ static int tg_is_decimal_text(const char *text)
         ++text;
     }
     return 1;
+}
+
+static int tg_parse_decimal_ulong(const char *text, unsigned long *value)
+{
+    unsigned long result;
+    unsigned long digit;
+
+    if (value == 0 || !tg_is_decimal_text(text)) {
+        return 1;
+    }
+
+    result = 0;
+    while (*text != '\0') {
+        digit = (unsigned long)(*text - '0');
+        if (result > (ULONG_MAX - digit) / 10UL) {
+            return 1;
+        }
+        result = result * 10UL + digit;
+        ++text;
+    }
+
+    *value = result;
+    return 0;
 }
 
 static void tg_trim_ascii_space(char *text)
@@ -850,7 +874,8 @@ static int tg_run_telegram_echo_once(const tg_config *config)
     return 0;
 }
 
-static int tg_run_telegram_echo_once_state(const tg_config *config)
+static int tg_run_telegram_echo_once_state_paths(const char *token_file_path,
+                                                 const char *offset_file_path)
 {
     tg_bot_status bot_status;
     tg_bot_call_result result;
@@ -864,8 +889,7 @@ static int tg_run_telegram_echo_once_state(const tg_config *config)
     unsigned long http_response_length;
     unsigned long send_response_length;
 
-    if (tg_load_offset_file(config->telegram_echo_once_state_offset_file_path,
-                            offset, sizeof(offset)) != 0) {
+    if (tg_load_offset_file(offset_file_path, offset, sizeof(offset)) != 0) {
         return 2;
     }
     if (offset[0] != '\0') {
@@ -875,7 +899,7 @@ static int tg_run_telegram_echo_once_state(const tg_config *config)
     }
 
     bot_status = tg_bot_get_updates_from_token_file_with_offset(
-        config->telegram_echo_once_state_token_file_path,
+        token_file_path,
         offset[0] != '\0' ? offset : 0,
         http_buffer, sizeof(http_buffer), &http_response_length, &result,
         error_buffer, sizeof(error_buffer));
@@ -915,8 +939,7 @@ static int tg_run_telegram_echo_once_state(const tg_config *config)
 
     if (!update.has_message || !update.has_text) {
         puts("telegram echo once state: update has no text message");
-        return tg_save_offset_file(config->telegram_echo_once_state_offset_file_path,
-                                   next_offset) == 0 ? 0 : 2;
+        return tg_save_offset_file(offset_file_path, next_offset) == 0 ? 0 : 2;
     }
     if (tg_build_echo_text(&update, echo_text, sizeof(echo_text)) != 0) {
         puts("telegram echo once state: echo text too long");
@@ -924,7 +947,7 @@ static int tg_run_telegram_echo_once_state(const tg_config *config)
     }
 
     bot_status = tg_bot_send_message_from_token_file(
-        config->telegram_echo_once_state_token_file_path,
+        token_file_path,
         update.chat_id, echo_text,
         send_buffer, sizeof(send_buffer), &send_response_length, &result,
         error_buffer, sizeof(error_buffer));
@@ -944,8 +967,58 @@ static int tg_run_telegram_echo_once_state(const tg_config *config)
         return 2;
     }
 
-    return tg_save_offset_file(config->telegram_echo_once_state_offset_file_path,
-                               next_offset) == 0 ? 0 : 2;
+    return tg_save_offset_file(offset_file_path, next_offset) == 0 ? 0 : 2;
+}
+
+static int tg_run_telegram_echo_once_state(const tg_config *config)
+{
+    return tg_run_telegram_echo_once_state_paths(
+        config->telegram_echo_once_state_token_file_path,
+        config->telegram_echo_once_state_offset_file_path);
+}
+
+static int tg_run_telegram_echo_loop(const tg_config *config)
+{
+    unsigned long poll_seconds;
+    unsigned long max_iterations;
+    unsigned long iteration;
+    int rc;
+
+    if (tg_parse_decimal_ulong(config->telegram_echo_loop_poll_seconds,
+                               &poll_seconds) != 0) {
+        puts("telegram echo loop: invalid poll seconds");
+        return 2;
+    }
+    if (tg_parse_decimal_ulong(config->telegram_echo_loop_max_iterations,
+                               &max_iterations) != 0) {
+        puts("telegram echo loop: invalid max iterations");
+        return 2;
+    }
+    if (poll_seconds > 3600UL) {
+        puts("telegram echo loop: poll seconds must be <= 3600");
+        return 2;
+    }
+    if (max_iterations == 0UL || max_iterations > 10000UL) {
+        puts("telegram echo loop: max iterations must be between 1 and 10000");
+        return 2;
+    }
+
+    for (iteration = 0; iteration < max_iterations; ++iteration) {
+        printf("telegram echo loop iteration: %lu/%lu\n",
+               iteration + 1UL, max_iterations);
+        rc = tg_run_telegram_echo_once_state_paths(
+            config->telegram_echo_loop_token_file_path,
+            config->telegram_echo_loop_offset_file_path);
+        if (rc != 0) {
+            return rc;
+        }
+        if (iteration + 1UL < max_iterations && poll_seconds > 0UL) {
+            printf("telegram echo loop sleep: %lu seconds\n", poll_seconds);
+            tg_platform_sleep_seconds(poll_seconds);
+        }
+    }
+
+    return 0;
 }
 
 static int tg_run_telegram_send_message_self_test(void)
@@ -1136,6 +1209,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_echo_once_state) {
         return tg_run_telegram_echo_once_state(&config);
+    }
+
+    if (config.run_telegram_echo_loop) {
+        return tg_run_telegram_echo_loop(&config);
     }
 
     if (config.run_telegram_send_message_self_test) {

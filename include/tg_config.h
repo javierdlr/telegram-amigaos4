@@ -40,6 +40,10 @@ typedef struct tg_config {
     const char *telegram_echo_once_offset;
     const char *telegram_echo_once_state_token_file_path;
     const char *telegram_echo_once_state_offset_file_path;
+    const char *telegram_echo_loop_token_file_path;
+    const char *telegram_echo_loop_offset_file_path;
+    const char *telegram_echo_loop_poll_seconds;
+    const char *telegram_echo_loop_max_iterations;
     const char *telegram_send_message_token_file_path;
     const char *telegram_send_message_chat_id;
     const char *telegram_send_message_text;
@@ -62,6 +66,7 @@ typedef struct tg_config {
     int run_telegram_echo_once_self_test;
     int run_telegram_echo_once;
     int run_telegram_echo_once_state;
+    int run_telegram_echo_loop;
     int run_telegram_send_message_self_test;
     int run_telegram_send_message;
 } tg_config;

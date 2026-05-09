@@ -22,6 +22,11 @@ void tg_platform_log(const char *level, const char *message)
     printf("[amigaos4:%s] %s\n", level, message);
 }
 
+void tg_platform_sleep_seconds(unsigned long seconds)
+{
+    (void)seconds;
+}
+
 tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char *host,
                                       const char *port, char *error_buffer,
                                       unsigned long error_buffer_size)

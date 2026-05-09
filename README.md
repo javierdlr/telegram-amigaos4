@@ -69,6 +69,8 @@ Initial core modules:
   extract the first update id, chat id and text from the returned array.
 - A one-shot echo command can read one update, print the next offset and send an
   `Echo: ...` reply when the update contains text.
+- A bounded echo loop can repeat the stateful one-shot flow with caller-chosen
+  polling seconds and a maximum iteration count.
 
 TLS note: the initial MorphOS backend uses OpenSSL/AmiSSL with SNI, but
 certificate validation is not enabled yet. This is enough for connectivity
@@ -159,6 +161,8 @@ Current options:
                       Read one update and echo its text back
     --telegram-echo-once-state <file> <offset-file>
                       Echo one update using a persistent offset file
+    --telegram-echo-loop <file> <offset-file> <poll-seconds> <max-iterations>
+                      Run bounded stateful echo polling
     --telegram-send-message-self-test
                       Run built-in Bot API sendMessage parser sample
     --telegram-send-message <file> <chat-id> <text>
@@ -185,6 +189,12 @@ successful send or after deliberately skipping a non-text update.
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.
+
+`telegram-echo-loop` is deliberately bounded rather than daemon-style. It
+reuses the same persistent offset file as `telegram-echo-once-state`, sleeps
+between iterations when `poll-seconds` is greater than zero, and stops after
+`max-iterations` or on the first error. The accepted limits are
+`poll-seconds <= 3600` and `1 <= max-iterations <= 10000`.
 
 Note: through BebboSSH, the remote shell does not always preserve the AmigaDOS
 PATH, so the Makefile uses absolute paths to the MorphOS SDK.

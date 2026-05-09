@@ -31,6 +31,14 @@ const char *tg_platform_default_data_dir(void);
 void tg_platform_log(const char *level, const char *message);
 
 /**
+ * Suspends execution for approximately the requested number of seconds.
+ *
+ * A value of zero returns immediately. This is used only by bounded polling
+ * commands; platform backends may use the simplest native sleep primitive.
+ */
+void tg_platform_sleep_seconds(unsigned long seconds);
+
+/**
  * Platform TCP connect implementation used by tg_net_connect().
  *
  * On success, connection must contain a valid platform_handle and is_open must
