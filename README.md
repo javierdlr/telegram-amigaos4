@@ -75,6 +75,8 @@ Initial core modules:
   polling seconds and a maximum iteration count.
 - Default-token command variants can load `telegram-token.txt` from the active
   data directory, or from a path supplied with `--token-file`.
+- `--telegram-preflight` checks the default token path and verifies HTTPS
+  reachability to Telegram without sending the token.
 
 TLS note: the current MorphOS and AmigaOS 3.x backends use OpenSSL/AmiSSL with
 SNI, but certificate validation is not enabled yet. This is enough for
@@ -173,6 +175,8 @@ Current options:
                       Load token file and test Bot API path construction
     --telegram-default-token-file-path-test <method>
                       Load default token file and test Bot API path construction
+    --telegram-preflight
+                      Check token path and Telegram HTTPS reachability
     --telegram-getme-self-test
                       Run built-in Bot API getMe parser sample
     --telegram-getme <file>
@@ -232,6 +236,11 @@ Commands ending in `-default` load the token from `telegram-token.txt` inside
 the active data directory. With the default AmigaOS-style data directory this is
 `PROGDIR:telegram-token.txt`; on Unix-like paths a slash is inserted when
 needed. `--token-file <path>` overrides that computed path.
+
+`telegram-preflight` is useful before giving a tester build to someone else. It
+prints the resolved token file path, reports whether the file is present, then
+performs an HTTPS request to `https://api.telegram.org/`. It does not call a Bot
+API method and does not send or print the token.
 
 `telegram-echo-loop` is deliberately bounded rather than daemon-style. It
 reuses the same persistent offset file as `telegram-echo-once-state`, sleeps

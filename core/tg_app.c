@@ -636,6 +636,98 @@ static int tg_run_telegram_default_token_file_path_test(const tg_config *config)
     return tg_run_telegram_token_file_path_test(&local_config);
 }
 
+static int tg_run_telegram_preflight(const tg_config *config)
+{
+    tg_telegram_status telegram_status;
+    tg_file_status file_status;
+    tg_https_status https_status;
+    tg_tls_status tls_status;
+    tg_net_status net_status;
+    tg_http_parse_status parse_status;
+    tg_http_response parsed_response;
+    char token_path[256];
+    char token[128];
+    char net_error[128];
+    char response[4096];
+    const char *resolved_path;
+    unsigned long token_length;
+    unsigned long response_length;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram preflight token file: %s\n", resolved_path);
+    telegram_status = tg_telegram_load_token_file(resolved_path, token,
+                                                  sizeof(token), &token_length,
+                                                  &file_status);
+    memset(token, 0, sizeof(token));
+    if (telegram_status == TG_TELEGRAM_OK) {
+        printf("telegram preflight token file: present, %lu bytes\n",
+               token_length);
+    } else if (telegram_status == TG_TELEGRAM_FILE_ERROR &&
+               file_status == TG_FILE_OPEN_FAILED) {
+        puts("telegram preflight token file: missing");
+    } else {
+        printf("telegram preflight token file: failed: %s",
+               tg_telegram_status_name(telegram_status));
+        if (telegram_status == TG_TELEGRAM_FILE_ERROR) {
+            printf(" / %s", tg_file_status_name(file_status));
+        }
+        printf("\n");
+        return 2;
+    }
+
+    net_error[0] = '\0';
+    https_status = tg_https_get(tg_telegram_api_host(), "443", "/",
+                                response, sizeof(response), &response_length,
+                                &tls_status, &net_status, net_error,
+                                sizeof(net_error));
+    if (https_status != TG_HTTPS_OK) {
+        printf("telegram preflight https: failed: %s",
+               tg_https_status_name(https_status));
+        if (https_status == TG_HTTPS_TLS_ERROR) {
+            printf(" / %s", tg_tls_status_name(tls_status));
+            if (tls_status == TG_TLS_NET_ERROR) {
+                printf(" / %s", tg_net_status_name(net_status));
+            }
+        }
+        if (net_error[0] != '\0') {
+            printf(" (%s)", net_error);
+        }
+        printf("\n");
+        return 2;
+    }
+
+    printf("telegram preflight https: received %lu bytes\n",
+           response_length);
+    parse_status = tg_http_parse_response(response, response_length,
+                                          &parsed_response);
+    if (parse_status != TG_HTTP_PARSE_OK) {
+        printf("telegram preflight http parse: failed: %s\n",
+               tg_http_parse_status_name(parse_status));
+        return 2;
+    }
+
+    printf("telegram preflight http status: %d", parsed_response.status_code);
+    if (parsed_response.reason_length > 0) {
+        printf(" %.*s", (int)parsed_response.reason_length,
+               parsed_response.reason);
+    }
+    printf("\n");
+
+    if (parsed_response.status_code < 200 ||
+        parsed_response.status_code > 399) {
+        puts("telegram preflight: failed");
+        return 2;
+    }
+
+    puts("telegram preflight: ok");
+    return 0;
+}
+
 static int tg_run_telegram_get_me_self_test(void)
 {
     static const char get_me_response[] =
@@ -1438,6 +1530,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_default_token_file_path_test) {
         return tg_run_telegram_default_token_file_path_test(&config);
+    }
+
+    if (config.run_telegram_preflight) {
+        return tg_run_telegram_preflight(&config);
     }
 
     if (config.run_telegram_get_me_self_test) {

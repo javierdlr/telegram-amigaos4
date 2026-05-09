@@ -63,6 +63,7 @@ void tg_config_init(tg_config *config)
     config->run_telegram_http_self_test = 0;
     config->run_telegram_token_file_path_test = 0;
     config->run_telegram_default_token_file_path_test = 0;
+    config->run_telegram_preflight = 0;
     config->run_telegram_get_me_self_test = 0;
     config->run_telegram_get_me = 0;
     config->run_telegram_get_me_default = 0;
@@ -174,6 +175,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_telegram_default_token_file_path_test = 1;
             config->telegram_default_token_file_method = argv[i + 1];
             ++i;
+        } else if (strcmp(argv[i], "--telegram-preflight") == 0) {
+            config->run_telegram_preflight = 1;
         } else if (strcmp(argv[i], "--telegram-getme-self-test") == 0) {
             config->run_telegram_get_me_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-getme") == 0) {
@@ -317,6 +320,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Load token file and test Bot API path construction\n");
     fprintf(stream, "      --telegram-default-token-file-path-test <method>\n");
     fprintf(stream, "                         Load default token file and test Bot API path construction\n");
+    fprintf(stream, "      --telegram-preflight\n");
+    fprintf(stream, "                         Check token path and Telegram HTTPS reachability\n");
     fprintf(stream, "      --telegram-getme-self-test\n");
     fprintf(stream, "                         Run built-in Bot API getMe parser sample\n");
     fprintf(stream, "      --telegram-getme <file>\n");
