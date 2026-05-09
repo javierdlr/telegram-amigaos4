@@ -53,6 +53,8 @@ If this package was built with TLS enabled, optional live tests are:
   telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
   telegram-test --telegram-inbox-default telegram-offset.txt
   telegram-test --telegram-inbox-loop-default telegram-offset.txt 5 10
+  telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default telegram-offset.txt 5 10
+  telegram-test --telegram-send-default <chat-id> "Hello from MorphOS"
 
 For Bot API tests, create telegram-token.txt in this drawer. The file must
 contain only the bot token. Never publish the token or screenshots that show it.

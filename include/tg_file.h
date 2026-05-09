@@ -41,6 +41,15 @@ tg_file_status tg_file_write_text(const char *path, const char *text,
                                   unsigned long text_length);
 
 /**
+ * Appends a complete text buffer to a file.
+ *
+ * The file is created when missing. The input text does not need to be
+ * NUL-terminated because text_length is explicit.
+ */
+tg_file_status tg_file_append_text(const char *path, const char *text,
+                                   unsigned long text_length);
+
+/**
  * Returns a static string for status. The caller must not free it.
  */
 const char *tg_file_status_name(tg_file_status status);

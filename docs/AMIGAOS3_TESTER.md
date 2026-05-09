@@ -21,7 +21,8 @@ The AmigaOS 3.x tester can:
 - call Telegram Bot API `getMe`, `getUpdates` and `sendMessage` when a token is
   provided;
 - run read-only stateful update checks;
-- run inbox-format receive-only update checks;
+- run inbox-format receive-only update checks with date/time, sender, message
+  kind, compact one-line summaries and optional append-only logging;
 - run one-shot, stateful batch or looped echo tests.
 
 Certificate validation is not enabled yet. Use this build only for supervised
@@ -214,16 +215,24 @@ Run a more readable receive-only inbox:
 ```text
 telegram-test --telegram-inbox-default telegram-offset.txt
 telegram-test --telegram-inbox-loop-default telegram-offset.txt 5 10
+telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default telegram-offset.txt 5 10
 ```
 
 Inbox output includes update id, chat id, sender name when available, decoded
-text and the next saved offset. It uses the same offset file as the read-only
-commands and never sends replies.
+text, message kind and the next saved offset. It uses the same offset file as
+the read-only commands and never sends replies. Non-text messages currently
+print placeholders such as `<photo>`, `<sticker>` or `<document>`.
 
 Send a controlled message back:
 
 ```text
 telegram-test --telegram-send-message-default <chat-id> "Hello from AmigaOS 3.x"
+```
+
+The shorter alias is also available:
+
+```text
+telegram-test --telegram-send-default <chat-id> "Hello from AmigaOS 3.x"
 ```
 
 Use the `chat id` printed by `getUpdates` or `read-once-state`.

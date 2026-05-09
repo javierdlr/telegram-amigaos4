@@ -83,6 +83,33 @@ tg_file_status tg_file_write_text(const char *path, const char *text,
     return TG_FILE_OK;
 }
 
+tg_file_status tg_file_append_text(const char *path, const char *text,
+                                   unsigned long text_length)
+{
+    FILE *file;
+    size_t written;
+
+    if (path == 0 || path[0] == '\0' || (text == 0 && text_length > 0)) {
+        return TG_FILE_INVALID_ARGUMENT;
+    }
+
+    file = fopen(path, "ab");
+    if (file == 0) {
+        return TG_FILE_OPEN_FAILED;
+    }
+
+    written = fwrite(text, 1, (size_t)text_length, file);
+    if (written != (size_t)text_length || ferror(file)) {
+        fclose(file);
+        return TG_FILE_WRITE_FAILED;
+    }
+    if (fclose(file) != 0) {
+        return TG_FILE_WRITE_FAILED;
+    }
+
+    return TG_FILE_OK;
+}
+
 const char *tg_file_status_name(tg_file_status status)
 {
     switch (status) {

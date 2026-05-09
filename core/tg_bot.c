@@ -68,6 +68,12 @@ static int tg_bot_is_decimal_text(const char *text)
     return 1;
 }
 
+static int tg_bot_raw_json_string_starts_with(const tg_json_value *value, char c)
+{
+    return value != 0 && value->type == TG_JSON_VALUE_STRING &&
+           value->length > 0 && value->start != 0 && value->start[0] == c;
+}
+
 static tg_bot_status tg_bot_append_json_hex_escape(char *buffer,
                                                    unsigned long buffer_size,
                                                    unsigned long *position,
@@ -158,10 +164,13 @@ void tg_bot_update_summary_init(tg_bot_update_summary *update)
     }
     update->has_update = 0;
     update->has_message = 0;
+    update->has_date = 0;
     update->has_sender_name = 0;
     update->has_text = 0;
+    update->message_kind = TG_BOT_MESSAGE_NONE;
     update->update_id[0] = '\0';
     update->chat_id[0] = '\0';
+    update->date[0] = '\0';
     update->sender_name[0] = '\0';
     update->text = 0;
     update->text_length = 0;
@@ -197,6 +206,7 @@ tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
     tg_json_value chat;
     tg_json_value from;
     tg_json_value text;
+    tg_json_value optional_value;
     unsigned long copied_length;
 
     if (update != 0) {
@@ -241,6 +251,16 @@ tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
         return TG_BOT_UPDATE_ERROR;
     }
     update->has_message = 1;
+    update->message_kind = TG_BOT_MESSAGE_UNSUPPORTED;
+
+    json_status = tg_json_object_get_number_copy(message.start, message.length,
+                                                 "date",
+                                                 update->date,
+                                                 sizeof(update->date),
+                                                 &copied_length);
+    if (json_status == TG_JSON_OK) {
+        update->has_date = 1;
+    }
 
     json_status = tg_json_object_get(message.start, message.length, "chat", &chat);
     if (json_status != TG_JSON_OK || chat.type != TG_JSON_VALUE_OBJECT) {
@@ -277,6 +297,24 @@ tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
 
     json_status = tg_json_object_get(message.start, message.length, "text", &text);
     if (json_status == TG_JSON_NOT_FOUND) {
+        json_status = tg_json_object_get(message.start, message.length,
+                                         "photo", &optional_value);
+        if (json_status == TG_JSON_OK && optional_value.type == TG_JSON_VALUE_ARRAY) {
+            update->message_kind = TG_BOT_MESSAGE_PHOTO;
+            return TG_BOT_OK;
+        }
+        json_status = tg_json_object_get(message.start, message.length,
+                                         "sticker", &optional_value);
+        if (json_status == TG_JSON_OK && optional_value.type == TG_JSON_VALUE_OBJECT) {
+            update->message_kind = TG_BOT_MESSAGE_STICKER;
+            return TG_BOT_OK;
+        }
+        json_status = tg_json_object_get(message.start, message.length,
+                                         "document", &optional_value);
+        if (json_status == TG_JSON_OK && optional_value.type == TG_JSON_VALUE_OBJECT) {
+            update->message_kind = TG_BOT_MESSAGE_DOCUMENT;
+            return TG_BOT_OK;
+        }
         return TG_BOT_OK;
     }
     if (json_status != TG_JSON_OK || text.type != TG_JSON_VALUE_STRING) {
@@ -284,9 +322,33 @@ tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
     }
 
     update->has_text = 1;
+    update->message_kind = tg_bot_raw_json_string_starts_with(&text, '/') ?
+                           TG_BOT_MESSAGE_COMMAND : TG_BOT_MESSAGE_TEXT;
     update->text = text.start;
     update->text_length = text.length;
     return TG_BOT_OK;
+}
+
+const char *tg_bot_message_kind_name(tg_bot_message_kind kind)
+{
+    switch (kind) {
+    case TG_BOT_MESSAGE_NONE:
+        return "none";
+    case TG_BOT_MESSAGE_TEXT:
+        return "text";
+    case TG_BOT_MESSAGE_COMMAND:
+        return "command";
+    case TG_BOT_MESSAGE_PHOTO:
+        return "photo";
+    case TG_BOT_MESSAGE_STICKER:
+        return "sticker";
+    case TG_BOT_MESSAGE_DOCUMENT:
+        return "document";
+    case TG_BOT_MESSAGE_UNSUPPORTED:
+        return "unsupported";
+    default:
+        return "unknown";
+    }
 }
 
 tg_bot_status tg_bot_update_next_offset(const tg_bot_update_summary *update,

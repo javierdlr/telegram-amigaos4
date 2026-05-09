@@ -5,11 +5,14 @@
 
 #include <stdio.h>
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "tg_app.h"
 #include "tg_bot.h"
 #include "tg_config.h"
+#include "tg_file.h"
 #include "tg_https.h"
 #include "tg_http.h"
 #include "tg_json.h"
@@ -245,10 +248,193 @@ static void tg_print_update_summary(const tg_bot_update_summary *update)
     }
 }
 
+static int tg_app_append_char(char *buffer, unsigned long buffer_size,
+                              unsigned long *position, char c)
+{
+    if (*position + 1 >= buffer_size) {
+        return 1;
+    }
+    buffer[*position] = c;
+    ++(*position);
+    buffer[*position] = '\0';
+    return 0;
+}
+
+static int tg_app_append_text(char *buffer, unsigned long buffer_size,
+                              unsigned long *position, const char *text)
+{
+    while (*text != '\0') {
+        if (tg_app_append_char(buffer, buffer_size, position, *text) != 0) {
+            return 1;
+        }
+        ++text;
+    }
+    return 0;
+}
+
+static int tg_format_inbox_date(const tg_bot_update_summary *update,
+                                char *buffer, unsigned long buffer_size)
+{
+    unsigned long timestamp;
+    char *end_ptr;
+    time_t raw_time;
+    struct tm *utc_time;
+    unsigned long position;
+
+    if (buffer == 0 || buffer_size == 0) {
+        return 1;
+    }
+    buffer[0] = '\0';
+    if (update == 0 || !update->has_date || update->date[0] == '\0') {
+        position = 0;
+        return tg_app_append_text(buffer, buffer_size, &position, "unknown");
+    }
+
+    end_ptr = 0;
+    timestamp = strtoul(update->date, &end_ptr, 10);
+    if (end_ptr == update->date || *end_ptr != '\0') {
+        position = 0;
+        return tg_app_append_text(buffer, buffer_size, &position, update->date);
+    }
+
+    raw_time = (time_t)timestamp;
+    utc_time = gmtime(&raw_time);
+    if (utc_time == 0 ||
+        strftime(buffer, (size_t)buffer_size, "%Y-%m-%d %H:%M:%S UTC",
+                 utc_time) == 0) {
+        position = 0;
+        return tg_app_append_text(buffer, buffer_size, &position, update->date);
+    }
+
+    return 0;
+}
+
+static void tg_sanitize_one_line(char *text)
+{
+    while (*text != '\0') {
+        if (*text == '\r' || *text == '\n' || *text == '\t') {
+            *text = ' ';
+        }
+        ++text;
+    }
+}
+
+static int tg_inbox_content_text(const tg_bot_update_summary *update,
+                                 char *buffer, unsigned long buffer_size)
+{
+    tg_json_status json_status;
+    unsigned long decoded_length;
+    unsigned long position;
+
+    if (buffer == 0 || buffer_size == 0 || update == 0) {
+        return 1;
+    }
+    buffer[0] = '\0';
+
+    if (update->has_text) {
+        json_status = tg_json_string_decode(update->text, update->text_length,
+                                            buffer, buffer_size,
+                                            &decoded_length);
+        if (json_status != TG_JSON_OK) {
+            position = 0;
+            return tg_app_append_text(buffer, buffer_size, &position,
+                                      "<decode failed>");
+        }
+        tg_sanitize_one_line(buffer);
+        return 0;
+    }
+
+    position = 0;
+    if (update->message_kind == TG_BOT_MESSAGE_PHOTO) {
+        return tg_app_append_text(buffer, buffer_size, &position, "<photo>");
+    } else if (update->message_kind == TG_BOT_MESSAGE_STICKER) {
+        return tg_app_append_text(buffer, buffer_size, &position, "<sticker>");
+    } else if (update->message_kind == TG_BOT_MESSAGE_DOCUMENT) {
+        return tg_app_append_text(buffer, buffer_size, &position, "<document>");
+    } else if (update->message_kind == TG_BOT_MESSAGE_UNSUPPORTED) {
+        return tg_app_append_text(buffer, buffer_size, &position,
+                                  "<unsupported message>");
+    }
+
+    return tg_app_append_text(buffer, buffer_size, &position, "<no message>");
+}
+
+static int tg_build_inbox_line(const tg_bot_update_summary *update,
+                               char *buffer, unsigned long buffer_size)
+{
+    char date_text[64];
+    char content_text[512];
+    const char *sender;
+    unsigned long position;
+
+    if (update == 0 || buffer == 0 || buffer_size == 0 || !update->has_update) {
+        return 1;
+    }
+
+    if (tg_format_inbox_date(update, date_text, sizeof(date_text)) != 0 ||
+        tg_inbox_content_text(update, content_text, sizeof(content_text)) != 0) {
+        return 1;
+    }
+    sender = update->has_sender_name ? update->sender_name : "unknown";
+
+    position = 0;
+    buffer[0] = '\0';
+    if (tg_app_append_text(buffer, buffer_size, &position, date_text) != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, " | ") != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, update->update_id) != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, " | chat ") != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, update->chat_id) != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, " | ") != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, sender) != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, " | ") != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position,
+                           tg_bot_message_kind_name(update->message_kind)) != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, " | ") != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, content_text) != 0) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int tg_append_inbox_log_line(const char *path,
+                                    const tg_bot_update_summary *update)
+{
+    tg_file_status file_status;
+    char line[1024];
+    unsigned long position;
+
+    if (path == 0 || path[0] == '\0') {
+        return 0;
+    }
+    if (tg_build_inbox_line(update, line, sizeof(line)) != 0) {
+        puts("inbox log: line too long");
+        return 2;
+    }
+
+    position = (unsigned long)strlen(line);
+    if (tg_app_append_char(line, sizeof(line), &position, '\n') != 0) {
+        puts("inbox log: line too long");
+        return 2;
+    }
+
+    file_status = tg_file_append_text(path, line, position);
+    if (file_status != TG_FILE_OK) {
+        printf("inbox log: write failed: %s\n",
+               tg_file_status_name(file_status));
+        return 2;
+    }
+
+    printf("inbox log appended: %s\n", path);
+    return 0;
+}
+
 static void tg_print_inbox_update_summary(const tg_bot_update_summary *update)
 {
     tg_json_status json_status;
     char decoded_text[512];
+    char date_text[64];
+    char line[1024];
     unsigned long decoded_length;
 
     if (!update->has_update) {
@@ -262,12 +448,16 @@ static void tg_print_inbox_update_summary(const tg_bot_update_summary *update)
         return;
     }
 
+    if (tg_format_inbox_date(update, date_text, sizeof(date_text)) == 0) {
+        printf("inbox date: %s\n", date_text);
+    }
     printf("inbox chat: %s\n", update->chat_id);
     if (update->has_sender_name) {
         printf("inbox sender: %s\n", update->sender_name);
     } else {
         puts("inbox sender: unknown");
     }
+    printf("inbox type: %s\n", tg_bot_message_kind_name(update->message_kind));
     if (update->has_text) {
         json_status = tg_json_string_decode(update->text, update->text_length,
                                             decoded_text, sizeof(decoded_text),
@@ -279,7 +469,18 @@ static void tg_print_inbox_update_summary(const tg_bot_update_summary *update)
                    tg_json_status_name(json_status));
         }
     } else {
-        puts("inbox text: <non-text or unsupported message>");
+        if (update->message_kind == TG_BOT_MESSAGE_PHOTO) {
+            puts("inbox text: <photo>");
+        } else if (update->message_kind == TG_BOT_MESSAGE_STICKER) {
+            puts("inbox text: <sticker>");
+        } else if (update->message_kind == TG_BOT_MESSAGE_DOCUMENT) {
+            puts("inbox text: <document>");
+        } else {
+            puts("inbox text: <non-text or unsupported message>");
+        }
+    }
+    if (tg_build_inbox_line(update, line, sizeof(line)) == 0) {
+        printf("inbox line: %s\n", line);
     }
 }
 
@@ -1160,7 +1361,8 @@ static int tg_run_telegram_read_once_state_self_test(void)
 
 static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
                                                  const char *offset_file_path,
-                                                 tg_read_output_mode output_mode)
+                                                 tg_read_output_mode output_mode,
+                                                 const char *inbox_log_file_path)
 {
     tg_bot_status bot_status;
     tg_bot_call_result updates_result;
@@ -1238,6 +1440,9 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
         if (output_mode == TG_READ_OUTPUT_INBOX) {
             printf("inbox item: %lu\n", index);
             tg_print_inbox_update_summary(&update);
+            if (tg_append_inbox_log_line(inbox_log_file_path, &update) != 0) {
+                return 2;
+            }
         } else {
             printf("telegram read once state update index: %lu\n", index);
             tg_print_update_summary(&update);
@@ -1290,7 +1495,8 @@ static int tg_run_telegram_read_once_state(const tg_config *config)
     return tg_run_telegram_read_once_state_paths(
         config->telegram_read_once_state_token_file_path,
         config->telegram_read_once_state_offset_file_path,
-        TG_READ_OUTPUT_STATE);
+        TG_READ_OUTPUT_STATE,
+        0);
 }
 
 static int tg_run_telegram_read_once_state_default(const tg_config *config)
@@ -1308,14 +1514,16 @@ static int tg_run_telegram_read_once_state_default(const tg_config *config)
     return tg_run_telegram_read_once_state_paths(
         resolved_path,
         config->telegram_read_once_state_default_offset_file_path,
-        TG_READ_OUTPUT_STATE);
+        TG_READ_OUTPUT_STATE,
+        0);
 }
 
 static int tg_run_telegram_read_loop_paths(const char *token_file_path,
                                            const char *offset_file_path,
                                            const char *poll_seconds_text,
                                            const char *max_iterations_text,
-                                           tg_read_output_mode output_mode)
+                                           tg_read_output_mode output_mode,
+                                           const char *inbox_log_file_path)
 {
     unsigned long poll_seconds;
     unsigned long max_iterations;
@@ -1345,7 +1553,8 @@ static int tg_run_telegram_read_loop_paths(const char *token_file_path,
         rc = tg_run_telegram_read_once_state_paths(
             token_file_path,
             offset_file_path,
-            output_mode);
+            output_mode,
+            inbox_log_file_path);
         if (rc != 0) {
             return rc;
         }
@@ -1365,7 +1574,8 @@ static int tg_run_telegram_read_loop(const tg_config *config)
         config->telegram_read_loop_offset_file_path,
         config->telegram_read_loop_poll_seconds,
         config->telegram_read_loop_max_iterations,
-        TG_READ_OUTPUT_STATE);
+        TG_READ_OUTPUT_STATE,
+        0);
 }
 
 static int tg_run_telegram_read_loop_default(const tg_config *config)
@@ -1385,7 +1595,8 @@ static int tg_run_telegram_read_loop_default(const tg_config *config)
         config->telegram_read_loop_default_offset_file_path,
         config->telegram_read_loop_default_poll_seconds,
         config->telegram_read_loop_default_max_iterations,
-        TG_READ_OUTPUT_STATE);
+        TG_READ_OUTPUT_STATE,
+        0);
 }
 
 static int tg_run_telegram_inbox(const tg_config *config)
@@ -1393,11 +1604,13 @@ static int tg_run_telegram_inbox(const tg_config *config)
     return tg_run_telegram_read_once_state_paths(
         config->telegram_inbox_token_file_path,
         config->telegram_inbox_offset_file_path,
-        TG_READ_OUTPUT_INBOX);
+        TG_READ_OUTPUT_INBOX,
+        config->inbox_log_file_path);
 }
 
 static int tg_run_telegram_inbox_self_test(void)
 {
+    static const char log_file_path[] = "telegram-inbox-self-test.log";
     static const char updates_response[] =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: application/json\r\n"
@@ -1405,18 +1618,29 @@ static int tg_run_telegram_inbox_self_test(void)
         "\r\n"
         "{\"ok\":true,\"result\":["
         "{\"update_id\":300,\"message\":{\"message_id\":1,"
+        "\"date\":1710000000,"
         "\"from\":{\"id\":42,\"first_name\":\"Michele\",\"username\":\"kaffeine\"},"
         "\"chat\":{\"id\":123,\"type\":\"private\"},"
-        "\"text\":\"Inbox \\\"test\\\"\\nLine\"}}"
+        "\"text\":\"Inbox \\\"test\\\"\\nLine\"}},"
+        "{\"update_id\":301,\"message\":{\"message_id\":2,"
+        "\"date\":1710000001,"
+        "\"from\":{\"id\":42,\"first_name\":\"Michele\",\"username\":\"kaffeine\"},"
+        "\"chat\":{\"id\":123,\"type\":\"private\"},"
+        "\"photo\":[{\"file_id\":\"abc\",\"width\":100,\"height\":100}]}}"
         "]}";
     static const char expected_text[] = "Inbox \"test\"\nLine";
     tg_bot_status bot_status;
     tg_json_status json_status;
     tg_bot_call_result result;
     tg_bot_update_summary update;
+    tg_bot_update_summary photo_update;
     char next_offset[32];
     char decoded_text[128];
+    char log_text[1024];
     unsigned long decoded_length;
+    unsigned long log_length;
+
+    remove(log_file_path);
 
     bot_status = tg_bot_parse_get_updates_http_response(
         updates_response, (unsigned long)strlen(updates_response), &result);
@@ -1428,7 +1652,9 @@ static int tg_run_telegram_inbox_self_test(void)
     bot_status = tg_bot_get_updates_at(&result, 0, &update);
     if (bot_status != TG_BOT_OK || !update.has_update ||
         !update.has_message || !update.has_sender_name ||
-        strcmp(update.sender_name, "kaffeine") != 0 || !update.has_text) {
+        strcmp(update.sender_name, "kaffeine") != 0 || !update.has_text ||
+        !update.has_date || strcmp(update.date, "1710000000") != 0 ||
+        update.message_kind != TG_BOT_MESSAGE_TEXT) {
         printf("telegram inbox self-test: update failed: %s\n",
                tg_bot_status_name(bot_status));
         return 2;
@@ -1449,8 +1675,30 @@ static int tg_run_telegram_inbox_self_test(void)
         return 2;
     }
 
+    bot_status = tg_bot_get_updates_at(&result, 1, &photo_update);
+    if (bot_status != TG_BOT_OK || !photo_update.has_update ||
+        !photo_update.has_message || photo_update.has_text ||
+        photo_update.message_kind != TG_BOT_MESSAGE_PHOTO ||
+        !photo_update.has_date || strcmp(photo_update.date, "1710000001") != 0) {
+        printf("telegram inbox self-test: photo update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+
     tg_print_inbox_update_summary(&update);
     printf("inbox next offset: %s\n", next_offset);
+    tg_print_inbox_update_summary(&photo_update);
+    if (tg_append_inbox_log_line(log_file_path, &update) != 0 ||
+        tg_append_inbox_log_line(log_file_path, &photo_update) != 0 ||
+        tg_file_read_text(log_file_path, log_text, sizeof(log_text),
+                          &log_length) != TG_FILE_OK ||
+        strstr(log_text, " | text | Inbox \"test\" Line") == 0 ||
+        strstr(log_text, " | photo | <photo>") == 0) {
+        puts("telegram inbox self-test: log failed");
+        remove(log_file_path);
+        return 2;
+    }
+    remove(log_file_path);
     puts("telegram inbox self-test: ok");
     return 0;
 }
@@ -1470,7 +1718,8 @@ static int tg_run_telegram_inbox_default(const tg_config *config)
     return tg_run_telegram_read_once_state_paths(
         resolved_path,
         config->telegram_inbox_default_offset_file_path,
-        TG_READ_OUTPUT_INBOX);
+        TG_READ_OUTPUT_INBOX,
+        config->inbox_log_file_path);
 }
 
 static int tg_run_telegram_inbox_loop(const tg_config *config)
@@ -1480,7 +1729,8 @@ static int tg_run_telegram_inbox_loop(const tg_config *config)
         config->telegram_inbox_loop_offset_file_path,
         config->telegram_inbox_loop_poll_seconds,
         config->telegram_inbox_loop_max_iterations,
-        TG_READ_OUTPUT_INBOX);
+        TG_READ_OUTPUT_INBOX,
+        config->inbox_log_file_path);
 }
 
 static int tg_run_telegram_inbox_loop_default(const tg_config *config)
@@ -1500,7 +1750,8 @@ static int tg_run_telegram_inbox_loop_default(const tg_config *config)
         config->telegram_inbox_loop_default_offset_file_path,
         config->telegram_inbox_loop_default_poll_seconds,
         config->telegram_inbox_loop_default_max_iterations,
-        TG_READ_OUTPUT_INBOX);
+        TG_READ_OUTPUT_INBOX,
+        config->inbox_log_file_path);
 }
 
 static int tg_run_telegram_echo_once_self_test(void)

@@ -111,6 +111,8 @@ Initial core modules:
   polling seconds and a maximum iteration count.
 - An inbox read command prints pending updates in a more human-readable format
   while reusing the same persistent offset handling and never sending replies.
+  It includes Telegram date/time when present, sender, message kind, compact
+  one-line output and optional append-only local logging.
 - A stateful echo batch can process up to five pending updates from one
   `getUpdates` response, saving the offset after each handled update.
 - A bounded echo loop can repeat the stateful batch flow with caller-chosen
@@ -257,6 +259,8 @@ Current options:
     --data-dir <path> Set application data directory
     --token-file <path>
                       Override default Telegram token file
+    --inbox-log-file <path>
+                      Append read-only inbox items to a local text log
     --net-test <host> <port>
                       Test DNS resolution and TCP connection
     --http-test <host> <port> <path>
@@ -333,6 +337,10 @@ Current options:
                       Send a Telegram message with token loaded from file
     --telegram-send-message-default <chat-id> <text>
                       Send a Telegram message with default token file
+    --telegram-send <file> <chat-id> <text>
+                      Alias for --telegram-send-message
+    --telegram-send-default <chat-id> <text>
+                      Alias for --telegram-send-message-default
 ```
 
 `getUpdates` prints the raw Telegram result and, when present, minimal summaries
@@ -378,7 +386,23 @@ iterations when `poll-seconds` is greater than zero, and never sends replies.
 
 Use `telegram-inbox` or `telegram-inbox-loop` when you want the same safe
 receive-only behavior with output shaped for reading messages. It prints update
-id, chat id, sender name when available, decoded text and the saved next offset.
+id, date/time when present, chat id, sender name when available, message kind,
+decoded text, a compact one-line summary and the saved next offset. Non-text
+messages currently print placeholders such as `<photo>`, `<sticker>` or
+`<document>`.
+
+Add `--inbox-log-file <path>` to append compact inbox lines to a local text
+file while polling:
+
+```text
+telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default telegram-offset.txt 5 10
+```
+
+For manual replies, prefer the explicit send command after reading the chat id:
+
+```text
+telegram-test --telegram-send-default <chat-id> "Hello from Telegram Amiga"
+```
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.

@@ -20,7 +20,9 @@ The MorphOS tester can:
 - run read-only and echo state self-tests;
 - with a TLS-enabled build, call real Telegram Bot API commands when a token is
   provided;
-- print pending updates in inbox format without sending replies.
+- print pending updates in inbox format without sending replies, including
+  date/time, sender, message kind, compact one-line summaries and optional
+  append-only logging.
 
 Certificate validation is not enabled yet. Use this build only for supervised
 testing with test bots and disposable tokens.
@@ -115,11 +117,20 @@ telegram-test --telegram-read-once-state-default telegram-offset.txt
 telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
 telegram-test --telegram-inbox-default telegram-offset.txt
 telegram-test --telegram-inbox-loop-default telegram-offset.txt 5 10
+telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default telegram-offset.txt 5 10
 ```
 
 For receive tests, send a message to the bot from Telegram before running the
 command. The inbox commands are receive-only: they print update id, chat id,
-sender name when available, decoded text and the next saved offset.
+sender name when available, decoded text, message kind and the next saved
+offset. Non-text messages currently print placeholders such as `<photo>`,
+`<sticker>` or `<document>`.
+
+To send a manual response after reading a chat id:
+
+```text
+telegram-test --telegram-send-default <chat-id> "Hello from MorphOS"
+```
 
 ## Reporting Results
 

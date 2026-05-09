@@ -12,6 +12,7 @@ void tg_config_init(tg_config *config)
 {
     config->data_dir = tg_platform_default_data_dir();
     config->token_file_path_override = 0;
+    config->inbox_log_file_path = 0;
     config->net_test_host = 0;
     config->net_test_port = 0;
     config->http_test_host = 0;
@@ -135,6 +136,12 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             }
             ++i;
             config->token_file_path_override = argv[i];
+        } else if (strcmp(argv[i], "--inbox-log-file") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            ++i;
+            config->inbox_log_file_path = argv[i];
         } else if (strcmp(argv[i], "--net-test") == 0) {
             if (i + 2 >= argc) {
                 return 1;
@@ -364,7 +371,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             i += 3;
         } else if (strcmp(argv[i], "--telegram-send-message-self-test") == 0) {
             config->run_telegram_send_message_self_test = 1;
-        } else if (strcmp(argv[i], "--telegram-send-message") == 0) {
+        } else if (strcmp(argv[i], "--telegram-send-message") == 0 ||
+                   strcmp(argv[i], "--telegram-send") == 0) {
             if (i + 3 >= argc) {
                 return 1;
             }
@@ -373,7 +381,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_send_message_chat_id = argv[i + 2];
             config->telegram_send_message_text = argv[i + 3];
             i += 3;
-        } else if (strcmp(argv[i], "--telegram-send-message-default") == 0) {
+        } else if (strcmp(argv[i], "--telegram-send-message-default") == 0 ||
+                   strcmp(argv[i], "--telegram-send-default") == 0) {
             if (i + 2 >= argc) {
                 return 1;
             }
@@ -400,6 +409,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "      --data-dir <path> Set application data directory\n");
     fprintf(stream, "      --token-file <path>\n");
     fprintf(stream, "                         Override default Telegram token file\n");
+    fprintf(stream, "      --inbox-log-file <path>\n");
+    fprintf(stream, "                         Append read-only inbox items to a local text log\n");
     fprintf(stream, "      --net-test <host> <port>\n");
     fprintf(stream, "                         Test DNS resolution and TCP connect\n");
     fprintf(stream, "      --http-test <host> <port> <path>\n");
@@ -476,4 +487,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Send a Telegram message with token loaded from file\n");
     fprintf(stream, "      --telegram-send-message-default <chat-id> <text>\n");
     fprintf(stream, "                         Send a Telegram message with default token file\n");
+    fprintf(stream, "      --telegram-send <file> <chat-id> <text>\n");
+    fprintf(stream, "                         Alias for --telegram-send-message\n");
+    fprintf(stream, "      --telegram-send-default <chat-id> <text>\n");
+    fprintf(stream, "                         Alias for --telegram-send-message-default\n");
 }

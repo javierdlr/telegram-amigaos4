@@ -48,21 +48,38 @@ typedef struct tg_bot_call_result {
 } tg_bot_call_result;
 
 /**
+ * Minimal message kind detected inside one Telegram update.
+ */
+typedef enum tg_bot_message_kind {
+    TG_BOT_MESSAGE_NONE = 0,
+    TG_BOT_MESSAGE_TEXT = 1,
+    TG_BOT_MESSAGE_COMMAND = 2,
+    TG_BOT_MESSAGE_PHOTO = 3,
+    TG_BOT_MESSAGE_STICKER = 4,
+    TG_BOT_MESSAGE_DOCUMENT = 5,
+    TG_BOT_MESSAGE_UNSUPPORTED = 6
+} tg_bot_message_kind;
+
+/**
  * Minimal summary of one Telegram update.
  *
  * update_id and chat_id are copied into fixed caller-visible buffers because
  * callers commonly need to store/print them. sender_name is decoded copied
- * text from message.from.username or message.from.first_name when present.
- * text is a borrowed raw JSON string view into the HTTP response buffer; call
- * tg_json_string_decode() before presenting or reusing it as user-visible text.
+ * text from message.from.username or message.from.first_name when present. date
+ * is copied as the raw Telegram Unix timestamp when present. text is a borrowed
+ * raw JSON string view into the HTTP response buffer; call tg_json_string_decode()
+ * before presenting or reusing it as user-visible text.
  */
 typedef struct tg_bot_update_summary {
     int has_update;
     int has_message;
+    int has_date;
     int has_sender_name;
     int has_text;
+    tg_bot_message_kind message_kind;
     char update_id[32];
     char chat_id[32];
+    char date[32];
     char sender_name[128];
     const char *text;
     unsigned long text_length;
@@ -127,6 +144,11 @@ tg_bot_status tg_bot_get_updates_at(const tg_bot_call_result *result,
 tg_bot_status tg_bot_update_next_offset(const tg_bot_update_summary *update,
                                         char *next_offset,
                                         unsigned long next_offset_size);
+
+/**
+ * Returns a static string for a message kind. The caller must not free it.
+ */
+const char *tg_bot_message_kind_name(tg_bot_message_kind kind);
 
 /**
  * Parses a complete HTTP response as the result of Telegram sendMessage.

@@ -37,10 +37,13 @@ on at least one real Amiga-like platform.
 
 - Keep MorphOS and AmigaOS 3.x at the same verified level: TLS preflight,
   `getMe`, receive-only polling and offset persistence.
-- Improve inbox output into the first practical text-reading workflow.
+- Continue improving inbox output into the first practical text-reading
+  workflow. Current command-line inbox output already includes date/time,
+  sender, message kind, compact summaries and optional append-only logs.
 - Add controlled send-message workflows without automatic replies by default.
+  Current command-line aliases support manual sends after reading a chat id.
 - Add small local conversation state files once the receive/send command line
-  flows are stable.
+  flows are stable. Current append-only inbox logs are the first step.
 - Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
   developed with community or hardware feedback.
 

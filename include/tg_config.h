@@ -19,6 +19,7 @@
 typedef struct tg_config {
     const char *data_dir;
     const char *token_file_path_override;
+    const char *inbox_log_file_path;
     const char *net_test_host;
     const char *net_test_port;
     const char *http_test_host;
