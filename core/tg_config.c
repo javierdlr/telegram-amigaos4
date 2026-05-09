@@ -13,6 +13,7 @@ void tg_config_init(tg_config *config)
     config->data_dir = tg_platform_default_data_dir();
     config->token_file_path_override = 0;
     config->inbox_log_file_path = 0;
+    config->chat_state_file_path = 0;
     config->net_test_host = 0;
     config->net_test_port = 0;
     config->http_test_host = 0;
@@ -53,6 +54,13 @@ void tg_config_init(tg_config *config)
     config->telegram_inbox_loop_default_offset_file_path = 0;
     config->telegram_inbox_loop_default_poll_seconds = 0;
     config->telegram_inbox_loop_default_max_iterations = 0;
+    config->telegram_session_token_file_path = 0;
+    config->telegram_session_offset_file_path = 0;
+    config->telegram_session_inbox_log_file_path = 0;
+    config->telegram_session_chat_state_file_path = 0;
+    config->telegram_session_default_offset_file_path = 0;
+    config->telegram_session_default_inbox_log_file_path = 0;
+    config->telegram_session_default_chat_state_file_path = 0;
     config->telegram_echo_once_token_file_path = 0;
     config->telegram_echo_once_offset = 0;
     config->telegram_echo_once_default_offset = 0;
@@ -101,6 +109,8 @@ void tg_config_init(tg_config *config)
     config->run_telegram_inbox_default = 0;
     config->run_telegram_inbox_loop = 0;
     config->run_telegram_inbox_loop_default = 0;
+    config->run_telegram_session = 0;
+    config->run_telegram_session_default = 0;
     config->run_telegram_echo_once_self_test = 0;
     config->run_telegram_echo_once = 0;
     config->run_telegram_echo_once_default = 0;
@@ -142,6 +152,12 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             }
             ++i;
             config->inbox_log_file_path = argv[i];
+        } else if (strcmp(argv[i], "--chat-state-file") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            ++i;
+            config->chat_state_file_path = argv[i];
         } else if (strcmp(argv[i], "--net-test") == 0) {
             if (i + 2 >= argc) {
                 return 1;
@@ -316,6 +332,25 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_inbox_loop_default_poll_seconds = argv[i + 2];
             config->telegram_inbox_loop_default_max_iterations = argv[i + 3];
             i += 3;
+        } else if (strcmp(argv[i], "--telegram-session") == 0) {
+            if (i + 4 >= argc) {
+                return 1;
+            }
+            config->run_telegram_session = 1;
+            config->telegram_session_token_file_path = argv[i + 1];
+            config->telegram_session_offset_file_path = argv[i + 2];
+            config->telegram_session_inbox_log_file_path = argv[i + 3];
+            config->telegram_session_chat_state_file_path = argv[i + 4];
+            i += 4;
+        } else if (strcmp(argv[i], "--telegram-session-default") == 0) {
+            if (i + 3 >= argc) {
+                return 1;
+            }
+            config->run_telegram_session_default = 1;
+            config->telegram_session_default_offset_file_path = argv[i + 1];
+            config->telegram_session_default_inbox_log_file_path = argv[i + 2];
+            config->telegram_session_default_chat_state_file_path = argv[i + 3];
+            i += 3;
         } else if (strcmp(argv[i], "--telegram-echo-once-self-test") == 0) {
             config->run_telegram_echo_once_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-echo-once") == 0) {
@@ -411,6 +446,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Override default Telegram token file\n");
     fprintf(stream, "      --inbox-log-file <path>\n");
     fprintf(stream, "                         Append read-only inbox items to a local text log\n");
+    fprintf(stream, "      --chat-state-file <path>\n");
+    fprintf(stream, "                         Update one-line-per-chat state during inbox reads\n");
     fprintf(stream, "      --net-test <host> <port>\n");
     fprintf(stream, "                         Test DNS resolution and TCP connect\n");
     fprintf(stream, "      --http-test <host> <port> <path>\n");
@@ -467,6 +504,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run bounded inbox polling\n");
     fprintf(stream, "      --telegram-inbox-loop-default <offset-file> <poll-seconds> <max-iterations>\n");
     fprintf(stream, "                         Run bounded inbox polling with default token file\n");
+    fprintf(stream, "      --telegram-session <file> <offset-file> <inbox-log> <chats-file>\n");
+    fprintf(stream, "                         Run one manual-client receive session\n");
+    fprintf(stream, "      --telegram-session-default <offset-file> <inbox-log> <chats-file>\n");
+    fprintf(stream, "                         Manual-client receive session with default token file\n");
     fprintf(stream, "      --telegram-echo-once-self-test\n");
     fprintf(stream, "                         Run built-in one-shot echo flow sample\n");
     fprintf(stream, "      --telegram-echo-once <file> [offset]\n");

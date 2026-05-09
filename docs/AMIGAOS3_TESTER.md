@@ -216,12 +216,21 @@ Run a more readable receive-only inbox:
 telegram-test --telegram-inbox-default telegram-offset.txt
 telegram-test --telegram-inbox-loop-default telegram-offset.txt 5 10
 telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default telegram-offset.txt 5 10
+telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log telegram-chats.txt
 ```
 
 Inbox output includes update id, chat id, sender name when available, decoded
 text, message kind and the next saved offset. It uses the same offset file as
 the read-only commands and never sends replies. Non-text messages currently
 print placeholders such as `<photo>`, `<sticker>` or `<document>`.
+
+`telegram-session-default` is the first manual-client preview. It reads pending
+updates once, saves the next offset, appends readable inbox lines and updates
+`telegram-chats.txt`. It does not send replies. The chat state format is:
+
+```text
+<chat-id>|<last-sender>|<last-date>|<last-text-or-placeholder>
+```
 
 Send a controlled message back:
 

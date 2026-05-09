@@ -261,6 +261,8 @@ Current options:
                       Override default Telegram token file
     --inbox-log-file <path>
                       Append read-only inbox items to a local text log
+    --chat-state-file <path>
+                      Update one-line-per-chat state during inbox reads
     --net-test <host> <port>
                       Test DNS resolution and TCP connection
     --http-test <host> <port> <path>
@@ -317,6 +319,10 @@ Current options:
                       Run bounded inbox polling
     --telegram-inbox-loop-default <offset-file> <poll-seconds> <max-iterations>
                       Run bounded inbox polling with default token file
+    --telegram-session <file> <offset-file> <inbox-log> <chats-file>
+                      Run one manual-client receive session
+    --telegram-session-default <offset-file> <inbox-log> <chats-file>
+                      Manual-client receive session with default token file
     --telegram-echo-once-self-test
                       Run built-in one-shot echo flow sample
     --telegram-echo-once <file> [offset]
@@ -392,10 +398,26 @@ messages currently print placeholders such as `<photo>`, `<sticker>` or
 `<document>`.
 
 Add `--inbox-log-file <path>` to append compact inbox lines to a local text
-file while polling:
+file while polling. Add `--chat-state-file <path>` to keep a small
+one-line-per-chat state file:
 
 ```text
 telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default telegram-offset.txt 5 10
+telegram-test --chat-state-file telegram-chats.txt --telegram-inbox-default telegram-offset.txt
+```
+
+`telegram-chats.txt` uses this simple format:
+
+```text
+<chat-id>|<last-sender>|<last-date>|<last-text-or-placeholder>
+```
+
+Use `telegram-session-default` for the current manual-client preview. It reads
+pending updates once, saves the offset, appends inbox lines and updates the chat
+state file. It does not send replies:
+
+```text
+telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log telegram-chats.txt
 ```
 
 For manual replies, prefer the explicit send command after reading the chat id:

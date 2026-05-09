@@ -118,6 +118,7 @@ telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
 telegram-test --telegram-inbox-default telegram-offset.txt
 telegram-test --telegram-inbox-loop-default telegram-offset.txt 5 10
 telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default telegram-offset.txt 5 10
+telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log telegram-chats.txt
 ```
 
 For receive tests, send a message to the bot from Telegram before running the
@@ -125,6 +126,14 @@ command. The inbox commands are receive-only: they print update id, chat id,
 sender name when available, decoded text, message kind and the next saved
 offset. Non-text messages currently print placeholders such as `<photo>`,
 `<sticker>` or `<document>`.
+
+`telegram-session-default` is the first manual-client preview. It reads pending
+updates once, saves the next offset, appends readable inbox lines and updates
+`telegram-chats.txt`. It does not send replies. The chat state format is:
+
+```text
+<chat-id>|<last-sender>|<last-date>|<last-text-or-placeholder>
+```
 
 To send a manual response after reading a chat id:
 

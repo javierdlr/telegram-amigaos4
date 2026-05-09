@@ -7,7 +7,6 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "tg_app.h"
 #include "tg_bot.h"
@@ -272,13 +271,91 @@ static int tg_app_append_text(char *buffer, unsigned long buffer_size,
     return 0;
 }
 
+static int tg_app_append_n(char *buffer, unsigned long buffer_size,
+                           unsigned long *position, const char *text,
+                           unsigned long text_length)
+{
+    unsigned long index;
+
+    for (index = 0; index < text_length; ++index) {
+        if (tg_app_append_char(buffer, buffer_size, position, text[index]) != 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int tg_is_leap_year(unsigned long year)
+{
+    return (year % 4UL == 0UL) &&
+           ((year % 100UL != 0UL) || (year % 400UL == 0UL));
+}
+
+static unsigned long tg_days_in_year(unsigned long year)
+{
+    return tg_is_leap_year(year) ? 366UL : 365UL;
+}
+
+static unsigned long tg_days_in_month(unsigned long year, unsigned long month)
+{
+    static const unsigned long month_days[] = {
+        31UL, 28UL, 31UL, 30UL, 31UL, 30UL,
+        31UL, 31UL, 30UL, 31UL, 30UL, 31UL
+    };
+
+    if (month == 2UL && tg_is_leap_year(year)) {
+        return 29UL;
+    }
+    return month_days[month - 1UL];
+}
+
+static int tg_format_unix_utc(unsigned long timestamp,
+                              char *buffer, unsigned long buffer_size)
+{
+    unsigned long seconds;
+    unsigned long minutes;
+    unsigned long hours;
+    unsigned long days;
+    unsigned long year;
+    unsigned long month;
+    unsigned long month_days;
+
+    seconds = timestamp % 60UL;
+    timestamp /= 60UL;
+    minutes = timestamp % 60UL;
+    timestamp /= 60UL;
+    hours = timestamp % 24UL;
+    days = timestamp / 24UL;
+
+    year = 1970UL;
+    while (days >= tg_days_in_year(year)) {
+        days -= tg_days_in_year(year);
+        ++year;
+    }
+
+    month = 1UL;
+    for (;;) {
+        month_days = tg_days_in_month(year, month);
+        if (days < month_days) {
+            break;
+        }
+        days -= month_days;
+        ++month;
+    }
+
+    if (buffer_size < 24UL) {
+        return 1;
+    }
+    sprintf(buffer, "%04lu-%02lu-%02lu %02lu:%02lu:%02lu UTC",
+            year, month, days + 1UL, hours, minutes, seconds);
+    return 0;
+}
+
 static int tg_format_inbox_date(const tg_bot_update_summary *update,
                                 char *buffer, unsigned long buffer_size)
 {
     unsigned long timestamp;
     char *end_ptr;
-    time_t raw_time;
-    struct tm *utc_time;
     unsigned long position;
 
     if (buffer == 0 || buffer_size == 0) {
@@ -297,11 +374,7 @@ static int tg_format_inbox_date(const tg_bot_update_summary *update,
         return tg_app_append_text(buffer, buffer_size, &position, update->date);
     }
 
-    raw_time = (time_t)timestamp;
-    utc_time = gmtime(&raw_time);
-    if (utc_time == 0 ||
-        strftime(buffer, (size_t)buffer_size, "%Y-%m-%d %H:%M:%S UTC",
-                 utc_time) == 0) {
+    if (tg_format_unix_utc(timestamp, buffer, buffer_size) != 0) {
         position = 0;
         return tg_app_append_text(buffer, buffer_size, &position, update->date);
     }
@@ -313,6 +386,16 @@ static void tg_sanitize_one_line(char *text)
 {
     while (*text != '\0') {
         if (*text == '\r' || *text == '\n' || *text == '\t') {
+            *text = ' ';
+        }
+        ++text;
+    }
+}
+
+static void tg_sanitize_chat_field(char *text)
+{
+    while (*text != '\0') {
+        if (*text == '\r' || *text == '\n' || *text == '\t' || *text == '|') {
             *text = ' ';
         }
         ++text;
@@ -426,6 +509,158 @@ static int tg_append_inbox_log_line(const char *path,
     }
 
     printf("inbox log appended: %s\n", path);
+    return 0;
+}
+
+static int tg_build_chat_state_line(const tg_bot_update_summary *update,
+                                    char *buffer, unsigned long buffer_size)
+{
+    char date_text[64];
+    char content_text[512];
+    char sender_text[128];
+    unsigned long position;
+
+    if (update == 0 || buffer == 0 || buffer_size == 0 ||
+        !update->has_update || !update->has_message) {
+        return 1;
+    }
+
+    if (tg_format_inbox_date(update, date_text, sizeof(date_text)) != 0 ||
+        tg_inbox_content_text(update, content_text, sizeof(content_text)) != 0) {
+        return 1;
+    }
+    if (update->has_sender_name) {
+        strcpy(sender_text, update->sender_name);
+    } else {
+        strcpy(sender_text, "unknown");
+    }
+    tg_sanitize_chat_field(sender_text);
+    tg_sanitize_chat_field(date_text);
+    tg_sanitize_chat_field(content_text);
+
+    position = 0;
+    buffer[0] = '\0';
+    if (tg_app_append_text(buffer, buffer_size, &position, update->chat_id) != 0 ||
+        tg_app_append_char(buffer, buffer_size, &position, '|') != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, sender_text) != 0 ||
+        tg_app_append_char(buffer, buffer_size, &position, '|') != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, date_text) != 0 ||
+        tg_app_append_char(buffer, buffer_size, &position, '|') != 0 ||
+        tg_app_append_text(buffer, buffer_size, &position, content_text) != 0 ||
+        tg_app_append_char(buffer, buffer_size, &position, '\n') != 0) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int tg_chat_state_line_matches(const char *line,
+                                      unsigned long line_length,
+                                      const char *chat_id)
+{
+    unsigned long chat_id_length;
+
+    if (line == 0 || chat_id == 0) {
+        return 0;
+    }
+    chat_id_length = (unsigned long)strlen(chat_id);
+    return line_length > chat_id_length &&
+           strncmp(line, chat_id, chat_id_length) == 0 &&
+           line[chat_id_length] == '|';
+}
+
+static int tg_update_chat_state_file(const char *path,
+                                     const tg_bot_update_summary *update)
+{
+    tg_file_status file_status;
+    char current[16384];
+    char rewritten[16384];
+    char new_line[1024];
+    unsigned long current_length;
+    unsigned long input_pos;
+    unsigned long output_pos;
+    int replaced;
+
+    if (path == 0 || path[0] == '\0') {
+        return 0;
+    }
+    if (update == 0 || !update->has_message) {
+        return 0;
+    }
+    if (tg_build_chat_state_line(update, new_line, sizeof(new_line)) != 0) {
+        puts("chat state: line too long");
+        return 2;
+    }
+
+    current[0] = '\0';
+    current_length = 0;
+    file_status = tg_file_read_text(path, current, sizeof(current),
+                                    &current_length);
+    if (file_status != TG_FILE_OK && file_status != TG_FILE_OPEN_FAILED) {
+        printf("chat state: read failed: %s\n",
+               tg_file_status_name(file_status));
+        return 2;
+    }
+
+    rewritten[0] = '\0';
+    input_pos = 0;
+    output_pos = 0;
+    replaced = 0;
+    while (input_pos < current_length) {
+        unsigned long line_start;
+        unsigned long line_end;
+        unsigned long line_length;
+
+        line_start = input_pos;
+        line_end = line_start;
+        while (line_end < current_length &&
+               current[line_end] != '\n' &&
+               current[line_end] != '\r') {
+            ++line_end;
+        }
+        line_length = line_end - line_start;
+
+        if (tg_chat_state_line_matches(current + line_start, line_length,
+                                       update->chat_id)) {
+            if (tg_app_append_text(rewritten, sizeof(rewritten), &output_pos,
+                                   new_line) != 0) {
+                puts("chat state: file too large");
+                return 2;
+            }
+            replaced = 1;
+        } else if (line_length > 0) {
+            if (tg_app_append_n(rewritten, sizeof(rewritten), &output_pos,
+                                current + line_start, line_length) != 0 ||
+                tg_app_append_char(rewritten, sizeof(rewritten), &output_pos,
+                                   '\n') != 0) {
+                puts("chat state: file too large");
+                return 2;
+            }
+        }
+
+        input_pos = line_end;
+        while (input_pos < current_length &&
+               (current[input_pos] == '\n' || current[input_pos] == '\r')) {
+            ++input_pos;
+        }
+    }
+
+    if (!replaced) {
+        if (tg_app_append_text(rewritten, sizeof(rewritten), &output_pos,
+                               new_line) != 0) {
+            puts("chat state: file too large");
+            return 2;
+        }
+    }
+
+    file_status = tg_file_write_text(path, rewritten, output_pos);
+    if (file_status != TG_FILE_OK) {
+        printf("chat state: write failed: %s\n",
+               tg_file_status_name(file_status));
+        return 2;
+    }
+
+    printf("chat state updated: %s\n", path);
     return 0;
 }
 
@@ -1362,7 +1597,8 @@ static int tg_run_telegram_read_once_state_self_test(void)
 static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
                                                  const char *offset_file_path,
                                                  tg_read_output_mode output_mode,
-                                                 const char *inbox_log_file_path)
+                                                 const char *inbox_log_file_path,
+                                                 const char *chat_state_file_path)
 {
     tg_bot_status bot_status;
     tg_bot_call_result updates_result;
@@ -1443,6 +1679,9 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
             if (tg_append_inbox_log_line(inbox_log_file_path, &update) != 0) {
                 return 2;
             }
+            if (tg_update_chat_state_file(chat_state_file_path, &update) != 0) {
+                return 2;
+            }
         } else {
             printf("telegram read once state update index: %lu\n", index);
             tg_print_update_summary(&update);
@@ -1496,6 +1735,7 @@ static int tg_run_telegram_read_once_state(const tg_config *config)
         config->telegram_read_once_state_token_file_path,
         config->telegram_read_once_state_offset_file_path,
         TG_READ_OUTPUT_STATE,
+        0,
         0);
 }
 
@@ -1515,6 +1755,7 @@ static int tg_run_telegram_read_once_state_default(const tg_config *config)
         resolved_path,
         config->telegram_read_once_state_default_offset_file_path,
         TG_READ_OUTPUT_STATE,
+        0,
         0);
 }
 
@@ -1523,7 +1764,8 @@ static int tg_run_telegram_read_loop_paths(const char *token_file_path,
                                            const char *poll_seconds_text,
                                            const char *max_iterations_text,
                                            tg_read_output_mode output_mode,
-                                           const char *inbox_log_file_path)
+                                           const char *inbox_log_file_path,
+                                           const char *chat_state_file_path)
 {
     unsigned long poll_seconds;
     unsigned long max_iterations;
@@ -1554,7 +1796,8 @@ static int tg_run_telegram_read_loop_paths(const char *token_file_path,
             token_file_path,
             offset_file_path,
             output_mode,
-            inbox_log_file_path);
+            inbox_log_file_path,
+            chat_state_file_path);
         if (rc != 0) {
             return rc;
         }
@@ -1575,6 +1818,7 @@ static int tg_run_telegram_read_loop(const tg_config *config)
         config->telegram_read_loop_poll_seconds,
         config->telegram_read_loop_max_iterations,
         TG_READ_OUTPUT_STATE,
+        0,
         0);
 }
 
@@ -1596,6 +1840,7 @@ static int tg_run_telegram_read_loop_default(const tg_config *config)
         config->telegram_read_loop_default_poll_seconds,
         config->telegram_read_loop_default_max_iterations,
         TG_READ_OUTPUT_STATE,
+        0,
         0);
 }
 
@@ -1605,12 +1850,14 @@ static int tg_run_telegram_inbox(const tg_config *config)
         config->telegram_inbox_token_file_path,
         config->telegram_inbox_offset_file_path,
         TG_READ_OUTPUT_INBOX,
-        config->inbox_log_file_path);
+        config->inbox_log_file_path,
+        config->chat_state_file_path);
 }
 
 static int tg_run_telegram_inbox_self_test(void)
 {
     static const char log_file_path[] = "telegram-inbox-self-test.log";
+    static const char chat_state_file_path[] = "telegram-chats-self-test.txt";
     static const char updates_response[] =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: application/json\r\n"
@@ -1637,10 +1884,13 @@ static int tg_run_telegram_inbox_self_test(void)
     char next_offset[32];
     char decoded_text[128];
     char log_text[1024];
+    char chat_state_text[1024];
     unsigned long decoded_length;
     unsigned long log_length;
+    unsigned long chat_state_length;
 
     remove(log_file_path);
+    remove(chat_state_file_path);
 
     bot_status = tg_bot_parse_get_updates_http_response(
         updates_response, (unsigned long)strlen(updates_response), &result);
@@ -1690,15 +1940,23 @@ static int tg_run_telegram_inbox_self_test(void)
     tg_print_inbox_update_summary(&photo_update);
     if (tg_append_inbox_log_line(log_file_path, &update) != 0 ||
         tg_append_inbox_log_line(log_file_path, &photo_update) != 0 ||
+        tg_update_chat_state_file(chat_state_file_path, &update) != 0 ||
+        tg_update_chat_state_file(chat_state_file_path, &photo_update) != 0 ||
         tg_file_read_text(log_file_path, log_text, sizeof(log_text),
                           &log_length) != TG_FILE_OK ||
         strstr(log_text, " | text | Inbox \"test\" Line") == 0 ||
-        strstr(log_text, " | photo | <photo>") == 0) {
-        puts("telegram inbox self-test: log failed");
+        strstr(log_text, " | photo | <photo>") == 0 ||
+        tg_file_read_text(chat_state_file_path, chat_state_text,
+                          sizeof(chat_state_text),
+                          &chat_state_length) != TG_FILE_OK ||
+        strstr(chat_state_text, "123|kaffeine|2024-03-09 16:00:01 UTC|<photo>\n") == 0) {
+        puts("telegram inbox self-test: local state failed");
         remove(log_file_path);
+        remove(chat_state_file_path);
         return 2;
     }
     remove(log_file_path);
+    remove(chat_state_file_path);
     puts("telegram inbox self-test: ok");
     return 0;
 }
@@ -1719,7 +1977,8 @@ static int tg_run_telegram_inbox_default(const tg_config *config)
         resolved_path,
         config->telegram_inbox_default_offset_file_path,
         TG_READ_OUTPUT_INBOX,
-        config->inbox_log_file_path);
+        config->inbox_log_file_path,
+        config->chat_state_file_path);
 }
 
 static int tg_run_telegram_inbox_loop(const tg_config *config)
@@ -1730,7 +1989,8 @@ static int tg_run_telegram_inbox_loop(const tg_config *config)
         config->telegram_inbox_loop_poll_seconds,
         config->telegram_inbox_loop_max_iterations,
         TG_READ_OUTPUT_INBOX,
-        config->inbox_log_file_path);
+        config->inbox_log_file_path,
+        config->chat_state_file_path);
 }
 
 static int tg_run_telegram_inbox_loop_default(const tg_config *config)
@@ -1751,7 +2011,52 @@ static int tg_run_telegram_inbox_loop_default(const tg_config *config)
         config->telegram_inbox_loop_default_poll_seconds,
         config->telegram_inbox_loop_default_max_iterations,
         TG_READ_OUTPUT_INBOX,
-        config->inbox_log_file_path);
+        config->inbox_log_file_path,
+        config->chat_state_file_path);
+}
+
+static int tg_run_telegram_session_paths(const char *token_file_path,
+                                         const char *offset_file_path,
+                                         const char *inbox_log_file_path,
+                                         const char *chat_state_file_path)
+{
+    puts("telegram manual session: receive only");
+    printf("telegram inbox log file: %s\n", inbox_log_file_path);
+    printf("telegram chat state file: %s\n", chat_state_file_path);
+    return tg_run_telegram_read_once_state_paths(
+        token_file_path,
+        offset_file_path,
+        TG_READ_OUTPUT_INBOX,
+        inbox_log_file_path,
+        chat_state_file_path);
+}
+
+static int tg_run_telegram_session(const tg_config *config)
+{
+    return tg_run_telegram_session_paths(
+        config->telegram_session_token_file_path,
+        config->telegram_session_offset_file_path,
+        config->telegram_session_inbox_log_file_path,
+        config->telegram_session_chat_state_file_path);
+}
+
+static int tg_run_telegram_session_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_session_paths(
+        resolved_path,
+        config->telegram_session_default_offset_file_path,
+        config->telegram_session_default_inbox_log_file_path,
+        config->telegram_session_default_chat_state_file_path);
 }
 
 static int tg_run_telegram_echo_once_self_test(void)
@@ -2463,6 +2768,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_inbox_loop_default) {
         return tg_run_telegram_inbox_loop_default(&config);
+    }
+
+    if (config.run_telegram_session) {
+        return tg_run_telegram_session(&config);
+    }
+
+    if (config.run_telegram_session_default) {
+        return tg_run_telegram_session_default(&config);
     }
 
     if (config.run_telegram_echo_once_self_test) {
