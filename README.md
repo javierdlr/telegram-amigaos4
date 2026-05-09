@@ -137,6 +137,11 @@ Build on MorphOS:
 System:Development/gg/bin/make -C Work:Dev/telegram-amiga -f Makefile.morphos run
 ```
 
+The default MorphOS build has TLS disabled and is suitable for offline
+self-tests. Build with `ENABLE_TLS=1` only when OpenSSL headers/libraries are
+available and you want live HTTPS tests. See `docs/MORPHOS_TESTER.md` for
+target-side test instructions.
+
 Remote build from the Mac:
 
 ```sh
@@ -228,6 +233,17 @@ Flow Studio on MorphOS:
   together with the main source files, so the Project Lister has an active C
   file from which it can populate Source/Header/Build.
 - `telegram-amiga.files` contains the list of the main project files.
+
+MorphOS tester package:
+
+```sh
+scripts/package-morphos-tester.sh
+```
+
+The script packages a MorphOS binary that was built on MorphOS and copied back
+to `build/morphos/telegram-test`. The package is written under
+`build/packages/`, which is ignored by git, and does not include Telegram tokens
+or OpenSSL runtime files.
 
 Current options:
 
