@@ -224,6 +224,28 @@ static void tg_print_update_summary(const tg_bot_update_summary *update)
     }
 }
 
+static int tg_build_echo_text(const tg_bot_update_summary *update,
+                              char *buffer, unsigned long buffer_size)
+{
+    static const char prefix[] = "Echo: ";
+    unsigned long prefix_length;
+
+    if (buffer == 0 || buffer_size == 0 || update == 0 ||
+        !update->has_text || update->text == 0) {
+        return 1;
+    }
+
+    prefix_length = (unsigned long)strlen(prefix);
+    if (prefix_length + update->text_length + 1 > buffer_size) {
+        return 1;
+    }
+
+    strcpy(buffer, prefix);
+    memcpy(buffer + prefix_length, update->text, update->text_length);
+    buffer[prefix_length + update->text_length] = '\0';
+    return 0;
+}
+
 static int tg_run_telegram_json_test_text(const char *json)
 {
     tg_telegram_status telegram_status;
@@ -577,6 +599,153 @@ static int tg_run_telegram_get_updates(const tg_config *config)
     return 0;
 }
 
+static int tg_run_telegram_echo_once_self_test(void)
+{
+    static const char updates_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":true,\"result\":[{\"update_id\":999,\"message\":{\"message_id\":1,\"chat\":{\"id\":123,\"type\":\"private\"},\"text\":\"hello\"}}]}";
+    tg_bot_status bot_status;
+    tg_bot_call_result result;
+    tg_bot_update_summary update;
+    char next_offset[32];
+    char echo_text[256];
+    char body[512];
+    unsigned long body_length;
+
+    bot_status = tg_bot_parse_get_updates_http_response(updates_response,
+                                                        (unsigned long)strlen(updates_response),
+                                                        &result);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram echo once self-test: getUpdates failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    bot_status = tg_bot_get_updates_first(&result, &update);
+    if (bot_status != TG_BOT_OK || !update.has_update ||
+        !update.has_message || !update.has_text) {
+        printf("telegram echo once self-test: update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    bot_status = tg_bot_update_next_offset(&update, next_offset, sizeof(next_offset));
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram echo once self-test: offset failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    if (strcmp(next_offset, "1000") != 0) {
+        printf("telegram echo once self-test: offset mismatch: %s\n", next_offset);
+        return 2;
+    }
+    if (tg_build_echo_text(&update, echo_text, sizeof(echo_text)) != 0) {
+        puts("telegram echo once self-test: echo text failed");
+        return 2;
+    }
+    bot_status = tg_bot_build_send_message_body(update.chat_id, echo_text,
+                                                body, sizeof(body), &body_length);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram echo once self-test: body failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+
+    puts("telegram echo once self-test: ok");
+    printf("telegram update id: %s\n", update.update_id);
+    printf("telegram next offset: %s\n", next_offset);
+    printf("telegram echo chat id: %s\n", update.chat_id);
+    printf("telegram echo text: %s\n", echo_text);
+    printf("telegram echo body bytes: %lu\n", body_length);
+    return 0;
+}
+
+static int tg_run_telegram_echo_once(const tg_config *config)
+{
+    tg_bot_status bot_status;
+    tg_bot_call_result result;
+    tg_bot_update_summary update;
+    char error_buffer[256];
+    char http_buffer[16384];
+    char send_buffer[8192];
+    char next_offset[32];
+    char echo_text[512];
+    unsigned long http_response_length;
+    unsigned long send_response_length;
+
+    bot_status = tg_bot_get_updates_from_token_file_with_offset(
+        config->telegram_echo_once_token_file_path,
+        config->telegram_echo_once_offset,
+        http_buffer, sizeof(http_buffer), &http_response_length, &result,
+        error_buffer, sizeof(error_buffer));
+    if (bot_status != TG_BOT_OK) {
+        tg_print_bot_error("telegram echo once getUpdates", bot_status,
+                           &result, error_buffer);
+        return 2;
+    }
+    if (result.response.http_status_code < 200 ||
+        result.response.http_status_code > 299 ||
+        !result.response.api.ok) {
+        printf("telegram echo once getUpdates: http status %d\n",
+               result.response.http_status_code);
+        tg_print_telegram_response(&result.response.api);
+        return 2;
+    }
+
+    bot_status = tg_bot_get_updates_first(&result, &update);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram echo once: update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    tg_print_update_summary(&update);
+    if (!update.has_update) {
+        puts("telegram echo once: no update to process");
+        return 0;
+    }
+
+    bot_status = tg_bot_update_next_offset(&update, next_offset, sizeof(next_offset));
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram echo once: next offset failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    printf("telegram next offset: %s\n", next_offset);
+
+    if (!update.has_message || !update.has_text) {
+        puts("telegram echo once: update has no text message");
+        return 0;
+    }
+    if (tg_build_echo_text(&update, echo_text, sizeof(echo_text)) != 0) {
+        puts("telegram echo once: echo text too long");
+        return 2;
+    }
+
+    bot_status = tg_bot_send_message_from_token_file(
+        config->telegram_echo_once_token_file_path,
+        update.chat_id, echo_text,
+        send_buffer, sizeof(send_buffer), &send_response_length, &result,
+        error_buffer, sizeof(error_buffer));
+    if (bot_status != TG_BOT_OK) {
+        tg_print_bot_error("telegram echo once sendMessage", bot_status,
+                           &result, error_buffer);
+        return 2;
+    }
+
+    printf("telegram echo once sendMessage: received %lu bytes\n",
+           send_response_length);
+    printf("telegram http status: %d\n", result.response.http_status_code);
+    tg_print_telegram_response(&result.response.api);
+    if (result.response.http_status_code < 200 ||
+        result.response.http_status_code > 299 ||
+        !result.response.api.ok) {
+        return 2;
+    }
+
+    return 0;
+}
+
 static int tg_run_telegram_send_message_self_test(void)
 {
     static const char send_response[] =
@@ -753,6 +922,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_get_updates) {
         return tg_run_telegram_get_updates(&config);
+    }
+
+    if (config.run_telegram_echo_once_self_test) {
+        return tg_run_telegram_echo_once_self_test();
+    }
+
+    if (config.run_telegram_echo_once) {
+        return tg_run_telegram_echo_once(&config);
     }
 
     if (config.run_telegram_send_message_self_test) {

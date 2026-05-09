@@ -104,6 +104,16 @@ tg_bot_status tg_bot_get_updates_first(const tg_bot_call_result *result,
                                        tg_bot_update_summary *update);
 
 /**
+ * Builds the next getUpdates offset from update->update_id.
+ *
+ * next_offset receives update_id + 1 as decimal text. Returns BODY_ERROR if the
+ * caller-owned buffer cannot hold the result.
+ */
+tg_bot_status tg_bot_update_next_offset(const tg_bot_update_summary *update,
+                                        char *next_offset,
+                                        unsigned long next_offset_size);
+
+/**
  * Parses a complete HTTP response as the result of Telegram sendMessage.
  *
  * This function does not allocate memory. result->response contains borrowed

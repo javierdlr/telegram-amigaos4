@@ -67,6 +67,8 @@ Initial core modules:
 - `tg_tls`/`tg_https`: minimal TLS/HTTPS with an initial MorphOS OpenSSL backend
 - Bot API `getMe`, `getUpdates` and `sendMessage` helpers; `getUpdates` can
   extract the first update id, chat id and text from the returned array.
+- A one-shot echo command can read one update, print the next offset and send an
+  `Echo: ...` reply when the update contains text.
 
 TLS note: the initial MorphOS backend uses OpenSSL/AmiSSL with SNI, but
 certificate validation is not enabled yet. This is enough for connectivity
@@ -151,6 +153,10 @@ Current options:
                       Run built-in Bot API getUpdates parser sample
     --telegram-get-updates <file> [offset]
                       Call Telegram getUpdates with optional offset
+    --telegram-echo-once-self-test
+                      Run built-in one-shot echo flow sample
+    --telegram-echo-once <file> [offset]
+                      Read one update and echo its text back
     --telegram-send-message-self-test
                       Run built-in Bot API sendMessage parser sample
     --telegram-send-message <file> <chat-id> <text>
@@ -165,6 +171,11 @@ telegram update id: 64052626
 telegram update chat id: 148319454
 telegram update text: /start
 ```
+
+`telegram-echo-once` is intentionally not a permanent loop. Run it again with
+the printed `telegram next offset` value to avoid processing the same update
+twice. Do not use arbitrary large offsets as a substitute for state; keep and
+reuse the actual next offset printed by the program.
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.

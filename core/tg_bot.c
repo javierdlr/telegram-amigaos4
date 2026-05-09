@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <string.h>
+
 #include "tg_bot.h"
 
 static tg_bot_status tg_bot_parse_http_response(const char *http_response,
@@ -250,6 +252,68 @@ tg_bot_status tg_bot_get_updates_first(const tg_bot_call_result *result,
     update->has_text = 1;
     update->text = text.start;
     update->text_length = text.length;
+    return TG_BOT_OK;
+}
+
+tg_bot_status tg_bot_update_next_offset(const tg_bot_update_summary *update,
+                                        char *next_offset,
+                                        unsigned long next_offset_size)
+{
+    char reversed[32];
+    unsigned long input_pos;
+    unsigned long reversed_length;
+    unsigned long output_pos;
+    int carry;
+
+    if (next_offset != 0 && next_offset_size > 0) {
+        next_offset[0] = '\0';
+    }
+    if (update == 0 || next_offset == 0 || next_offset_size == 0 ||
+        !update->has_update || !tg_bot_is_decimal_text(update->update_id)) {
+        return TG_BOT_INVALID_ARGUMENT;
+    }
+
+    input_pos = (unsigned long)strlen(update->update_id);
+    reversed_length = 0;
+    carry = 1;
+
+    while (input_pos > 0) {
+        int digit;
+
+        --input_pos;
+        digit = (update->update_id[input_pos] - '0') + carry;
+        if (digit >= 10) {
+            digit -= 10;
+            carry = 1;
+        } else {
+            carry = 0;
+        }
+        if (reversed_length + 1 >= sizeof(reversed)) {
+            return TG_BOT_BODY_ERROR;
+        }
+        reversed[reversed_length] = (char)('0' + digit);
+        ++reversed_length;
+    }
+
+    if (carry) {
+        if (reversed_length + 1 >= sizeof(reversed)) {
+            return TG_BOT_BODY_ERROR;
+        }
+        reversed[reversed_length] = '1';
+        ++reversed_length;
+    }
+
+    if (reversed_length + 1 > next_offset_size) {
+        return TG_BOT_BODY_ERROR;
+    }
+
+    output_pos = 0;
+    while (reversed_length > 0) {
+        --reversed_length;
+        next_offset[output_pos] = reversed[reversed_length];
+        ++output_pos;
+    }
+    next_offset[output_pos] = '\0';
     return TG_BOT_OK;
 }
 
