@@ -65,6 +65,8 @@ Initial core modules:
 - `tg_net`: portable TCP API with MorphOS and initial AmigaOS 3.x backends
 - `tg_telegram`: Telegram API response envelope parsing
 - `tg_tls`/`tg_https`: minimal TLS/HTTPS with an initial MorphOS OpenSSL backend
+- Bot API `getMe`, `getUpdates` and `sendMessage` helpers; `getUpdates` can
+  extract the first update id, chat id and text from the returned array.
 
 TLS note: the initial MorphOS backend uses OpenSSL/AmiSSL with SNI, but
 certificate validation is not enabled yet. This is enough for connectivity
@@ -147,12 +149,21 @@ Current options:
                       Call Telegram getMe with token loaded from file
     --telegram-get-updates-self-test
                       Run built-in Bot API getUpdates parser sample
-    --telegram-get-updates <file>
-                      Call Telegram getUpdates with token loaded from file
+    --telegram-get-updates <file> [offset]
+                      Call Telegram getUpdates with optional offset
     --telegram-send-message-self-test
                       Run built-in Bot API sendMessage parser sample
     --telegram-send-message <file> <chat-id> <text>
                       Send a Telegram message with token loaded from file
+```
+
+`getUpdates` prints the raw Telegram result and, when present, a minimal first
+update summary:
+
+```text
+telegram update id: 64052626
+telegram update chat id: 148319454
+telegram update text: /start
 ```
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be

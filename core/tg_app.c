@@ -202,6 +202,28 @@ static void tg_print_telegram_response(const tg_telegram_response *response)
     }
 }
 
+static void tg_print_update_summary(const tg_bot_update_summary *update)
+{
+    if (!update->has_update) {
+        puts("telegram update: none");
+        return;
+    }
+
+    printf("telegram update id: %s\n", update->update_id);
+    if (!update->has_message) {
+        puts("telegram update message: none");
+        return;
+    }
+
+    printf("telegram update chat id: %s\n", update->chat_id);
+    if (update->has_text) {
+        printf("telegram update text: %.*s\n",
+               (int)update->text_length, update->text);
+    } else {
+        puts("telegram update text: none");
+    }
+}
+
 static int tg_run_telegram_json_test_text(const char *json)
 {
     tg_telegram_status telegram_status;
@@ -457,8 +479,15 @@ static int tg_run_telegram_get_updates_self_test(void)
         "Connection: close\r\n"
         "\r\n"
         "{\"ok\":true,\"result\":[{\"update_id\":1000,\"message\":{\"message_id\":1,\"chat\":{\"id\":123,\"type\":\"private\"},\"text\":\"hello\"}}]}";
+    static const char empty_updates_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":true,\"result\":[]}";
     tg_bot_status bot_status;
     tg_bot_call_result result;
+    tg_bot_update_summary update;
 
     bot_status = tg_bot_parse_get_updates_http_response(updates_response,
                                                         (unsigned long)strlen(updates_response),
@@ -476,6 +505,31 @@ static int tg_run_telegram_get_updates_self_test(void)
     puts("telegram getUpdates self-test: ok response");
     printf("telegram http status: %d\n", result.response.http_status_code);
     tg_print_telegram_response(&result.response.api);
+
+    bot_status = tg_bot_get_updates_first(&result, &update);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram getUpdates self-test: update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    tg_print_update_summary(&update);
+
+    bot_status = tg_bot_parse_get_updates_http_response(
+        empty_updates_response,
+        (unsigned long)strlen(empty_updates_response),
+        &result);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram getUpdates empty self-test: failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    bot_status = tg_bot_get_updates_first(&result, &update);
+    if (bot_status != TG_BOT_OK || update.has_update) {
+        printf("telegram getUpdates empty self-test: failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    puts("telegram getUpdates empty self-test: ok");
     return 0;
 }
 
@@ -483,12 +537,14 @@ static int tg_run_telegram_get_updates(const tg_config *config)
 {
     tg_bot_status bot_status;
     tg_bot_call_result result;
+    tg_bot_update_summary update;
     char error_buffer[256];
     char http_buffer[16384];
     unsigned long http_response_length;
 
-    bot_status = tg_bot_get_updates_from_token_file(
+    bot_status = tg_bot_get_updates_from_token_file_with_offset(
         config->telegram_get_updates_token_file_path,
+        config->telegram_get_updates_offset,
         http_buffer, sizeof(http_buffer), &http_response_length, &result,
         error_buffer, sizeof(error_buffer));
     if (bot_status != TG_BOT_OK) {
@@ -499,6 +555,18 @@ static int tg_run_telegram_get_updates(const tg_config *config)
     printf("telegram getUpdates: received %lu bytes\n", http_response_length);
     printf("telegram http status: %d\n", result.response.http_status_code);
     tg_print_telegram_response(&result.response.api);
+
+    if (result.response.http_status_code >= 200 &&
+        result.response.http_status_code <= 299 &&
+        result.response.api.ok) {
+        bot_status = tg_bot_get_updates_first(&result, &update);
+        if (bot_status != TG_BOT_OK) {
+            printf("telegram getUpdates: update failed: %s\n",
+                   tg_bot_status_name(bot_status));
+            return 2;
+        }
+        tg_print_update_summary(&update);
+    }
 
     if (result.response.http_status_code < 200 ||
         result.response.http_status_code > 299 ||

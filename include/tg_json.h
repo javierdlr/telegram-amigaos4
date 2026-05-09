@@ -60,6 +60,16 @@ tg_json_status tg_json_object_get(const char *json, unsigned long json_length,
                                   const char *field_name, tg_json_value *value);
 
 /**
+ * Looks up the first element in a JSON array.
+ *
+ * array_json is caller-owned and must contain a complete JSON array. The
+ * returned value is a borrowed view into array_json. TG_JSON_NOT_FOUND means the
+ * array is valid but empty.
+ */
+tg_json_status tg_json_array_first(const char *array_json, unsigned long array_json_length,
+                                   tg_json_value *value);
+
+/**
  * Looks up a top-level boolean field.
  *
  * Returns TG_JSON_TYPE_MISMATCH when the field exists but is not true/false.
@@ -79,6 +89,17 @@ tg_json_status tg_json_object_get_string_copy(const char *json, unsigned long js
                                               const char *field_name, char *buffer,
                                               unsigned long buffer_size,
                                               unsigned long *string_length);
+
+/**
+ * Looks up a top-level number field and copies its raw JSON text.
+ *
+ * No numeric conversion is performed, which avoids platform-specific integer
+ * width issues. The caller receives a NUL-terminated decimal/exponent string.
+ */
+tg_json_status tg_json_object_get_number_copy(const char *json, unsigned long json_length,
+                                              const char *field_name, char *buffer,
+                                              unsigned long buffer_size,
+                                              unsigned long *number_length);
 
 /**
  * Returns a static string for status. The caller must not free it.

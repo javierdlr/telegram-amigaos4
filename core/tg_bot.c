@@ -52,6 +52,20 @@ static tg_bot_status tg_bot_append_text(char *buffer, unsigned long buffer_size,
     return TG_BOT_OK;
 }
 
+static int tg_bot_is_decimal_text(const char *text)
+{
+    if (text == 0 || text[0] == '\0') {
+        return 0;
+    }
+    while (*text != '\0') {
+        if (*text < '0' || *text > '9') {
+            return 0;
+        }
+        ++text;
+    }
+    return 1;
+}
+
 static tg_bot_status tg_bot_append_json_hex_escape(char *buffer,
                                                    unsigned long buffer_size,
                                                    unsigned long *position,
@@ -135,6 +149,20 @@ void tg_bot_call_result_init(tg_bot_call_result *result)
     result->response.api.result.bool_value = 0;
 }
 
+void tg_bot_update_summary_init(tg_bot_update_summary *update)
+{
+    if (update == 0) {
+        return;
+    }
+    update->has_update = 0;
+    update->has_message = 0;
+    update->has_text = 0;
+    update->update_id[0] = '\0';
+    update->chat_id[0] = '\0';
+    update->text = 0;
+    update->text_length = 0;
+}
+
 tg_bot_status tg_bot_parse_get_me_http_response(const char *http_response,
                                                 unsigned long http_response_length,
                                                 tg_bot_call_result *result)
@@ -147,6 +175,82 @@ tg_bot_status tg_bot_parse_get_updates_http_response(const char *http_response,
                                                      tg_bot_call_result *result)
 {
     return tg_bot_parse_http_response(http_response, http_response_length, result);
+}
+
+tg_bot_status tg_bot_get_updates_first(const tg_bot_call_result *result,
+                                       tg_bot_update_summary *update)
+{
+    tg_json_status json_status;
+    tg_json_value first_update;
+    tg_json_value message;
+    tg_json_value chat;
+    tg_json_value text;
+    unsigned long copied_length;
+
+    if (update != 0) {
+        tg_bot_update_summary_init(update);
+    }
+    if (result == 0 || update == 0) {
+        return TG_BOT_INVALID_ARGUMENT;
+    }
+    if (!result->response.api.has_result ||
+        result->response.api.result.type != TG_JSON_VALUE_ARRAY) {
+        return TG_BOT_UPDATE_ERROR;
+    }
+
+    json_status = tg_json_array_first(result->response.api.result.start,
+                                      result->response.api.result.length,
+                                      &first_update);
+    if (json_status == TG_JSON_NOT_FOUND) {
+        return TG_BOT_OK;
+    }
+    if (json_status != TG_JSON_OK || first_update.type != TG_JSON_VALUE_OBJECT) {
+        return TG_BOT_UPDATE_ERROR;
+    }
+
+    update->has_update = 1;
+    json_status = tg_json_object_get_number_copy(first_update.start, first_update.length,
+                                                 "update_id", update->update_id,
+                                                 sizeof(update->update_id),
+                                                 &copied_length);
+    if (json_status != TG_JSON_OK) {
+        return TG_BOT_UPDATE_ERROR;
+    }
+
+    json_status = tg_json_object_get(first_update.start, first_update.length,
+                                     "message", &message);
+    if (json_status == TG_JSON_NOT_FOUND) {
+        return TG_BOT_OK;
+    }
+    if (json_status != TG_JSON_OK || message.type != TG_JSON_VALUE_OBJECT) {
+        return TG_BOT_UPDATE_ERROR;
+    }
+    update->has_message = 1;
+
+    json_status = tg_json_object_get(message.start, message.length, "chat", &chat);
+    if (json_status != TG_JSON_OK || chat.type != TG_JSON_VALUE_OBJECT) {
+        return TG_BOT_UPDATE_ERROR;
+    }
+    json_status = tg_json_object_get_number_copy(chat.start, chat.length, "id",
+                                                 update->chat_id,
+                                                 sizeof(update->chat_id),
+                                                 &copied_length);
+    if (json_status != TG_JSON_OK) {
+        return TG_BOT_UPDATE_ERROR;
+    }
+
+    json_status = tg_json_object_get(message.start, message.length, "text", &text);
+    if (json_status == TG_JSON_NOT_FOUND) {
+        return TG_BOT_OK;
+    }
+    if (json_status != TG_JSON_OK || text.type != TG_JSON_VALUE_STRING) {
+        return TG_BOT_UPDATE_ERROR;
+    }
+
+    update->has_text = 1;
+    update->text = text.start;
+    update->text_length = text.length;
+    return TG_BOT_OK;
 }
 
 tg_bot_status tg_bot_parse_send_message_http_response(const char *http_response,
@@ -262,10 +366,26 @@ tg_bot_status tg_bot_get_updates_from_token_file(const char *token_file_path,
                                                  char *error_buffer,
                                                  unsigned long error_buffer_size)
 {
+    return tg_bot_get_updates_from_token_file_with_offset(
+        token_file_path, 0, http_buffer, http_buffer_size, http_response_length,
+        result, error_buffer, error_buffer_size);
+}
+
+tg_bot_status tg_bot_get_updates_from_token_file_with_offset(
+    const char *token_file_path,
+    const char *offset,
+    char *http_buffer,
+    unsigned long http_buffer_size,
+    unsigned long *http_response_length,
+    tg_bot_call_result *result,
+    char *error_buffer,
+    unsigned long error_buffer_size)
+{
     tg_telegram_status telegram_status;
     tg_https_status https_status;
     char token[128];
     char path[256];
+    char method[64];
     unsigned long token_length;
     unsigned long path_length;
 
@@ -279,6 +399,9 @@ tg_bot_status tg_bot_get_updates_from_token_file(const char *token_file_path,
         http_response_length == 0 || result == 0) {
         return TG_BOT_INVALID_ARGUMENT;
     }
+    if (offset != 0 && offset[0] != '\0' && !tg_bot_is_decimal_text(offset)) {
+        return TG_BOT_INVALID_ARGUMENT;
+    }
 
     tg_bot_call_result_init(result);
 
@@ -289,7 +412,22 @@ tg_bot_status tg_bot_get_updates_from_token_file(const char *token_file_path,
         return TG_BOT_TOKEN_ERROR;
     }
 
-    telegram_status = tg_telegram_build_bot_path(token, "getUpdates", path, sizeof(path),
+    method[0] = '\0';
+    path_length = 0;
+    if (tg_bot_append_text(method, sizeof(method), &path_length,
+                           "getUpdates") != TG_BOT_OK) {
+        return TG_BOT_PATH_ERROR;
+    }
+    if (offset != 0 && offset[0] != '\0') {
+        if (tg_bot_append_text(method, sizeof(method), &path_length,
+                               "?offset=") != TG_BOT_OK ||
+            tg_bot_append_text(method, sizeof(method), &path_length,
+                               offset) != TG_BOT_OK) {
+            return TG_BOT_PATH_ERROR;
+        }
+    }
+
+    telegram_status = tg_telegram_build_bot_path(token, method, path, sizeof(path),
                                                  &path_length);
     if (telegram_status != TG_TELEGRAM_OK) {
         result->telegram_status = telegram_status;
@@ -395,6 +533,8 @@ const char *tg_bot_status_name(tg_bot_status status)
         return "telegram-error";
     case TG_BOT_BODY_ERROR:
         return "body-error";
+    case TG_BOT_UPDATE_ERROR:
+        return "update-error";
     default:
         return "unknown";
     }

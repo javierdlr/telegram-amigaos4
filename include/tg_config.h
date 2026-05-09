@@ -35,6 +35,7 @@ typedef struct tg_config {
     const char *telegram_token_file_method;
     const char *telegram_get_me_token_file_path;
     const char *telegram_get_updates_token_file_path;
+    const char *telegram_get_updates_offset;
     const char *telegram_send_message_token_file_path;
     const char *telegram_send_message_chat_id;
     const char *telegram_send_message_text;

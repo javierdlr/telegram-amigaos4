@@ -25,7 +25,8 @@ typedef enum tg_bot_status {
     TG_BOT_PATH_ERROR = 3,
     TG_BOT_HTTPS_ERROR = 4,
     TG_BOT_TELEGRAM_ERROR = 5,
-    TG_BOT_BODY_ERROR = 6
+    TG_BOT_BODY_ERROR = 6,
+    TG_BOT_UPDATE_ERROR = 7
 } tg_bot_status;
 
 /**
@@ -47,9 +48,31 @@ typedef struct tg_bot_call_result {
 } tg_bot_call_result;
 
 /**
+ * Minimal summary of one Telegram update.
+ *
+ * update_id and chat_id are copied into fixed caller-visible buffers because
+ * callers commonly need to store/print them. text is a borrowed raw JSON string
+ * view into the HTTP response buffer; escape sequences are not decoded yet.
+ */
+typedef struct tg_bot_update_summary {
+    int has_update;
+    int has_message;
+    int has_text;
+    char update_id[32];
+    char chat_id[32];
+    const char *text;
+    unsigned long text_length;
+} tg_bot_update_summary;
+
+/**
  * Initializes a call result to default OK/empty values.
  */
 void tg_bot_call_result_init(tg_bot_call_result *result);
+
+/**
+ * Initializes an update summary to empty values.
+ */
+void tg_bot_update_summary_init(tg_bot_update_summary *update);
 
 /**
  * Parses a complete HTTP response as the result of Telegram getMe.
@@ -70,6 +93,15 @@ tg_bot_status tg_bot_parse_get_me_http_response(const char *http_response,
 tg_bot_status tg_bot_parse_get_updates_http_response(const char *http_response,
                                                      unsigned long http_response_length,
                                                      tg_bot_call_result *result);
+
+/**
+ * Extracts the first update summary from a parsed getUpdates response.
+ *
+ * response must come from tg_bot_parse_get_updates_http_response() or a live
+ * getUpdates call. Empty result arrays return TG_BOT_OK with has_update == 0.
+ */
+tg_bot_status tg_bot_get_updates_first(const tg_bot_call_result *result,
+                                       tg_bot_update_summary *update);
 
 /**
  * Parses a complete HTTP response as the result of Telegram sendMessage.
@@ -124,6 +156,22 @@ tg_bot_status tg_bot_get_updates_from_token_file(const char *token_file_path,
                                                  tg_bot_call_result *result,
                                                  char *error_buffer,
                                                  unsigned long error_buffer_size);
+
+/**
+ * Loads a token from file and performs getUpdates with an optional offset.
+ *
+ * offset may be NULL or empty. When present, it must contain only decimal
+ * digits and is appended as getUpdates?offset=<offset>.
+ */
+tg_bot_status tg_bot_get_updates_from_token_file_with_offset(
+    const char *token_file_path,
+    const char *offset,
+    char *http_buffer,
+    unsigned long http_buffer_size,
+    unsigned long *http_response_length,
+    tg_bot_call_result *result,
+    char *error_buffer,
+    unsigned long error_buffer_size);
 
 /**
  * Loads a token from file and performs sendMessage using HTTPS POST.

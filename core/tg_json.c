@@ -315,6 +315,37 @@ tg_json_status tg_json_object_get(const char *json, unsigned long json_length,
     }
 }
 
+tg_json_status tg_json_array_first(const char *array_json, unsigned long array_json_length,
+                                   tg_json_value *value)
+{
+    unsigned long pos;
+    unsigned long next_pos;
+
+    if (value != 0) {
+        value->type = TG_JSON_VALUE_NULL;
+        value->start = 0;
+        value->length = 0;
+        value->bool_value = 0;
+    }
+    if (array_json == 0 || value == 0) {
+        return TG_JSON_INVALID_ARGUMENT;
+    }
+
+    pos = 0;
+    tg_json_skip_ws(array_json, array_json_length, &pos);
+    if (pos >= array_json_length || array_json[pos] != '[') {
+        return TG_JSON_INVALID_JSON;
+    }
+    ++pos;
+
+    tg_json_skip_ws(array_json, array_json_length, &pos);
+    if (pos < array_json_length && array_json[pos] == ']') {
+        return TG_JSON_NOT_FOUND;
+    }
+
+    return tg_json_scan_value(array_json, array_json_length, pos, value, &next_pos);
+}
+
 tg_json_status tg_json_object_get_bool(const char *json, unsigned long json_length,
                                        const char *field_name, int *bool_value)
 {
@@ -366,6 +397,38 @@ tg_json_status tg_json_object_get_string_copy(const char *json, unsigned long js
     memcpy(buffer, value.start, value.length);
     buffer[value.length] = '\0';
     *string_length = value.length;
+    return TG_JSON_OK;
+}
+
+tg_json_status tg_json_object_get_number_copy(const char *json, unsigned long json_length,
+                                              const char *field_name, char *buffer,
+                                              unsigned long buffer_size,
+                                              unsigned long *number_length)
+{
+    tg_json_value value;
+    tg_json_status status;
+
+    if (number_length != 0) {
+        *number_length = 0;
+    }
+    if (buffer == 0 || buffer_size == 0 || number_length == 0) {
+        return TG_JSON_INVALID_ARGUMENT;
+    }
+
+    status = tg_json_object_get(json, json_length, field_name, &value);
+    if (status != TG_JSON_OK) {
+        return status;
+    }
+    if (value.type != TG_JSON_VALUE_NUMBER) {
+        return TG_JSON_TYPE_MISMATCH;
+    }
+    if (value.length + 1 > buffer_size) {
+        return TG_JSON_BUFFER_TOO_SMALL;
+    }
+
+    memcpy(buffer, value.start, value.length);
+    buffer[value.length] = '\0';
+    *number_length = value.length;
     return TG_JSON_OK;
 }
 
