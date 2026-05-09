@@ -81,8 +81,8 @@ connectivity tests, not yet for secure use.
 Initial targets:
 
 - MorphOS: active and verified
-- AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS and
-  Telegram `getMe` verified on Vampire/AmiKit with AmiSSL v5
+- AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS,
+  Telegram `getMe` and `sendMessage` verified on Vampire/AmiKit with AmiSSL v5
 - AmigaOS 4.x: stub ready, toolchain to install
 - AROS: stub ready, toolchain to install
 
