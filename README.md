@@ -123,6 +123,11 @@ Current AROS builds are useful for offline core tests. Network, HTTPS and live
 Telegram commands still report unsupported until the AROS platform backend is
 implemented.
 
+If AROS `make` reports `Clock skew detected`, check the system date/time or
+refresh the unpacked source file timestamps. This can happen when archives are
+created on another machine and extracted with timestamps that are in the future
+for the AROS system clock.
+
 Cross-build for AmigaOS 3.x from the Mac:
 
 ```sh
