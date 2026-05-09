@@ -38,8 +38,11 @@ What it is not:
 - no login with a personal Telegram account
 - no automatic heavy media support
 
-The first realistic target is reliable lightweight text messaging through the
-Bot API, with strict limits and explicit handling of unsupported/heavy content.
+The first realistic milestone is reliable lightweight text messaging through
+the Bot API, with strict limits and explicit handling of unsupported/heavy
+content. The long-term direction is still to move toward a lightweight Telegram
+client experience for Amiga-like systems where the platform constraints and
+available protocols make that feasible.
 
 ## Goal
 
