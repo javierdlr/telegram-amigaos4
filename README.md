@@ -5,17 +5,45 @@ SPDX-License-Identifier: MIT
 
 # Telegram Amiga
 
+Experimental Telegram Bot API client core for Amiga-like systems.
+
+**Not a full Telegram Desktop/mobile replacement.**
+
 License: MIT
 
 Telegram Amiga is a non-commercial community project, created as a gift to the
-Amiga community and as an exploration of what a modern Telegram client for
-Amiga-like systems could become.
+Amiga community and as an exploration of what a lightweight Telegram-related
+client/tool for Amiga-like systems could become.
 
-Current status: early technical bootstrap, not yet a usable Telegram client.
+Current status: early technical bootstrap, not yet a usable end-user Telegram
+client. The current implementation uses the Telegram Bot API as a practical
+bootstrap layer for networking, TLS, JSON parsing, polling and text-message
+experiments.
+
+## What it is / What it is not
+
+What it is:
+
+- a portable C networking/TLS/Telegram Bot API experiment
+- a diagnostic/test client for Amiga-like systems
+- a possible base for lightweight text messaging tools
+- an incremental way to verify real MorphOS, AmigaOS 3.x, AmigaOS 4.x and AROS
+  support
+
+What it is not:
+
+- not a full Telegram user client yet
+- not an MTProto implementation
+- not a replacement for Telegram Desktop or Telegram mobile apps
+- no login with a personal Telegram account
+- no automatic heavy media support
+
+The first realistic target is reliable lightweight text messaging through the
+Bot API, with strict limits and explicit handling of unsupported/heavy content.
 
 ## Goal
 
-Build, one step at a time, a cross-platform Telegram client for:
+Build, one step at a time, a cross-platform Telegram-related lightweight client/tool for:
 
 - AmigaOS 3.x
 - MorphOS
@@ -23,7 +51,8 @@ Build, one step at a time, a cross-platform Telegram client for:
 - AROS
 
 The project favors portable C code, platform-specific backends and incremental
-testing on real hardware or real target systems.
+testing on real hardware or real target systems. The scope is intentionally
+limited first to Bot API based diagnostics and lightweight text messaging.
 
 ## AI-Assisted Development
 
