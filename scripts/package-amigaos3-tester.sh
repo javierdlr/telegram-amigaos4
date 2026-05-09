@@ -39,6 +39,7 @@ mkdir -p "$DEST_DIR"
 
 cp "$TARGET" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AMIGAOS3_TESTER.md" "$DEST_DIR/README.md"
+cp "$ROOT_DIR/scripts/RunAmigaOS3Preflight" "$DEST_DIR/RunAmigaOS3Preflight"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AmigaOS 3.x pre-alpha tester
@@ -49,11 +50,7 @@ AmigaOS 3.x with ixemul and AmiSSL v5.
 
 Minimum supervised test:
 
-  Assign AmiSSL: SYS:AmiSSL
-  Assign LIBS: AmiSSL:Libs ADD
-  Stack 65536
-  Avail FLUSH
-  telegram-test --telegram-preflight
+  Execute RunAmigaOS3Preflight
 
 Expected successful HTTPS result:
 

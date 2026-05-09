@@ -1,0 +1,70 @@
+; Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+; SPDX-License-Identifier: MIT
+;
+; AmigaOS 3.x helper for the Telegram Amiga AmiSSL tester.
+; Copy this script next to telegram-test and run:
+;
+;   Execute RunAmigaOS3Preflight
+;
+; Optional arguments:
+;
+;   Execute RunAmigaOS3Preflight SYS:AmiSSL telegram-test
+;   Execute RunAmigaOS3Preflight RAM:AmiSSLRT RAM:telegram-test-batch
+
+.KEY AMISSLDIR,PROGRAM
+.BRA {
+.KET }
+
+Echo "Telegram Amiga AmigaOS 3.x preflight"
+FailAt 21
+
+IF "{AMISSLDIR}" EQ ""
+    Echo "AmiSSL directory: SYS:AmiSSL"
+    IF NOT EXISTS SYS:AmiSSL
+        Echo "SYS:AmiSSL was not found."
+        Echo "Pass the AmiSSL install path, for example:"
+        Echo "Execute RunAmigaOS3Preflight RAM:AmiSSLRT RAM:telegram-test-batch"
+        Quit 20
+    ENDIF
+    Assign AmiSSL: SYS:AmiSSL
+ELSE
+    Echo "AmiSSL directory: {AMISSLDIR}"
+    IF NOT EXISTS {AMISSLDIR}
+        Echo "{AMISSLDIR} was not found."
+        Quit 20
+    ENDIF
+    Assign AmiSSL: {AMISSLDIR}
+ENDIF
+
+IF "{PROGRAM}" EQ ""
+    Echo "Program: PROGDIR:telegram-test"
+ELSE
+    Echo "Program: {PROGRAM}"
+ENDIF
+
+IF NOT EXISTS AmiSSL:Libs
+    Echo "AmiSSL:Libs was not found. Check the AmiSSL directory."
+    Echo "The directory must contain Libs/amisslmaster.library."
+    Quit 20
+ENDIF
+
+FailAt 10
+
+Stack 65536
+Assign LIBS: AmiSSL:Libs
+Assign LIBS: SYS:Libs ADD
+Avail FLUSH
+
+IF EXISTS AmiSSL:Libs/amisslmaster.library
+    Version AmiSSL:Libs/amisslmaster.library FULL
+ENDIF
+
+IF EXISTS LIBS:amisslmaster.library
+    Version LIBS:amisslmaster.library FULL
+ENDIF
+
+IF "{PROGRAM}" EQ ""
+    PROGDIR:telegram-test --telegram-preflight
+ELSE
+    {PROGRAM} --telegram-preflight
+ENDIF

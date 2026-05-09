@@ -81,12 +81,31 @@ Avail FLUSH
 If AmiSSL is already installed globally and working, the assigns may already be
 present.
 
+The tester package also includes an AmigaDOS helper script:
+
+```text
+Execute RunAmigaOS3Preflight
+```
+
+By default it uses `SYS:AmiSSL` and `PROGDIR:telegram-test`. You can override
+both paths:
+
+```text
+Execute RunAmigaOS3Preflight RAM:AmiSSLRT RAM:telegram-test-batch
+```
+
 ## First Test Without A Token
 
 Run the preflight check:
 
 ```text
 telegram-test --telegram-preflight
+```
+
+Or use the helper script:
+
+```text
+Execute RunAmigaOS3Preflight
 ```
 
 Expected successful HTTPS output includes:

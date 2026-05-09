@@ -144,7 +144,9 @@ scripts/package-amigaos3-tester.sh
 The script builds the AmiSSL-enabled 68k tester and creates a local package
 under `build/packages/`. See `docs/AMIGAOS3_TESTER.md` for target-side
 requirements, commands and reporting notes. The package does not include
-Telegram tokens or AmiSSL runtime files.
+Telegram tokens or AmiSSL runtime files. The package includes
+`RunAmigaOS3Preflight`, an AmigaDOS helper that assigns AmiSSL, sets stack,
+runs `Avail FLUSH` and starts `--telegram-preflight`.
 
 Flow Studio on MorphOS:
 
