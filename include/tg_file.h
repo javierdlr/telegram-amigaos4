@@ -10,15 +10,15 @@
  * File helper result.
  *
  * TOO_LARGE means the caller-owned destination buffer cannot hold the complete
- * file plus a final NUL terminator. OPEN_FAILED and READ_FAILED are deliberately
- * generic for now to keep the portable API small.
+ * file plus a final NUL terminator.
  */
 typedef enum tg_file_status {
     TG_FILE_OK = 0,
     TG_FILE_INVALID_ARGUMENT = 1,
     TG_FILE_OPEN_FAILED = 2,
     TG_FILE_READ_FAILED = 3,
-    TG_FILE_TOO_LARGE = 4
+    TG_FILE_TOO_LARGE = 4,
+    TG_FILE_WRITE_FAILED = 5
 } tg_file_status;
 
 /**
@@ -30,6 +30,15 @@ typedef enum tg_file_status {
 tg_file_status tg_file_read_text(const char *path, char *buffer,
                                  unsigned long buffer_size,
                                  unsigned long *text_length);
+
+/**
+ * Writes a complete text buffer to a file.
+ *
+ * The input text does not need to be NUL-terminated because text_length is
+ * explicit. Existing files are replaced.
+ */
+tg_file_status tg_file_write_text(const char *path, const char *text,
+                                  unsigned long text_length);
 
 /**
  * Returns a static string for status. The caller must not free it.

@@ -157,6 +157,8 @@ Current options:
                       Run built-in one-shot echo flow sample
     --telegram-echo-once <file> [offset]
                       Read one update and echo its text back
+    --telegram-echo-once-state <file> <offset-file>
+                      Echo one update using a persistent offset file
     --telegram-send-message-self-test
                       Run built-in Bot API sendMessage parser sample
     --telegram-send-message <file> <chat-id> <text>
@@ -176,6 +178,10 @@ telegram update text: /start
 the printed `telegram next offset` value to avoid processing the same update
 twice. Do not use arbitrary large offsets as a substitute for state; keep and
 reuse the actual next offset printed by the program.
+
+For repeated one-shot runs, prefer `telegram-echo-once-state`. It reads the
+offset from a caller-provided text file and saves the next offset after a
+successful send or after deliberately skipping a non-text update.
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.
