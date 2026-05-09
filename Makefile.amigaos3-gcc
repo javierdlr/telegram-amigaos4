@@ -10,6 +10,9 @@
 CC := m68k-amigaos-gcc
 ENABLE_AMISSL ?= 0
 AMISSL_SDK ?= $(HOME)/amiga-dev/sdk/AmiSSL/Developer
+# Request a conservative AmiSSL v5 API by default so tester binaries can use a
+# normally installed system AmiSSL instead of requiring the newest SDK runtime.
+AMISSL_API_VERSION ?= AMISSL_V340
 
 ifeq ($(ENABLE_AMISSL),1)
 # The AmiSSL SDK headers and inline varargs helpers require GCC extensions.
@@ -24,7 +27,7 @@ LDLIBS ?= -lc -lamiga
 TARGET ?= build/amigaos3/telegram-test
 
 ifeq ($(ENABLE_AMISSL),1)
-CFLAGS += -DTG_AMIGAOS3_ENABLE_AMISSL=1 -I$(AMISSL_SDK)/include
+CFLAGS += -DTG_AMIGAOS3_ENABLE_AMISSL=1 -DTG_AMIGAOS3_AMISSL_API_VERSION=$(AMISSL_API_VERSION) -I$(AMISSL_SDK)/include
 LDLIBS := -L$(AMISSL_SDK)/lib/AmigaOS3 -lamisslstubs $(LDLIBS)
 endif
 

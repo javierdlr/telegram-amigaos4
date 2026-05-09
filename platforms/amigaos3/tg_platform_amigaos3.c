@@ -54,6 +54,10 @@
 #include "tg_platform.h"
 
 #if defined(__amigaos3__) && TG_AMIGAOS3_ENABLE_AMISSL
+#ifndef TG_AMIGAOS3_AMISSL_API_VERSION
+#define TG_AMIGAOS3_AMISSL_API_VERSION AMISSL_CURRENT_VERSION
+#endif
+
 struct Library *AmiSSLMasterBase = 0;
 struct Library *AmiSSLBase = 0;
 struct Library *AmiSSLExtBase = 0;
@@ -381,7 +385,7 @@ static int tg_amigaos3_amissl_init(char *error_buffer, unsigned long error_buffe
         return 1;
     }
 
-    amissl_error = OpenAmiSSLTags(AMISSL_CURRENT_VERSION,
+    amissl_error = OpenAmiSSLTags(TG_AMIGAOS3_AMISSL_API_VERSION,
                                   AmiSSL_UsesOpenSSLStructs, FALSE,
                                   AmiSSL_InitAmiSSL, TRUE,
                                   AmiSSL_GetAmiSSLBase, (ULONG)&AmiSSLBase,

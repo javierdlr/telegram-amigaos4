@@ -190,12 +190,18 @@ make -f Makefile.amigaos3-gcc \
   TARGET=build/amigaos3/telegram-test-amissl
 ```
 
-The AmiSSL build needs AmiSSL v5 installed on the target system, with
-`AmiSSL:` assigned to the AmiSSL install directory and `LIBS:` extended with
-`AmiSSL:Libs`. On AmigaOS 3.x/Vampire, choose the AmiSSL `68020/030/040/080`
-library variant. If an older `amisslmaster.library` is already resident after
-an upgrade, reboot or run `Avail FLUSH` before testing so `OpenLibrary()` sees
-the newer master.
+The default AmiSSL build asks for the conservative `AMISSL_V340` API, matching
+AmiSSL 5.18 or newer. This is intentional: tester binaries should use a normal
+system AmiSSL installation instead of requiring the newest SDK runtime to be
+copied next to the program. Override `AMISSL_API_VERSION` only when you need to
+target a newer runtime explicitly.
+
+The AmiSSL build needs AmiSSL v5 installed on the target system and visible
+through `LIBS:`. If AmiSSL is installed in a separate drawer, assign `AmiSSL:`
+to that drawer and put `AmiSSL:Libs` first in `LIBS:` before adding `SYS:Libs`.
+On AmigaOS 3.x/Vampire, choose the AmiSSL `68020/030/040/080` library variant.
+If an older `amisslmaster.library` is already resident after an upgrade, reboot
+or run `Avail FLUSH` before testing so `OpenLibrary()` sees the newer master.
 
 AmigaOS 3.x tester package:
 
@@ -203,12 +209,12 @@ AmigaOS 3.x tester package:
 scripts/package-amigaos3-tester.sh
 ```
 
-The script builds the AmiSSL-enabled 68k tester and creates a local package
-under `build/packages/`. See `docs/AMIGAOS3_TESTER.md` for target-side
-requirements, commands and reporting notes. The package does not include
-Telegram tokens or AmiSSL runtime files. The package includes
-`RunAmigaOS3Preflight`, an AmigaDOS helper that assigns AmiSSL, sets stack,
-runs `Avail FLUSH` and starts `--telegram-preflight`.
+The script builds the system-AmiSSL 68k tester and creates a local package under
+`build/packages/`. See `docs/AMIGAOS3_TESTER.md` for target-side requirements,
+commands and reporting notes. The package does not include Telegram tokens or
+AmiSSL runtime files. The package includes `RunAmigaOS3Preflight`, an AmigaDOS
+helper that auto-detects common AmiSSL drawers, sets stack, runs `Avail FLUSH`
+and starts `--telegram-preflight`.
 
 Flow Studio on MorphOS:
 

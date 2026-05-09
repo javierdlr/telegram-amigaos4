@@ -9,7 +9,7 @@
 ; Optional arguments:
 ;
 ;   Execute RunAmigaOS3Preflight SYS:AmiSSL telegram-test
-;   Execute RunAmigaOS3Preflight RAM:AmiSSLRT RAM:telegram-test-batch
+;   Execute RunAmigaOS3Preflight AmiKit:Internet/AmiSSL telegram-test
 
 .KEY AMISSLDIR,PROGRAM
 .BRA {
@@ -19,14 +19,22 @@ Echo "Telegram Amiga AmigaOS 3.x preflight"
 FailAt 21
 
 IF "{AMISSLDIR}" EQ ""
-    Echo "AmiSSL directory: SYS:AmiSSL"
-    IF NOT EXISTS SYS:AmiSSL
-        Echo "SYS:AmiSSL was not found."
-        Echo "Pass the AmiSSL install path, for example:"
-        Echo "Execute RunAmigaOS3Preflight RAM:AmiSSLRT RAM:telegram-test-batch"
-        Quit 20
+    IF EXISTS SYS:AmiSSL/Libs
+        Echo "AmiSSL directory: SYS:AmiSSL"
+        Assign AmiSSL: SYS:AmiSSL
+        Assign LIBS: AmiSSL:Libs
+        Assign LIBS: SYS:Libs ADD
+    ELSE
+        IF EXISTS AmiKit:Internet/AmiSSL/Libs
+            Echo "AmiSSL directory: AmiKit:Internet/AmiSSL"
+            Assign AmiSSL: AmiKit:Internet/AmiSSL
+            Assign LIBS: AmiSSL:Libs
+            Assign LIBS: SYS:Libs ADD
+        ELSE
+            Echo "AmiSSL directory: system LIBS:"
+            Echo "No AmiSSL drawer was auto-detected; using existing LIBS:."
+        ENDIF
     ENDIF
-    Assign AmiSSL: SYS:AmiSSL
 ELSE
     Echo "AmiSSL directory: {AMISSLDIR}"
     IF NOT EXISTS {AMISSLDIR}
@@ -34,6 +42,8 @@ ELSE
         Quit 20
     ENDIF
     Assign AmiSSL: {AMISSLDIR}
+    Assign LIBS: AmiSSL:Libs
+    Assign LIBS: SYS:Libs ADD
 ENDIF
 
 IF "{PROGRAM}" EQ ""
@@ -42,22 +52,10 @@ ELSE
     Echo "Program: {PROGRAM}"
 ENDIF
 
-IF NOT EXISTS AmiSSL:Libs
-    Echo "AmiSSL:Libs was not found. Check the AmiSSL directory."
-    Echo "The directory must contain Libs/amisslmaster.library."
-    Quit 20
-ENDIF
-
 FailAt 10
 
 Stack 65536
-Assign LIBS: AmiSSL:Libs
-Assign LIBS: SYS:Libs ADD
 Avail FLUSH
-
-IF EXISTS AmiSSL:Libs/amisslmaster.library
-    Version AmiSSL:Libs/amisslmaster.library FULL
-ENDIF
 
 IF EXISTS LIBS:amisslmaster.library
     Version LIBS:amisslmaster.library FULL

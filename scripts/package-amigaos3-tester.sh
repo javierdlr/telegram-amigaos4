@@ -11,6 +11,7 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TOOLCHAIN_BIN=${TOOLCHAIN_BIN:-"$HOME/amiga-dev/toolchain/bin"}
 AMISSL_SDK=${AMISSL_SDK:-"$HOME/amiga-dev/sdk/AmiSSL/Developer"}
+AMISSL_API_VERSION=${AMISSL_API_VERSION:-AMISSL_V340}
 PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/packages"}
 TARGET=${TARGET:-"$ROOT_DIR/build/amigaos3/telegram-test-amissl"}
 DATE_STAMP=$(date +%Y%m%d)
@@ -31,6 +32,7 @@ fi
 PATH="$TOOLCHAIN_BIN:$PATH" make -C "$ROOT_DIR" -f Makefile.amigaos3-gcc \
     clean all \
     ENABLE_AMISSL=1 \
+    AMISSL_API_VERSION="$AMISSL_API_VERSION" \
     AMISSL_SDK="$AMISSL_SDK" \
     TARGET="$TARGET"
 
@@ -47,6 +49,9 @@ Build: $COMMIT_ID
 
 This is not a usable Telegram client yet. It is a diagnostic tester for
 AmigaOS 3.x with ixemul and AmiSSL v5.
+
+This tester is built for the conservative AmiSSL API $AMISSL_API_VERSION so it
+can use a normal system AmiSSL v5 installation. No AmiSSL runtime is bundled.
 
 On 68060 systems, use the AmiSSL 68060 library variant. On Vampire or 68080
 systems, use the AmiSSL 68020/030/040/080 library variant.

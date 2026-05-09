@@ -32,7 +32,7 @@ The tested AmigaOS 3.x build currently requires:
 
 - AmigaOS 3.x with a working TCP/IP stack;
 - `ixemul.library`, because the current m68k GCC build links through ixemul;
-- AmiSSL v5 for HTTPS tests;
+- AmiSSL 5.18 or newer for HTTPS tests;
 - enough stack for TLS work, for example `Stack 65536`;
 - a real or test Telegram bot token only for Bot API commands.
 
@@ -53,6 +53,11 @@ make -f Makefile.amigaos3-gcc \
   TARGET=build/amigaos3/telegram-test-amissl
 ```
 
+By default this asks AmiSSL for the conservative `AMISSL_V340` API, matching
+AmiSSL 5.18 or newer. This keeps public tester binaries aligned with normal
+system AmiSSL installations. To intentionally require a newer runtime, override
+`AMISSL_API_VERSION`, for example `AMISSL_API_VERSION=AMISSL_V360`.
+
 Or create a local tester package:
 
 ```sh
@@ -71,17 +76,16 @@ CD Work:TelegramAmiga
 ```
 
 Make sure AmiSSL is assigned and visible through `LIBS:`. Adjust the path to
-match your installation:
+match your installation. If AmiSSL is already installed globally and working,
+you may not need these assigns:
 
 ```text
 Assign AmiSSL: SYS:AmiSSL
-Assign LIBS: AmiSSL:Libs ADD
+Assign LIBS: AmiSSL:Libs
+Assign LIBS: SYS:Libs ADD
 Stack 65536
 Avail FLUSH
 ```
-
-If AmiSSL is already installed globally and working, the assigns may already be
-present.
 
 The tester package also includes an AmigaDOS helper script:
 
@@ -89,11 +93,11 @@ The tester package also includes an AmigaDOS helper script:
 Execute RunAmigaOS3Preflight
 ```
 
-By default it uses `SYS:AmiSSL` and `PROGDIR:telegram-test`. You can override
-both paths:
+By default it auto-detects `SYS:AmiSSL`, then `AmiKit:Internet/AmiSSL`, and
+otherwise uses the existing system `LIBS:`. You can override both paths:
 
 ```text
-Execute RunAmigaOS3Preflight RAM:AmiSSLRT RAM:telegram-test-batch
+Execute RunAmigaOS3Preflight AmiKit:Internet/AmiSSL telegram-test
 ```
 
 ## First Test Without A Token
@@ -238,13 +242,14 @@ telegram preflight https: failed: tls-error / unsupported
 
 Use the AmiSSL-enabled build.
 
-AmiSSL is not installed or not assigned correctly:
+AmiSSL is not installed, not visible through `LIBS:`, or too old for the binary:
 
 ```text
 telegram preflight https: failed: tls-error / handshake-failed
 ```
 
-Check `AmiSSL:`, `LIBS:` and the installed AmiSSL version.
+Check `LIBS:amisslmaster.library`, the installed AmiSSL version and whether the
+binary was built for a compatible `AMISSL_API_VERSION`.
 
 The token file is missing:
 
