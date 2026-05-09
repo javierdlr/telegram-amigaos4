@@ -97,6 +97,16 @@ Execute RunAmigaOS3Preflight RAM:AmiSSLRT RAM:telegram-test-batch
 
 ## First Test Without A Token
 
+Run offline parser and Bot API self-tests first:
+
+```text
+telegram-test --telegram-json-self-test
+telegram-test --telegram-get-updates-self-test
+telegram-test --telegram-read-once-state-self-test
+telegram-test --telegram-echo-once-self-test
+telegram-test --telegram-send-message-self-test
+```
+
 Run the preflight check:
 
 ```text

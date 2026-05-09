@@ -230,6 +230,8 @@ Current options:
                       Call Telegram getUpdates with optional offset
     --telegram-get-updates-default [offset]
                       Call Telegram getUpdates with default token file
+    --telegram-read-once-state-self-test
+                      Run built-in read-only stateful update sample
     --telegram-read-once-state <file> <offset-file>
                       Read pending updates and save a persistent offset
     --telegram-read-once-state-default <offset-file>
@@ -273,6 +275,7 @@ network backend:
 telegram-test --help
 telegram-test --telegram-json-self-test
 telegram-test --telegram-get-updates-self-test
+telegram-test --telegram-read-once-state-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 ```

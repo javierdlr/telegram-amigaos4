@@ -73,6 +73,7 @@ void tg_config_init(tg_config *config)
     config->run_telegram_get_updates_self_test = 0;
     config->run_telegram_get_updates = 0;
     config->run_telegram_get_updates_default = 0;
+    config->run_telegram_read_once_state_self_test = 0;
     config->run_telegram_read_once_state = 0;
     config->run_telegram_read_once_state_default = 0;
     config->run_telegram_echo_once_self_test = 0;
@@ -212,6 +213,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
                 config->telegram_get_updates_default_offset = argv[i + 1];
                 ++i;
             }
+        } else if (strcmp(argv[i], "--telegram-read-once-state-self-test") == 0) {
+            config->run_telegram_read_once_state_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-read-once-state") == 0) {
             if (i + 2 >= argc) {
                 return 1;
@@ -354,6 +357,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Call Telegram getUpdates with optional offset\n");
     fprintf(stream, "      --telegram-get-updates-default [offset]\n");
     fprintf(stream, "                         Call Telegram getUpdates with default token file\n");
+    fprintf(stream, "      --telegram-read-once-state-self-test\n");
+    fprintf(stream, "                         Run built-in read-only stateful update sample\n");
     fprintf(stream, "      --telegram-read-once-state <file> <offset-file>\n");
     fprintf(stream, "                         Read pending updates and save a persistent offset\n");
     fprintf(stream, "      --telegram-read-once-state-default <offset-file>\n");

@@ -80,6 +80,7 @@ typedef struct tg_config {
     int run_telegram_get_updates_self_test;
     int run_telegram_get_updates;
     int run_telegram_get_updates_default;
+    int run_telegram_read_once_state_self_test;
     int run_telegram_read_once_state;
     int run_telegram_read_once_state_default;
     int run_telegram_echo_once_self_test;

@@ -1011,6 +1011,110 @@ static int tg_run_telegram_get_updates_default(const tg_config *config)
         resolved_path, config->telegram_get_updates_default_offset);
 }
 
+static int tg_run_telegram_read_once_state_self_test(void)
+{
+    static const char offset_file_path[] = "telegram-read-once-self-test.tmp";
+    static const char updates_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"ok\":true,\"result\":["
+        "{\"update_id\":200,\"message\":{\"message_id\":1,\"chat\":{\"id\":123,\"type\":\"private\"},\"text\":\"read \\\"only\\\"\\nLine \\u20ac\"}},"
+        "{\"update_id\":201,\"edited_message\":{\"message_id\":2,\"chat\":{\"id\":456,\"type\":\"private\"},\"text\":\"ignored\"}}"
+        "]}";
+    static const char expected_text[] =
+        "read \"only\"\nLine " "\xe2" "\x82" "\xac";
+    tg_bot_status bot_status;
+    tg_json_status json_status;
+    tg_bot_call_result result;
+    tg_bot_update_summary update;
+    char next_offset[32];
+    char saved_offset[32];
+    char decoded_text[128];
+    unsigned long decoded_length;
+
+    remove(offset_file_path);
+
+    bot_status = tg_bot_parse_get_updates_http_response(
+        updates_response, (unsigned long)strlen(updates_response), &result);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram read once state self-test: getUpdates failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+
+    bot_status = tg_bot_get_updates_at(&result, 0, &update);
+    if (bot_status != TG_BOT_OK || !update.has_update ||
+        !update.has_message || !update.has_text) {
+        printf("telegram read once state self-test: first update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    json_status = tg_json_string_decode(update.text, update.text_length,
+                                        decoded_text, sizeof(decoded_text),
+                                        &decoded_length);
+    if (json_status != TG_JSON_OK || strcmp(decoded_text, expected_text) != 0) {
+        printf("telegram read once state self-test: text decode failed: %s\n",
+               tg_json_status_name(json_status));
+        return 2;
+    }
+    bot_status = tg_bot_update_next_offset(&update, next_offset,
+                                           sizeof(next_offset));
+    if (bot_status != TG_BOT_OK || strcmp(next_offset, "201") != 0) {
+        printf("telegram read once state self-test: first offset failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    if (tg_save_offset_file(offset_file_path, next_offset) != 0 ||
+        tg_load_offset_file(offset_file_path, saved_offset,
+                            sizeof(saved_offset)) != 0 ||
+        strcmp(saved_offset, "201") != 0) {
+        puts("telegram read once state self-test: first offset file failed");
+        remove(offset_file_path);
+        return 2;
+    }
+
+    bot_status = tg_bot_get_updates_at(&result, 1, &update);
+    if (bot_status != TG_BOT_OK || !update.has_update ||
+        update.has_message || update.has_text) {
+        printf("telegram read once state self-test: second update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        remove(offset_file_path);
+        return 2;
+    }
+    bot_status = tg_bot_update_next_offset(&update, next_offset,
+                                           sizeof(next_offset));
+    if (bot_status != TG_BOT_OK || strcmp(next_offset, "202") != 0) {
+        printf("telegram read once state self-test: second offset failed: %s\n",
+               tg_bot_status_name(bot_status));
+        remove(offset_file_path);
+        return 2;
+    }
+    if (tg_save_offset_file(offset_file_path, next_offset) != 0 ||
+        tg_load_offset_file(offset_file_path, saved_offset,
+                            sizeof(saved_offset)) != 0 ||
+        strcmp(saved_offset, "202") != 0) {
+        puts("telegram read once state self-test: second offset file failed");
+        remove(offset_file_path);
+        return 2;
+    }
+
+    bot_status = tg_bot_get_updates_at(&result, 2, &update);
+    if (bot_status != TG_BOT_OK || update.has_update) {
+        printf("telegram read once state self-test: end update failed: %s\n",
+               tg_bot_status_name(bot_status));
+        remove(offset_file_path);
+        return 2;
+    }
+
+    remove(offset_file_path);
+    puts("telegram read once state self-test: ok");
+    printf("telegram read once state self-test: processed 2 update(s)\n");
+    printf("telegram next offset: %s\n", next_offset);
+    return 0;
+}
+
 static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
                                                  const char *offset_file_path)
 {
@@ -1797,6 +1901,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_get_updates_default) {
         return tg_run_telegram_get_updates_default(&config);
+    }
+
+    if (config.run_telegram_read_once_state_self_test) {
+        return tg_run_telegram_read_once_state_self_test();
     }
 
     if (config.run_telegram_read_once_state) {
