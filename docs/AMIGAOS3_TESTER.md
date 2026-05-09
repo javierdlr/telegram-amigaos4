@@ -20,6 +20,7 @@ The AmigaOS 3.x tester can:
   `--telegram-preflight`;
 - call Telegram Bot API `getMe`, `getUpdates` and `sendMessage` when a token is
   provided;
+- run read-only stateful update checks;
 - run one-shot, stateful batch or looped echo tests.
 
 Certificate validation is not enabled yet. Use this build only for supervised
@@ -153,6 +154,15 @@ telegram-test --telegram-get-updates-default
 
 The output should include the update id, chat id and text. When several updates
 are pending, the tester prints summaries for up to the first five.
+
+Read pending updates and save the offset without sending replies:
+
+```text
+telegram-test --telegram-read-once-state-default telegram-offset.txt
+```
+
+This is the safest first receive test. It prints decoded message text and saves
+`telegram-offset.txt` after each processed update.
 
 Send a controlled message back:
 

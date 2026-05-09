@@ -32,6 +32,9 @@ void tg_config_init(tg_config *config)
     config->telegram_get_updates_token_file_path = 0;
     config->telegram_get_updates_offset = 0;
     config->telegram_get_updates_default_offset = 0;
+    config->telegram_read_once_state_token_file_path = 0;
+    config->telegram_read_once_state_offset_file_path = 0;
+    config->telegram_read_once_state_default_offset_file_path = 0;
     config->telegram_echo_once_token_file_path = 0;
     config->telegram_echo_once_offset = 0;
     config->telegram_echo_once_default_offset = 0;
@@ -70,6 +73,8 @@ void tg_config_init(tg_config *config)
     config->run_telegram_get_updates_self_test = 0;
     config->run_telegram_get_updates = 0;
     config->run_telegram_get_updates_default = 0;
+    config->run_telegram_read_once_state = 0;
+    config->run_telegram_read_once_state_default = 0;
     config->run_telegram_echo_once_self_test = 0;
     config->run_telegram_echo_once = 0;
     config->run_telegram_echo_once_default = 0;
@@ -207,6 +212,21 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
                 config->telegram_get_updates_default_offset = argv[i + 1];
                 ++i;
             }
+        } else if (strcmp(argv[i], "--telegram-read-once-state") == 0) {
+            if (i + 2 >= argc) {
+                return 1;
+            }
+            config->run_telegram_read_once_state = 1;
+            config->telegram_read_once_state_token_file_path = argv[i + 1];
+            config->telegram_read_once_state_offset_file_path = argv[i + 2];
+            i += 2;
+        } else if (strcmp(argv[i], "--telegram-read-once-state-default") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_telegram_read_once_state_default = 1;
+            config->telegram_read_once_state_default_offset_file_path = argv[i + 1];
+            ++i;
         } else if (strcmp(argv[i], "--telegram-echo-once-self-test") == 0) {
             config->run_telegram_echo_once_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-echo-once") == 0) {
@@ -334,6 +354,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Call Telegram getUpdates with optional offset\n");
     fprintf(stream, "      --telegram-get-updates-default [offset]\n");
     fprintf(stream, "                         Call Telegram getUpdates with default token file\n");
+    fprintf(stream, "      --telegram-read-once-state <file> <offset-file>\n");
+    fprintf(stream, "                         Read pending updates and save a persistent offset\n");
+    fprintf(stream, "      --telegram-read-once-state-default <offset-file>\n");
+    fprintf(stream, "                         Stateful read pending updates with default token file\n");
     fprintf(stream, "      --telegram-echo-once-self-test\n");
     fprintf(stream, "                         Run built-in one-shot echo flow sample\n");
     fprintf(stream, "      --telegram-echo-once <file> [offset]\n");

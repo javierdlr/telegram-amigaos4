@@ -73,6 +73,8 @@ Initial core modules:
 - A one-shot echo command can read one update, print the next offset and send an
   `Echo: ...` reply when the update contains text. JSON string escapes are
   decoded before displaying or echoing text.
+- A stateful read batch can print up to five pending updates from one
+  `getUpdates` response and save the offset without sending replies.
 - A stateful echo batch can process up to five pending updates from one
   `getUpdates` response, saving the offset after each handled update.
 - A bounded echo loop can repeat the stateful batch flow with caller-chosen
@@ -228,6 +230,10 @@ Current options:
                       Call Telegram getUpdates with optional offset
     --telegram-get-updates-default [offset]
                       Call Telegram getUpdates with default token file
+    --telegram-read-once-state <file> <offset-file>
+                      Read pending updates and save a persistent offset
+    --telegram-read-once-state-default <offset-file>
+                      Stateful read pending updates with default token file
     --telegram-echo-once-self-test
                       Run built-in one-shot echo flow sample
     --telegram-echo-once <file> [offset]
@@ -280,6 +286,10 @@ For repeated polling runs, prefer `telegram-echo-once-state`. It reads the
 offset from a caller-provided text file, processes up to five pending updates
 from one `getUpdates` response, and saves the next offset after each successful
 send or after deliberately skipping a non-text update.
+
+Use `telegram-read-once-state` when you only want to receive and mark pending
+updates as processed. It prints decoded message text, saves the offset after
+each update and does not send replies.
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.

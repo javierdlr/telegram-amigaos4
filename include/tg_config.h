@@ -39,6 +39,9 @@ typedef struct tg_config {
     const char *telegram_get_updates_token_file_path;
     const char *telegram_get_updates_offset;
     const char *telegram_get_updates_default_offset;
+    const char *telegram_read_once_state_token_file_path;
+    const char *telegram_read_once_state_offset_file_path;
+    const char *telegram_read_once_state_default_offset_file_path;
     const char *telegram_echo_once_token_file_path;
     const char *telegram_echo_once_offset;
     const char *telegram_echo_once_default_offset;
@@ -77,6 +80,8 @@ typedef struct tg_config {
     int run_telegram_get_updates_self_test;
     int run_telegram_get_updates;
     int run_telegram_get_updates_default;
+    int run_telegram_read_once_state;
+    int run_telegram_read_once_state_default;
     int run_telegram_echo_once_self_test;
     int run_telegram_echo_once;
     int run_telegram_echo_once_default;

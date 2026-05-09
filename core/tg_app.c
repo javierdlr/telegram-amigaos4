@@ -18,7 +18,7 @@
 #include "tg_platform.h"
 #include "tg_telegram.h"
 
-#define TG_ECHO_STATE_MAX_UPDATES 5UL
+#define TG_STATE_MAX_UPDATES 5UL
 
 static const char tg_default_token_file_name[] = "telegram-token.txt";
 
@@ -1011,6 +1011,123 @@ static int tg_run_telegram_get_updates_default(const tg_config *config)
         resolved_path, config->telegram_get_updates_default_offset);
 }
 
+static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
+                                                 const char *offset_file_path)
+{
+    tg_bot_status bot_status;
+    tg_bot_call_result updates_result;
+    tg_bot_update_summary update;
+    char offset[32];
+    char error_buffer[256];
+    char http_buffer[16384];
+    char next_offset[32];
+    unsigned long http_response_length;
+    unsigned long index;
+    unsigned long processed_count;
+
+    if (tg_load_offset_file(offset_file_path, offset, sizeof(offset)) != 0) {
+        return 2;
+    }
+    if (offset[0] != '\0') {
+        printf("telegram offset loaded: %s\n", offset);
+    } else {
+        puts("telegram offset loaded: none");
+    }
+
+    bot_status = tg_bot_get_updates_from_token_file_with_offset(
+        token_file_path,
+        offset[0] != '\0' ? offset : 0,
+        http_buffer, sizeof(http_buffer), &http_response_length, &updates_result,
+        error_buffer, sizeof(error_buffer));
+    if (bot_status != TG_BOT_OK) {
+        tg_print_bot_error("telegram read once state getUpdates", bot_status,
+                           &updates_result, error_buffer);
+        return 2;
+    }
+    if (updates_result.response.http_status_code < 200 ||
+        updates_result.response.http_status_code > 299 ||
+        !updates_result.response.api.ok) {
+        printf("telegram read once state getUpdates: http status %d\n",
+               updates_result.response.http_status_code);
+        tg_print_telegram_response(&updates_result.response.api);
+        return 2;
+    }
+
+    processed_count = 0;
+    for (index = 0; index < TG_STATE_MAX_UPDATES; ++index) {
+        bot_status = tg_bot_get_updates_at(&updates_result, index, &update);
+        if (bot_status != TG_BOT_OK) {
+            printf("telegram read once state: update failed: %s\n",
+                   tg_bot_status_name(bot_status));
+            return 2;
+        }
+        if (!update.has_update) {
+            if (index == 0) {
+                puts("telegram read once state: no update to process");
+            } else {
+                printf("telegram read once state: processed %lu update(s)\n",
+                       processed_count);
+            }
+            return 0;
+        }
+
+        printf("telegram read once state update index: %lu\n", index);
+        tg_print_update_summary(&update);
+
+        bot_status = tg_bot_update_next_offset(&update, next_offset,
+                                               sizeof(next_offset));
+        if (bot_status != TG_BOT_OK) {
+            printf("telegram read once state: next offset failed: %s\n",
+                   tg_bot_status_name(bot_status));
+            return 2;
+        }
+        printf("telegram next offset: %s\n", next_offset);
+        if (tg_save_offset_file(offset_file_path, next_offset) != 0) {
+            return 2;
+        }
+        ++processed_count;
+    }
+
+    bot_status = tg_bot_get_updates_at(&updates_result, TG_STATE_MAX_UPDATES,
+                                       &update);
+    if (bot_status != TG_BOT_OK) {
+        printf("telegram read once state: update limit check failed: %s\n",
+               tg_bot_status_name(bot_status));
+        return 2;
+    }
+    if (update.has_update) {
+        printf("telegram read once state: update limit reached: %lu\n",
+               TG_STATE_MAX_UPDATES);
+    }
+    printf("telegram read once state: processed %lu update(s)\n",
+           processed_count);
+    return 0;
+}
+
+static int tg_run_telegram_read_once_state(const tg_config *config)
+{
+    return tg_run_telegram_read_once_state_paths(
+        config->telegram_read_once_state_token_file_path,
+        config->telegram_read_once_state_offset_file_path);
+}
+
+static int tg_run_telegram_read_once_state_default(const tg_config *config)
+{
+    char token_path[256];
+    const char *resolved_path;
+
+    resolved_path = tg_default_token_file_path(config, token_path,
+                                              sizeof(token_path));
+    if (resolved_path == 0) {
+        return 2;
+    }
+
+    printf("telegram token file: %s\n", resolved_path);
+    return tg_run_telegram_read_once_state_paths(
+        resolved_path,
+        config->telegram_read_once_state_default_offset_file_path);
+}
+
 static int tg_run_telegram_echo_once_self_test(void)
 {
     static const char updates_response[] =
@@ -1277,7 +1394,7 @@ static int tg_run_telegram_echo_once_state_paths(const char *token_file_path,
 
     processed_count = 0;
     sent_count = 0;
-    for (index = 0; index < TG_ECHO_STATE_MAX_UPDATES; ++index) {
+    for (index = 0; index < TG_STATE_MAX_UPDATES; ++index) {
         bot_status = tg_bot_get_updates_at(&updates_result, index, &update);
         if (bot_status != TG_BOT_OK) {
             printf("telegram echo once state: update failed: %s\n",
@@ -1347,7 +1464,7 @@ static int tg_run_telegram_echo_once_state_paths(const char *token_file_path,
         ++sent_count;
     }
 
-    bot_status = tg_bot_get_updates_at(&updates_result, TG_ECHO_STATE_MAX_UPDATES,
+    bot_status = tg_bot_get_updates_at(&updates_result, TG_STATE_MAX_UPDATES,
                                        &update);
     if (bot_status != TG_BOT_OK) {
         printf("telegram echo once state: update limit check failed: %s\n",
@@ -1356,7 +1473,7 @@ static int tg_run_telegram_echo_once_state_paths(const char *token_file_path,
     }
     if (update.has_update) {
         printf("telegram echo once state: update limit reached: %lu\n",
-               TG_ECHO_STATE_MAX_UPDATES);
+               TG_STATE_MAX_UPDATES);
     }
     printf("telegram echo once state: processed %lu update(s), sent %lu message(s)\n",
            processed_count, sent_count);
@@ -1680,6 +1797,14 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_get_updates_default) {
         return tg_run_telegram_get_updates_default(&config);
+    }
+
+    if (config.run_telegram_read_once_state) {
+        return tg_run_telegram_read_once_state(&config);
+    }
+
+    if (config.run_telegram_read_once_state_default) {
+        return tg_run_telegram_read_once_state_default(&config);
     }
 
     if (config.run_telegram_echo_once_self_test) {
