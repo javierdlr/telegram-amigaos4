@@ -51,8 +51,10 @@ the community?
 Minimal bootstrap:
 
 - `core/`: portable logic
+- `docs/`: target notes and tester instructions
 - `include/`: internal public interfaces
 - `platforms/*/`: platform-specific adapters
+- `scripts/`: local helper scripts for builds and packaging
 - `src/main.c`: thin entry point
 
 Initial core modules:
@@ -130,6 +132,17 @@ The AmiSSL build needs AmiSSL v5 installed on the target system, with
 library variant. If an older `amisslmaster.library` is already resident after
 an upgrade, reboot or run `Avail FLUSH` before testing so `OpenLibrary()` sees
 the newer master.
+
+AmigaOS 3.x tester package:
+
+```sh
+scripts/package-amigaos3-tester.sh
+```
+
+The script builds the AmiSSL-enabled 68k tester and creates a local package
+under `build/packages/`. See `docs/AMIGAOS3_TESTER.md` for target-side
+requirements, commands and reporting notes. The package does not include
+Telegram tokens or AmiSSL runtime files.
 
 Flow Studio on MorphOS:
 
