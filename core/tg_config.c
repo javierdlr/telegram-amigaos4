@@ -341,9 +341,9 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "      --telegram-echo-once-default [offset]\n");
     fprintf(stream, "                         Echo one update using the default token file\n");
     fprintf(stream, "      --telegram-echo-once-state <file> <offset-file>\n");
-    fprintf(stream, "                         Echo one update using a persistent offset file\n");
+    fprintf(stream, "                         Echo pending updates using a persistent offset file\n");
     fprintf(stream, "      --telegram-echo-once-state-default <offset-file>\n");
-    fprintf(stream, "                         Stateful echo one update with default token file\n");
+    fprintf(stream, "                         Stateful echo pending updates with default token file\n");
     fprintf(stream, "      --telegram-echo-loop <file> <offset-file> <poll-seconds> <max-iterations>\n");
     fprintf(stream, "                         Run bounded stateful echo polling\n");
     fprintf(stream, "      --telegram-echo-loop-default <offset-file> <poll-seconds> <max-iterations>\n");

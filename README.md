@@ -73,7 +73,9 @@ Initial core modules:
 - A one-shot echo command can read one update, print the next offset and send an
   `Echo: ...` reply when the update contains text. JSON string escapes are
   decoded before displaying or echoing text.
-- A bounded echo loop can repeat the stateful one-shot flow with caller-chosen
+- A stateful echo batch can process up to five pending updates from one
+  `getUpdates` response, saving the offset after each handled update.
+- A bounded echo loop can repeat the stateful batch flow with caller-chosen
   polling seconds and a maximum iteration count.
 - Default-token command variants can load `telegram-token.txt` from the active
   data directory, or from a path supplied with `--token-file`.
@@ -209,9 +211,9 @@ Current options:
     --telegram-echo-once-default [offset]
                       Echo one update using the default token file
     --telegram-echo-once-state <file> <offset-file>
-                      Echo one update using a persistent offset file
+                      Echo pending updates using a persistent offset file
     --telegram-echo-once-state-default <offset-file>
-                      Stateful echo one update with default token file
+                      Stateful echo pending updates with default token file
     --telegram-echo-loop <file> <offset-file> <poll-seconds> <max-iterations>
                       Run bounded stateful echo polling
     --telegram-echo-loop-default <offset-file> <poll-seconds> <max-iterations>
@@ -239,9 +241,10 @@ the printed `telegram next offset` value to avoid processing the same update
 twice. Do not use arbitrary large offsets as a substitute for state; keep and
 reuse the actual next offset printed by the program.
 
-For repeated one-shot runs, prefer `telegram-echo-once-state`. It reads the
-offset from a caller-provided text file and saves the next offset after a
-successful send or after deliberately skipping a non-text update.
+For repeated polling runs, prefer `telegram-echo-once-state`. It reads the
+offset from a caller-provided text file, processes up to five pending updates
+from one `getUpdates` response, and saves the next offset after each successful
+send or after deliberately skipping a non-text update.
 
 Use fake tokens for path tests and examples. Real Bot API tokens should not be
 committed, pasted into public issues or shared in logs.
@@ -259,7 +262,8 @@ API method and does not send or print the token.
 `telegram-echo-loop` is deliberately bounded rather than daemon-style. It
 reuses the same persistent offset file as `telegram-echo-once-state`, sleeps
 between iterations when `poll-seconds` is greater than zero, and stops after
-`max-iterations` or on the first error. The accepted limits are
+`max-iterations` or on the first error. Each iteration may process up to five
+pending updates. The accepted limits are
 `poll-seconds <= 3600` and `1 <= max-iterations <= 10000`.
 
 Note: through BebboSSH, the remote shell does not always preserve the AmigaDOS

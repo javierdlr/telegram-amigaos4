@@ -20,7 +20,7 @@ The AmigaOS 3.x tester can:
   `--telegram-preflight`;
 - call Telegram Bot API `getMe`, `getUpdates` and `sendMessage` when a token is
   provided;
-- run a bounded one-shot or looped echo test.
+- run one-shot, stateful batch or looped echo tests.
 
 Certificate validation is not enabled yet. Use this build only for supervised
 testing with test bots and disposable tokens.
@@ -141,11 +141,14 @@ Send a controlled message back:
 telegram-test --telegram-send-message-default <chat-id> "Hello from AmigaOS 3.x"
 ```
 
-Run one stateful echo attempt:
+Run one stateful echo batch:
 
 ```text
 telegram-test --telegram-echo-once-state-default telegram-offset.txt
 ```
+
+One stateful batch processes up to five pending updates and saves
+`telegram-offset.txt` after each handled update.
 
 Run a bounded echo loop:
 
