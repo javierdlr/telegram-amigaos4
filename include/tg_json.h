@@ -40,7 +40,9 @@ typedef enum tg_json_value_type {
  *
  * start/length point into the caller-owned JSON buffer; no allocation is done.
  * For strings, start points to the raw string content without surrounding
- * quotes. Escape sequences are not decoded yet.
+ * quotes. Escape sequences are not decoded in this borrowed view; use
+ * tg_json_string_decode() or tg_json_object_get_string_copy() when decoded text
+ * is needed.
  */
 typedef struct tg_json_value {
     tg_json_value_type type;
@@ -78,12 +80,25 @@ tg_json_status tg_json_object_get_bool(const char *json, unsigned long json_leng
                                        const char *field_name, int *bool_value);
 
 /**
- * Looks up a top-level string field and copies it into caller-owned buffer.
+ * Decodes raw JSON string content into a caller-owned buffer.
  *
- * buffer receives a NUL-terminated string. string_length receives the copied
- * byte count excluding the NUL. Returns TG_JSON_BUFFER_TOO_SMALL if buffer_size
- * cannot hold the string plus terminator. Escape decoding will be added when
- * needed; currently the raw JSON string content is copied.
+ * raw_string must point to the content inside a JSON string, without the
+ * surrounding quotes. buffer receives NUL-terminated UTF-8 bytes and
+ * string_length receives the decoded byte count excluding the terminator.
+ * Standard JSON escapes are supported, including \uXXXX and surrogate pairs.
+ */
+tg_json_status tg_json_string_decode(const char *raw_string,
+                                     unsigned long raw_string_length,
+                                     char *buffer,
+                                     unsigned long buffer_size,
+                                     unsigned long *string_length);
+
+/**
+ * Looks up a top-level string field and copies decoded text into buffer.
+ *
+ * buffer receives a NUL-terminated UTF-8 string. string_length receives the
+ * decoded byte count excluding the NUL. Returns TG_JSON_BUFFER_TOO_SMALL if
+ * buffer_size cannot hold the decoded string plus terminator.
  */
 tg_json_status tg_json_object_get_string_copy(const char *json, unsigned long json_length,
                                               const char *field_name, char *buffer,

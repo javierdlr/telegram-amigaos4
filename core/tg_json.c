@@ -17,6 +17,27 @@ static int tg_json_is_digit(char c)
     return c >= '0' && c <= '9';
 }
 
+static int tg_json_is_hex_digit(char c)
+{
+    return (c >= '0' && c <= '9') ||
+           (c >= 'a' && c <= 'f') ||
+           (c >= 'A' && c <= 'F');
+}
+
+static int tg_json_hex_value(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return 10 + (c - 'a');
+    }
+    if (c >= 'A' && c <= 'F') {
+        return 10 + (c - 'A');
+    }
+    return -1;
+}
+
 static void tg_json_skip_ws(const char *json, unsigned long json_length, unsigned long *pos)
 {
     while (*pos < json_length && tg_json_is_space(json[*pos])) {
@@ -39,15 +60,36 @@ static tg_json_status tg_json_scan_string(const char *json, unsigned long json_l
     i = pos + 1;
     while (i < json_length) {
         if (json[i] == '\\') {
+            unsigned long j;
+
             if (i + 1 >= json_length) {
                 return TG_JSON_INVALID_JSON;
             }
-            i += 2;
+            if (json[i + 1] == '"' || json[i + 1] == '\\' ||
+                json[i + 1] == '/' || json[i + 1] == 'b' ||
+                json[i + 1] == 'f' || json[i + 1] == 'n' ||
+                json[i + 1] == 'r' || json[i + 1] == 't') {
+                i += 2;
+            } else if (json[i + 1] == 'u') {
+                if (i + 5 >= json_length) {
+                    return TG_JSON_INVALID_JSON;
+                }
+                for (j = i + 2; j < i + 6; ++j) {
+                    if (!tg_json_is_hex_digit(json[j])) {
+                        return TG_JSON_INVALID_JSON;
+                    }
+                }
+                i += 6;
+            } else {
+                return TG_JSON_INVALID_JSON;
+            }
         } else if (json[i] == '"') {
             *content_start = pos + 1;
             *content_length = i - (pos + 1);
             *next_pos = i + 1;
             return TG_JSON_OK;
+        } else if ((unsigned char)json[i] < 0x20) {
+            return TG_JSON_INVALID_JSON;
         } else {
             ++i;
         }
@@ -368,6 +410,226 @@ tg_json_status tg_json_object_get_bool(const char *json, unsigned long json_leng
     return TG_JSON_OK;
 }
 
+static tg_json_status tg_json_decode_append_byte(char *buffer,
+                                                 unsigned long buffer_size,
+                                                 unsigned long *position,
+                                                 unsigned char byte)
+{
+    if (*position + 1 >= buffer_size) {
+        return TG_JSON_BUFFER_TOO_SMALL;
+    }
+
+    buffer[*position] = (char)byte;
+    ++(*position);
+    buffer[*position] = '\0';
+    return TG_JSON_OK;
+}
+
+static tg_json_status tg_json_decode_append_utf8(char *buffer,
+                                                 unsigned long buffer_size,
+                                                 unsigned long *position,
+                                                 unsigned long code_point)
+{
+    if (code_point <= 0x7fUL) {
+        return tg_json_decode_append_byte(buffer, buffer_size, position,
+                                          (unsigned char)code_point);
+    }
+    if (code_point <= 0x7ffUL) {
+        if (tg_json_decode_append_byte(buffer, buffer_size, position,
+                                       (unsigned char)(0xc0UL | (code_point >> 6))) != TG_JSON_OK) {
+            return TG_JSON_BUFFER_TOO_SMALL;
+        }
+        return tg_json_decode_append_byte(buffer, buffer_size, position,
+                                          (unsigned char)(0x80UL | (code_point & 0x3fUL)));
+    }
+    if (code_point <= 0xffffUL) {
+        if (tg_json_decode_append_byte(buffer, buffer_size, position,
+                                       (unsigned char)(0xe0UL | (code_point >> 12))) != TG_JSON_OK ||
+            tg_json_decode_append_byte(buffer, buffer_size, position,
+                                       (unsigned char)(0x80UL | ((code_point >> 6) & 0x3fUL))) != TG_JSON_OK) {
+            return TG_JSON_BUFFER_TOO_SMALL;
+        }
+        return tg_json_decode_append_byte(buffer, buffer_size, position,
+                                          (unsigned char)(0x80UL | (code_point & 0x3fUL)));
+    }
+    if (code_point <= 0x10ffffUL) {
+        if (tg_json_decode_append_byte(buffer, buffer_size, position,
+                                       (unsigned char)(0xf0UL | (code_point >> 18))) != TG_JSON_OK ||
+            tg_json_decode_append_byte(buffer, buffer_size, position,
+                                       (unsigned char)(0x80UL | ((code_point >> 12) & 0x3fUL))) != TG_JSON_OK ||
+            tg_json_decode_append_byte(buffer, buffer_size, position,
+                                       (unsigned char)(0x80UL | ((code_point >> 6) & 0x3fUL))) != TG_JSON_OK) {
+            return TG_JSON_BUFFER_TOO_SMALL;
+        }
+        return tg_json_decode_append_byte(buffer, buffer_size, position,
+                                          (unsigned char)(0x80UL | (code_point & 0x3fUL)));
+    }
+
+    return TG_JSON_INVALID_JSON;
+}
+
+static tg_json_status tg_json_decode_hex4(const char *text,
+                                          unsigned long text_length,
+                                          unsigned long position,
+                                          unsigned long *code_unit)
+{
+    unsigned long value;
+    unsigned long i;
+    int digit;
+
+    if (code_unit == 0 || position + 4 > text_length) {
+        return TG_JSON_INVALID_JSON;
+    }
+
+    value = 0;
+    for (i = 0; i < 4; ++i) {
+        digit = tg_json_hex_value(text[position + i]);
+        if (digit < 0) {
+            return TG_JSON_INVALID_JSON;
+        }
+        value = (value << 4) | (unsigned long)digit;
+    }
+
+    *code_unit = value;
+    return TG_JSON_OK;
+}
+
+tg_json_status tg_json_string_decode(const char *raw_string,
+                                     unsigned long raw_string_length,
+                                     char *buffer,
+                                     unsigned long buffer_size,
+                                     unsigned long *string_length)
+{
+    unsigned long input_pos;
+    unsigned long output_pos;
+    tg_json_status status;
+
+    if (string_length != 0) {
+        *string_length = 0;
+    }
+    if (buffer != 0 && buffer_size > 0) {
+        buffer[0] = '\0';
+    }
+    if (raw_string == 0 || buffer == 0 || buffer_size == 0 ||
+        string_length == 0) {
+        return TG_JSON_INVALID_ARGUMENT;
+    }
+
+    input_pos = 0;
+    output_pos = 0;
+    while (input_pos < raw_string_length) {
+        unsigned char c;
+
+        c = (unsigned char)raw_string[input_pos];
+        if (c == '\\') {
+            unsigned char escape;
+
+            if (input_pos + 1 >= raw_string_length) {
+                return TG_JSON_INVALID_JSON;
+            }
+            escape = (unsigned char)raw_string[input_pos + 1];
+            if (escape == '"' || escape == '\\' || escape == '/') {
+                status = tg_json_decode_append_byte(buffer, buffer_size,
+                                                    &output_pos, escape);
+                if (status != TG_JSON_OK) {
+                    return status;
+                }
+                input_pos += 2;
+            } else if (escape == 'b') {
+                status = tg_json_decode_append_byte(buffer, buffer_size,
+                                                    &output_pos, '\b');
+                if (status != TG_JSON_OK) {
+                    return status;
+                }
+                input_pos += 2;
+            } else if (escape == 'f') {
+                status = tg_json_decode_append_byte(buffer, buffer_size,
+                                                    &output_pos, '\f');
+                if (status != TG_JSON_OK) {
+                    return status;
+                }
+                input_pos += 2;
+            } else if (escape == 'n') {
+                status = tg_json_decode_append_byte(buffer, buffer_size,
+                                                    &output_pos, '\n');
+                if (status != TG_JSON_OK) {
+                    return status;
+                }
+                input_pos += 2;
+            } else if (escape == 'r') {
+                status = tg_json_decode_append_byte(buffer, buffer_size,
+                                                    &output_pos, '\r');
+                if (status != TG_JSON_OK) {
+                    return status;
+                }
+                input_pos += 2;
+            } else if (escape == 't') {
+                status = tg_json_decode_append_byte(buffer, buffer_size,
+                                                    &output_pos, '\t');
+                if (status != TG_JSON_OK) {
+                    return status;
+                }
+                input_pos += 2;
+            } else if (escape == 'u') {
+                unsigned long code_unit;
+                unsigned long code_point;
+
+                status = tg_json_decode_hex4(raw_string, raw_string_length,
+                                             input_pos + 2, &code_unit);
+                if (status != TG_JSON_OK) {
+                    return status;
+                }
+                input_pos += 6;
+                if (code_unit >= 0xd800UL && code_unit <= 0xdbffUL) {
+                    unsigned long low_unit;
+
+                    if (input_pos + 6 > raw_string_length ||
+                        raw_string[input_pos] != '\\' ||
+                        raw_string[input_pos + 1] != 'u') {
+                        return TG_JSON_INVALID_JSON;
+                    }
+                    status = tg_json_decode_hex4(raw_string, raw_string_length,
+                                                 input_pos + 2, &low_unit);
+                    if (status != TG_JSON_OK ||
+                        low_unit < 0xdc00UL || low_unit > 0xdfffUL) {
+                        return TG_JSON_INVALID_JSON;
+                    }
+                    code_point = 0x10000UL +
+                                 ((code_unit - 0xd800UL) << 10) +
+                                 (low_unit - 0xdc00UL);
+                    input_pos += 6;
+                } else if (code_unit >= 0xdc00UL && code_unit <= 0xdfffUL) {
+                    return TG_JSON_INVALID_JSON;
+                } else {
+                    code_point = code_unit;
+                }
+
+                status = tg_json_decode_append_utf8(buffer, buffer_size,
+                                                    &output_pos, code_point);
+                if (status != TG_JSON_OK) {
+                    return status;
+                }
+            } else {
+                return TG_JSON_INVALID_JSON;
+            }
+        } else {
+            if (c < 0x20) {
+                return TG_JSON_INVALID_JSON;
+            }
+            status = tg_json_decode_append_byte(buffer, buffer_size,
+                                                &output_pos, c);
+            if (status != TG_JSON_OK) {
+                return status;
+            }
+            ++input_pos;
+        }
+    }
+
+    buffer[output_pos] = '\0';
+    *string_length = output_pos;
+    return TG_JSON_OK;
+}
+
 tg_json_status tg_json_object_get_string_copy(const char *json, unsigned long json_length,
                                               const char *field_name, char *buffer,
                                               unsigned long buffer_size,
@@ -390,14 +652,8 @@ tg_json_status tg_json_object_get_string_copy(const char *json, unsigned long js
     if (value.type != TG_JSON_VALUE_STRING) {
         return TG_JSON_TYPE_MISMATCH;
     }
-    if (value.length + 1 > buffer_size) {
-        return TG_JSON_BUFFER_TOO_SMALL;
-    }
-
-    memcpy(buffer, value.start, value.length);
-    buffer[value.length] = '\0';
-    *string_length = value.length;
-    return TG_JSON_OK;
+    return tg_json_string_decode(value.start, value.length, buffer,
+                                 buffer_size, string_length);
 }
 
 tg_json_status tg_json_object_get_number_copy(const char *json, unsigned long json_length,

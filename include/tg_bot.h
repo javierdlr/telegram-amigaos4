@@ -52,7 +52,8 @@ typedef struct tg_bot_call_result {
  *
  * update_id and chat_id are copied into fixed caller-visible buffers because
  * callers commonly need to store/print them. text is a borrowed raw JSON string
- * view into the HTTP response buffer; escape sequences are not decoded yet.
+ * view into the HTTP response buffer; call tg_json_string_decode() before
+ * presenting or reusing it as user-visible text.
  */
 typedef struct tg_bot_update_summary {
     int has_update;

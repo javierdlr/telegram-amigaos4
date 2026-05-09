@@ -205,6 +205,10 @@ static void tg_print_telegram_response(const tg_telegram_response *response)
 
 static void tg_print_update_summary(const tg_bot_update_summary *update)
 {
+    tg_json_status json_status;
+    char decoded_text[512];
+    unsigned long decoded_length;
+
     if (!update->has_update) {
         puts("telegram update: none");
         return;
@@ -218,8 +222,15 @@ static void tg_print_update_summary(const tg_bot_update_summary *update)
 
     printf("telegram update chat id: %s\n", update->chat_id);
     if (update->has_text) {
-        printf("telegram update text: %.*s\n",
-               (int)update->text_length, update->text);
+        json_status = tg_json_string_decode(update->text, update->text_length,
+                                            decoded_text, sizeof(decoded_text),
+                                            &decoded_length);
+        if (json_status == TG_JSON_OK) {
+            printf("telegram update text: %s\n", decoded_text);
+        } else {
+            printf("telegram update text: <decode failed: %s>\n",
+                   tg_json_status_name(json_status));
+        }
     } else {
         puts("telegram update text: none");
     }
@@ -230,6 +241,8 @@ static int tg_build_echo_text(const tg_bot_update_summary *update,
 {
     static const char prefix[] = "Echo: ";
     unsigned long prefix_length;
+    unsigned long decoded_length;
+    tg_json_status json_status;
 
     if (buffer == 0 || buffer_size == 0 || update == 0 ||
         !update->has_text || update->text == 0) {
@@ -237,13 +250,18 @@ static int tg_build_echo_text(const tg_bot_update_summary *update,
     }
 
     prefix_length = (unsigned long)strlen(prefix);
-    if (prefix_length + update->text_length + 1 > buffer_size) {
+    if (prefix_length + 1 > buffer_size) {
         return 1;
     }
 
     strcpy(buffer, prefix);
-    memcpy(buffer + prefix_length, update->text, update->text_length);
-    buffer[prefix_length + update->text_length] = '\0';
+    json_status = tg_json_string_decode(update->text, update->text_length,
+                                        buffer + prefix_length,
+                                        buffer_size - prefix_length,
+                                        &decoded_length);
+    if (json_status != TG_JSON_OK) {
+        return 1;
+    }
     return 0;
 }
 
@@ -734,7 +752,11 @@ static int tg_run_telegram_echo_once_self_test(void)
         "Content-Type: application/json\r\n"
         "Connection: close\r\n"
         "\r\n"
-        "{\"ok\":true,\"result\":[{\"update_id\":999,\"message\":{\"message_id\":1,\"chat\":{\"id\":123,\"type\":\"private\"},\"text\":\"hello\"}}]}";
+        "{\"ok\":true,\"result\":[{\"update_id\":999,\"message\":{\"message_id\":1,\"chat\":{\"id\":123,\"type\":\"private\"},\"text\":\"hello \\\"Amiga\\\"\\nPath C:\\\\Temp \\u0041 \\u20ac \\ud83d\\ude80\"}}]}";
+    static const char expected_echo_text[] =
+        "Echo: hello \"Amiga\"\nPath C:\\Temp A "
+        "\xe2" "\x82" "\xac" " "
+        "\xf0" "\x9f" "\x9a" "\x80";
     tg_bot_status bot_status;
     tg_bot_call_result result;
     tg_bot_update_summary update;
@@ -770,6 +792,11 @@ static int tg_run_telegram_echo_once_self_test(void)
     }
     if (tg_build_echo_text(&update, echo_text, sizeof(echo_text)) != 0) {
         puts("telegram echo once self-test: echo text failed");
+        return 2;
+    }
+    if (strcmp(echo_text, expected_echo_text) != 0) {
+        puts("telegram echo once self-test: decoded echo text mismatch");
+        printf("telegram echo text: %s\n", echo_text);
         return 2;
     }
     bot_status = tg_bot_build_send_message_body(update.chat_id, echo_text,

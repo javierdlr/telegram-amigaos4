@@ -61,14 +61,15 @@ Initial core modules:
 - `tg_bot`: Bot API orchestration helpers
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
-- `tg_json`: minimal top-level JSON field lookup for Telegram-style responses
+- `tg_json`: minimal top-level JSON field lookup plus JSON string escape decoding
 - `tg_net`: portable TCP API with MorphOS and initial AmigaOS 3.x backends
 - `tg_telegram`: Telegram API response envelope parsing
 - `tg_tls`/`tg_https`: minimal TLS/HTTPS with an initial MorphOS OpenSSL backend
 - Bot API `getMe`, `getUpdates` and `sendMessage` helpers; `getUpdates` can
   extract the first update id, chat id and text from the returned array.
 - A one-shot echo command can read one update, print the next offset and send an
-  `Echo: ...` reply when the update contains text.
+  `Echo: ...` reply when the update contains text. JSON string escapes are
+  decoded before displaying or echoing text.
 - A bounded echo loop can repeat the stateful one-shot flow with caller-chosen
   polling seconds and a maximum iteration count.
 
