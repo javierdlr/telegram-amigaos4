@@ -34,8 +34,9 @@ cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AmigaOS 4.x pre-alpha tester
 Build: $COMMIT_ID
 
-This is not a usable Telegram client yet. It is an offline diagnostic tester for
-AmigaOS 4.x.
+This is not a usable Telegram client yet. It is a pre-alpha tester for
+AmigaOS 4.x. If built with ENABLE_AMISSL=1, it can perform live HTTPS
+Telegram Bot API checks.
 
 Minimum offline test:
 
@@ -47,14 +48,18 @@ Minimum offline test:
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
 
+Live read-only test, with a token file already copied to RAM:
+
+  telegram-test --telegram-preflight
+  telegram-test --telegram-getme RAM:telegram-token.txt
+  telegram-test --telegram-read-loop RAM:telegram-token.txt RAM:telegram-offset-os4.txt 0 1
+
 If this package also contains source files and gcc is available, the helper
 BuildAmigaOS4Offline can build and run the same offline checks from the project
 drawer.
 
-Network and HTTPS commands are expected to report unsupported until the
-AmigaOS 4.x TCP/TLS backend is implemented.
-
-This package does not include Telegram tokens or AmiSSL runtime files.
+This package does not include Telegram tokens, SDK files or AmiSSL runtime
+files.
 
 Full notes are in README.md.
 EOF

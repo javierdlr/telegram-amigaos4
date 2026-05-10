@@ -122,17 +122,17 @@ Initial core modules:
 - `--telegram-preflight` checks the default token path and verifies HTTPS
   reachability to Telegram without sending the token.
 
-TLS note: the current MorphOS and AmigaOS 3.x backends use OpenSSL/AmiSSL with
-SNI, but certificate validation is not enabled yet. This is enough for
-connectivity tests, not yet for secure use.
+TLS note: the current MorphOS, AmigaOS 3.x and AmigaOS 4.x backends use
+OpenSSL/AmiSSL with SNI, but certificate validation is not enabled yet. This is
+enough for connectivity tests, not yet for secure use.
 
 Initial targets:
 
 - MorphOS: TLS, `getMe` and read-only polling verified on real hardware
 - AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS,
   Telegram `getMe` and `sendMessage` verified on Vampire/AmiKit with AmiSSL v5
-- AmigaOS 4.x: QEMU/BebboSSH target detected; offline tester preparation is
-  ready, but toolchain and TCP/TLS backend work are still pending
+- AmigaOS 4.x: native QEMU build, AmiSSL HTTPS, Telegram `preflight`, `getMe`
+  and read-only polling verified
 - AROS: native build and offline self-tests reported working by the community
   on AROS One 32-bit and 64-bit; networking/TLS backend is still a stub
 
@@ -231,14 +231,15 @@ Build or package AmigaOS 4.x:
 
 ```sh
 make -f Makefile.amigaos4 clean all CC=ppc-amigaos-gcc TARGET=build/amigaos4/telegram-test
+make -f Makefile.amigaos4 clean all CC=ppc-amigaos-gcc ENABLE_AMISSL=1 TARGET=build/amigaos4/telegram-test
 scripts/package-amigaos4-tester.sh
 ```
 
-The AmigaOS 4.x backend is currently offline-only and still returns
-unsupported for TCP/TLS. The first QEMU target is reachable through BebboSSH,
-but it did not yet have `gcc`, `make`, `wget` or `unzip` in the shell path, and
-its installed AmiSSL was older than the AmiSSL 5 runtime needed for Telegram
-HTTPS. See `docs/AMIGAOS4_TESTER.md`.
+The AmigaOS 4.x TCP backend is enabled in native builds. HTTPS is enabled when
+building with `ENABLE_AMISSL=1` and requires the OS4 SDK headers plus the
+AmiSSL SDK package. The QEMU test target has passed native GCC builds, offline
+self-tests, `--telegram-preflight`, `--telegram-getme` and one read-only poll
+against Telegram. See `docs/AMIGAOS4_TESTER.md`.
 
 Flow Studio on MorphOS:
 

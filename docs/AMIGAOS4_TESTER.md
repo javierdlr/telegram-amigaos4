@@ -5,10 +5,9 @@ SPDX-License-Identifier: MIT
 
 # AmigaOS 4.x Tester Notes
 
-This document describes the current AmigaOS 4.x preparation state. It is not a
-usable Telegram client yet. The AmigaOS 4.x backend is currently an offline
-tester target: startup, command-line parsing and core self-tests are useful, but
-TCP/TLS still report unsupported.
+This document describes the current AmigaOS 4.x tester state. It is not a
+usable Telegram client yet, but the native AmigaOS 4.x backend can now build
+with TCP and optional AmiSSL HTTPS support.
 
 ## Current Scope
 
@@ -16,32 +15,42 @@ The AmigaOS 4.x tester can:
 
 - print the platform and data directory;
 - run local parser, HTTP builder and Telegram Bot API parser self-tests;
-- exercise the manual-client command-line flow without live networking.
+- exercise the manual-client command-line flow;
+- connect to Telegram over HTTPS when built with `ENABLE_AMISSL=1`;
+- run live `preflight`, `getMe` and read-only polling.
 
 It cannot yet:
 
-- connect to Telegram;
-- use AmiSSL for HTTPS;
-- run live `getMe`, `getUpdates` or `sendMessage`.
+- provide a real GUI;
+- validate TLS certificates;
+- behave as a finished end-user Telegram client.
 
 ## Current QEMU Probe
 
-The first QEMU target reachable through BebboSSH reported:
+The QEMU target reachable through BebboSSH reported after system updates:
 
 ```text
-Kickstart 54.57, Workbench 53.14
+Kickstart 54.57, Workbench 53.21
 ```
 
-Useful notes from the probe:
+Useful notes from the current setup:
 
 - SSH/BebboSSH is reachable through a forwarded localhost port.
 - `System:`, `Work:` and `RAM:` are mounted.
-- `gcc`, `make`, `wget` and `unzip` were not in the target PATH.
-- The installed AmiSSL master was old:
-  `amisslmaster.library 3.7 (2-Apr-2006) OS4 version`.
+- AmigaOS 4 SDK 54.16 is installed in `Work:SDK`.
+- GCC 11.2.0 is available through `SDK:S/sdk-startup`.
+- The SDK startup is persisted from `S:User-Startup`.
+- AmiSSL runtime was updated and live TLS was verified with:
+  `amisslmaster.library 5.25 (12-Oct-2025)`.
 
-Live Telegram HTTPS will need a modern AmiSSL 5 setup or another supported TLS
-backend before it can be tested.
+The SDK packages needed for native builds are:
+
+- base SDK;
+- `execsg_sdk-54.31.lha`;
+- `gcc-noarch.lha`;
+- one GCC binary package, currently tested with `gcc-11.2.0-bin.lha`;
+- `newlib-53.80.lha`;
+- `AmiSSL-5.3.lha` for AmiSSL headers and `libamisslstubs.a`.
 
 ## Build Options
 
@@ -60,6 +69,12 @@ the compiler and make are in the shell path. Then build from the project drawer:
 make -f Makefile.amigaos4 all
 ```
 
+To build the AmiSSL HTTPS tester:
+
+```text
+make -f Makefile.amigaos4 all ENABLE_AMISSL=1
+```
+
 If `make` is not installed yet but `gcc` is available, use the included
 AmigaDOS helper from the project drawer:
 
@@ -68,7 +83,7 @@ Execute scripts/BuildAmigaOS4Offline
 ```
 
 The helper compiles the current offline tester and runs the parser/inbox/send
-self-tests. The current source build is intended for offline self-tests only.
+self-tests.
 
 ## First Offline Test
 
@@ -84,8 +99,24 @@ telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 ```
 
-Network or HTTPS commands are expected to fail with `unsupported` until the
-AmigaOS 4.x platform backend is implemented.
+For the AmiSSL build, also run:
+
+```text
+telegram-test --telegram-preflight
+telegram-test --telegram-getme RAM:telegram-token.txt
+telegram-test --telegram-read-loop RAM:telegram-token.txt RAM:telegram-offset-os4.txt 0 1
+```
+
+The token file must contain only the BotFather token line. Do not include it in
+logs or screenshots.
+
+## Confirmed Live Results
+
+On the QEMU AmigaOS 4.x target, the AmiSSL build has been verified with:
+
+- `--telegram-preflight`: HTTP 302 and ok;
+- `--telegram-getme`: HTTP 200 and ok for `KaffoAmigaBot`;
+- `--telegram-read-loop`: one read-only iteration, rc 0, no update available.
 
 ## Packaging From The Mac
 
@@ -112,6 +143,6 @@ When reporting AmigaOS 4.x results, include:
 - whether the build was native or cross-compiled;
 - compiler version and SDK source;
 - AmiSSL version if TLS work is being attempted;
-- exact output from the offline self-tests.
+- exact output from the offline or live tester commands.
 
 Do not include Telegram tokens or screenshots containing tokens.
