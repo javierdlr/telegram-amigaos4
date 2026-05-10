@@ -131,7 +131,8 @@ Initial targets:
 - MorphOS: TLS, `getMe` and read-only polling verified on real hardware
 - AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS,
   Telegram `getMe` and `sendMessage` verified on Vampire/AmiKit with AmiSSL v5
-- AmigaOS 4.x: stub ready, toolchain to install
+- AmigaOS 4.x: QEMU/BebboSSH target detected; offline tester preparation is
+  ready, but toolchain and TCP/TLS backend work are still pending
 - AROS: native build and offline self-tests reported working by the community
   on AROS One 32-bit and 64-bit; networking/TLS backend is still a stub
 
@@ -225,6 +226,19 @@ commands and reporting notes. The package does not include Telegram tokens or
 AmiSSL runtime files. The package includes `RunAmigaOS3Preflight`, an AmigaDOS
 helper that auto-detects common AmiSSL drawers, sets stack, runs `Avail FLUSH`
 and starts `--telegram-preflight`.
+
+Build or package AmigaOS 4.x:
+
+```sh
+make -f Makefile.amigaos4 clean all CC=ppc-amigaos-gcc TARGET=build/amigaos4/telegram-test
+scripts/package-amigaos4-tester.sh
+```
+
+The AmigaOS 4.x backend is currently offline-only and still returns
+unsupported for TCP/TLS. The first QEMU target is reachable through BebboSSH,
+but it did not yet have `gcc`, `make`, `wget` or `unzip` in the shell path, and
+its installed AmiSSL was older than the AmiSSL 5 runtime needed for Telegram
+HTTPS. See `docs/AMIGAOS4_TESTER.md`.
 
 Flow Studio on MorphOS:
 

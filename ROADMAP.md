@@ -57,6 +57,9 @@ on at least one real Amiga-like platform.
   inbox/chat files and prints the saved chat list without automatic sends.
 - Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
   developed with community or hardware feedback.
+- Bring the new AmigaOS 4.x/QEMU target to the offline self-test level first:
+  install or provide a PPC AmigaOS 4 toolchain, build the stub backend, then
+  run parser/manual-client self-tests before implementing TCP/TLS.
 
 ## Phase 4: User Interface
 
