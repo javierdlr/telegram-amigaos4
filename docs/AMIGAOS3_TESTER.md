@@ -95,8 +95,18 @@ The tester package also includes an AmigaDOS helper script:
 Execute RunAmigaOS3Preflight
 ```
 
-By default it auto-detects `SYS:AmiSSL`, then `AmiKit:Internet/AmiSSL`, and
-otherwise uses the existing system `LIBS:`. You can override both paths:
+Use `Execute`; running the script directly may require Amiga protection bits
+that can be lost when unpacking ZIP archives. If you want to run it directly,
+set them manually:
+
+```text
+Protect RunAmigaOS3Preflight +se
+```
+
+By default it auto-detects only `SYS:AmiSSL` and otherwise uses the existing
+system `LIBS:`. It intentionally does not probe distribution-specific volumes,
+because checking a missing volume can open an AmigaDOS requester on plain
+systems. You can pass a custom AmiSSL drawer explicitly:
 
 ```text
 Execute RunAmigaOS3Preflight AmiKit:Internet/AmiSSL telegram-test
@@ -246,6 +256,11 @@ List saved chats with:
 telegram-test --telegram-chats telegram-chats.txt
 ```
 
+This is the easiest way to avoid copying the raw `chat id` by hand. The
+manual/session commands update `telegram-chats.txt`; then `--telegram-chats`
+prints a numbered list, and `--telegram-send-chat-default` sends to the selected
+1-based index.
+
 Send a controlled message back using the 1-based chat list index:
 
 ```text
@@ -264,7 +279,9 @@ The shorter alias is also available:
 telegram-test --telegram-send-default <chat-id> "Hello from AmigaOS 3.x"
 ```
 
-Use the `chat id` printed by `getUpdates` or `read-once-state`.
+Use the `chat id` printed by `getUpdates` or `read-once-state` only when you
+want the explicit chat-id command. For normal testing, prefer the saved chat
+list flow above.
 
 Run one stateful echo batch:
 

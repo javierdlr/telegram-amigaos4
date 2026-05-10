@@ -60,6 +60,11 @@ Minimum supervised test:
 
   Execute RunAmigaOS3Preflight
 
+Use Execute for the helper script. If you want to run it directly and your
+unpacker cleared Amiga protection bits, run:
+
+  Protect RunAmigaOS3Preflight +se
+
 Expected successful HTTPS result:
 
   telegram preflight http status: 302 Moved Temporarily
@@ -98,6 +103,10 @@ Useful commands:
 
 Certificate validation is not enabled yet. Use this only with test bots and
 disposable tokens.
+
+Tip: to avoid copying a raw chat id, send a message to the bot, run
+telegram-manual-client-default, then use telegram-chats and
+telegram-send-chat-default with the numbered chat index.
 
 Full notes are in README.md.
 EOF

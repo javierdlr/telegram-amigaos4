@@ -10,6 +10,9 @@
 ;
 ;   Execute RunAmigaOS3Preflight SYS:AmiSSL telegram-test
 ;   Execute RunAmigaOS3Preflight AmiKit:Internet/AmiSSL telegram-test
+;
+; The default path intentionally probes only SYS:AmiSSL. Referencing arbitrary
+; missing volumes can open system requesters on plain AmigaOS installations.
 
 .KEY AMISSLDIR,PROGRAM
 .BRA {
@@ -25,15 +28,10 @@ IF "{AMISSLDIR}" EQ ""
         Assign LIBS: AmiSSL:Libs
         Assign LIBS: SYS:Libs ADD
     ELSE
-        IF EXISTS AmiKit:Internet/AmiSSL/Libs
-            Echo "AmiSSL directory: AmiKit:Internet/AmiSSL"
-            Assign AmiSSL: AmiKit:Internet/AmiSSL
-            Assign LIBS: AmiSSL:Libs
-            Assign LIBS: SYS:Libs ADD
-        ELSE
-            Echo "AmiSSL directory: system LIBS:"
-            Echo "No AmiSSL drawer was auto-detected; using existing LIBS:."
-        ENDIF
+        Echo "AmiSSL directory: system LIBS:"
+        Echo "No SYS:AmiSSL drawer was auto-detected; using existing LIBS:."
+        Echo "For a custom AmiSSL drawer, run:"
+        Echo "Execute RunAmigaOS3Preflight <AmiSSL drawer> telegram-test"
     ENDIF
 ELSE
     Echo "AmiSSL directory: {AMISSLDIR}"
