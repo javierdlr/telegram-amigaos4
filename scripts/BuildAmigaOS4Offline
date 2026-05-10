@@ -1,0 +1,16 @@
+FailAt 21
+Stack 65536
+Echo "Telegram Amiga AmigaOS 4.x offline build start"
+CD Work:Dev/telegram-amiga
+MakeDir build
+gcc -Wall -Wextra -O2 -Iinclude -o build/telegram-test src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_file.c core/tg_http.c core/tg_https.c core/tg_json.c core/tg_telegram.c core/tg_log.c core/tg_net.c core/tg_tls.c platforms/amigaos4/tg_platform_amigaos4.c
+Echo "gcc rc $RC"
+build/telegram-test --telegram-json-self-test
+Echo "json self-test rc $RC"
+build/telegram-test --telegram-get-updates-self-test
+Echo "getUpdates self-test rc $RC"
+build/telegram-test --telegram-inbox-self-test
+Echo "inbox self-test rc $RC"
+build/telegram-test --telegram-send-message-self-test
+Echo "sendMessage self-test rc $RC"
+Echo "Telegram Amiga AmigaOS 4.x offline build end"

@@ -28,6 +28,7 @@ mkdir -p "$DEST_DIR"
 
 cp "$BINARY" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AMIGAOS4_TESTER.md" "$DEST_DIR/README.md"
+cp "$ROOT_DIR/scripts/BuildAmigaOS4Offline" "$DEST_DIR/BuildAmigaOS4Offline"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AmigaOS 4.x pre-alpha tester
@@ -45,6 +46,10 @@ Minimum offline test:
   telegram-test --telegram-inbox-self-test
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
+
+If this package also contains source files and gcc is available, the helper
+BuildAmigaOS4Offline can build and run the same offline checks from the project
+drawer.
 
 Network and HTTPS commands are expected to report unsupported until the
 AmigaOS 4.x TCP/TLS backend is implemented.

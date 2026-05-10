@@ -60,7 +60,15 @@ the compiler and make are in the shell path. Then build from the project drawer:
 make -f Makefile.amigaos4 all
 ```
 
-The current source build is intended for offline self-tests only.
+If `make` is not installed yet but `gcc` is available, use the included
+AmigaDOS helper from the project drawer:
+
+```text
+Execute scripts/BuildAmigaOS4Offline
+```
+
+The helper compiles the current offline tester and runs the parser/inbox/send
+self-tests. The current source build is intended for offline self-tests only.
 
 ## First Offline Test
 
