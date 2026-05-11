@@ -140,6 +140,7 @@ static int tg_run_telegram_tls_status(void)
     puts("transport encryption: platform TLS backend when available");
     puts("server name indication: enabled by supported TLS backends");
     puts("certificate validation: disabled");
+    puts("certificate validation plan: load platform CA store, verify chain, verify hostname");
     puts("security note: use only test bots and disposable tokens for now");
     return 0;
 }
@@ -2530,12 +2531,77 @@ static int tg_run_telegram_send_chat_path(const char *token_file_path,
                                           const char *index_text,
                                           const char *text);
 
+static int tg_print_last_inbox_line(const char *inbox_log_file_path)
+{
+    tg_file_status file_status;
+    char content[16384];
+    unsigned long content_length;
+    unsigned long line_start;
+    unsigned long line_end;
+
+    file_status = tg_file_read_text(inbox_log_file_path, content,
+                                    sizeof(content), &content_length);
+    if (file_status == TG_FILE_OPEN_FAILED) {
+        puts("telegram inbox last: none");
+        return 0;
+    }
+    if (file_status != TG_FILE_OK) {
+        printf("telegram inbox last: read failed: %s\n",
+               tg_file_status_name(file_status));
+        return 2;
+    }
+    if (content_length == 0) {
+        puts("telegram inbox last: none");
+        return 0;
+    }
+
+    line_end = content_length;
+    while (line_end > 0 &&
+           (content[line_end - 1] == '\n' || content[line_end - 1] == '\r')) {
+        --line_end;
+    }
+    if (line_end == 0) {
+        puts("telegram inbox last: none");
+        return 0;
+    }
+    line_start = line_end;
+    while (line_start > 0 &&
+           content[line_start - 1] != '\n' &&
+           content[line_start - 1] != '\r') {
+        --line_start;
+    }
+
+    printf("telegram inbox last: %.*s\n",
+           (int)(line_end - line_start), content + line_start);
+    return 0;
+}
+
+static void tg_print_client_console_status(const char *offset_file_path,
+                                           const char *inbox_log_file_path,
+                                           const char *chat_state_file_path)
+{
+    char offset[32];
+
+    printf("telegram offset file: %s\n", offset_file_path);
+    printf("telegram inbox log file: %s\n", inbox_log_file_path);
+    printf("telegram chat state file: %s\n", chat_state_file_path);
+    if (tg_load_offset_file(offset_file_path, offset, sizeof(offset)) == 0 &&
+        offset[0] != '\0') {
+        printf("telegram offset: %s\n", offset);
+    } else {
+        puts("telegram offset: none");
+    }
+}
+
 static void tg_print_client_console_help(void)
 {
     puts("telegram client console commands:");
     puts("  p                 poll for new messages");
     puts("  l                 list saved chats");
+    puts("  i                 show last inbox log line");
+    puts("  s                 show local client status");
     puts("  r <index> <text>  send a manual reply");
+    puts("  h                 show help");
     puts("  q                 quit");
 }
 
@@ -2643,6 +2709,19 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
         }
         if (strcmp(line, "h") == 0 || strcmp(line, "help") == 0) {
             tg_print_client_console_help();
+            continue;
+        }
+        if (strcmp(line, "s") == 0 || strcmp(line, "status") == 0) {
+            tg_print_client_console_status(resolved_offset_path,
+                                           resolved_inbox_path,
+                                           resolved_chats_path);
+            continue;
+        }
+        if (strcmp(line, "i") == 0 || strcmp(line, "inbox") == 0) {
+            rc = tg_print_last_inbox_line(resolved_inbox_path);
+            if (rc != 0) {
+                return rc;
+            }
             continue;
         }
         if (strcmp(line, "l") == 0 || strcmp(line, "list") == 0) {
@@ -2785,6 +2864,14 @@ static int tg_run_telegram_client_self_test(void)
         command_text == 0 ||
         strcmp(command_text, "Hello console") != 0) {
         puts("telegram client self-test: console command parse failed");
+        remove(chat_state_file_path);
+        return 2;
+    }
+    puts("telegram client self-test status sample:");
+    tg_print_client_console_status("telegram-client-self-test-offset.txt",
+                                   "telegram-client-self-test-inbox.log",
+                                   chat_state_file_path);
+    if (tg_print_last_inbox_line("telegram-client-self-test-inbox.log") != 0) {
         remove(chat_state_file_path);
         return 2;
     }

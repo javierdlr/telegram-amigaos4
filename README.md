@@ -128,7 +128,8 @@ Initial core modules:
 TLS note: the current MorphOS, AmigaOS 3.x and AmigaOS 4.x backends use
 OpenSSL/AmiSSL with SNI, but certificate validation is not enabled yet. This is
 enough for supervised connectivity tests, not yet for secure use. Run
-`--telegram-tls-status` to print this status from a tester binary.
+`--telegram-tls-status` to print this status from a tester binary, and see
+`docs/TLS_CERTIFICATES.md` for the validation plan.
 
 Initial targets:
 
@@ -536,9 +537,10 @@ telegram-test --telegram-client-console
 ```
 
 Console commands are `p` to poll, `l` to list saved chats,
-`r <index> <text>` to send a controlled reply and `q` to quit. The console uses
-the same `telegram-offset.txt`, `telegram-inbox.log` and `telegram-chats.txt`
-files as `telegram-client-default`.
+`i` to show the last inbox log line, `s` to show local status,
+`r <index> <text>` to send a controlled reply and `q` to quit. The console
+uses the same `telegram-offset.txt`, `telegram-inbox.log` and
+`telegram-chats.txt` files as `telegram-client-default`.
 
 List the saved chats:
 

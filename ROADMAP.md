@@ -63,6 +63,8 @@ on at least one real Amiga-like platform.
   It can poll, list saved chats, send an explicit indexed reply and quit.
 - TLS security status is explicit through `telegram-tls-status`; certificate
   validation is still a required future task before normal secure use.
+- AROS now has an initial BSD-socket TCP backend that needs native AROS
+  validation before HTTPS/TLS work starts.
 - Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
   developed with community or hardware feedback.
 - Bring the new AmigaOS 4.x/QEMU target to the offline self-test level first:

@@ -12,7 +12,9 @@ manual-client state tests.
 ## Current Status
 
 - AROS One 32-bit and 64-bit community builds have compiled the project.
-- The AROS backend currently reports networking/TLS as unsupported.
+- The AROS backend has an initial BSD-socket TCP implementation. It still needs
+  native community testing on real AROS setups.
+- TLS still reports unsupported.
 - AROS One 32-bit has AmiSSL available according to community feedback.
 - AROS One 64-bit currently does not have AmiSSL available.
 - Live Telegram Bot API commands need an AROS TCP/TLS backend before they can
@@ -57,7 +59,8 @@ certificate validation: disabled
 ```
 
 HTTPS and live Telegram commands are expected to fail with `unsupported` until
-the platform backend is implemented.
+the TLS platform backend is implemented. Plain TCP/HTTP diagnostics may work on
+AROS systems with a compatible BSD socket stack.
 
 ## Reporting Results
 
