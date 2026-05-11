@@ -13,6 +13,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#if defined(__AROS__)
+#include <exec/libraries.h>
+#include <proto/exec.h>
+
+struct Library *SocketBase = 0;
+#endif
+
 #include "tg_platform.h"
 
 const char *tg_platform_name(void)
@@ -46,6 +53,26 @@ static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer
     }
 }
 
+#if defined(__AROS__)
+static int tg_aros_open_socket_library(void)
+{
+    if (SocketBase != 0) {
+        return 1;
+    }
+
+    SocketBase = OpenLibrary((CONST_STRPTR)"bsdsocket.library", 3);
+    return SocketBase != 0;
+}
+
+static void tg_aros_close_socket_library(void)
+{
+    if (SocketBase != 0) {
+        CloseLibrary(SocketBase);
+        SocketBase = 0;
+    }
+}
+#endif
+
 tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char *host,
                                       const char *port, char *error_buffer,
                                       unsigned long error_buffer_size)
@@ -65,10 +92,21 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
         return TG_NET_INVALID_ARGUMENT;
     }
 
+#if defined(__AROS__)
+    if (!tg_aros_open_socket_library()) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "cannot open bsdsocket.library");
+        return TG_NET_CONNECT_FAILED;
+    }
+#endif
+
     host_entry = gethostbyname(host);
     if (host_entry == 0 || host_entry->h_addr_list == 0 ||
         host_entry->h_addr_list[0] == 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, "host lookup failed");
+#if defined(__AROS__)
+        tg_aros_close_socket_library();
+#endif
         return TG_NET_RESOLVE_FAILED;
     }
 
@@ -80,6 +118,9 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+#if defined(__AROS__)
+        tg_aros_close_socket_library();
+#endif
         return TG_NET_CONNECT_FAILED;
     }
 
@@ -92,6 +133,9 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
 
     close(sock);
     tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+#if defined(__AROS__)
+    tg_aros_close_socket_library();
+#endif
     return TG_NET_CONNECT_FAILED;
 }
 
@@ -150,7 +194,11 @@ void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
         close((int)connection->platform_handle);
+        connection->is_open = 0;
     }
+#if defined(__AROS__)
+    tg_aros_close_socket_library();
+#endif
 }
 
 tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char *host,
