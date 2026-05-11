@@ -13,6 +13,7 @@ BUILD_DIR := $(dir $(TARGET))
 SRC := src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_file.c core/tg_http.c core/tg_https.c core/tg_json.c core/tg_telegram.c core/tg_log.c core/tg_net.c core/tg_tls.c platforms/aros/tg_platform_aros.c
 
 CFLAGS ?= -Wall -Wextra -O2
+ENABLE_TLS ?= 0
 CPPFLAGS += -nostdinc \
 	-isystem "$(AROS_SDK)/lib/gcc/i386-aros/6.5.0/include" \
 	-isystem "$(AROS_SDK)/lib/gcc/i386-aros/6.5.0/include-fixed" \
@@ -27,6 +28,11 @@ LDFLAGS += -nostdlib \
 LDSTART := "$(AROS_SDK)/lib/startup.o"
 LDLIBS += -lautoinit -lcrtprog -lcrt -lstdlib -lstdc.static \
 	-lamiga -laros -ldos -lexec -lutility -lgcc -lautoinit
+
+ifeq ($(ENABLE_TLS),1)
+CPPFLAGS += -DTG_ENABLE_TLS=1
+LDLIBS := -lssl -lcrypto $(LDLIBS)
+endif
 
 .PHONY: all clean
 

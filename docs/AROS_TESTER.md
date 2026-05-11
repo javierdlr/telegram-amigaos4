@@ -16,7 +16,8 @@ manual-client state tests.
   `bsdsocket.library`.
 - AROS One i386 alt-abiv0 has been cross-built from macOS and smoke-tested in
   an AROS VM with offline self-tests plus plain TCP/HTTP diagnostics.
-- TLS still reports unsupported.
+- TLS can be enabled at build time against OpenSSL from the AROS SDK, but it is
+  still experimental and has not passed a live HTTPS test on AROS yet.
 - AROS One 32-bit has AmiSSL available according to community feedback.
 - AROS One 64-bit currently does not have AmiSSL available.
 - Live Telegram Bot API commands need an AROS TCP/TLS backend before they can
@@ -51,6 +52,18 @@ If you need to override only the compiler executable, use `AROS_CC=...`.
 Do not mix this with a generic i386 AROS toolchain built for a different ABI:
 the resulting binary may not run on AROS One alt-abiv0.
 
+The default AROS build keeps TLS disabled. A TLS-enabled cross-build can be
+attempted with:
+
+```text
+make -f Makefile.aros-i386-abiv0 all ENABLE_TLS=1 \
+  TOOLCHAIN=/path/to/aros-i386-abiv0 \
+  AROS_SDK=/path/to/AROS/Development
+```
+
+This links against OpenSSL from the AROS SDK. It is not yet part of the
+live-tested release matrix.
+
 If `make` reports `Clock skew detected`, check the AROS system date/time or
 refresh the source timestamps after unpacking the archive.
 
@@ -74,9 +87,9 @@ Expected TLS status today:
 certificate validation: disabled
 ```
 
-HTTPS and live Telegram commands are expected to fail with `unsupported` until
-the TLS platform backend is implemented. Plain TCP/HTTP diagnostics may work on
-AROS systems with a compatible BSD socket stack.
+HTTPS and live Telegram commands need a TLS-enabled build and are still
+experimental on AROS. Plain TCP/HTTP diagnostics work on tested AROS systems
+with a compatible BSD socket stack.
 
 Plain network diagnostics:
 

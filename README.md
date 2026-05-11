@@ -138,8 +138,10 @@ Initial targets:
   Telegram `getMe` and `sendMessage` verified on Vampire/AmiKit with AmiSSL v5
 - AmigaOS 4.x: native QEMU build, AmiSSL HTTPS, Telegram `preflight`, `getMe`
   and read-only polling verified
-- AROS: native build and offline self-tests reported working by the community
-  on AROS One 32-bit and 64-bit; networking/TLS backend is still a stub
+- AROS: native builds reported working by the community on AROS One 32-bit and
+  64-bit; AROS One i386 alt-abiv0 is cross-built from macOS and has passed
+  offline self-tests plus plain TCP/HTTP diagnostics in a VM. TLS is still
+  experimental and not live-tested.
 
 Build on MorphOS:
 
@@ -171,9 +173,9 @@ The AROS Makefile uses native `gcc` by default. Cross-builds can override it:
 make -f Makefile.aros CC=i386-aros-gcc all
 ```
 
-Current AROS builds are useful for offline core tests. Network, HTTPS and live
-Telegram commands still report unsupported until the AROS platform backend is
-implemented. See `docs/AROS_TESTER.md` for tester notes and reporting details.
+Current AROS builds are useful for offline core tests and plain TCP/HTTP
+diagnostics through `bsdsocket.library`. HTTPS/TLS is still experimental. See
+`docs/AROS_TESTER.md` for tester notes and reporting details.
 
 Recommended AROS offline smoke test:
 
@@ -184,6 +186,8 @@ telegram-test --telegram-inbox-self-test
 telegram-test --telegram-send-message-self-test
 telegram-test --telegram-client-self-test
 telegram-test --telegram-tls-status
+telegram-test --net-test example.com 80
+telegram-test --http-test example.com 80 /
 ```
 
 Community feedback so far: AROS One 32-bit has AmiSSL available, while AROS
@@ -242,6 +246,17 @@ commands and reporting notes. The package does not include Telegram tokens or
 AmiSSL runtime files. The package includes `RunAmigaOS3Preflight`, an AmigaDOS
 helper that auto-detects common AmiSSL drawers, sets stack, runs `Avail FLUSH`
 and starts `--telegram-preflight`.
+
+AROS tester package:
+
+```sh
+scripts/package-aros-tester.sh
+```
+
+The script cross-builds an AROS One i386 alt-abiv0 tester and creates a local
+package under `build/packages/`. It is currently intended for offline tests and
+plain TCP/HTTP diagnostics. TLS-enabled AROS builds can be attempted with
+`ENABLE_TLS=1`, but live HTTPS is not yet part of the public-tested matrix.
 
 Build or package AmigaOS 4.x:
 

@@ -42,9 +42,13 @@ AmigaOS 4.x/AmiSSL:
 
 AROS:
 
-- implement plain TCP first;
-- evaluate AmiSSL availability separately for 32-bit and 64-bit AROS;
-- add HTTPS only after a concrete CA-store strategy exists.
+- plain TCP is implemented through `bsdsocket.library`;
+- AROS One i386 alt-abiv0 can link a TLS-enabled build against OpenSSL 1.1.0h
+  from the AROS SDK;
+- evaluate AmiSSL/runtime OpenSSL availability separately for 32-bit and
+  64-bit AROS;
+- live-test HTTPS before promoting AROS TLS to the normal tester workflow;
+- add certificate validation only after a concrete CA-store strategy exists.
 
 ## Current User-Facing Status
 
