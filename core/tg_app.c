@@ -19,6 +19,7 @@
 #include "tg_net.h"
 #include "tg_platform.h"
 #include "tg_telegram.h"
+#include "tg_tls.h"
 
 #define TG_STATE_MAX_UPDATES 5UL
 
@@ -139,9 +140,21 @@ static int tg_run_telegram_tls_status(void)
     printf("platform: %s\n", tg_platform_name());
     puts("transport encryption: platform TLS backend when available");
     puts("server name indication: enabled by supported TLS backends");
-    puts("certificate validation: disabled");
-    puts("certificate validation plan: load platform CA store, verify chain, verify hostname");
-    puts("security note: use only test bots and disposable tokens for now");
+    printf("certificate validation requested: %s\n",
+           tg_tls_certificate_validation_enabled() ? "yes" : "no");
+    if (tg_tls_certificate_ca_file() != 0) {
+        printf("certificate ca file: %s\n", tg_tls_certificate_ca_file());
+    }
+    if (tg_tls_certificate_ca_path() != 0) {
+        printf("certificate ca path: %s\n", tg_tls_certificate_ca_path());
+    }
+    if (tg_tls_certificate_validation_enabled()) {
+        puts("hostname verification: requested");
+        puts("security note: validation support depends on the platform TLS backend");
+    } else {
+        puts("certificate validation plan: use --tls-verify with a CA file or CA path");
+        puts("security note: use only test bots and disposable tokens without validation");
+    }
     return 0;
 }
 
@@ -2585,6 +2598,8 @@ static void tg_print_client_console_status(const char *offset_file_path,
     printf("telegram offset file: %s\n", offset_file_path);
     printf("telegram inbox log file: %s\n", inbox_log_file_path);
     printf("telegram chat state file: %s\n", chat_state_file_path);
+    printf("tls certificate validation requested: %s\n",
+           tg_tls_certificate_validation_enabled() ? "yes" : "no");
     if (tg_load_offset_file(offset_file_path, offset, sizeof(offset)) == 0 &&
         offset[0] != '\0') {
         printf("telegram offset: %s\n", offset);
@@ -2596,16 +2611,17 @@ static void tg_print_client_console_status(const char *offset_file_path,
 static void tg_print_client_console_help(void)
 {
     puts("telegram client console commands:");
-    puts("  p                 poll for new messages");
-    puts("  l                 list saved chats");
-    puts("  i                 show last inbox log line");
-    puts("  s                 show local client status");
-    puts("  r <index> <text>  send a manual reply");
-    puts("  h                 show help");
-    puts("  q                 quit");
+    puts("  p, poll                 receive new messages");
+    puts("  l, list                 show saved chats");
+    puts("  i, last, inbox          show last inbox line");
+    puts("  s, status               show local files and offset");
+    puts("  r, send <index> <text>  send to saved chat index");
+    puts("  h, help                 show help");
+    puts("  q, quit                 quit");
 }
 
 static int tg_parse_console_reply_command(char *line,
+                                          unsigned long command_length,
                                           char *index_buffer,
                                           unsigned long index_buffer_size,
                                           char **text_start)
@@ -2619,7 +2635,7 @@ static int tg_parse_console_reply_command(char *line,
         return 1;
     }
 
-    cursor = line + 1;
+    cursor = line + command_length;
     while (*cursor == ' ' || *cursor == '\t') {
         ++cursor;
     }
@@ -2717,7 +2733,9 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
                                            resolved_chats_path);
             continue;
         }
-        if (strcmp(line, "i") == 0 || strcmp(line, "inbox") == 0) {
+        if (strcmp(line, "i") == 0 ||
+            strcmp(line, "last") == 0 ||
+            strcmp(line, "inbox") == 0) {
             rc = tg_print_last_inbox_line(resolved_inbox_path);
             if (rc != 0) {
                 return rc;
@@ -2747,7 +2765,7 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
         }
         if (line[0] == 'r' &&
             (line[1] == ' ' || line[1] == '\t')) {
-            if (tg_parse_console_reply_command(line, index_text,
+            if (tg_parse_console_reply_command(line, 1, index_text,
                                                sizeof(index_text),
                                                &reply_text) != 0) {
                 puts("telegram client console: use r <index> <text>");
@@ -2760,10 +2778,29 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             if (rc != 0) {
                 return rc;
             }
+            puts("telegram client console: sent");
+            continue;
+        }
+        if (strncmp(line, "send", 4) == 0 &&
+            (line[4] == ' ' || line[4] == '\t')) {
+            if (tg_parse_console_reply_command(line, 4, index_text,
+                                               sizeof(index_text),
+                                               &reply_text) != 0) {
+                puts("telegram client console: use send <index> <text>");
+                continue;
+            }
+            rc = tg_run_telegram_send_chat_path(token_file_path,
+                                                resolved_chats_path,
+                                                index_text,
+                                                reply_text);
+            if (rc != 0) {
+                return rc;
+            }
+            puts("telegram client console: sent");
             continue;
         }
 
-        puts("telegram client console: unknown command");
+        puts("telegram client console: unknown command, use h for help");
         tg_print_client_console_help();
     }
 }
@@ -2857,7 +2894,7 @@ static int tg_run_telegram_client_self_test(void)
     }
     strcpy(command_line, "r 2 Hello console");
     command_text = 0;
-    if (tg_parse_console_reply_command(command_line, command_index,
+    if (tg_parse_console_reply_command(command_line, 1, command_index,
                                        sizeof(command_index),
                                        &command_text) != 0 ||
         strcmp(command_index, "2") != 0 ||
@@ -3567,6 +3604,9 @@ int tg_app_run(int argc, char **argv)
     }
 
     tg_log_set_level(config.log_level);
+    tg_tls_set_certificate_validation(config.tls_verify,
+                                      config.tls_ca_file,
+                                      config.tls_ca_path);
 
     puts("telegram-amiga bootstrap");
     printf("platform: %s\n", tg_platform_name());

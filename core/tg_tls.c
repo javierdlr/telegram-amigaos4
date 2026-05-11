@@ -6,6 +6,10 @@
 #include "tg_platform.h"
 #include "tg_tls.h"
 
+static int tg_tls_verify_certificates = 0;
+static const char *tg_tls_verify_ca_file = 0;
+static const char *tg_tls_verify_ca_path = 0;
+
 void tg_tls_connection_init(tg_tls_connection *connection)
 {
     if (connection != 0) {
@@ -14,6 +18,30 @@ void tg_tls_connection_init(tg_tls_connection *connection)
         connection->platform_session = 0;
         connection->is_open = 0;
     }
+}
+
+void tg_tls_set_certificate_validation(int enabled,
+                                       const char *ca_file,
+                                       const char *ca_path)
+{
+    tg_tls_verify_certificates = enabled ? 1 : 0;
+    tg_tls_verify_ca_file = ca_file;
+    tg_tls_verify_ca_path = ca_path;
+}
+
+int tg_tls_certificate_validation_enabled(void)
+{
+    return tg_tls_verify_certificates;
+}
+
+const char *tg_tls_certificate_ca_file(void)
+{
+    return tg_tls_verify_ca_file;
+}
+
+const char *tg_tls_certificate_ca_path(void)
+{
+    return tg_tls_verify_ca_path;
 }
 
 tg_tls_status tg_tls_connect(tg_tls_connection *connection, const char *host, const char *port,
@@ -92,6 +120,8 @@ const char *tg_tls_status_name(tg_tls_status status)
         return "closed";
     case TG_TLS_UNSUPPORTED:
         return "unsupported";
+    case TG_TLS_VERIFY_FAILED:
+        return "verify-failed";
     default:
         return "unknown";
     }

@@ -12,6 +12,8 @@ void tg_config_init(tg_config *config)
 {
     config->data_dir = tg_platform_default_data_dir();
     config->token_file_path_override = 0;
+    config->tls_ca_file = 0;
+    config->tls_ca_path = 0;
     config->inbox_log_file_path = 0;
     config->chat_state_file_path = 0;
     config->net_test_host = 0;
@@ -120,6 +122,7 @@ void tg_config_init(tg_config *config)
     config->telegram_send_chat_default_index = 0;
     config->telegram_send_chat_default_text = 0;
     config->log_level = TG_LOG_INFO;
+    config->tls_verify = 0;
     config->show_help = 0;
     config->run_net_test = 0;
     config->run_http_test = 0;
@@ -201,6 +204,20 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             }
             ++i;
             config->token_file_path_override = argv[i];
+        } else if (strcmp(argv[i], "--tls-verify") == 0) {
+            config->tls_verify = 1;
+        } else if (strcmp(argv[i], "--tls-ca-file") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            ++i;
+            config->tls_ca_file = argv[i];
+        } else if (strcmp(argv[i], "--tls-ca-path") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            ++i;
+            config->tls_ca_path = argv[i];
         } else if (strcmp(argv[i], "--inbox-log-file") == 0) {
             if (i + 1 >= argc) {
                 return 1;
@@ -627,6 +644,11 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "      --data-dir <path> Set application data directory\n");
     fprintf(stream, "      --token-file <path>\n");
     fprintf(stream, "                         Override default Telegram token file\n");
+    fprintf(stream, "      --tls-verify       Verify TLS certificate chain and hostname\n");
+    fprintf(stream, "      --tls-ca-file <path>\n");
+    fprintf(stream, "                         CA bundle file for --tls-verify\n");
+    fprintf(stream, "      --tls-ca-path <path>\n");
+    fprintf(stream, "                         CA directory for --tls-verify\n");
     fprintf(stream, "      --inbox-log-file <path>\n");
     fprintf(stream, "                         Append read-only inbox items to a local text log\n");
     fprintf(stream, "      --chat-state-file <path>\n");

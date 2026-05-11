@@ -25,8 +25,8 @@ The AmigaOS 3.x tester can:
   kind, compact one-line summaries and optional append-only logging;
 - run one-shot, stateful batch or looped echo tests.
 
-Certificate validation is not enabled yet. Use this build only for supervised
-testing with test bots and disposable tokens.
+AmiSSL certificate validation is not implemented in this backend yet. Use this
+build only for supervised testing with test bots and disposable tokens.
 
 ## Target Requirements
 
@@ -261,9 +261,10 @@ entry point. It uses these default files in the program drawer:
 iterations; use `telegram-client-default 2 5` to override that timing.
 
 `telegram-client-console` uses the same default files and starts a small manual
-console. Use `p` to poll, `l` to list saved chats, `i` to show the last inbox
-log line, `s` to show local status, `r <index> <text>` to send a controlled
-reply and `q` to quit. It does not send replies automatically.
+console. Use `p` to poll, `l` to list saved chats, `i`/`last`/`inbox` to show
+the last inbox log line, `s` to show local status, `r <index> <text>` or
+`send <index> <text>` to send a controlled reply and `q` to quit. It does not
+send replies automatically.
 
 List saved chats with:
 

@@ -175,12 +175,60 @@ static void tg_platform_set_ssl_error(char *error_buffer, unsigned long error_bu
     tg_platform_set_error(error_buffer, error_buffer_size, error_string);
 }
 
+static tg_tls_status tg_morphos_configure_certificate_validation(SSL_CTX *ctx,
+                                                                SSL *ssl,
+                                                                const char *host,
+                                                                char *error_buffer,
+                                                                unsigned long error_buffer_size)
+{
+    const char *ca_file;
+    const char *ca_path;
+    X509_VERIFY_PARAM *verify_param;
+
+    if (!tg_tls_certificate_validation_enabled()) {
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, 0);
+        return TG_TLS_OK;
+    }
+
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, 0);
+    ca_file = tg_tls_certificate_ca_file();
+    ca_path = tg_tls_certificate_ca_path();
+    if (ca_file != 0 || ca_path != 0) {
+        if (SSL_CTX_load_verify_locations(ctx, ca_file, ca_path) != 1) {
+            tg_platform_set_ssl_error(error_buffer, error_buffer_size);
+            return TG_TLS_VERIFY_FAILED;
+        }
+    } else if (SSL_CTX_set_default_verify_paths(ctx) != 1) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "could not load default CA paths");
+        return TG_TLS_VERIFY_FAILED;
+    }
+
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
+    verify_param = SSL_get0_param(ssl);
+    if (verify_param == 0 ||
+        X509_VERIFY_PARAM_set1_host(verify_param, host, 0) != 1) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "could not enable hostname verification");
+        return TG_TLS_VERIFY_FAILED;
+    }
+#else
+    (void)verify_param;
+    tg_platform_set_error(error_buffer, error_buffer_size,
+                          "hostname verification is not supported by OpenSSL");
+    return TG_TLS_VERIFY_FAILED;
+#endif
+
+    return TG_TLS_OK;
+}
+
 tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char *host,
                                       const char *port, tg_net_status *net_status,
                                       char *error_buffer, unsigned long error_buffer_size)
 {
     SSL_CTX *ctx;
     SSL *ssl;
+    tg_tls_status verify_status;
     tg_net_status local_net_status;
 
     if (net_status != 0) {
@@ -206,7 +254,6 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
         return TG_TLS_HANDSHAKE_FAILED;
     }
 
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, 0);
 #ifdef SSL_OP_IGNORE_UNEXPECTED_EOF
     SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
 #endif
@@ -221,6 +268,14 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
 
     SSL_set_fd(ssl, (int)connection->tcp.platform_handle);
     SSL_set_tlsext_host_name(ssl, host);
+    verify_status = tg_morphos_configure_certificate_validation(
+        ctx, ssl, host, error_buffer, error_buffer_size);
+    if (verify_status != TG_TLS_OK) {
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        tg_net_close(&connection->tcp);
+        return verify_status;
+    }
 
     if (SSL_connect(ssl) != 1) {
         tg_platform_set_ssl_error(error_buffer, error_buffer_size);
@@ -228,6 +283,16 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
         SSL_CTX_free(ctx);
         tg_net_close(&connection->tcp);
         return TG_TLS_HANDSHAKE_FAILED;
+    }
+    if (tg_tls_certificate_validation_enabled() &&
+        SSL_get_verify_result(ssl) != X509_V_OK) {
+        tg_platform_set_error(
+            error_buffer, error_buffer_size,
+            X509_verify_cert_error_string(SSL_get_verify_result(ssl)));
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        tg_net_close(&connection->tcp);
+        return TG_TLS_VERIFY_FAILED;
     }
 
     connection->platform_context = ctx;

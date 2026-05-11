@@ -24,8 +24,10 @@ The MorphOS tester can:
   date/time, sender, message kind, compact one-line summaries and optional
   append-only logging.
 
-Certificate validation is not enabled yet. Use this build only for supervised
-testing with test bots and disposable tokens.
+Certificate validation is optional on OpenSSL builds. Use `--tls-verify` with
+`--tls-ca-file` or `--tls-ca-path` to request certificate-chain and hostname
+verification. Without validation, use this build only for supervised testing
+with test bots and disposable tokens.
 
 ## Target Requirements
 
@@ -154,9 +156,10 @@ entry point. It uses these default files in the program drawer:
 iterations; use `telegram-client-default 2 5` to override that timing.
 
 `telegram-client-console` uses the same default files and starts a small manual
-console. Use `p` to poll, `l` to list saved chats, `i` to show the last inbox
-log line, `s` to show local status, `r <index> <text>` to send a controlled
-reply and `q` to quit. It does not send replies automatically.
+console. Use `p` to poll, `l` to list saved chats, `i`/`last`/`inbox` to show
+the last inbox log line, `s` to show local status, `r <index> <text>` or
+`send <index> <text>` to send a controlled reply and `q` to quit. It does not
+send replies automatically.
 
 List saved chats with:
 

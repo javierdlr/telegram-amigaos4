@@ -5,9 +5,11 @@ SPDX-License-Identifier: MIT
 
 # TLS Certificate Validation Plan
 
-Current TLS backends encrypt traffic and use SNI where supported, but they do
-not validate the server certificate chain or hostname yet. This is acceptable
-only for supervised testing with disposable bot tokens.
+Current TLS backends encrypt traffic and use SNI where supported. OpenSSL-based
+backends can now request certificate-chain and hostname validation with
+`--tls-verify`, optionally paired with `--tls-ca-file` or `--tls-ca-path`.
+AmiSSL validation still needs backend work. Connections without validation are
+acceptable only for supervised testing with disposable bot tokens.
 
 ## Required Behavior
 
@@ -47,9 +49,11 @@ AROS:
   from the AROS SDK;
 - the first supervised HTTPS preflight and Telegram `getMe` tests passed on
   AROS One i386 alt-abiv0;
+- `--tls-verify --tls-ca-file DH0:TGTEST/ca-bundle.crt` passed against
+  `api.telegram.org` with the YAM CA bundle from the AROS One DVD;
 - evaluate AmiSSL/runtime OpenSSL availability separately for 32-bit and
   64-bit AROS;
-- add certificate validation only after a concrete CA-store strategy exists.
+- document a practical CA-store strategy before enabling validation by default.
 
 ## Current User-Facing Status
 
@@ -62,5 +66,5 @@ telegram-test --telegram-tls-status
 Expected current output includes:
 
 ```text
-certificate validation: disabled
+certificate validation requested: no
 ```

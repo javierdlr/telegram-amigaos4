@@ -62,9 +62,9 @@ Live read-only test, after creating telegram-token.txt in the same drawer:
   telegram-test --telegram-client-default
   telegram-test --telegram-client-console
 
-Inside the console, use p to poll, l to list saved chats, i to show the last
-inbox line, s to show local state, r <index> <text> to send a controlled reply,
-h for help and q to quit.
+Inside the console, use p to poll, l to list saved chats, i/last/inbox to show
+the last inbox line, s to show local state, r/send <index> <text> to send a
+controlled reply, h for help and q to quit.
 
 Manual send by saved chat index:
 
@@ -84,8 +84,8 @@ To create a test bot, open Telegram, talk to @BotFather, send /newbot, choose a
 display name and a username ending in bot, then copy the token into
 telegram-token.txt. If the token is exposed, revoke it with BotFather /revoke.
 
-Certificate validation is not enabled yet. Use this only with test bots and
-disposable tokens.
+AmiSSL certificate validation is not implemented in this backend yet. Use this
+only with test bots and disposable tokens.
 
 Full notes are in README.md.
 EOF

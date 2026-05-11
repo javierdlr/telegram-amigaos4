@@ -99,6 +99,11 @@ Useful commands:
   telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
   telegram-test --telegram-client-default
   telegram-test --telegram-client-console
+
+Inside the console, use p to poll, l to list saved chats, i/last/inbox to show
+the last inbox line, s to show local state, r/send <index> <text> to send a
+controlled reply, h for help and q to quit.
+
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default
   telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from AmigaOS 3.x"
@@ -108,8 +113,8 @@ Useful commands:
   telegram-test --telegram-echo-once-state-default telegram-offset.txt
   telegram-test --telegram-echo-loop-default telegram-offset.txt 5 10
 
-Certificate validation is not enabled yet. Use this only with test bots and
-disposable tokens.
+AmiSSL certificate validation is not implemented in this backend yet. Use this
+only with test bots and disposable tokens.
 
 Tip: to avoid copying a raw chat id, send a message to the bot, run
 telegram-client-default, then use telegram-chats-default and

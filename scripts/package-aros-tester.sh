@@ -60,6 +60,16 @@ If this package was built with TLS enabled, optional supervised live tests are:
   telegram-test --https-test api.telegram.org 443 /
   telegram-test --telegram-preflight
   telegram-test --telegram-getme-default
+  telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
+  telegram-test --telegram-client-default
+  telegram-test --telegram-client-console
+  telegram-test --telegram-chats-default
+  telegram-test --telegram-reply-default 1 "Hello from AROS"
+  telegram-test --telegram-send-last-default "Hello from AROS"
+
+Inside the console, use p to poll, l to list saved chats, i/last/inbox to show
+the last inbox line, s to show local state, r/send <index> <text> to send a
+controlled reply, h for help and q to quit.
 
 If this package was built with TLS disabled, live Telegram commands are expected
 to report unsupported.
@@ -71,8 +81,12 @@ To create a test bot, open Telegram, talk to @BotFather, send /newbot, choose a
 display name and a username ending in bot, then copy the token into
 telegram-token.txt. If the token is exposed, revoke it with BotFather /revoke.
 
-Certificate validation is not enabled yet. Use this only with test bots and
-disposable tokens.
+Certificate validation is not enabled by default. Use unverified TLS only
+with test bots and disposable tokens.
+
+OpenSSL builds can request certificate validation with:
+
+  telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 
 Full notes are in README.md.
 EOF

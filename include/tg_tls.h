@@ -22,7 +22,8 @@ typedef enum tg_tls_status {
     TG_TLS_SEND_FAILED = 4,
     TG_TLS_RECV_FAILED = 5,
     TG_TLS_CLOSED = 6,
-    TG_TLS_UNSUPPORTED = 7
+    TG_TLS_UNSUPPORTED = 7,
+    TG_TLS_VERIFY_FAILED = 8
 } tg_tls_status;
 
 /**
@@ -42,6 +43,27 @@ typedef struct tg_tls_connection {
  * Resets a TLS connection object to a closed state.
  */
 void tg_tls_connection_init(tg_tls_connection *connection);
+
+/**
+ * Sets process-wide certificate verification options for later TLS connects.
+ *
+ * The strings are borrowed and must remain valid for the process lifetime or
+ * until the next call. Passing enabled=0 disables certificate validation.
+ */
+void tg_tls_set_certificate_validation(int enabled,
+                                       const char *ca_file,
+                                       const char *ca_path);
+
+/**
+ * Returns non-zero when certificate validation is requested.
+ */
+int tg_tls_certificate_validation_enabled(void);
+
+/**
+ * Returns the configured CA file/path, or NULL when not configured.
+ */
+const char *tg_tls_certificate_ca_file(void);
+const char *tg_tls_certificate_ca_path(void);
 
 /**
  * Opens a TCP connection and performs the TLS handshake.

@@ -123,13 +123,15 @@ Initial core modules:
   reachability to Telegram without sending the token.
 - `--telegram-client-console` starts a small manual text console using the
   default token, offset, inbox log and chat-state files. It never sends
-  automatically; replies require an explicit `r <index> <text>` command.
+  automatically; replies require an explicit `r <index> <text>` or
+  `send <index> <text>` command.
 
-TLS note: the current MorphOS, AmigaOS 3.x and AmigaOS 4.x backends use
-OpenSSL/AmiSSL with SNI, but certificate validation is not enabled yet. This is
-enough for supervised connectivity tests, not yet for secure use. Run
-`--telegram-tls-status` to print this status from a tester binary, and see
-`docs/TLS_CERTIFICATES.md` for the validation plan.
+TLS note: current TLS builds use SNI. Certificate validation is now available
+as an opt-in path for OpenSSL-based backends with `--tls-verify`,
+`--tls-ca-file` and `--tls-ca-path`; AmiSSL validation still needs backend
+work. Builds without validation are enough for supervised connectivity tests,
+not yet for secure use. Run `--telegram-tls-status` to print this status from a
+tester binary, and see `docs/TLS_CERTIFICATES.md` for the validation plan.
 
 Initial targets:
 
@@ -308,6 +310,13 @@ telegram-test --telegram-client-default
 telegram-test --telegram-chats-default
 telegram-test --telegram-reply-default 1 "Hello from Telegram Amiga"
 telegram-test --telegram-client-console
+```
+
+OpenSSL-based builds can request certificate validation by adding
+`--tls-verify` and, when platform defaults are not configured, a CA bundle:
+
+```text
+telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 ```
 
 Before the reply command can work, send a message to the bot from Telegram and
@@ -551,10 +560,10 @@ For a small manual text console, run:
 telegram-test --telegram-client-console
 ```
 
-Console commands are `p` to poll, `l` to list saved chats,
-`i` to show the last inbox log line, `s` to show local status,
-`r <index> <text>` to send a controlled reply and `q` to quit. The console
-uses the same `telegram-offset.txt`, `telegram-inbox.log` and
+Console commands are `p` to poll, `l` to list saved chats, `i`/`last`/`inbox`
+to show the last inbox log line, `s` to show local status, `r <index> <text>`
+or `send <index> <text>` to send a controlled reply and `q` to quit. The
+console uses the same `telegram-offset.txt`, `telegram-inbox.log` and
 `telegram-chats.txt` files as `telegram-client-default`.
 
 List the saved chats:

@@ -19,6 +19,8 @@
 typedef struct tg_config {
     const char *data_dir;
     const char *token_file_path_override;
+    const char *tls_ca_file;
+    const char *tls_ca_path;
     const char *inbox_log_file_path;
     const char *chat_state_file_path;
     const char *net_test_host;
@@ -127,6 +129,7 @@ typedef struct tg_config {
     const char *telegram_send_chat_default_index;
     const char *telegram_send_chat_default_text;
     tg_log_level log_level;
+    int tls_verify;
     int show_help;
     int run_net_test;
     int run_http_test;
