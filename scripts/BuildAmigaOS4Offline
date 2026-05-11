@@ -13,4 +13,6 @@ build/telegram-test --telegram-inbox-self-test
 Echo "inbox self-test rc $RC"
 build/telegram-test --telegram-send-message-self-test
 Echo "sendMessage self-test rc $RC"
+build/telegram-test --telegram-client-self-test
+Echo "client self-test rc $RC"
 Echo "Telegram Amiga AmigaOS 4.x offline build end"

@@ -123,6 +123,7 @@ telegram-test --telegram-read-once-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
+telegram-test --telegram-client-self-test
 ```
 
 Run the preflight check:
@@ -229,6 +230,7 @@ telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default 
 telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log telegram-chats.txt
 telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
 telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
+telegram-test --telegram-client-default
 ```
 
 Inbox output includes update id, chat id, sender name when available, decoded
@@ -250,21 +252,30 @@ preview: it performs bounded receive-only polling, updates the inbox/chat files
 and then prints the saved chat list. It still never sends messages
 automatically.
 
+The shorter `telegram-client-default` command is the recommended manual test
+entry point. It uses these default files in the program drawer:
+`telegram-token.txt`, `telegram-offset.txt`, `telegram-inbox.log` and
+`telegram-chats.txt`. Without timing arguments it polls every 5 seconds for 10
+iterations; use `telegram-client-default 2 5` to override that timing.
+
 List saved chats with:
 
 ```text
 telegram-test --telegram-chats telegram-chats.txt
+telegram-test --telegram-chats-default
 ```
 
 This is the easiest way to avoid copying the raw `chat id` by hand. The
-manual/session commands update `telegram-chats.txt`; then `--telegram-chats`
-prints a numbered list, and `--telegram-send-chat-default` sends to the selected
-1-based index.
+manual/session commands update `telegram-chats.txt` with the most recently
+active chat at index `1`; then `--telegram-chats-default` prints a numbered
+list, and `--telegram-reply-default` sends to the selected 1-based index.
 
 Send a controlled message back using the 1-based chat list index:
 
 ```text
 telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from AmigaOS 3.x"
+telegram-test --telegram-reply-default 1 "Hello from AmigaOS 3.x"
+telegram-test --telegram-send-last-default "Hello from AmigaOS 3.x"
 ```
 
 Send a controlled message back:

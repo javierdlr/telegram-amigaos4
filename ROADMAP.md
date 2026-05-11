@@ -55,6 +55,10 @@ on at least one real Amiga-like platform.
 - A first single-command text preview now exists as
   `telegram-manual-client-default`: it polls read-only updates, updates local
   inbox/chat files and prints the saved chat list without automatic sends.
+- A shorter default workflow now exists as `telegram-client-default`,
+  `telegram-chats-default`, `telegram-reply-default` and
+  `telegram-send-last-default`, using default local state files and keeping the
+  most recently active chat at index 1.
 - Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
   developed with community or hardware feedback.
 - Bring the new AmigaOS 4.x/QEMU target to the offline self-test level first:

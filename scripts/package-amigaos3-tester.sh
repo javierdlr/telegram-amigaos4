@@ -85,6 +85,7 @@ Useful commands:
   telegram-test --telegram-inbox-self-test
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
+  telegram-test --telegram-client-self-test
   telegram-test --telegram-getme-default
   telegram-test --telegram-get-updates-default
   telegram-test --telegram-read-once-state-default telegram-offset.txt
@@ -95,8 +96,12 @@ Useful commands:
   telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log telegram-chats.txt
   telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
   telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
+  telegram-test --telegram-client-default
   telegram-test --telegram-chats telegram-chats.txt
+  telegram-test --telegram-chats-default
   telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from AmigaOS 3.x"
+  telegram-test --telegram-reply-default 1 "Hello from AmigaOS 3.x"
+  telegram-test --telegram-send-last-default "Hello from AmigaOS 3.x"
   telegram-test --telegram-send-default <chat-id> "Hello from AmigaOS 3.x"
   telegram-test --telegram-echo-once-state-default telegram-offset.txt
   telegram-test --telegram-echo-loop-default telegram-offset.txt 5 10
@@ -105,8 +110,9 @@ Certificate validation is not enabled yet. Use this only with test bots and
 disposable tokens.
 
 Tip: to avoid copying a raw chat id, send a message to the bot, run
-telegram-manual-client-default, then use telegram-chats and
-telegram-send-chat-default with the numbered chat index.
+telegram-client-default, then use telegram-chats-default and
+telegram-reply-default with the numbered chat index. Index 1 is the most
+recently updated chat.
 
 Full notes are in README.md.
 EOF

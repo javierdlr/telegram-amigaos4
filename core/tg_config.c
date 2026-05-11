@@ -83,7 +83,15 @@ void tg_config_init(tg_config *config)
     config->telegram_manual_client_default_chat_state_file_path = 0;
     config->telegram_manual_client_default_poll_seconds = 0;
     config->telegram_manual_client_default_max_iterations = 0;
+    config->telegram_client_token_file_path = 0;
+    config->telegram_client_poll_seconds = 0;
+    config->telegram_client_max_iterations = 0;
+    config->telegram_client_default_poll_seconds = 0;
+    config->telegram_client_default_max_iterations = 0;
     config->telegram_chats_file_path = 0;
+    config->telegram_reply_default_index = 0;
+    config->telegram_reply_default_text = 0;
+    config->telegram_send_last_default_text = 0;
     config->telegram_echo_once_token_file_path = 0;
     config->telegram_echo_once_offset = 0;
     config->telegram_echo_once_default_offset = 0;
@@ -145,7 +153,13 @@ void tg_config_init(tg_config *config)
     config->run_telegram_session_loop_default = 0;
     config->run_telegram_manual_client = 0;
     config->run_telegram_manual_client_default = 0;
+    config->run_telegram_client_self_test = 0;
+    config->run_telegram_client = 0;
+    config->run_telegram_client_default = 0;
     config->run_telegram_chats = 0;
+    config->run_telegram_chats_default = 0;
+    config->run_telegram_reply_default = 0;
+    config->run_telegram_send_last_default = 0;
     config->run_telegram_echo_once_self_test = 0;
     config->run_telegram_echo_once = 0;
     config->run_telegram_echo_once_default = 0;
@@ -434,6 +448,33 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_manual_client_default_poll_seconds = argv[i + 4];
             config->telegram_manual_client_default_max_iterations = argv[i + 5];
             i += 5;
+        } else if (strcmp(argv[i], "--telegram-client-self-test") == 0) {
+            config->run_telegram_client_self_test = 1;
+        } else if (strcmp(argv[i], "--telegram-client") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_telegram_client = 1;
+            config->telegram_client_token_file_path = argv[i + 1];
+            ++i;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_client_poll_seconds = argv[i + 1];
+                ++i;
+            }
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_client_max_iterations = argv[i + 1];
+                ++i;
+            }
+        } else if (strcmp(argv[i], "--telegram-client-default") == 0) {
+            config->run_telegram_client_default = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_client_default_poll_seconds = argv[i + 1];
+                ++i;
+            }
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_client_default_max_iterations = argv[i + 1];
+                ++i;
+            }
         } else if (strcmp(argv[i], "--telegram-chats") == 0) {
             if (i + 1 >= argc) {
                 return 1;
@@ -441,6 +482,16 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_telegram_chats = 1;
             config->telegram_chats_file_path = argv[i + 1];
             ++i;
+        } else if (strcmp(argv[i], "--telegram-chats-default") == 0) {
+            config->run_telegram_chats_default = 1;
+        } else if (strcmp(argv[i], "--telegram-reply-default") == 0) {
+            if (i + 2 >= argc) {
+                return 1;
+            }
+            config->run_telegram_reply_default = 1;
+            config->telegram_reply_default_index = argv[i + 1];
+            config->telegram_reply_default_text = argv[i + 2];
+            i += 2;
         } else if (strcmp(argv[i], "--telegram-echo-once-self-test") == 0) {
             config->run_telegram_echo_once_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-echo-once") == 0) {
@@ -534,6 +585,13 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_send_chat_default_index = argv[i + 2];
             config->telegram_send_chat_default_text = argv[i + 3];
             i += 3;
+        } else if (strcmp(argv[i], "--telegram-send-last-default") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_telegram_send_last_default = 1;
+            config->telegram_send_last_default_text = argv[i + 1];
+            ++i;
         } else {
             return 1;
         }
@@ -625,8 +683,18 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Poll read-only updates, then list saved chats\n");
     fprintf(stream, "      --telegram-manual-client-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>\n");
     fprintf(stream, "                         Manual-client preview with default token file\n");
+    fprintf(stream, "      --telegram-client-self-test\n");
+    fprintf(stream, "                         Run built-in simplified client state sample\n");
+    fprintf(stream, "      --telegram-client <file> [poll-seconds] [max-iterations]\n");
+    fprintf(stream, "                         Manual-client preview using default local state files\n");
+    fprintf(stream, "      --telegram-client-default [poll-seconds] [max-iterations]\n");
+    fprintf(stream, "                         Short manual-client preview with default token and state files\n");
     fprintf(stream, "      --telegram-chats <chats-file>\n");
     fprintf(stream, "                         List chats saved by manual-client sessions\n");
+    fprintf(stream, "      --telegram-chats-default\n");
+    fprintf(stream, "                         List chats from the default chat state file\n");
+    fprintf(stream, "      --telegram-reply-default <index> <text>\n");
+    fprintf(stream, "                         Send to a saved chat index using default files\n");
     fprintf(stream, "      --telegram-echo-once-self-test\n");
     fprintf(stream, "                         Run built-in one-shot echo flow sample\n");
     fprintf(stream, "      --telegram-echo-once <file> [offset]\n");
@@ -655,4 +723,6 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Send to a saved chat by 1-based list index\n");
     fprintf(stream, "      --telegram-send-chat-default <chats-file> <index> <text>\n");
     fprintf(stream, "                         Send to a saved chat index with default token file\n");
+    fprintf(stream, "      --telegram-send-last-default <text>\n");
+    fprintf(stream, "                         Send to chat index 1 from the default chat state file\n");
 }

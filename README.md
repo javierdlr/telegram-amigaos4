@@ -346,8 +346,18 @@ Current options:
                       Poll read-only updates, then list saved chats
     --telegram-manual-client-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>
                       Manual-client preview with default token file
+    --telegram-client-self-test
+                      Run built-in simplified client state sample
+    --telegram-client <file> [poll-seconds] [max-iterations]
+                      Manual-client preview using default local state files
+    --telegram-client-default [poll-seconds] [max-iterations]
+                      Short manual-client preview with default token and state files
     --telegram-chats <chats-file>
                       List chats saved by manual-client sessions
+    --telegram-chats-default
+                      List chats from the default chat state file
+    --telegram-reply-default <index> <text>
+                      Send to a saved chat index using default files
     --telegram-echo-once-self-test
                       Run built-in one-shot echo flow sample
     --telegram-echo-once <file> [offset]
@@ -376,6 +386,8 @@ Current options:
                       Send to a saved chat by 1-based list index
     --telegram-send-chat-default <chats-file> <index> <text>
                       Send to a saved chat index with default token file
+    --telegram-send-last-default <text>
+                      Send to chat index 1 from the default chat state file
 ```
 
 `getUpdates` prints the raw Telegram result and, when present, minimal summaries
@@ -399,6 +411,7 @@ telegram-test --telegram-read-once-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
+telegram-test --telegram-client-self-test
 ```
 
 `telegram-echo-once` is intentionally not a permanent loop. Run it again with
@@ -463,16 +476,35 @@ list. It still never sends messages automatically:
 telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
 ```
 
+For the simplified default workflow, keep `telegram-token.txt` beside the
+binary and run:
+
+```text
+telegram-test --telegram-client-default
+```
+
+That command uses `telegram-offset.txt`, `telegram-inbox.log` and
+`telegram-chats.txt` in the active data directory, with a default bounded poll
+of 5 seconds and 10 iterations. You can override just the timing:
+
+```text
+telegram-test --telegram-client-default 2 5
+```
+
 List the saved chats:
 
 ```text
 telegram-test --telegram-chats telegram-chats.txt
+telegram-test --telegram-chats-default
 ```
 
-For manual replies, use the saved chat list when available:
+For manual replies, use the saved chat list when available. Chat index `1` is
+the most recently updated chat:
 
 ```text
 telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from Telegram Amiga"
+telegram-test --telegram-reply-default 1 "Hello from Telegram Amiga"
+telegram-test --telegram-send-last-default "Hello from Telegram Amiga"
 ```
 
 The explicit chat-id send command is still available:

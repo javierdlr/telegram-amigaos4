@@ -47,6 +47,7 @@ Minimum offline test:
   telegram-test --telegram-inbox-self-test
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
+  telegram-test --telegram-client-self-test
 
 Preflight check, without sending a token:
 
@@ -57,11 +58,14 @@ Live read-only test, after creating telegram-token.txt in the same drawer:
   telegram-test --telegram-getme-default
   telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
   telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
+  telegram-test --telegram-client-default
 
 Manual send by saved chat index:
 
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from AmigaOS 4.x"
+  telegram-test --telegram-reply-default 1 "Hello from AmigaOS 4.x"
+  telegram-test --telegram-send-last-default "Hello from AmigaOS 4.x"
 
 If this package also contains source files and gcc is available, the helper
 BuildAmigaOS4Offline can build and run the same offline checks from the project

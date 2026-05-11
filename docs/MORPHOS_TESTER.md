@@ -80,6 +80,7 @@ telegram-test --telegram-read-once-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
+telegram-test --telegram-client-self-test
 ```
 
 A TLS-disabled build should report `unsupported` for HTTPS commands. That is
@@ -121,6 +122,7 @@ telegram-test --inbox-log-file telegram-inbox.log --telegram-inbox-loop-default 
 telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log telegram-chats.txt
 telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
 telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
+telegram-test --telegram-client-default
 ```
 
 For receive tests, send a message to the bot from Telegram before running the
@@ -143,16 +145,26 @@ preview: it performs bounded receive-only polling, updates the inbox/chat files
 and then prints the saved chat list. It still never sends messages
 automatically.
 
+The shorter `telegram-client-default` command is the recommended manual test
+entry point. It uses these default files in the program drawer:
+`telegram-token.txt`, `telegram-offset.txt`, `telegram-inbox.log` and
+`telegram-chats.txt`. Without timing arguments it polls every 5 seconds for 10
+iterations; use `telegram-client-default 2 5` to override that timing.
+
 List saved chats with:
 
 ```text
 telegram-test --telegram-chats telegram-chats.txt
+telegram-test --telegram-chats-default
 ```
 
-To send a manual response using the 1-based chat list index:
+To send a manual response using the 1-based chat list index. Chat index `1` is
+the most recently updated chat:
 
 ```text
 telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from MorphOS"
+telegram-test --telegram-reply-default 1 "Hello from MorphOS"
+telegram-test --telegram-send-last-default "Hello from MorphOS"
 ```
 
 The explicit chat-id send command is still available:
