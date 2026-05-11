@@ -2611,11 +2611,12 @@ static void tg_print_client_console_status(const char *offset_file_path,
 static void tg_print_client_console_help(void)
 {
     puts("telegram client console commands:");
-    puts("  p, poll                 receive new messages");
+    puts("  p, poll, read           receive new messages");
     puts("  l, list                 show saved chats");
     puts("  i, last, inbox          show last inbox line");
     puts("  s, status               show local files and offset");
-    puts("  r, send <index> <text>  send to saved chat index");
+    puts("  r, send, reply <index> <text>");
+    puts("                           send to saved chat index");
     puts("  h, help                 show help");
     puts("  q, quit                 quit");
 }
@@ -2660,6 +2661,30 @@ static int tg_parse_console_reply_command(char *line,
     return 0;
 }
 
+static int tg_run_client_console_send_command(const char *token_file_path,
+                                              const char *chats_file_path,
+                                              char *line,
+                                              unsigned long command_length,
+                                              const char *usage_text)
+{
+    char index_text[32];
+    char *reply_text;
+    int rc;
+
+    if (tg_parse_console_reply_command(line, command_length, index_text,
+                                       sizeof(index_text), &reply_text) != 0) {
+        printf("telegram client console: use %s\n", usage_text);
+        return 0;
+    }
+    rc = tg_run_telegram_send_chat_path(token_file_path, chats_file_path,
+                                        index_text, reply_text);
+    if (rc != 0) {
+        return rc;
+    }
+    puts("telegram client console: sent");
+    return 0;
+}
+
 static int tg_run_telegram_client_console_paths(const tg_config *config,
                                                 const char *token_file_path,
                                                 const char *poll_seconds_text,
@@ -2669,8 +2694,6 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
     char inbox_path[256];
     char chats_path[256];
     char line[512];
-    char index_text[32];
-    char *reply_text;
     const char *resolved_offset_path;
     const char *resolved_inbox_path;
     const char *resolved_chats_path;
@@ -2750,7 +2773,9 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             }
             continue;
         }
-        if (strcmp(line, "p") == 0 || strcmp(line, "poll") == 0) {
+        if (strcmp(line, "p") == 0 ||
+            strcmp(line, "poll") == 0 ||
+            strcmp(line, "read") == 0) {
             rc = tg_run_telegram_manual_client_paths(
                 token_file_path,
                 resolved_offset_path,
@@ -2761,42 +2786,37 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             if (rc != 0) {
                 return rc;
             }
+            puts("telegram client console: use list, then reply <index> <text>");
             continue;
         }
         if (line[0] == 'r' &&
             (line[1] == ' ' || line[1] == '\t')) {
-            if (tg_parse_console_reply_command(line, 1, index_text,
-                                               sizeof(index_text),
-                                               &reply_text) != 0) {
-                puts("telegram client console: use r <index> <text>");
-                continue;
-            }
-            rc = tg_run_telegram_send_chat_path(token_file_path,
-                                                resolved_chats_path,
-                                                index_text,
-                                                reply_text);
+            rc = tg_run_client_console_send_command(
+                token_file_path, resolved_chats_path, line, 1,
+                "r <index> <text>");
             if (rc != 0) {
                 return rc;
             }
-            puts("telegram client console: sent");
             continue;
         }
         if (strncmp(line, "send", 4) == 0 &&
             (line[4] == ' ' || line[4] == '\t')) {
-            if (tg_parse_console_reply_command(line, 4, index_text,
-                                               sizeof(index_text),
-                                               &reply_text) != 0) {
-                puts("telegram client console: use send <index> <text>");
-                continue;
-            }
-            rc = tg_run_telegram_send_chat_path(token_file_path,
-                                                resolved_chats_path,
-                                                index_text,
-                                                reply_text);
+            rc = tg_run_client_console_send_command(
+                token_file_path, resolved_chats_path, line, 4,
+                "send <index> <text>");
             if (rc != 0) {
                 return rc;
             }
-            puts("telegram client console: sent");
+            continue;
+        }
+        if (strncmp(line, "reply", 5) == 0 &&
+            (line[5] == ' ' || line[5] == '\t')) {
+            rc = tg_run_client_console_send_command(
+                token_file_path, resolved_chats_path, line, 5,
+                "reply <index> <text>");
+            if (rc != 0) {
+                return rc;
+            }
             continue;
         }
 

@@ -325,6 +325,45 @@ static void tg_platform_set_ssl_error(char *error_buffer, unsigned long error_bu
     tg_platform_set_error(error_buffer, error_buffer_size, fallback_message);
 }
 
+static tg_tls_status tg_amigaos4_configure_certificate_validation(
+    SSL_CTX *ctx,
+    SSL *ssl,
+    const char *host,
+    char *error_buffer,
+    unsigned long error_buffer_size)
+{
+    const char *ca_file;
+    const char *ca_path;
+
+    if (!tg_tls_certificate_validation_enabled()) {
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, 0);
+        return TG_TLS_OK;
+    }
+
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, 0);
+    ca_file = tg_tls_certificate_ca_file();
+    ca_path = tg_tls_certificate_ca_path();
+    if (ca_file != 0 || ca_path != 0) {
+        if (SSL_CTX_load_verify_locations(ctx, ca_file, ca_path) != 1) {
+            tg_platform_set_ssl_error(error_buffer, error_buffer_size,
+                                      "could not load CA file/path");
+            return TG_TLS_VERIFY_FAILED;
+        }
+    } else if (SSL_CTX_set_default_verify_paths(ctx) != 1) {
+        tg_platform_set_ssl_error(error_buffer, error_buffer_size,
+                                  "could not load default CA paths");
+        return TG_TLS_VERIFY_FAILED;
+    }
+
+    if (SSL_set1_host(ssl, host) != 1) {
+        tg_platform_set_ssl_error(error_buffer, error_buffer_size,
+                                  "could not enable hostname verification");
+        return TG_TLS_VERIFY_FAILED;
+    }
+
+    return TG_TLS_OK;
+}
+
 static void tg_amigaos4_amissl_cleanup(void)
 {
     if (tg_amigaos4_amissl_initialized) {
@@ -408,6 +447,7 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
 {
     SSL_CTX *ctx;
     SSL *ssl;
+    tg_tls_status verify_status;
     tg_net_status local_net_status;
 
     if (net_status != 0) {
@@ -437,7 +477,6 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
         return TG_TLS_HANDSHAKE_FAILED;
     }
 
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, 0);
 #ifdef SSL_MODE_AUTO_RETRY
     SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
 #endif
@@ -457,6 +496,15 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
 
     SSL_set_fd(ssl, (int)connection->tcp.platform_handle);
     SSL_set_tlsext_host_name(ssl, host);
+    verify_status = tg_amigaos4_configure_certificate_validation(
+        ctx, ssl, host, error_buffer, error_buffer_size);
+    if (verify_status != TG_TLS_OK) {
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        tg_net_close(&connection->tcp);
+        tg_amigaos4_amissl_cleanup();
+        return verify_status;
+    }
     ERR_clear_error();
 
     if (SSL_connect(ssl) != 1) {
@@ -467,6 +515,17 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
         tg_net_close(&connection->tcp);
         tg_amigaos4_amissl_cleanup();
         return TG_TLS_HANDSHAKE_FAILED;
+    }
+    if (tg_tls_certificate_validation_enabled() &&
+        SSL_get_verify_result(ssl) != X509_V_OK) {
+        tg_platform_set_error(
+            error_buffer, error_buffer_size,
+            X509_verify_cert_error_string(SSL_get_verify_result(ssl)));
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
+        tg_net_close(&connection->tcp);
+        tg_amigaos4_amissl_cleanup();
+        return TG_TLS_VERIFY_FAILED;
     }
 
     connection->platform_context = ctx;

@@ -131,10 +131,11 @@ telegram-test --data-dir PROGDIR: --telegram-client-default
 telegram-test --data-dir PROGDIR: --telegram-client-console
 ```
 
-Inside `telegram-client-console`, use `p` to poll, `l` to list saved chats,
-`i`/`last`/`inbox` to show the last inbox log line, `s` to show local status,
-`r <index> <text>` or `send <index> <text>` to send a controlled reply and
-`q` to quit. It does not send replies automatically.
+Inside `telegram-client-console`, use `p`/`poll`/`read` to poll, `l`/`list` to
+list saved chats, `i`/`last`/`inbox` to show the last inbox log line,
+`s`/`status` to show local status, `r`/`send`/`reply <index> <text>` to send a
+controlled reply and `q`/`quit` to quit. It does not send replies
+automatically.
 
 Once a chat has been saved by polling a message from the bot, send by saved
 chat index with:

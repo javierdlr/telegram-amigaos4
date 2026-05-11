@@ -6,10 +6,12 @@ SPDX-License-Identifier: MIT
 # TLS Certificate Validation Plan
 
 Current TLS backends encrypt traffic and use SNI where supported. OpenSSL-based
-backends can now request certificate-chain and hostname validation with
-`--tls-verify`, optionally paired with `--tls-ca-file` or `--tls-ca-path`.
-AmiSSL validation still needs backend work. Connections without validation are
-acceptable only for supervised testing with disposable bot tokens.
+AROS/MorphOS and AmiSSL-based AmigaOS 3.x/4.x backends can now request
+certificate-chain and hostname validation with `--tls-verify`, optionally
+paired with `--tls-ca-file` or `--tls-ca-path`. AROS has passed a live CA-bundle
+validation smoke test; MorphOS and AmiSSL validation paths still need more
+target-side testing. Connections without validation are acceptable only for
+supervised testing with disposable bot tokens.
 
 ## Required Behavior
 
@@ -32,14 +34,15 @@ MorphOS/OpenSSL:
 
 AmigaOS 3.x/AmiSSL:
 
-- use AmiSSL/OpenSSL verification APIs available through the selected AmiSSL v5
+- uses AmiSSL/OpenSSL verification APIs available through the selected AmiSSL v5
   API level;
-- prefer the system AmiSSL trust store when present;
-- document the exact AmiSSL drawer/files needed for testers.
+- supports explicit `--tls-ca-file`/`--tls-ca-path` and default verify paths;
+- needs live target-side validation with a known CA bundle before enabling
+  verification by default.
 
 AmigaOS 4.x/AmiSSL:
 
-- follow the same AmiSSL policy as AmigaOS 3.x;
+- follows the same AmiSSL policy as AmigaOS 3.x;
 - keep the SDK/build helper independent from private local paths.
 
 AROS:

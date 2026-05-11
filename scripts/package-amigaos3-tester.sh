@@ -100,9 +100,10 @@ Useful commands:
   telegram-test --telegram-client-default
   telegram-test --telegram-client-console
 
-Inside the console, use p to poll, l to list saved chats, i/last/inbox to show
-the last inbox line, s to show local state, r/send <index> <text> to send a
-controlled reply, h for help and q to quit.
+Inside the console, use p/poll/read to poll, l/list to list saved chats,
+i/last/inbox to show the last inbox line, s/status to show local state,
+r/send/reply <index> <text> to send a controlled reply, h/help for help and
+q/quit to quit.
 
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default
@@ -113,8 +114,9 @@ controlled reply, h for help and q to quit.
   telegram-test --telegram-echo-once-state-default telegram-offset.txt
   telegram-test --telegram-echo-loop-default telegram-offset.txt 5 10
 
-AmiSSL certificate validation is not implemented in this backend yet. Use this
-only with test bots and disposable tokens.
+AmiSSL certificate validation is opt-in with --tls-verify and either
+--tls-ca-file or --tls-ca-path. Keep using test bots and disposable tokens
+until this path has more independent target-side testing.
 
 Tip: to avoid copying a raw chat id, send a message to the bot, run
 telegram-client-default, then use telegram-chats-default and

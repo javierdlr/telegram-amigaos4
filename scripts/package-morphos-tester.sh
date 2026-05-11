@@ -62,9 +62,10 @@ If this package was built with TLS enabled, optional live tests are:
   telegram-test --telegram-client-default
   telegram-test --telegram-client-console
 
-Inside the console, use p to poll, l to list saved chats, i/last/inbox to show
-the last inbox line, s to show local state, r/send <index> <text> to send a
-controlled reply, h for help and q to quit.
+Inside the console, use p/poll/read to poll, l/list to list saved chats,
+i/last/inbox to show the last inbox line, s/status to show local state,
+r/send/reply <index> <text> to send a controlled reply, h/help for help and
+q/quit to quit.
 
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default

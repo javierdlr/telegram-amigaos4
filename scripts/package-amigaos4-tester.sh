@@ -29,6 +29,7 @@ mkdir -p "$DEST_DIR"
 cp "$BINARY" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AMIGAOS4_TESTER.md" "$DEST_DIR/README.md"
 cp "$ROOT_DIR/scripts/BuildAmigaOS4Offline" "$DEST_DIR/BuildAmigaOS4Offline"
+cp "$ROOT_DIR/scripts/BuildAmigaOS4AmiSSL" "$DEST_DIR/BuildAmigaOS4AmiSSL"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AmigaOS 4.x pre-alpha tester
@@ -62,9 +63,10 @@ Live read-only test, after creating telegram-token.txt in the same drawer:
   telegram-test --telegram-client-default
   telegram-test --telegram-client-console
 
-Inside the console, use p to poll, l to list saved chats, i/last/inbox to show
-the last inbox line, s to show local state, r/send <index> <text> to send a
-controlled reply, h for help and q to quit.
+Inside the console, use p/poll/read to poll, l/list to list saved chats,
+i/last/inbox to show the last inbox line, s/status to show local state,
+r/send/reply <index> <text> to send a controlled reply, h/help for help and
+q/quit to quit.
 
 Manual send by saved chat index:
 
@@ -75,7 +77,8 @@ Manual send by saved chat index:
 
 If this package also contains source files and gcc is available, the helper
 BuildAmigaOS4Offline can build and run the same offline checks from the project
-drawer.
+drawer. BuildAmigaOS4AmiSSL builds the AmiSSL-enabled tester when AmiSSL SDK
+stubs are installed.
 
 This package does not include Telegram tokens, SDK files or AmiSSL runtime
 files.
@@ -84,8 +87,9 @@ To create a test bot, open Telegram, talk to @BotFather, send /newbot, choose a
 display name and a username ending in bot, then copy the token into
 telegram-token.txt. If the token is exposed, revoke it with BotFather /revoke.
 
-AmiSSL certificate validation is not implemented in this backend yet. Use this
-only with test bots and disposable tokens.
+AmiSSL certificate validation is opt-in with --tls-verify and either
+--tls-ca-file or --tls-ca-path. Keep using test bots and disposable tokens
+until this path has more independent target-side testing.
 
 Full notes are in README.md.
 EOF

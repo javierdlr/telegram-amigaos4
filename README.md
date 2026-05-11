@@ -123,15 +123,16 @@ Initial core modules:
   reachability to Telegram without sending the token.
 - `--telegram-client-console` starts a small manual text console using the
   default token, offset, inbox log and chat-state files. It never sends
-  automatically; replies require an explicit `r <index> <text>` or
-  `send <index> <text>` command.
+  automatically; replies require an explicit `r`, `send` or `reply` command
+  with a saved chat index and text.
 
 TLS note: current TLS builds use SNI. Certificate validation is now available
-as an opt-in path for OpenSSL-based backends with `--tls-verify`,
-`--tls-ca-file` and `--tls-ca-path`; AmiSSL validation still needs backend
-work. Builds without validation are enough for supervised connectivity tests,
-not yet for secure use. Run `--telegram-tls-status` to print this status from a
-tester binary, and see `docs/TLS_CERTIFICATES.md` for the validation plan.
+as an opt-in path with `--tls-verify`, `--tls-ca-file` and `--tls-ca-path`.
+OpenSSL validation has been verified on AROS with an explicit CA bundle;
+MorphOS and AmiSSL validation paths still need more target-side testing. Builds
+without validation are enough for supervised connectivity tests, not yet for
+secure use. Run `--telegram-tls-status` to print this status from a tester
+binary, and see `docs/TLS_CERTIFICATES.md` for the validation plan.
 
 Initial targets:
 
@@ -560,11 +561,12 @@ For a small manual text console, run:
 telegram-test --telegram-client-console
 ```
 
-Console commands are `p` to poll, `l` to list saved chats, `i`/`last`/`inbox`
-to show the last inbox log line, `s` to show local status, `r <index> <text>`
-or `send <index> <text>` to send a controlled reply and `q` to quit. The
-console uses the same `telegram-offset.txt`, `telegram-inbox.log` and
-`telegram-chats.txt` files as `telegram-client-default`.
+Console commands are `p`/`poll`/`read` to poll, `l`/`list` to list saved chats,
+`i`/`last`/`inbox` to show the last inbox log line, `s`/`status` to show local
+status, `r`/`send`/`reply <index> <text>` to send a controlled reply and
+`q`/`quit` to quit. The console uses the same `telegram-offset.txt`,
+`telegram-inbox.log` and `telegram-chats.txt` files as
+`telegram-client-default`.
 
 List the saved chats:
 

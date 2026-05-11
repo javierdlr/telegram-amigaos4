@@ -1,0 +1,18 @@
+FailAt 21
+Stack 65536
+Echo "Telegram Amiga AmigaOS 4.x AmiSSL build start"
+Assign SDK: Work:SDK
+Execute SDK:S/sdk-startup
+CD Work:Dev/telegram-amiga
+If NOT EXISTS build
+	MakeDir build
+EndIf
+gcc -Wall -Wextra -O2 -Iinclude -ISDK:include/include_h -ISDK:include/netinclude -DTG_AMIGAOS4_ENABLE_AMISSL=1 -o build/telegram-test-amissl src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_file.c core/tg_http.c core/tg_https.c core/tg_json.c core/tg_telegram.c core/tg_log.c core/tg_net.c core/tg_tls.c platforms/amigaos4/tg_platform_amigaos4.c -lamisslstubs
+Echo "gcc rc $RC"
+build/telegram-test-amissl --telegram-client-self-test
+Echo "client self-test rc $RC"
+build/telegram-test-amissl --telegram-tls-status
+Echo "tls status rc $RC"
+build/telegram-test-amissl --tls-verify --telegram-tls-status
+Echo "tls verify status rc $RC"
+Echo "Telegram Amiga AmigaOS 4.x AmiSSL build end"
