@@ -55,9 +55,14 @@ Plain TCP/HTTP diagnostics, no Telegram token required:
   telegram-test --net-test example.com 80
   telegram-test --http-test example.com 80 /
 
-HTTPS and live Telegram Bot API tests require a working TLS backend. If this
-package was built with TLS disabled, live Telegram commands are expected to
-report unsupported.
+If this package was built with TLS enabled, optional supervised live tests are:
+
+  telegram-test --https-test api.telegram.org 443 /
+  telegram-test --telegram-preflight
+  telegram-test --telegram-getme-default
+
+If this package was built with TLS disabled, live Telegram commands are expected
+to report unsupported.
 
 For Bot API tests, create telegram-token.txt in this drawer. The file must
 contain only the bot token. Never publish the token or screenshots that show it.

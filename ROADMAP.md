@@ -64,8 +64,8 @@ on at least one real Amiga-like platform.
 - TLS security status is explicit through `telegram-tls-status`; certificate
   validation is still a required future task before normal secure use.
 - AROS now has a BSD-socket TCP backend validated on AROS One i386 alt-abiv0
-  with offline self-tests plus plain TCP/HTTP diagnostics. TLS builds link
-  against OpenSSL from the AROS SDK, but live HTTPS still needs runtime testing.
+  with offline self-tests, plain TCP/HTTP diagnostics, HTTPS preflight and
+  Telegram `getMe`. TLS builds link against OpenSSL from the AROS SDK.
 - Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
   developed with community or hardware feedback.
 - Bring the new AmigaOS 4.x/QEMU target to the offline self-test level first:

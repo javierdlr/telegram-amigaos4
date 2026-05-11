@@ -15,9 +15,11 @@ manual-client state tests.
 - The AROS backend has an initial BSD-socket TCP implementation using
   `bsdsocket.library`.
 - AROS One i386 alt-abiv0 has been cross-built from macOS and smoke-tested in
-  an AROS VM with offline self-tests plus plain TCP/HTTP diagnostics.
-- TLS can be enabled at build time against OpenSSL from the AROS SDK, but it is
-  still experimental and has not passed a live HTTPS test on AROS yet.
+  an AROS VM with offline self-tests, plain TCP/HTTP diagnostics, HTTPS
+  preflight and Telegram `getMe`.
+- TLS can be enabled at build time against OpenSSL from the AROS SDK. The first
+  live HTTPS and `getMe` tests passed on AROS One i386 alt-abiv0, but
+  certificate validation is still disabled.
 - AROS One 32-bit has AmiSSL available according to community feedback.
 - AROS One 64-bit currently does not have AmiSSL available.
 - Live Telegram Bot API commands need an AROS TCP/TLS backend before they can
@@ -61,8 +63,7 @@ make -f Makefile.aros-i386-abiv0 all ENABLE_TLS=1 \
   AROS_SDK=/path/to/AROS/Development
 ```
 
-This links against OpenSSL from the AROS SDK. It is not yet part of the
-live-tested release matrix.
+This links against OpenSSL from the AROS SDK.
 
 If `make` reports `Clock skew detected`, check the AROS system date/time or
 refresh the source timestamps after unpacking the archive.
@@ -87,9 +88,9 @@ Expected TLS status today:
 certificate validation: disabled
 ```
 
-HTTPS and live Telegram commands need a TLS-enabled build and are still
-experimental on AROS. Plain TCP/HTTP diagnostics work on tested AROS systems
-with a compatible BSD socket stack.
+HTTPS and live Telegram commands need a TLS-enabled build. They have passed the
+first supervised AROS One i386 alt-abiv0 checks, but certificate validation is
+still disabled, so use only test bots and disposable tokens.
 
 Plain network diagnostics:
 
@@ -99,6 +100,23 @@ telegram-test --http-test example.com 80 /
 ```
 
 These tests do not require a Telegram token.
+
+TLS diagnostics, no Telegram token required:
+
+```text
+telegram-test --https-test api.telegram.org 443 /
+telegram-test --telegram-preflight
+```
+
+If DNS resolution fails immediately after boot or after several short network
+tests, run a simple network diagnostic such as `--net-test api.telegram.org 443`
+and retry the HTTPS command.
+
+Live Bot API check, after creating `telegram-token.txt` in the same drawer:
+
+```text
+telegram-test --data-dir PROGDIR: --telegram-getme-default
+```
 
 ## Reporting Results
 

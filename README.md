@@ -140,8 +140,8 @@ Initial targets:
   and read-only polling verified
 - AROS: native builds reported working by the community on AROS One 32-bit and
   64-bit; AROS One i386 alt-abiv0 is cross-built from macOS and has passed
-  offline self-tests plus plain TCP/HTTP diagnostics in a VM. TLS is still
-  experimental and not live-tested.
+  offline self-tests, plain TCP/HTTP diagnostics, HTTPS preflight and Telegram
+  `getMe` in a VM.
 
 Build on MorphOS:
 
@@ -174,7 +174,8 @@ make -f Makefile.aros CC=i386-aros-gcc all
 ```
 
 Current AROS builds are useful for offline core tests and plain TCP/HTTP
-diagnostics through `bsdsocket.library`. HTTPS/TLS is still experimental. See
+diagnostics through `bsdsocket.library`. TLS-enabled AROS builds use OpenSSL
+from the AROS SDK and have passed first supervised HTTPS/getMe checks. See
 `docs/AROS_TESTER.md` for tester notes and reporting details.
 
 Recommended AROS offline smoke test:
@@ -254,9 +255,8 @@ scripts/package-aros-tester.sh
 ```
 
 The script cross-builds an AROS One i386 alt-abiv0 tester and creates a local
-package under `build/packages/`. It is currently intended for offline tests and
-plain TCP/HTTP diagnostics. TLS-enabled AROS builds can be attempted with
-`ENABLE_TLS=1`, but live HTTPS is not yet part of the public-tested matrix.
+package under `build/packages/`. The default package keeps TLS disabled. Use
+`ENABLE_TLS=1` to build the OpenSSL-enabled AROS tester.
 
 Build or package AmigaOS 4.x:
 
