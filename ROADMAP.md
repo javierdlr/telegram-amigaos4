@@ -59,6 +59,10 @@ on at least one real Amiga-like platform.
   `telegram-chats-default`, `telegram-reply-default` and
   `telegram-send-last-default`, using default local state files and keeping the
   most recently active chat at index 1.
+- A first interactive manual console now exists as `telegram-client-console`.
+  It can poll, list saved chats, send an explicit indexed reply and quit.
+- TLS security status is explicit through `telegram-tls-status`; certificate
+  validation is still a required future task before normal secure use.
 - Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
   developed with community or hardware feedback.
 - Bring the new AmigaOS 4.x/QEMU target to the offline self-test level first:

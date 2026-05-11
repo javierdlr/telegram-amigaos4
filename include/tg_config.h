@@ -95,6 +95,8 @@ typedef struct tg_config {
     const char *telegram_client_max_iterations;
     const char *telegram_client_default_poll_seconds;
     const char *telegram_client_default_max_iterations;
+    const char *telegram_client_console_poll_seconds;
+    const char *telegram_client_console_max_iterations;
     const char *telegram_chats_file_path;
     const char *telegram_reply_default_index;
     const char *telegram_reply_default_text;
@@ -130,6 +132,7 @@ typedef struct tg_config {
     int run_http_test;
     int run_http_post_self_test;
     int run_https_test;
+    int run_telegram_tls_status;
     int run_json_test;
     int run_telegram_json_test;
     int run_telegram_json_self_test;
@@ -163,6 +166,7 @@ typedef struct tg_config {
     int run_telegram_client_self_test;
     int run_telegram_client;
     int run_telegram_client_default;
+    int run_telegram_client_console;
     int run_telegram_chats;
     int run_telegram_chats_default;
     int run_telegram_reply_default;

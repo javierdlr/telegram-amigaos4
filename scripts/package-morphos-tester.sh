@@ -46,6 +46,7 @@ Minimum offline test:
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
   telegram-test --telegram-client-self-test
+  telegram-test --telegram-tls-status
 
 If this package was built with TLS enabled, optional live tests are:
 
@@ -59,6 +60,7 @@ If this package was built with TLS enabled, optional live tests are:
   telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
   telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
   telegram-test --telegram-client-default
+  telegram-test --telegram-client-console
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default
   telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from MorphOS"

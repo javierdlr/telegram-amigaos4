@@ -124,6 +124,7 @@ telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 telegram-test --telegram-client-self-test
+telegram-test --telegram-tls-status
 ```
 
 Run the preflight check:
@@ -231,6 +232,7 @@ telegram-test --telegram-session-default telegram-offset.txt telegram-inbox.log 
 telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
 telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
 telegram-test --telegram-client-default
+telegram-test --telegram-client-console
 ```
 
 Inbox output includes update id, chat id, sender name when available, decoded
@@ -257,6 +259,10 @@ entry point. It uses these default files in the program drawer:
 `telegram-token.txt`, `telegram-offset.txt`, `telegram-inbox.log` and
 `telegram-chats.txt`. Without timing arguments it polls every 5 seconds for 10
 iterations; use `telegram-client-default 2 5` to override that timing.
+
+`telegram-client-console` uses the same default files and starts a small manual
+console. Use `p` to poll, `l` to list saved chats, `r <index> <text>` to send a
+controlled reply and `q` to quit. It does not send replies automatically.
 
 List saved chats with:
 

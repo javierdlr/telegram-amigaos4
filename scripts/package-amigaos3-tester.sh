@@ -86,6 +86,7 @@ Useful commands:
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
   telegram-test --telegram-client-self-test
+  telegram-test --telegram-tls-status
   telegram-test --telegram-getme-default
   telegram-test --telegram-get-updates-default
   telegram-test --telegram-read-once-state-default telegram-offset.txt
@@ -97,6 +98,7 @@ Useful commands:
   telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
   telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
   telegram-test --telegram-client-default
+  telegram-test --telegram-client-console
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default
   telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from AmigaOS 3.x"

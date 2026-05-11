@@ -88,6 +88,8 @@ void tg_config_init(tg_config *config)
     config->telegram_client_max_iterations = 0;
     config->telegram_client_default_poll_seconds = 0;
     config->telegram_client_default_max_iterations = 0;
+    config->telegram_client_console_poll_seconds = 0;
+    config->telegram_client_console_max_iterations = 0;
     config->telegram_chats_file_path = 0;
     config->telegram_reply_default_index = 0;
     config->telegram_reply_default_text = 0;
@@ -123,6 +125,7 @@ void tg_config_init(tg_config *config)
     config->run_http_test = 0;
     config->run_http_post_self_test = 0;
     config->run_https_test = 0;
+    config->run_telegram_tls_status = 0;
     config->run_json_test = 0;
     config->run_telegram_json_test = 0;
     config->run_telegram_json_self_test = 0;
@@ -156,6 +159,7 @@ void tg_config_init(tg_config *config)
     config->run_telegram_client_self_test = 0;
     config->run_telegram_client = 0;
     config->run_telegram_client_default = 0;
+    config->run_telegram_client_console = 0;
     config->run_telegram_chats = 0;
     config->run_telegram_chats_default = 0;
     config->run_telegram_reply_default = 0;
@@ -237,6 +241,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->https_test_port = argv[i + 2];
             config->https_test_path = argv[i + 3];
             i += 3;
+        } else if (strcmp(argv[i], "--telegram-tls-status") == 0) {
+            config->run_telegram_tls_status = 1;
         } else if (strcmp(argv[i], "--json-test") == 0) {
             if (i + 2 >= argc) {
                 return 1;
@@ -475,6 +481,16 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
                 config->telegram_client_default_max_iterations = argv[i + 1];
                 ++i;
             }
+        } else if (strcmp(argv[i], "--telegram-client-console") == 0) {
+            config->run_telegram_client_console = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_client_console_poll_seconds = argv[i + 1];
+                ++i;
+            }
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_client_console_max_iterations = argv[i + 1];
+                ++i;
+            }
         } else if (strcmp(argv[i], "--telegram-chats") == 0) {
             if (i + 1 >= argc) {
                 return 1;
@@ -623,6 +639,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run built-in HTTP POST request builder sample\n");
     fprintf(stream, "      --https-test <host> <port> <path>\n");
     fprintf(stream, "                         Test TLS send and receive with HTTP/1.0\n");
+    fprintf(stream, "      --telegram-tls-status\n");
+    fprintf(stream, "                         Print current TLS security status\n");
     fprintf(stream, "      --json-test <json> <field>\n");
     fprintf(stream, "                         Test top-level JSON field lookup\n");
     fprintf(stream, "      --telegram-json-test <json>\n");
@@ -689,6 +707,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Manual-client preview using default local state files\n");
     fprintf(stream, "      --telegram-client-default [poll-seconds] [max-iterations]\n");
     fprintf(stream, "                         Short manual-client preview with default token and state files\n");
+    fprintf(stream, "      --telegram-client-console [poll-seconds] [max-iterations]\n");
+    fprintf(stream, "                         Interactive manual console using default files\n");
     fprintf(stream, "      --telegram-chats <chats-file>\n");
     fprintf(stream, "                         List chats saved by manual-client sessions\n");
     fprintf(stream, "      --telegram-chats-default\n");

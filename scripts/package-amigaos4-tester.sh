@@ -48,6 +48,7 @@ Minimum offline test:
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
   telegram-test --telegram-client-self-test
+  telegram-test --telegram-tls-status
 
 Preflight check, without sending a token:
 
@@ -59,6 +60,7 @@ Live read-only test, after creating telegram-token.txt in the same drawer:
   telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
   telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
   telegram-test --telegram-client-default
+  telegram-test --telegram-client-console
 
 Manual send by saved chat index:
 

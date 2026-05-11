@@ -121,10 +121,14 @@ Initial core modules:
   data directory, or from a path supplied with `--token-file`.
 - `--telegram-preflight` checks the default token path and verifies HTTPS
   reachability to Telegram without sending the token.
+- `--telegram-client-console` starts a small manual text console using the
+  default token, offset, inbox log and chat-state files. It never sends
+  automatically; replies require an explicit `r <index> <text>` command.
 
 TLS note: the current MorphOS, AmigaOS 3.x and AmigaOS 4.x backends use
 OpenSSL/AmiSSL with SNI, but certificate validation is not enabled yet. This is
-enough for connectivity tests, not yet for secure use.
+enough for supervised connectivity tests, not yet for secure use. Run
+`--telegram-tls-status` to print this status from a tester binary.
 
 Initial targets:
 
@@ -168,7 +172,18 @@ make -f Makefile.aros CC=i386-aros-gcc all
 
 Current AROS builds are useful for offline core tests. Network, HTTPS and live
 Telegram commands still report unsupported until the AROS platform backend is
-implemented.
+implemented. See `docs/AROS_TESTER.md` for tester notes and reporting details.
+
+Recommended AROS offline smoke test:
+
+```text
+telegram-test --telegram-json-self-test
+telegram-test --telegram-get-updates-self-test
+telegram-test --telegram-inbox-self-test
+telegram-test --telegram-send-message-self-test
+telegram-test --telegram-client-self-test
+telegram-test --telegram-tls-status
+```
 
 Community feedback so far: AROS One 32-bit has AmiSSL available, while AROS
 One 64-bit currently does not. A future AROS HTTPS backend will likely need to
@@ -265,6 +280,25 @@ to `build/morphos/telegram-test`. The package is written under
 `build/packages/`, which is ignored by git, and does not include Telegram tokens
 or OpenSSL runtime files.
 
+## Quick Start
+
+For TLS-enabled tester builds on MorphOS, AmigaOS 3.x or AmigaOS 4.x:
+
+```text
+telegram-test --telegram-tls-status
+telegram-test --telegram-preflight
+telegram-test --telegram-getme-default
+telegram-test --telegram-client-default
+telegram-test --telegram-chats-default
+telegram-test --telegram-reply-default 1 "Hello from Telegram Amiga"
+telegram-test --telegram-client-console
+```
+
+Before the reply command can work, send a message to the bot from Telegram and
+run `telegram-client-default` or `telegram-client-console` so
+`telegram-chats.txt` contains at least one saved chat. Chat index `1` is the
+most recently updated chat.
+
 Current options:
 
 ```text
@@ -286,6 +320,8 @@ Current options:
                       Run built-in HTTP POST request builder sample
     --https-test <host> <port> <path>
                       Test TLS connect/send/recv with HTTP/1.0
+    --telegram-tls-status
+                      Print current TLS security status
     --json-test <json> <field>
                       Test top-level JSON field lookup
     --telegram-json-test <json>
@@ -352,6 +388,8 @@ Current options:
                       Manual-client preview using default local state files
     --telegram-client-default [poll-seconds] [max-iterations]
                       Short manual-client preview with default token and state files
+    --telegram-client-console [poll-seconds] [max-iterations]
+                      Interactive manual console using default files
     --telegram-chats <chats-file>
                       List chats saved by manual-client sessions
     --telegram-chats-default
@@ -490,6 +528,17 @@ of 5 seconds and 10 iterations. You can override just the timing:
 ```text
 telegram-test --telegram-client-default 2 5
 ```
+
+For a small manual text console, run:
+
+```text
+telegram-test --telegram-client-console
+```
+
+Console commands are `p` to poll, `l` to list saved chats,
+`r <index> <text>` to send a controlled reply and `q` to quit. The console uses
+the same `telegram-offset.txt`, `telegram-inbox.log` and `telegram-chats.txt`
+files as `telegram-client-default`.
 
 List the saved chats:
 
