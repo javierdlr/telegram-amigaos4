@@ -10,7 +10,9 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #ifndef TG_ENABLE_TLS
@@ -19,6 +21,7 @@
 
 #if defined(__AROS__)
 #include <exec/libraries.h>
+#include <proto/dos.h>
 #include <proto/exec.h>
 
 struct Library *SocketBase = 0;
@@ -51,6 +54,31 @@ void tg_platform_sleep_seconds(unsigned long seconds)
     if (seconds > 0) {
         sleep(seconds);
     }
+}
+
+int tg_platform_stdin_readable(unsigned long timeout_seconds)
+{
+#if defined(__AROS__)
+    unsigned long timeout_microseconds;
+
+    if (timeout_seconds > 2147UL) {
+        timeout_microseconds = 2147000000UL;
+    } else {
+        timeout_microseconds = timeout_seconds * 1000000UL;
+    }
+    return WaitForChar(Input(), (long)timeout_microseconds) != 0;
+#else
+    fd_set read_fds;
+    struct timeval timeout;
+    int rc;
+
+    FD_ZERO(&read_fds);
+    FD_SET(0, &read_fds);
+    timeout.tv_sec = (long)timeout_seconds;
+    timeout.tv_usec = 0;
+    rc = select(1, &read_fds, 0, 0, &timeout);
+    return rc > 0 && FD_ISSET(0, &read_fds);
+#endif
 }
 
 static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer_size,

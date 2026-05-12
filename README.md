@@ -595,9 +595,7 @@ status, `chat <index>` to enter a simple line-oriented chat,
 quit. The console uses the same `telegram-offset.txt`, `telegram-inbox.log` and
 `telegram-chats.txt` files as `telegram-client-default`. After `read` or
 `poll`, it prints the saved chat list automatically and suggests the
-`reply <index> <text>` form. Inside chat mode, type normal text to send to the
-selected chat, or use `/read`, `/list`, `/last`, `/status`, `/back` and
-`/quit`.
+`reply <index> <text>` form. Inside chat mode, type normal text to send to the selected chat. The console auto-reads every 5 seconds by default while waiting for input; use `/watch <seconds>` to change the interval, `/watch off` to disable it, or `/read`, `/list`, `/last`, `/status`, `/back` and `/quit`.
 
 List the saved chats:
 

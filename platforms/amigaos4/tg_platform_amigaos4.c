@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <proto/dos.h>
 #include <proto/exec.h>
 #include <proto/socket.h>
 #endif
@@ -84,6 +85,23 @@ void tg_platform_sleep_seconds(unsigned long seconds)
     }
     while ((unsigned long)(time(0) - start) < seconds) {
     }
+#endif
+}
+
+int tg_platform_stdin_readable(unsigned long timeout_seconds)
+{
+#if defined(__amigaos4__)
+    unsigned long timeout_microseconds;
+
+    if (timeout_seconds > 2147UL) {
+        timeout_microseconds = 2147000000UL;
+    } else {
+        timeout_microseconds = timeout_seconds * 1000000UL;
+    }
+    return WaitForChar(Input(), (long)timeout_microseconds) != 0;
+#else
+    (void)timeout_seconds;
+    return 0;
 #endif
 }
 

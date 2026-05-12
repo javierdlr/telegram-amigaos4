@@ -67,7 +67,7 @@ Live read-only test, after creating telegram-token.txt in the same drawer:
 
 Inside the console, use p/poll/read to poll, l/list to list saved chats,
 i/last/inbox to show the last inbox line, s/status to show local state,
-chat <index> to enter a simple line-oriented chat, r/send/reply <index> <text> to send a controlled reply, h/help for help and q/quit to quit. Inside chat mode, type normal text to send, or use /read, /list, /last, /status, /back and /quit.
+chat <index> to enter a simple line-oriented chat, r/send/reply <index> <text> to send a controlled reply, h/help for help and q/quit to quit. Inside chat mode, type normal text to send. It auto-reads every 5 seconds by default while waiting for input; use /watch <seconds> to change the interval, /watch off to disable it, or /read, /list, /last, /status, /back and /quit.
 
 Manual send by saved chat index:
 

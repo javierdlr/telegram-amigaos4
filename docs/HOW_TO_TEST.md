@@ -111,9 +111,7 @@ quit
 
 `read` polls Telegram and then prints the saved chat list. Use the displayed
 chat index with `reply <index> <text>`, or use `chat <index>` to enter a
-line-oriented chat mode. In chat mode, type normal text to send it to the
-selected chat, press an empty line or use `/read` to poll, and use `/back` or
-`/quit` to leave. The console never sends automatic replies.
+line-oriented chat mode. In chat mode, type normal text to send it to the selected chat. It auto-reads every 5 seconds by default while waiting for input; use `/watch <seconds>` to change the interval, `/watch off` to disable it, `/read` to poll immediately, and `/back` or `/quit` to leave. The console never sends automatic replies.
 
 ## 6. Report Results
 

@@ -39,6 +39,15 @@ void tg_platform_log(const char *level, const char *message);
 void tg_platform_sleep_seconds(unsigned long seconds);
 
 /**
+ * Waits until standard input appears readable, or until timeout_seconds pass.
+ *
+ * Returns non-zero when a line can probably be read with fgets(), zero on
+ * timeout or when the platform cannot test standard input readiness. A timeout
+ * of zero performs a non-blocking poll.
+ */
+int tg_platform_stdin_readable(unsigned long timeout_seconds);
+
+/**
  * Platform TCP connect implementation used by tg_net_connect().
  *
  * On success, connection must contain a valid platform_handle and is_open must

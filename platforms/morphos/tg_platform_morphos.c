@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <proto/dos.h>
 
 #ifndef TG_ENABLE_TLS
 #define TG_ENABLE_TLS 0
@@ -44,6 +45,18 @@ void tg_platform_sleep_seconds(unsigned long seconds)
     if (seconds > 0) {
         sleep(seconds);
     }
+}
+
+int tg_platform_stdin_readable(unsigned long timeout_seconds)
+{
+    unsigned long timeout_microseconds;
+
+    if (timeout_seconds > 2147UL) {
+        timeout_microseconds = 2147000000UL;
+    } else {
+        timeout_microseconds = timeout_seconds * 1000000UL;
+    }
+    return WaitForChar(Input(), (long)timeout_microseconds) != 0;
 }
 
 static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer_size,

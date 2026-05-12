@@ -36,6 +36,7 @@ static const char tg_default_poll_seconds_text[] = "5";
 static const char tg_default_max_iterations_text[] = "10";
 static const char tg_console_poll_seconds_text[] = "0";
 static const char tg_console_max_iterations_text[] = "1";
+static const unsigned long tg_chat_default_watch_seconds = 5UL;
 
 static int tg_run_http_test(const tg_config *config)
 {
@@ -2755,12 +2756,55 @@ static void tg_print_client_chat_help(void)
     puts("telegram chat commands:");
     puts("  <text>                  send text to the selected chat");
     puts("  /read                   receive new messages");
+    puts("  /watch <seconds>        set automatic receive interval");
+    puts("  /watch off              disable automatic receive");
     puts("  /list                   show saved chats");
     puts("  /last                   show last inbox line");
     puts("  /status                 show local files and offset");
     puts("  /help                   show chat commands");
     puts("  /back                   return to console");
     puts("  /quit                   quit");
+}
+
+static unsigned long tg_chat_initial_watch_seconds(const char *poll_seconds_text)
+{
+    unsigned long seconds;
+
+    if (poll_seconds_text != 0 &&
+        tg_parse_decimal_ulong(poll_seconds_text, &seconds) == 0 &&
+        seconds > 0UL) {
+        if (seconds > 3600UL) {
+            return 3600UL;
+        }
+        return seconds;
+    }
+    return tg_chat_default_watch_seconds;
+}
+
+static int tg_chat_set_watch_seconds(char *line, unsigned long *watch_seconds)
+{
+    char *cursor;
+    unsigned long seconds;
+
+    if (line == 0 || watch_seconds == 0) {
+        return 1;
+    }
+    cursor = line + 6;
+    while (*cursor == ' ' || *cursor == '\t') {
+        ++cursor;
+    }
+    if (strcmp(cursor, "off") == 0) {
+        *watch_seconds = 0UL;
+        puts("telegram chat: auto-read disabled");
+        return 0;
+    }
+    if (tg_parse_decimal_ulong(cursor, &seconds) != 0 || seconds > 3600UL) {
+        puts("telegram chat: use /watch <seconds <= 3600> or /watch off");
+        return 0;
+    }
+    *watch_seconds = seconds;
+    printf("telegram chat: auto-read every %lu second(s)\n", *watch_seconds);
+    return 0;
 }
 
 static int tg_run_client_console_chat_mode(const char *token_file_path,
@@ -2772,6 +2816,7 @@ static int tg_run_client_console_chat_mode(const char *token_file_path,
                                            const char *index_text)
 {
     unsigned long index;
+    unsigned long watch_seconds;
     char chat_id[64];
     char line[512];
     int rc;
@@ -2785,7 +2830,13 @@ static int tg_run_client_console_chat_mode(const char *token_file_path,
         return 0;
     }
 
+    watch_seconds = tg_chat_initial_watch_seconds(poll_seconds_text);
     printf("telegram chat: selected index %lu, chat %s\n", index, chat_id);
+    if (watch_seconds > 0UL) {
+        printf("telegram chat: auto-read every %lu second(s)\n", watch_seconds);
+    } else {
+        puts("telegram chat: auto-read disabled");
+    }
     tg_print_client_chat_help();
     rc = tg_run_client_console_poll_once(token_file_path,
                                          offset_file_path,
@@ -2800,6 +2851,20 @@ static int tg_run_client_console_chat_mode(const char *token_file_path,
     for (;;) {
         printf("telegram chat %lu> ", index);
         fflush(stdout);
+        if (watch_seconds > 0UL &&
+            !tg_platform_stdin_readable(watch_seconds)) {
+            puts("");
+            rc = tg_run_client_console_poll_once(token_file_path,
+                                                 offset_file_path,
+                                                 inbox_log_file_path,
+                                                 chat_state_file_path,
+                                                 poll_seconds_text,
+                                                 max_iterations_text);
+            if (rc != 0) {
+                return rc;
+            }
+            continue;
+        }
         if (fgets(line, sizeof(line), stdin) == 0) {
             puts("telegram chat: eof");
             return 0;
@@ -2858,6 +2923,16 @@ static int tg_run_client_console_chat_mode(const char *token_file_path,
                                                  max_iterations_text);
             if (rc != 0) {
                 return rc;
+            }
+            continue;
+        }
+        if (strncmp(line, "/watch", 6) == 0 &&
+            (line[6] == '\0' || line[6] == ' ' || line[6] == '\t')) {
+            if (line[6] == '\0') {
+                printf("telegram chat: auto-read every %lu second(s)\n",
+                       watch_seconds);
+            } else if (tg_chat_set_watch_seconds(line, &watch_seconds) != 0) {
+                return 2;
             }
             continue;
         }
@@ -3103,8 +3178,10 @@ static int tg_run_telegram_client_self_test(void)
     char command_line[64];
     char command_index[16];
     char chat_command_index[16];
+    char watch_command_line[32];
     char *command_text;
     unsigned long index;
+    unsigned long watch_seconds;
 
     remove(chat_state_file_path);
     bot_status = tg_bot_parse_get_updates_http_response(
@@ -3158,6 +3235,21 @@ static int tg_run_telegram_client_self_test(void)
                                        sizeof(chat_command_index)) != 0 ||
         strcmp(chat_command_index, "12") != 0) {
         puts("telegram client self-test: console chat command parse failed");
+        remove(chat_state_file_path);
+        return 2;
+    }
+    strcpy(watch_command_line, "/watch 7");
+    watch_seconds = 0UL;
+    if (tg_chat_set_watch_seconds(watch_command_line, &watch_seconds) != 0 ||
+        watch_seconds != 7UL) {
+        puts("telegram client self-test: console watch command parse failed");
+        remove(chat_state_file_path);
+        return 2;
+    }
+    strcpy(watch_command_line, "/watch off");
+    if (tg_chat_set_watch_seconds(watch_command_line, &watch_seconds) != 0 ||
+        watch_seconds != 0UL) {
+        puts("telegram client self-test: console watch off parse failed");
         remove(chat_state_file_path);
         return 2;
     }
