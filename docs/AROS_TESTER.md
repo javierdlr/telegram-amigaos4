@@ -23,6 +23,8 @@ other targets: offline parser/state tests, TCP/HTTP diagnostics, HTTPS,
   `--tls-verify`.
 - AROS One 32-bit has AmiSSL available according to community feedback.
 - AROS One 64-bit currently does not have AmiSSL available.
+- AROS x86_64 has an experimental `Makefile.aros-x86_64` and should follow the
+  OpenSSL path, but it has not been validated yet.
 - Live Telegram Bot API `getMe`, read-only polling and controlled
   `sendMessage` have passed on the TLS-enabled AROS One i386 alt-abiv0 build.
 - TLS certificate validation with an explicit CA bundle has passed against
@@ -67,6 +69,14 @@ make -f Makefile.aros-i386-abiv0 all ENABLE_TLS=1 \
 ```
 
 This links against OpenSSL from the AROS SDK.
+
+For initial AROS x86_64 experiments, use:
+
+```text
+make -f Makefile.aros-x86_64 all ENABLE_TLS=1
+```
+
+That target is not validated yet. See `docs/AROS_X86_64_TESTER.md`.
 
 If `make` reports `Clock skew detected`, check the AROS system date/time or
 refresh the source timestamps after unpacking the archive.

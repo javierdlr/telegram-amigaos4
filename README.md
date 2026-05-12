@@ -148,7 +148,8 @@ Initial targets:
 - AROS: native builds reported working by the community on AROS One 32-bit and
   64-bit; AROS One i386 alt-abiv0 is cross-built from macOS and has passed
   offline self-tests, TCP/HTTP, HTTPS, `preflight`, `getMe`, read-only polling,
-  controlled `sendMessage` and TLS certificate validation in a VM.
+  controlled `sendMessage` and TLS certificate validation in a VM. AROS
+  x86_64 now has an experimental build file, but no validated package yet.
 
 Build on MorphOS:
 
@@ -186,6 +187,16 @@ self-tests, TCP/HTTP diagnostics, HTTPS, `preflight`, `getMe`, read-only
 polling, controlled `sendMessage` and TLS certificate validation with an
 explicit CA bundle. See `docs/AROS_TESTER.md` for tester notes and reporting
 details.
+
+Experimental AROS x86_64 builds can start from:
+
+```text
+make -f Makefile.aros-x86_64 all ENABLE_TLS=1
+```
+
+This target is not validated yet and should use the same OpenSSL-based TLS path
+once a matching AROS x86_64 SDK/toolchain is available. See
+`docs/AROS_X86_64_TESTER.md`.
 
 Recommended AROS offline smoke test:
 
@@ -267,6 +278,15 @@ scripts/package-aros-tester.sh
 The script cross-builds an AROS One i386 alt-abiv0 tester and creates a local
 package under `build/packages/`. The default package keeps TLS disabled. Use
 `ENABLE_TLS=1` to build the OpenSSL-enabled AROS tester.
+
+Experimental AROS x86_64 package:
+
+```sh
+scripts/package-aros-x86_64-tester.sh
+```
+
+This requires a validated AROS x86_64 build environment or an existing binary
+passed with `TARGET=...`; it is not a public tested target yet.
 
 Build or package AmigaOS 4.x:
 
