@@ -320,6 +320,8 @@ OpenSSL-based builds can request certificate validation by adding
 telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 ```
 
+For the common tester checklist, see `docs/HOW_TO_TEST.md`.
+
 Before the reply command can work, send a message to the bot from Telegram and
 run `telegram-client-default` or `telegram-client-console` so
 `telegram-chats.txt` contains at least one saved chat. Chat index `1` is the

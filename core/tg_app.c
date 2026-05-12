@@ -2621,6 +2621,13 @@ static void tg_print_client_console_help(void)
     puts("  q, quit                 quit");
 }
 
+static int tg_print_client_console_chats(const char *chat_state_file_path)
+{
+    puts("telegram client console chats:");
+    return tg_for_each_chat_line(chat_state_file_path,
+                                 tg_print_chat_line_callback, 0, 1);
+}
+
 static int tg_parse_console_reply_command(char *line,
                                           unsigned long command_length,
                                           char *index_buffer,
@@ -2766,8 +2773,7 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             continue;
         }
         if (strcmp(line, "l") == 0 || strcmp(line, "list") == 0) {
-            rc = tg_for_each_chat_line(resolved_chats_path,
-                                       tg_print_chat_line_callback, 0, 1);
+            rc = tg_print_client_console_chats(resolved_chats_path);
             if (rc != 0) {
                 return rc;
             }
@@ -2786,7 +2792,11 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             if (rc != 0) {
                 return rc;
             }
-            puts("telegram client console: use list, then reply <index> <text>");
+            rc = tg_print_client_console_chats(resolved_chats_path);
+            if (rc != 0) {
+                return rc;
+            }
+            puts("telegram client console: use reply <index> <text>");
             continue;
         }
         if (line[0] == 'r' &&
