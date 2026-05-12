@@ -51,7 +51,7 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
 {
     unsigned long timeout_microseconds;
 
-    if (timeout_seconds > 2147UL) {
+    if (timeout_seconds > (2147000000UL / 1000000UL)) {
         timeout_microseconds = 2147000000UL;
     } else {
         timeout_microseconds = timeout_seconds * 1000000UL;
@@ -170,6 +170,18 @@ void tg_platform_tcp_close(tg_net_connection *connection)
 
 #if TG_ENABLE_TLS
 
+static void tg_morphos_openssl_init_once(void)
+{
+    static int initialized = 0;
+
+    if (!initialized) {
+        SSL_library_init();
+        SSL_load_error_strings();
+        initialized = 1;
+    }
+    ERR_clear_error();
+}
+
 static void tg_platform_set_ssl_error(char *error_buffer, unsigned long error_buffer_size)
 {
     unsigned long error_code;
@@ -248,8 +260,7 @@ tg_tls_status tg_platform_tls_connect(tg_tls_connection *connection, const char 
         *net_status = TG_NET_OK;
     }
 
-    SSL_library_init();
-    SSL_load_error_strings();
+    tg_morphos_openssl_init_once();
 
     local_net_status = tg_net_connect(&connection->tcp, host, port,
                                       error_buffer, error_buffer_size);

@@ -5,7 +5,7 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
+#include <unistd.h>
 
 #ifndef TG_AMIGAOS4_ENABLE_AMISSL
 #define TG_AMIGAOS4_ENABLE_AMISSL 0
@@ -20,7 +20,6 @@
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <sys/socket.h>
-#include <unistd.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
 #include <proto/socket.h>
@@ -73,17 +72,8 @@ void tg_platform_sleep_seconds(unsigned long seconds)
         sleep(seconds);
     }
 #else
-    time_t start;
-
-    if (seconds == 0) {
-        return;
-    }
-
-    start = time(0);
-    if (start == (time_t)-1) {
-        return;
-    }
-    while ((unsigned long)(time(0) - start) < seconds) {
+    if (seconds > 0) {
+        sleep((unsigned int)seconds);
     }
 #endif
 }
@@ -93,7 +83,7 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
 #if defined(__amigaos4__)
     unsigned long timeout_microseconds;
 
-    if (timeout_seconds > 2147UL) {
+    if (timeout_seconds > (2147000000UL / 1000000UL)) {
         timeout_microseconds = 2147000000UL;
     } else {
         timeout_microseconds = timeout_seconds * 1000000UL;
@@ -187,7 +177,7 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_port = htons((unsigned short)port_number);
-    address.sin_len = (unsigned char)host_entry->h_length;
+    address.sin_len = (unsigned char)sizeof(address);
     memcpy(&address.sin_addr, host_entry->h_addr_list[0], (size_t)host_entry->h_length);
 
     sock = socket(AF_INET, SOCK_STREAM, 0);

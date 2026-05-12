@@ -61,7 +61,7 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
 #if defined(__AROS__)
     unsigned long timeout_microseconds;
 
-    if (timeout_seconds > 2147UL) {
+    if (timeout_seconds > (2147000000UL / 1000000UL)) {
         timeout_microseconds = 2147000000UL;
     } else {
         timeout_microseconds = timeout_seconds * 1000000UL;
