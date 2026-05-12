@@ -54,6 +54,10 @@ telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 Without `--tls-verify`, TLS encrypts traffic but does not validate the
 certificate. Keep that mode limited to supervised tests.
 
+Certificate validation also requires a correct system date. If a platform
+reports that a certificate is not yet valid or has expired, verify the clock
+before debugging TLS code.
+
 ## 3. Create A Test Bot
 
 1. Open Telegram on a phone or desktop.

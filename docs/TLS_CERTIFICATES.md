@@ -8,10 +8,10 @@ SPDX-License-Identifier: MIT
 Current TLS backends encrypt traffic and use SNI where supported. OpenSSL-based
 AROS/MorphOS and AmiSSL-based AmigaOS 3.x/4.x backends can now request
 certificate-chain and hostname validation with `--tls-verify`, optionally
-paired with `--tls-ca-file` or `--tls-ca-path`. AROS, MorphOS and AmigaOS 3.x
-have passed live CA-bundle validation smoke tests; AmigaOS 4.x still needs a
-clean target-side runtime retest. Connections without validation are acceptable
-only for supervised testing with disposable bot tokens.
+paired with `--tls-ca-file` or `--tls-ca-path`. AROS, MorphOS, AmigaOS 3.x and
+AmigaOS 4.x have passed live CA-bundle validation smoke tests. Connections
+without validation are acceptable only for supervised testing with disposable
+bot tokens.
 
 ## Required Behavior
 
@@ -43,7 +43,10 @@ AmigaOS 3.x/AmiSSL:
 AmigaOS 4.x/AmiSSL:
 
 - follows the same AmiSSL policy as AmigaOS 3.x;
-- keep the SDK/build helper independent from private local paths.
+- passed supervised HTTPS and preflight validation smoke tests against
+  `api.telegram.org` with an explicit CA bundle on the project QEMU setup;
+- keep the SDK/build helper independent from private local paths;
+- requires a correct system date for certificate validity checks.
 
 AROS:
 
