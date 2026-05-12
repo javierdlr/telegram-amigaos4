@@ -96,10 +96,11 @@ Initial core modules:
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
 - `tg_json`: minimal top-level JSON field lookup plus JSON string escape decoding
-- `tg_net`: portable TCP API with MorphOS and initial AmigaOS 3.x backends
+- `tg_net`: portable TCP API with MorphOS, AmigaOS 3.x, AmigaOS 4.x and AROS
+  backends
 - `tg_telegram`: Telegram API response envelope parsing
-- `tg_tls`/`tg_https`: minimal TLS/HTTPS with MorphOS OpenSSL and optional
-  AmigaOS 3.x AmiSSL backends
+- `tg_tls`/`tg_https`: minimal TLS/HTTPS with OpenSSL backends for MorphOS and
+  AROS, plus AmiSSL backends for AmigaOS 3.x and AmigaOS 4.x
 - Bot API `getMe`, `getUpdates` and `sendMessage` helpers; `getUpdates` can
   extract update ids, chat ids and text from the returned array.
 - A one-shot echo command can read one update, print the next offset and send an
@@ -132,19 +133,22 @@ AROS, MorphOS, AmigaOS 3.x and AmigaOS 4.x have passed supervised validation
 tests with an explicit CA bundle. Builds without validation are enough for
 supervised connectivity tests, not yet for secure use. Run
 `--telegram-tls-status` to print this status from a tester binary, and see
-`docs/TLS_CERTIFICATES.md` for the validation plan.
+`docs/TLS_CERTIFICATES.md` for certificate validation details.
 
 Initial targets:
 
-- MorphOS: TLS, `getMe` and read-only polling verified on real hardware
-- AmigaOS 3.x: TCP/HTTP verified on real hardware; optional AmiSSL HTTPS,
-  Telegram `getMe` and `sendMessage` verified on Vampire/AmiKit with AmiSSL v5
-- AmigaOS 4.x: native QEMU build, AmiSSL HTTPS, Telegram `preflight`, `getMe`
-  and read-only polling verified
+- MorphOS: TLS, `getMe`, read-only polling, controlled `sendMessage` and TLS
+  certificate validation verified on real hardware
+- AmigaOS 3.x: TCP/HTTP, AmiSSL HTTPS, `getMe`, read-only polling, controlled
+  `sendMessage` and TLS certificate validation verified on Vampire/AmiKit with
+  AmiSSL v5
+- AmigaOS 4.x: native QEMU build, AmiSSL HTTPS, `preflight`, `getMe`,
+  read-only polling, controlled `sendMessage` and TLS certificate validation
+  verified; certificate validation requires a correct system date
 - AROS: native builds reported working by the community on AROS One 32-bit and
   64-bit; AROS One i386 alt-abiv0 is cross-built from macOS and has passed
-  offline self-tests, plain TCP/HTTP diagnostics, HTTPS preflight and Telegram
-  `getMe` in a VM.
+  offline self-tests, TCP/HTTP, HTTPS, `preflight`, `getMe`, read-only polling,
+  controlled `sendMessage` and TLS certificate validation in a VM.
 
 Build on MorphOS:
 
@@ -176,10 +180,12 @@ The AROS Makefile uses native `gcc` by default. Cross-builds can override it:
 make -f Makefile.aros CC=i386-aros-gcc all
 ```
 
-Current AROS builds are useful for offline core tests and plain TCP/HTTP
-diagnostics through `bsdsocket.library`. TLS-enabled AROS builds use OpenSSL
-from the AROS SDK and have passed first supervised HTTPS/getMe checks. See
-`docs/AROS_TESTER.md` for tester notes and reporting details.
+Current AROS One i386 alt-abiv0 builds use `bsdsocket.library` for networking
+and OpenSSL from the AROS SDK for TLS. The VM test target has passed offline
+self-tests, TCP/HTTP diagnostics, HTTPS, `preflight`, `getMe`, read-only
+polling, controlled `sendMessage` and TLS certificate validation with an
+explicit CA bundle. See `docs/AROS_TESTER.md` for tester notes and reporting
+details.
 
 Recommended AROS offline smoke test:
 
@@ -195,8 +201,9 @@ telegram-test --http-test example.com 80 /
 ```
 
 Community feedback so far: AROS One 32-bit has AmiSSL available, while AROS
-One 64-bit currently does not. A future AROS HTTPS backend will likely need to
-treat 32-bit and 64-bit separately.
+One 64-bit currently does not. The current maintained tester path uses OpenSSL
+on AROS One i386 alt-abiv0; AmiSSL availability may still matter for future
+backend variants.
 
 If AROS `make` reports `Clock skew detected`, check the system date/time or
 refresh the unpacked source file timestamps. This can happen when archives are
@@ -271,9 +278,19 @@ scripts/package-amigaos4-tester.sh
 
 The AmigaOS 4.x TCP backend is enabled in native builds. HTTPS is enabled when
 building with `ENABLE_AMISSL=1` and requires the OS4 SDK headers plus the
-AmiSSL SDK package. The QEMU test target has passed native GCC builds, offline
-self-tests, `--telegram-preflight`, `--telegram-getme` and one read-only poll
-against Telegram. See `docs/AMIGAOS4_TESTER.md`.
+AmiSSL SDK package. On an OS4 target with the SDK installed, the helper scripts
+can also be used directly:
+
+```text
+Execute scripts/BuildAmigaOS4Offline
+Execute scripts/BuildAmigaOS4AmiSSL
+```
+
+The QEMU test target has passed native GCC builds, offline self-tests, AmiSSL
+HTTPS, `--telegram-preflight`, `--telegram-getme`, read-only polling,
+controlled `sendMessage` and TLS certificate validation with an explicit CA
+bundle. Certificate validation depends on the system date being correct. See
+`docs/AMIGAOS4_TESTER.md`.
 
 Flow Studio on MorphOS:
 
@@ -301,7 +318,7 @@ or OpenSSL runtime files.
 
 ## Quick Start
 
-For TLS-enabled tester builds on MorphOS, AmigaOS 3.x or AmigaOS 4.x:
+For TLS-enabled tester builds on MorphOS, AmigaOS 3.x, AmigaOS 4.x or AROS:
 
 ```text
 telegram-test --telegram-tls-status
@@ -313,12 +330,15 @@ telegram-test --telegram-reply-default 1 "Hello from Telegram Amiga"
 telegram-test --telegram-client-console
 ```
 
-OpenSSL-based builds can request certificate validation by adding
-`--tls-verify` and, when platform defaults are not configured, a CA bundle:
+TLS-enabled builds can request certificate validation by adding `--tls-verify`
+and, when platform defaults are not configured, a CA bundle:
 
 ```text
 telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 ```
+
+Certificate validation requires a correct system date. If validation fails with
+an expired or not-yet-valid certificate error, check the target clock first.
 
 For the common tester checklist, see `docs/HOW_TO_TEST.md`.
 
@@ -336,6 +356,11 @@ Current options:
     --data-dir <path> Set application data directory
     --token-file <path>
                       Override default Telegram token file
+    --tls-verify      Verify TLS certificate chain and hostname
+    --tls-ca-file <path>
+                      CA bundle file for --tls-verify
+    --tls-ca-path <path>
+                      CA directory for --tls-verify
     --inbox-log-file <path>
                       Append read-only inbox items to a local text log
     --chat-state-file <path>
@@ -466,8 +491,8 @@ telegram update chat id: 148319454
 telegram update text: /start
 ```
 
-Useful commands for a first offline run on AROS or another target without a
-network backend:
+Useful commands for a first offline run on any target before network or token
+tests:
 
 ```text
 telegram-test --help
@@ -568,7 +593,8 @@ Console commands are `p`/`poll`/`read` to poll, `l`/`list` to list saved chats,
 status, `r`/`send`/`reply <index> <text>` to send a controlled reply and
 `q`/`quit` to quit. The console uses the same `telegram-offset.txt`,
 `telegram-inbox.log` and `telegram-chats.txt` files as
-`telegram-client-default`.
+`telegram-client-default`. After `read` or `poll`, it prints the saved chat
+list automatically and suggests the `reply <index> <text>` form.
 
 List the saved chats:
 
@@ -617,13 +643,21 @@ The same limits apply to `telegram-read-loop`.
 Note: through BebboSSH, the remote shell does not always preserve the AmigaDOS
 PATH, so the Makefile uses absolute paths to the MorphOS SDK.
 
-Planned Makefiles:
+Current Makefiles and helpers:
 
 - `Makefile.morphos`
 - `Makefile.amigaos3`
 - `Makefile.amigaos3-gcc`
 - `Makefile.amigaos4`
 - `Makefile.aros`
+- `Makefile.aros-i386-abiv0`
+- `scripts/package-morphos-tester.sh`
+- `scripts/package-amigaos3-tester.sh`
+- `scripts/package-amigaos4-tester.sh`
+- `scripts/package-aros-tester.sh`
+- `scripts/BuildAmigaOS4Offline`
+- `scripts/BuildAmigaOS4AmiSSL`
+- `scripts/RunAmigaOS3Preflight`
 
 ## License
 
