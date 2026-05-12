@@ -128,8 +128,8 @@ Initial core modules:
 
 TLS note: current TLS builds use SNI. Certificate validation is now available
 as an opt-in path with `--tls-verify`, `--tls-ca-file` and `--tls-ca-path`.
-OpenSSL validation has been verified on AROS with an explicit CA bundle;
-MorphOS and AmiSSL validation paths still need more target-side testing. Builds
+AROS, MorphOS and AmigaOS 3.x have passed supervised validation tests with an
+explicit CA bundle; AmigaOS 4.x still needs a clean runtime retest. Builds
 without validation are enough for supervised connectivity tests, not yet for
 secure use. Run `--telegram-tls-status` to print this status from a tester
 binary, and see `docs/TLS_CERTIFICATES.md` for the validation plan.

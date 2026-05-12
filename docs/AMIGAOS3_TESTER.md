@@ -27,8 +27,9 @@ The AmigaOS 3.x tester can:
 
 AmiSSL certificate validation is opt-in with `--tls-verify` and either a CA
 bundle supplied through `--tls-ca-file` or a usable AmiSSL/OpenSSL default
-trust store. Keep using test bots and disposable tokens until this path has
-more independent target-side testing.
+trust store. This has passed a supervised HTTPS smoke test on the project
+AmigaOS 3.x/Vampire setup with an explicit CA bundle. Keep using test bots and
+disposable tokens until this path has more independent target-side testing.
 
 ## Target Requirements
 
@@ -133,6 +134,13 @@ Run the preflight check:
 
 ```text
 telegram-test --telegram-preflight
+```
+
+To request certificate validation with an explicit CA bundle:
+
+```text
+telegram-test --tls-verify --tls-ca-file ca-bundle.crt --https-test api.telegram.org 443 /
+telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 ```
 
 Or use the helper script:
