@@ -590,11 +590,14 @@ telegram-test --telegram-client-console
 
 Console commands are `p`/`poll`/`read` to poll, `l`/`list` to list saved chats,
 `i`/`last`/`inbox` to show the last inbox log line, `s`/`status` to show local
-status, `r`/`send`/`reply <index> <text>` to send a controlled reply and
-`q`/`quit` to quit. The console uses the same `telegram-offset.txt`,
-`telegram-inbox.log` and `telegram-chats.txt` files as
-`telegram-client-default`. After `read` or `poll`, it prints the saved chat
-list automatically and suggests the `reply <index> <text>` form.
+status, `chat <index>` to enter a simple line-oriented chat,
+`r`/`send`/`reply <index> <text>` to send a controlled reply and `q`/`quit` to
+quit. The console uses the same `telegram-offset.txt`, `telegram-inbox.log` and
+`telegram-chats.txt` files as `telegram-client-default`. After `read` or
+`poll`, it prints the saved chat list automatically and suggests the
+`reply <index> <text>` form. Inside chat mode, type normal text to send to the
+selected chat, or use `/read`, `/list`, `/last`, `/status`, `/back` and
+`/quit`.
 
 List the saved chats:
 

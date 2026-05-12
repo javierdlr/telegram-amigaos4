@@ -104,8 +104,7 @@ Useful commands:
 
 Inside the console, use p/poll/read to poll, l/list to list saved chats,
 i/last/inbox to show the last inbox line, s/status to show local state,
-r/send/reply <index> <text> to send a controlled reply, h/help for help and
-q/quit to quit.
+chat <index> to enter a simple line-oriented chat, r/send/reply <index> <text> to send a controlled reply, h/help for help and q/quit to quit. Inside chat mode, type normal text to send, or use /read, /list, /last, /status, /back and /quit.
 
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default

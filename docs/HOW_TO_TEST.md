@@ -103,14 +103,17 @@ Useful commands:
 read
 list
 reply 1 Hello from Telegram Amiga
+chat 1
 last
 status
 quit
 ```
 
 `read` polls Telegram and then prints the saved chat list. Use the displayed
-chat index with `reply <index> <text>`. The console never sends automatic
-replies.
+chat index with `reply <index> <text>`, or use `chat <index>` to enter a
+line-oriented chat mode. In chat mode, type normal text to send it to the
+selected chat, press an empty line or use `/read` to poll, and use `/back` or
+`/quit` to leave. The console never sends automatic replies.
 
 ## 6. Report Results
 

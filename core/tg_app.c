@@ -2544,6 +2544,10 @@ static int tg_run_telegram_send_chat_path(const char *token_file_path,
                                           const char *index_text,
                                           const char *text);
 
+static int tg_run_telegram_send_message_path(const char *token_file_path,
+                                             const char *chat_id,
+                                             const char *text);
+
 static int tg_print_last_inbox_line(const char *inbox_log_file_path)
 {
     tg_file_status file_status;
@@ -2615,6 +2619,7 @@ static void tg_print_client_console_help(void)
     puts("  l, list                 show saved chats");
     puts("  i, last, inbox          show last inbox line");
     puts("  s, status               show local files and offset");
+    puts("  chat <index>            open a simple send/read chat loop");
     puts("  r, send, reply <index> <text>");
     puts("                           send to saved chat index");
     puts("  h, help                 show help");
@@ -2668,6 +2673,59 @@ static int tg_parse_console_reply_command(char *line,
     return 0;
 }
 
+static int tg_parse_console_index_command(char *line,
+                                          unsigned long command_length,
+                                          char *index_buffer,
+                                          unsigned long index_buffer_size)
+{
+    char *cursor;
+    char *index_start;
+    unsigned long index_length;
+
+    if (line == 0 || index_buffer == 0 || index_buffer_size == 0) {
+        return 1;
+    }
+
+    cursor = line + command_length;
+    while (*cursor == ' ' || *cursor == '\t') {
+        ++cursor;
+    }
+    index_start = cursor;
+    while (*cursor >= '0' && *cursor <= '9') {
+        ++cursor;
+    }
+    index_length = (unsigned long)(cursor - index_start);
+    if (index_length == 0 || index_length + 1 > index_buffer_size) {
+        return 1;
+    }
+    while (*cursor == ' ' || *cursor == '\t') {
+        ++cursor;
+    }
+    if (*cursor != '\0') {
+        return 1;
+    }
+
+    memcpy(index_buffer, index_start, index_length);
+    index_buffer[index_length] = '\0';
+    return 0;
+}
+
+static int tg_run_client_console_poll_once(const char *token_file_path,
+                                           const char *offset_file_path,
+                                           const char *inbox_log_file_path,
+                                           const char *chat_state_file_path,
+                                           const char *poll_seconds_text,
+                                           const char *max_iterations_text)
+{
+    puts("telegram client console: read");
+    return tg_run_telegram_session_loop_paths(token_file_path,
+                                              offset_file_path,
+                                              inbox_log_file_path,
+                                              chat_state_file_path,
+                                              poll_seconds_text,
+                                              max_iterations_text);
+}
+
 static int tg_run_client_console_send_command(const char *token_file_path,
                                               const char *chats_file_path,
                                               char *line,
@@ -2690,6 +2748,139 @@ static int tg_run_client_console_send_command(const char *token_file_path,
     }
     puts("telegram client console: sent");
     return 0;
+}
+
+static void tg_print_client_chat_help(void)
+{
+    puts("telegram chat commands:");
+    puts("  <text>                  send text to the selected chat");
+    puts("  /read                   receive new messages");
+    puts("  /list                   show saved chats");
+    puts("  /last                   show last inbox line");
+    puts("  /status                 show local files and offset");
+    puts("  /help                   show chat commands");
+    puts("  /back                   return to console");
+    puts("  /quit                   quit");
+}
+
+static int tg_run_client_console_chat_mode(const char *token_file_path,
+                                           const char *offset_file_path,
+                                           const char *inbox_log_file_path,
+                                           const char *chat_state_file_path,
+                                           const char *poll_seconds_text,
+                                           const char *max_iterations_text,
+                                           const char *index_text)
+{
+    unsigned long index;
+    char chat_id[64];
+    char line[512];
+    int rc;
+
+    if (tg_parse_decimal_ulong(index_text, &index) != 0 || index == 0UL) {
+        puts("telegram chat: invalid chat index");
+        return 0;
+    }
+    if (tg_find_chat_id_by_index(chat_state_file_path, index,
+                                 chat_id, sizeof(chat_id)) != 0) {
+        return 0;
+    }
+
+    printf("telegram chat: selected index %lu, chat %s\n", index, chat_id);
+    tg_print_client_chat_help();
+    rc = tg_run_client_console_poll_once(token_file_path,
+                                         offset_file_path,
+                                         inbox_log_file_path,
+                                         chat_state_file_path,
+                                         poll_seconds_text,
+                                         max_iterations_text);
+    if (rc != 0) {
+        return rc;
+    }
+
+    for (;;) {
+        printf("telegram chat %lu> ", index);
+        fflush(stdout);
+        if (fgets(line, sizeof(line), stdin) == 0) {
+            puts("telegram chat: eof");
+            return 0;
+        }
+        tg_trim_ascii_space(line);
+        if (line[0] == '\0') {
+            rc = tg_run_client_console_poll_once(token_file_path,
+                                                 offset_file_path,
+                                                 inbox_log_file_path,
+                                                 chat_state_file_path,
+                                                 poll_seconds_text,
+                                                 max_iterations_text);
+            if (rc != 0) {
+                return rc;
+            }
+            continue;
+        }
+        if (strcmp(line, "/back") == 0) {
+            puts("telegram chat: back");
+            return 0;
+        }
+        if (strcmp(line, "/quit") == 0) {
+            puts("telegram chat: quit");
+            return 1;
+        }
+        if (strcmp(line, "/help") == 0) {
+            tg_print_client_chat_help();
+            continue;
+        }
+        if (strcmp(line, "/status") == 0) {
+            tg_print_client_console_status(offset_file_path,
+                                           inbox_log_file_path,
+                                           chat_state_file_path);
+            continue;
+        }
+        if (strcmp(line, "/last") == 0) {
+            rc = tg_print_last_inbox_line(inbox_log_file_path);
+            if (rc != 0) {
+                return rc;
+            }
+            continue;
+        }
+        if (strcmp(line, "/list") == 0) {
+            rc = tg_print_client_console_chats(chat_state_file_path);
+            if (rc != 0) {
+                return rc;
+            }
+            continue;
+        }
+        if (strcmp(line, "/read") == 0) {
+            rc = tg_run_client_console_poll_once(token_file_path,
+                                                 offset_file_path,
+                                                 inbox_log_file_path,
+                                                 chat_state_file_path,
+                                                 poll_seconds_text,
+                                                 max_iterations_text);
+            if (rc != 0) {
+                return rc;
+            }
+            continue;
+        }
+        if (line[0] == '/') {
+            puts("telegram chat: unknown command, use /help");
+            continue;
+        }
+
+        rc = tg_run_telegram_send_message_path(token_file_path, chat_id, line);
+        if (rc != 0) {
+            return rc;
+        }
+        printf("me: %s\n", line);
+        rc = tg_run_client_console_poll_once(token_file_path,
+                                             offset_file_path,
+                                             inbox_log_file_path,
+                                             chat_state_file_path,
+                                             poll_seconds_text,
+                                             max_iterations_text);
+        if (rc != 0) {
+            return rc;
+        }
+    }
 }
 
 static int tg_run_telegram_client_console_paths(const tg_config *config,
@@ -2782,7 +2973,7 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
         if (strcmp(line, "p") == 0 ||
             strcmp(line, "poll") == 0 ||
             strcmp(line, "read") == 0) {
-            rc = tg_run_telegram_manual_client_paths(
+            rc = tg_run_client_console_poll_once(
                 token_file_path,
                 resolved_offset_path,
                 resolved_inbox_path,
@@ -2797,6 +2988,32 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
                 return rc;
             }
             puts("telegram client console: use reply <index> <text>");
+            continue;
+        }
+        if (strncmp(line, "chat", 4) == 0 &&
+            (line[4] == ' ' || line[4] == '\t')) {
+            char index_text[32];
+
+            if (tg_parse_console_index_command(line, 4, index_text,
+                                               sizeof(index_text)) != 0) {
+                puts("telegram client console: use chat <index>");
+                continue;
+            }
+            rc = tg_run_client_console_chat_mode(
+                token_file_path,
+                resolved_offset_path,
+                resolved_inbox_path,
+                resolved_chats_path,
+                poll_seconds_text,
+                max_iterations_text,
+                index_text);
+            if (rc < 0) {
+                return 2;
+            }
+            if (rc > 0) {
+                puts("telegram client console: quit");
+                return 0;
+            }
             continue;
         }
         if (line[0] == 'r' &&
@@ -2885,6 +3102,7 @@ static int tg_run_telegram_client_self_test(void)
     char chat_id[64];
     char command_line[64];
     char command_index[16];
+    char chat_command_index[16];
     char *command_text;
     unsigned long index;
 
@@ -2931,6 +3149,15 @@ static int tg_run_telegram_client_self_test(void)
         command_text == 0 ||
         strcmp(command_text, "Hello console") != 0) {
         puts("telegram client self-test: console command parse failed");
+        remove(chat_state_file_path);
+        return 2;
+    }
+    strcpy(command_line, "chat 12");
+    if (tg_parse_console_index_command(command_line, 4,
+                                       chat_command_index,
+                                       sizeof(chat_command_index)) != 0 ||
+        strcmp(chat_command_index, "12") != 0) {
+        puts("telegram client self-test: console chat command parse failed");
         remove(chat_state_file_path);
         return 2;
     }
