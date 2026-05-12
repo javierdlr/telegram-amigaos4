@@ -6,8 +6,9 @@ SPDX-License-Identifier: MIT
 # AROS Tester Notes
 
 Telegram Amiga is not a usable end-user Telegram client yet. On AROS, the
-current build is useful for offline parser, JSON, HTTP request-building and
-manual-client state tests.
+current tester can exercise the same Bot API based diagnostic flow used on the
+other targets: offline parser/state tests, TCP/HTTP diagnostics, HTTPS,
+`getMe`, read-only polling, saved-chat replies and controlled `sendMessage`.
 
 ## Current Status
 
@@ -15,15 +16,17 @@ manual-client state tests.
 - The AROS backend has an initial BSD-socket TCP implementation using
   `bsdsocket.library`.
 - AROS One i386 alt-abiv0 has been cross-built from macOS and smoke-tested in
-  an AROS VM with offline self-tests, plain TCP/HTTP diagnostics, HTTPS
-  preflight and Telegram `getMe`.
-- TLS can be enabled at build time against OpenSSL from the AROS SDK. The first
-  live HTTPS and `getMe` tests passed on AROS One i386 alt-abiv0, but
-  certificate validation must be explicitly requested with `--tls-verify`.
+  an AROS VM with offline self-tests, TCP/HTTP diagnostics, HTTPS, preflight,
+  Telegram `getMe`, read-only polling and controlled `sendMessage`.
+- TLS can be enabled at build time against OpenSSL from the AROS SDK.
+  Certificate validation is available and must be explicitly requested with
+  `--tls-verify`.
 - AROS One 32-bit has AmiSSL available according to community feedback.
 - AROS One 64-bit currently does not have AmiSSL available.
 - Live Telegram Bot API `getMe`, read-only polling and controlled
   `sendMessage` have passed on the TLS-enabled AROS One i386 alt-abiv0 build.
+- TLS certificate validation with an explicit CA bundle has passed against
+  `api.telegram.org` on the AROS One i386 alt-abiv0 VM.
 
 ## Build
 
@@ -82,16 +85,16 @@ telegram-test --telegram-client-self-test
 telegram-test --telegram-tls-status
 ```
 
-Expected TLS status today:
+Expected TLS status without validation flags:
 
 ```text
 certificate validation requested: no
 ```
 
 HTTPS and live Telegram commands need a TLS-enabled build. They have passed
-supervised AROS One i386 alt-abiv0 checks. Certificate validation is still
-disabled by default, so use unverified TLS only with test bots and disposable
-tokens.
+supervised AROS One i386 alt-abiv0 checks. Certificate validation is disabled
+unless `--tls-verify` is supplied, so use unverified TLS only with test bots
+and disposable tokens.
 
 Plain network diagnostics:
 
@@ -113,6 +116,7 @@ TLS diagnostics with certificate validation:
 
 ```text
 telegram-test --tls-verify --tls-ca-file ca-bundle.crt --https-test api.telegram.org 443 /
+telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 ```
 
 On the current AROS One test VM, a YAM CA bundle from the AROS One DVD passed
@@ -154,6 +158,12 @@ Please report:
 - 32-bit or 64-bit;
 - compiler name and version;
 - whether AmiSSL is installed;
+- whether OpenSSL/TLS was enabled;
+- whether `--tls-verify` was tested and which CA bundle/path was used;
 - full output of the offline test commands;
 - output of the plain TCP/HTTP diagnostics, if networking is configured;
+- output of HTTPS, `getMe`, read-only polling and controlled reply/send tests,
+  if a disposable token was used;
 - whether the build required changing `CC` or other Makefile variables.
+
+Do not include Telegram tokens or screenshots containing tokens.

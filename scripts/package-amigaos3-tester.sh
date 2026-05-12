@@ -41,6 +41,8 @@ mkdir -p "$DEST_DIR"
 
 cp "$TARGET" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AMIGAOS3_TESTER.md" "$DEST_DIR/README.md"
+cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
+cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
 cp "$ROOT_DIR/scripts/RunAmigaOS3Preflight" "$DEST_DIR/RunAmigaOS3Preflight"
 
 cat > "$DEST_DIR/README.txt" <<EOF
@@ -118,12 +120,16 @@ AmiSSL certificate validation is opt-in with --tls-verify and either
 --tls-ca-file or --tls-ca-path. Keep using test bots and disposable tokens
 until this path has more independent target-side testing.
 
+  telegram-test --tls-verify --tls-ca-file ca-bundle.crt --https-test api.telegram.org 443 /
+  telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
+
 Tip: to avoid copying a raw chat id, send a message to the bot, run
 telegram-client-default, then use telegram-chats-default and
 telegram-reply-default with the numbered chat index. Index 1 is the most
 recently updated chat.
 
-Full notes are in README.md.
+Full platform notes are in README.md. The common checklist is in HOW_TO_TEST.md.
+TLS validation details are in TLS_CERTIFICATES.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then

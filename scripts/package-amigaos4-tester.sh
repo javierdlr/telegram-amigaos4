@@ -28,6 +28,8 @@ mkdir -p "$DEST_DIR"
 
 cp "$BINARY" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AMIGAOS4_TESTER.md" "$DEST_DIR/README.md"
+cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
+cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
 cp "$ROOT_DIR/scripts/BuildAmigaOS4Offline" "$DEST_DIR/BuildAmigaOS4Offline"
 cp "$ROOT_DIR/scripts/BuildAmigaOS4AmiSSL" "$DEST_DIR/BuildAmigaOS4AmiSSL"
 
@@ -91,7 +93,11 @@ AmiSSL certificate validation is opt-in with --tls-verify and either
 --tls-ca-file or --tls-ca-path. Keep using test bots and disposable tokens
 until this path has more independent target-side testing.
 
-Full notes are in README.md.
+  telegram-test --tls-verify --tls-ca-file ca-bundle.crt --https-test api.telegram.org 443 /
+  telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
+
+Full platform notes are in README.md. The common checklist is in HOW_TO_TEST.md.
+TLS validation details are in TLS_CERTIFICATES.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then
