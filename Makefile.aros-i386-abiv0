@@ -6,6 +6,7 @@
 
 TOOLCHAIN ?= $(HOME)/amiga-dev/toolchains/aros-i386-abiv0
 AROS_SDK ?= /Volumes/AROS One DVD/Development
+SDK_GCC_ROOT ?= $(AROS_SDK)/lib/gcc/i386-aros/6.5.0
 AROS_CC ?= $(TOOLCHAIN)/i386-aros-gcc
 TARGET ?= build/aros-i386-abiv0/telegram-test
 BUILD_DIR := $(dir $(TARGET))
@@ -15,8 +16,8 @@ SRC := src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_console.c
 CFLAGS ?= -Wall -Wextra -O2
 ENABLE_TLS ?= 0
 CPPFLAGS += -nostdinc \
-	-isystem "$(AROS_SDK)/lib/gcc/i386-aros/6.5.0/include" \
-	-isystem "$(AROS_SDK)/lib/gcc/i386-aros/6.5.0/include-fixed" \
+	-isystem "$(SDK_GCC_ROOT)/include" \
+	-isystem "$(SDK_GCC_ROOT)/include-fixed" \
 	-I"$(AROS_SDK)/include/aros/posixc" \
 	-I"$(AROS_SDK)/include/aros/stdc" \
 	-I"$(AROS_SDK)/include" \
@@ -24,7 +25,7 @@ CPPFLAGS += -nostdinc \
 	-D__AROS__
 LDFLAGS += -nostdlib \
 	-L"$(AROS_SDK)/lib" \
-	-L"$(AROS_SDK)/lib/gcc/i386-aros/6.5.0"
+	-L"$(SDK_GCC_ROOT)"
 LDSTART := "$(AROS_SDK)/lib/startup.o"
 LDLIBS += -lautoinit -lcrtprog -lcrt -lstdlib -lstdc.static \
 	-lamiga -laros -ldos -lexec -lutility -lgcc -lautoinit

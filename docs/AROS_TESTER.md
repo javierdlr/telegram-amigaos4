@@ -55,6 +55,8 @@ make -f Makefile.aros-i386-abiv0 all \
 ```
 
 If you need to override only the compiler executable, use `AROS_CC=...`.
+If the GCC builtin headers are not under `$(AROS_SDK)/lib/gcc/i386-aros/6.5.0`,
+also set `SDK_GCC_ROOT=/path/to/lib/gcc/i386-aros/<version>`.
 
 Do not mix this with a generic i386 AROS toolchain built for a different ABI:
 the resulting binary may not run on AROS One alt-abiv0.
@@ -69,6 +71,20 @@ make -f Makefile.aros-i386-abiv0 all ENABLE_TLS=1 \
 ```
 
 This links against OpenSSL from the AROS SDK.
+
+For hosted AROS i386 SDK/toolchains built from current AROS sources, the same
+Makefile can be pointed at the hosted SDK:
+
+```text
+make -f Makefile.aros-i386-abiv0 all ENABLE_TLS=0 \
+  TOOLCHAIN=/path/to/toolchain-core-i386 \
+  AROS_CC=/path/to/toolchain-core-i386/i386-aros-gcc \
+  AROS_SDK=/path/to/core-linux-i386-host-i386-d/bin/linux-i386/AROS/Development \
+  SDK_GCC_ROOT=/path/to/toolchain-core-i386/lib/gcc/i386-aros/10.5.0
+```
+
+This hosted i386 path is currently useful for offline build smoke tests. It is
+not yet a replacement for the AROS One i386 alt-abiv0 live Telegram validation.
 
 For initial AROS x86_64 experiments, use:
 
