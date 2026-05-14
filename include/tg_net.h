@@ -41,6 +41,21 @@ typedef struct tg_net_connection {
 void tg_net_connection_init(tg_net_connection *connection);
 
 /**
+ * Sets the TCP connect timeout used by platform backends that support it.
+ *
+ * A value of 0 keeps the platform default blocking behavior. Non-zero values
+ * are expressed in seconds and are clamped by tg_net_set_connect_timeout_seconds().
+ */
+void tg_net_set_connect_timeout_seconds(unsigned long seconds);
+
+/**
+ * Returns the currently configured TCP connect timeout in seconds.
+ *
+ * A return value of 0 means no application-level timeout was requested.
+ */
+unsigned long tg_net_connect_timeout_seconds(void);
+
+/**
  * Opens a TCP connection to host:port.
  *
  * error_buffer is caller-owned and optional; when provided, the platform may

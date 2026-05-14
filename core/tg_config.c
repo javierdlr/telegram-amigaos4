@@ -12,6 +12,7 @@ void tg_config_init(tg_config *config)
 {
     config->data_dir = tg_platform_default_data_dir();
     config->token_file_path_override = 0;
+    config->connect_timeout_seconds = 0;
     config->tls_ca_file = 0;
     config->tls_ca_path = 0;
     config->inbox_log_file_path = 0;
@@ -204,6 +205,12 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             }
             ++i;
             config->token_file_path_override = argv[i];
+        } else if (strcmp(argv[i], "--connect-timeout") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            ++i;
+            config->connect_timeout_seconds = argv[i];
         } else if (strcmp(argv[i], "--tls-verify") == 0) {
             config->tls_verify = 1;
         } else if (strcmp(argv[i], "--tls-ca-file") == 0) {
@@ -644,6 +651,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "      --data-dir <path> Set application data directory\n");
     fprintf(stream, "      --token-file <path>\n");
     fprintf(stream, "                         Override default Telegram token file\n");
+    fprintf(stream, "      --connect-timeout <seconds>\n");
+    fprintf(stream, "                         Limit TCP connect on supported platforms (0 disables)\n");
     fprintf(stream, "      --tls-verify       Verify TLS certificate chain and hostname\n");
     fprintf(stream, "      --tls-ca-file <path>\n");
     fprintf(stream, "                         CA bundle file for --tls-verify\n");

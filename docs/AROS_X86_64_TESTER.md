@@ -1,10 +1,11 @@
 # AROS x86_64 Tester Notes
 
-This target is planned but not validated yet.
+This target is an offline pre-alpha tester.
 
-The current tested AROS build is AROS One i386 alt-abiv0 with OpenSSL from the
-AROS SDK. AROS x86_64 should follow the same OpenSSL path, not AmiSSL, but it
-needs a matching x86_64 AROS SDK/toolchain and target-side validation.
+The current AROS x86_64 path uses the AROS SDK/toolchain on a Linux server and
+hosted AROS x86_64 for short non-interactive runtime checks. TLS should follow
+the OpenSSL path, not AmiSSL, but the current SDK does not provide the OpenSSL
+headers and libraries needed for HTTPS/live Telegram yet.
 
 ## Current Status
 
@@ -21,7 +22,11 @@ needs a matching x86_64 AROS SDK/toolchain and target-side validation.
 - TLS build status: blocked until OpenSSL headers and libraries are available
   in the AROS x86_64 SDK/toolchain.
 - Live Telegram status: not validated
-- Public package status: not published
+- Public package status: published as an offline pre-alpha tester:
+  `https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260514-fadc278`
+- `--connect-timeout` is accepted by the common CLI, but native AROS currently
+  keeps the platform blocking connect path. Do not use unreachable-IP timeout
+  tests as an AROS runtime health check yet.
 
 ## Native Build Sketch
 
@@ -108,5 +113,6 @@ Current limitations:
 - Avoid remote redirection and pipes.
 - Avoid `RAM:` for persistent tests.
 - Interactive console mode is not validated on this SSH path.
+- Unreachable-host network timeout tests are not validated on native AROS yet.
 - BebboSSHd x64 v0.3.1 or newer is required for larger command stack. Older
   builds could run `telegram-test` out of stack during heavier self-tests.

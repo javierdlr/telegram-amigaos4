@@ -380,6 +380,8 @@ Current options:
     --data-dir <path> Set application data directory
     --token-file <path>
                       Override default Telegram token file
+    --connect-timeout <seconds>
+                      Limit TCP connect on supported platforms (0 disables)
     --tls-verify      Verify TLS certificate chain and hostname
     --tls-ca-file <path>
                       CA bundle file for --tls-verify

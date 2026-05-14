@@ -6,12 +6,27 @@
 #include "tg_net.h"
 #include "tg_platform.h"
 
+static unsigned long tg_connect_timeout_seconds = 0;
+
 void tg_net_connection_init(tg_net_connection *connection)
 {
     if (connection != 0) {
         connection->platform_handle = -1;
         connection->is_open = 0;
     }
+}
+
+void tg_net_set_connect_timeout_seconds(unsigned long seconds)
+{
+    if (seconds > 3600UL) {
+        seconds = 3600UL;
+    }
+    tg_connect_timeout_seconds = seconds;
+}
+
+unsigned long tg_net_connect_timeout_seconds(void)
+{
+    return tg_connect_timeout_seconds;
 }
 
 tg_net_status tg_net_connect(tg_net_connection *connection, const char *host, const char *port,

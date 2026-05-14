@@ -11,6 +11,7 @@
 #include "tg_app.h"
 #include "tg_bot.h"
 #include "tg_config.h"
+#include "tg_console.h"
 #include "tg_file.h"
 #include "tg_https.h"
 #include "tg_http.h"
@@ -1085,36 +1086,6 @@ static int tg_parse_decimal_ulong(const char *text, unsigned long *value)
     return 0;
 }
 
-static void tg_trim_ascii_space(char *text)
-{
-    unsigned long start;
-    unsigned long end;
-    unsigned long length;
-
-    if (text == 0) {
-        return;
-    }
-
-    start = 0;
-    while (text[start] == ' ' || text[start] == '\t' ||
-           text[start] == '\r' || text[start] == '\n') {
-        ++start;
-    }
-
-    end = (unsigned long)strlen(text);
-    while (end > start &&
-           (text[end - 1] == ' ' || text[end - 1] == '\t' ||
-            text[end - 1] == '\r' || text[end - 1] == '\n')) {
-        --end;
-    }
-
-    length = end - start;
-    if (start > 0 && length > 0) {
-        memmove(text, text + start, length);
-    }
-    text[length] = '\0';
-}
-
 static int tg_build_data_file_path(const char *data_dir, const char *file_name,
                                    char *buffer, unsigned long buffer_size)
 {
@@ -1213,7 +1184,7 @@ static int tg_load_offset_file(const char *path, char *offset,
         return 1;
     }
 
-    tg_trim_ascii_space(offset);
+    tg_console_trim_ascii_space(offset);
     if (offset[0] != '\0' && !tg_is_decimal_text(offset)) {
         puts("telegram offset file: invalid offset");
         return 1;
@@ -2725,83 +2696,6 @@ static int tg_print_client_console_chats(const char *chat_state_file_path)
                                  tg_print_chat_line_callback, 0, 1);
 }
 
-static int tg_parse_console_reply_command(char *line,
-                                          unsigned long command_length,
-                                          char *index_buffer,
-                                          unsigned long index_buffer_size,
-                                          char **text_start)
-{
-    char *cursor;
-    char *index_start;
-    unsigned long index_length;
-
-    if (line == 0 || index_buffer == 0 || index_buffer_size == 0 ||
-        text_start == 0) {
-        return 1;
-    }
-
-    cursor = line + command_length;
-    while (*cursor == ' ' || *cursor == '\t') {
-        ++cursor;
-    }
-    index_start = cursor;
-    while (*cursor >= '0' && *cursor <= '9') {
-        ++cursor;
-    }
-    index_length = (unsigned long)(cursor - index_start);
-    if (index_length == 0 || index_length + 1 > index_buffer_size) {
-        return 1;
-    }
-    memcpy(index_buffer, index_start, index_length);
-    index_buffer[index_length] = '\0';
-
-    while (*cursor == ' ' || *cursor == '\t') {
-        ++cursor;
-    }
-    if (*cursor == '\0') {
-        return 1;
-    }
-    *text_start = cursor;
-    return 0;
-}
-
-static int tg_parse_console_index_command(char *line,
-                                          unsigned long command_length,
-                                          char *index_buffer,
-                                          unsigned long index_buffer_size)
-{
-    char *cursor;
-    char *index_start;
-    unsigned long index_length;
-
-    if (line == 0 || index_buffer == 0 || index_buffer_size == 0) {
-        return 1;
-    }
-
-    cursor = line + command_length;
-    while (*cursor == ' ' || *cursor == '\t') {
-        ++cursor;
-    }
-    index_start = cursor;
-    while (*cursor >= '0' && *cursor <= '9') {
-        ++cursor;
-    }
-    index_length = (unsigned long)(cursor - index_start);
-    if (index_length == 0 || index_length + 1 > index_buffer_size) {
-        return 1;
-    }
-    while (*cursor == ' ' || *cursor == '\t') {
-        ++cursor;
-    }
-    if (*cursor != '\0') {
-        return 1;
-    }
-
-    memcpy(index_buffer, index_start, index_length);
-    index_buffer[index_length] = '\0';
-    return 0;
-}
-
 static int tg_run_client_console_poll_once(const char *token_file_path,
                                            const char *offset_file_path,
                                            const char *inbox_log_file_path,
@@ -2828,7 +2722,7 @@ static int tg_run_client_console_send_command(const char *token_file_path,
     char *reply_text;
     int rc;
 
-    if (tg_parse_console_reply_command(line, command_length, index_text,
+    if (tg_console_parse_reply_command(line, command_length, index_text,
                                        sizeof(index_text), &reply_text) != 0) {
         printf("telegram client console: use %s\n", usage_text);
         return 0;
@@ -2960,7 +2854,7 @@ static int tg_run_client_console_chat_mode(const char *token_file_path,
             puts("telegram chat: eof");
             return 0;
         }
-        tg_trim_ascii_space(line);
+        tg_console_trim_ascii_space(line);
         if (line[0] == '\0') {
             rc = tg_run_client_console_poll_once(token_file_path,
                                                  offset_file_path,
@@ -3102,7 +2996,7 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             puts("telegram client console: eof");
             return 0;
         }
-        tg_trim_ascii_space(line);
+        tg_console_trim_ascii_space(line);
         if (line[0] == '\0') {
             continue;
         }
@@ -3160,7 +3054,7 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             (line[4] == ' ' || line[4] == '\t')) {
             char index_text[32];
 
-            if (tg_parse_console_index_command(line, 4, index_text,
+            if (tg_console_parse_index_command(line, 4, index_text,
                                                sizeof(index_text)) != 0) {
                 puts("telegram client console: use chat <index>");
                 continue;
@@ -3321,7 +3215,7 @@ static int tg_run_telegram_client_self_test(void)
     }
     strcpy(command_line, "r 2 Hello console");
     command_text = 0;
-    if (tg_parse_console_reply_command(command_line, 1, command_index,
+    if (tg_console_parse_reply_command(command_line, 1, command_index,
                                        sizeof(command_index),
                                        &command_text) != 0 ||
         strcmp(command_index, "2") != 0 ||
@@ -3332,7 +3226,7 @@ static int tg_run_telegram_client_self_test(void)
         return 2;
     }
     strcpy(command_line, "chat 12");
-    if (tg_parse_console_index_command(command_line, 4,
+    if (tg_console_parse_index_command(command_line, 4,
                                        chat_command_index,
                                        sizeof(chat_command_index)) != 0 ||
         strcmp(chat_command_index, "12") != 0) {
@@ -4049,6 +3943,7 @@ int tg_app_run(int argc, char **argv)
 {
     tg_config config;
     tg_net_status net_status;
+    unsigned long connect_timeout_seconds;
     char net_error[128];
     const char *program_name;
 
@@ -4069,6 +3964,15 @@ int tg_app_run(int argc, char **argv)
     }
 
     tg_log_set_level(config.log_level);
+    if (config.connect_timeout_seconds != 0) {
+        if (tg_parse_decimal_ulong(config.connect_timeout_seconds,
+                                   &connect_timeout_seconds) != 0 ||
+            connect_timeout_seconds > 3600UL) {
+            fprintf(stderr, "connect timeout: invalid value\n");
+            return 2;
+        }
+        tg_net_set_connect_timeout_seconds(connect_timeout_seconds);
+    }
     tg_tls_set_certificate_validation(config.tls_verify,
                                       config.tls_ca_file,
                                       config.tls_ca_path);

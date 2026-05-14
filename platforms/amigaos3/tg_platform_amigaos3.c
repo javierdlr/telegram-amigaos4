@@ -105,12 +105,11 @@ void tg_platform_sleep_seconds(unsigned long seconds)
 int tg_platform_stdin_readable(unsigned long timeout_seconds)
 {
 #if defined(__amigaos3__)
-    unsigned long timeout_microseconds;
+    unsigned long long timeout_microseconds;
 
-    if (timeout_seconds > (2147000000UL / 1000000UL)) {
-        timeout_microseconds = 2147000000UL;
-    } else {
-        timeout_microseconds = timeout_seconds * 1000000UL;
+    timeout_microseconds = (unsigned long long)timeout_seconds * 1000000ULL;
+    if (timeout_microseconds > 2147000000ULL) {
+        timeout_microseconds = 2147000000ULL;
     }
     return WaitForChar(Input(), (long)timeout_microseconds) != 0;
 #else

@@ -19,6 +19,7 @@
 typedef struct tg_config {
     const char *data_dir;
     const char *token_file_path_override;
+    const char *connect_timeout_seconds;
     const char *tls_ca_file;
     const char *tls_ca_path;
     const char *inbox_log_file_path;

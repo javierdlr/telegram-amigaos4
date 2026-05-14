@@ -5,6 +5,7 @@ src/main.c
 core/tg_app.c
 core/tg_bot.c
 core/tg_config.c
+core/tg_console.c
 core/tg_file.c
 core/tg_http.c
 core/tg_https.c
@@ -16,6 +17,7 @@ core/tg_tls.c
 include/tg_app.h
 include/tg_bot.h
 include/tg_config.h
+include/tg_console.h
 include/tg_file.h
 include/tg_http.h
 include/tg_https.h

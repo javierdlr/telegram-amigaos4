@@ -34,6 +34,10 @@ struct Library *SocketBase = 0;
 
 #include "tg_platform.h"
 
+#if !defined(__AROS__)
+#include <fcntl.h>
+#endif
+
 const char *tg_platform_name(void)
 {
     return "AROS";
@@ -59,12 +63,11 @@ void tg_platform_sleep_seconds(unsigned long seconds)
 int tg_platform_stdin_readable(unsigned long timeout_seconds)
 {
 #if defined(__AROS__)
-    unsigned long timeout_microseconds;
+    unsigned long long timeout_microseconds;
 
-    if (timeout_seconds > (2147000000UL / 1000000UL)) {
-        timeout_microseconds = 2147000000UL;
-    } else {
-        timeout_microseconds = timeout_seconds * 1000000UL;
+    timeout_microseconds = (unsigned long long)timeout_seconds * 1000000ULL;
+    if (timeout_microseconds > 2147000000ULL) {
+        timeout_microseconds = 2147000000ULL;
     }
     return WaitForChar(Input(), (long)timeout_microseconds) != 0;
 #else
@@ -107,6 +110,86 @@ static void tg_aros_close_socket_library(void)
         CloseLibrary(SocketBase);
         SocketBase = 0;
     }
+}
+#endif
+
+#if !defined(__AROS__)
+static tg_net_status tg_platform_connect_socket(int sock, struct sockaddr_in *address,
+                                                char *error_buffer,
+                                                unsigned long error_buffer_size)
+{
+    unsigned long timeout_seconds;
+    int flags;
+    int rc;
+    int socket_error;
+    socklen_t socket_error_size;
+    fd_set write_fds;
+    struct timeval timeout;
+
+    timeout_seconds = tg_net_connect_timeout_seconds();
+    if (timeout_seconds == 0) {
+        rc = connect(sock, (struct sockaddr *)address, sizeof(*address));
+        if (rc == 0) {
+            return TG_NET_OK;
+        }
+        tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+        return TG_NET_CONNECT_FAILED;
+    }
+
+    flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        rc = connect(sock, (struct sockaddr *)address, sizeof(*address));
+        if (rc == 0) {
+            return TG_NET_OK;
+        }
+        tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+        return TG_NET_CONNECT_FAILED;
+    }
+
+    rc = connect(sock, (struct sockaddr *)address, sizeof(*address));
+    if (rc == 0) {
+        (void)fcntl(sock, F_SETFL, flags);
+        return TG_NET_OK;
+    }
+    if (errno != EINPROGRESS && errno != EWOULDBLOCK) {
+        (void)fcntl(sock, F_SETFL, flags);
+        tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+        return TG_NET_CONNECT_FAILED;
+    }
+
+    FD_ZERO(&write_fds);
+    FD_SET(sock, &write_fds);
+    timeout.tv_sec = (long)timeout_seconds;
+    timeout.tv_usec = 0;
+
+    rc = select(sock + 1, 0, &write_fds, 0, &timeout);
+    if (rc <= 0) {
+        (void)fcntl(sock, F_SETFL, flags);
+        if (rc == 0) {
+            tg_platform_set_error(error_buffer, error_buffer_size,
+                                  "socket connect timed out");
+        } else {
+            tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+        }
+        return TG_NET_CONNECT_FAILED;
+    }
+
+    socket_error = 0;
+    socket_error_size = sizeof(socket_error);
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &socket_error,
+                   &socket_error_size) != 0) {
+        (void)fcntl(sock, F_SETFL, flags);
+        tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+        return TG_NET_CONNECT_FAILED;
+    }
+    if (socket_error != 0) {
+        (void)fcntl(sock, F_SETFL, flags);
+        tg_platform_set_error(error_buffer, error_buffer_size, strerror(socket_error));
+        return TG_NET_CONNECT_FAILED;
+    }
+
+    (void)fcntl(sock, F_SETFL, flags);
+    return TG_NET_OK;
 }
 #endif
 
@@ -161,15 +244,23 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
         return TG_NET_CONNECT_FAILED;
     }
 
+#if defined(__AROS__)
     rc = connect(sock, (struct sockaddr *)&address, sizeof(address));
     if (rc == 0) {
+#else
+    (void)rc;
+    if (tg_platform_connect_socket(sock, &address, error_buffer,
+                                   error_buffer_size) == TG_NET_OK) {
+#endif
         connection->platform_handle = sock;
         connection->is_open = 1;
         return TG_NET_OK;
     }
 
     close(sock);
+#if defined(__AROS__)
     tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+#endif
 #if defined(__AROS__)
     tg_aros_close_socket_library();
 #endif
