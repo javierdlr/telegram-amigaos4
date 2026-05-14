@@ -3,8 +3,9 @@
 # Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
 # SPDX-License-Identifier: MIT
 #
-# Experimental package helper for AROS x86_64. This target is not validated yet;
-# use it only after building with a matching native or cross AROS x86_64 setup.
+# Package helper for the AROS x86_64 offline pre-alpha tester. TLS is not
+# available yet on this target because the validated SDK lacks OpenSSL headers
+# and libraries.
 
 set -eu
 
@@ -39,12 +40,14 @@ cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
 cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
 
 cat > "$DEST_DIR/README.txt" <<EOF
-Telegram Amiga - AROS x86_64 experimental pre-alpha tester
+Telegram Amiga - AROS x86_64 offline pre-alpha tester
 Build: $COMMIT_ID
 TLS enabled: $ENABLE_TLS
 
-This target is not validated yet. The current tested AROS package is the AROS
-One i386 alt-abiv0 build.
+This target has been validated for offline self-tests on hosted AROS x86_64
+through short non-interactive BebboSSHd commands. It is not a live Telegram
+build yet because the current AROS x86_64 SDK used for this package does not
+include OpenSSL headers or libraries.
 
 Minimum offline test:
 
@@ -60,6 +63,20 @@ Minimum offline test:
 
 If built with TLS enabled, use only disposable test bot tokens until HTTPS has
 been validated repeatedly on the target.
+
+For this package, TLS is expected to be disabled. Commands that need HTTPS or
+Telegram live API access are expected to report unsupported until the x86_64
+OpenSSL SDK path is available.
+
+Hosted AROS x86_64 runtime notes:
+
+  - 10.255.222.2:2222 is a TAP-internal endpoint on the Linux build server.
+  - It works only while hosted AROS is running, and normally only from that
+    server unless an SSH tunnel is used.
+  - Use BebboSSHd x64 v0.3.1 or newer. Older x64 builds used too small a
+    command stack for heavier telegram-test self-tests.
+  - Use short non-interactive commands. Do not use shell redirection or pipes.
+  - Do not rely on interactive console mode through this SSH path yet.
 
 Full notes are in README.md. The common checklist is in HOW_TO_TEST.md.
 TLS validation details are in TLS_CERTIFICATES.md.
