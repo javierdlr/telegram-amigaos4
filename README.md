@@ -318,19 +318,6 @@ controlled `sendMessage` and TLS certificate validation with an explicit CA
 bundle. Certificate validation depends on the system date being correct. See
 `docs/AMIGAOS4_TESTER.md`.
 
-Flow Studio on MorphOS:
-
-- `default.sprj` is the auto-loadable Flow Studio project.
-- `telegram-amiga.xprj` can be opened manually from the project requester.
-- Open a source file from `Work:Dev/telegram-amiga` or start Flow Studio with
-  `PROJECT=Work:Dev/telegram-amiga/default.sprj`.
-- The build uses `System:Development/gg/bin/make -f Makefile.morphos all`.
-- If opening only the project shows just `Build Rules`, run
-  `execute Work:Dev/telegram-amiga/OpenTelegramAmiga.flow`: it opens the project
-  together with the main source files, so the Project Lister has an active C
-  file from which it can populate Source/Header/Build.
-- `telegram-amiga.files` contains the list of the main project files.
-
 MorphOS tester package:
 
 ```sh

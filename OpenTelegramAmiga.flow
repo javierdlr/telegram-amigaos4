@@ -1,8 +1,0 @@
-; Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
-; SPDX-License-Identifier: MIT
-;
-; MorphOS Flow Studio launcher.
-; Run this from Shell on MorphOS:
-;   execute Work:Dev/telegram-amiga/OpenTelegramAmiga.flow
-
-System:Applications/FlowStudio/FlowStudio PROJECT=Work:Dev/telegram-amiga/telegram-amiga.xprj Work:Dev/telegram-amiga/src/main.c Work:Dev/telegram-amiga/core/tg_bot.c Work:Dev/telegram-amiga/core/tg_file.c Work:Dev/telegram-amiga/core/tg_http.c Work:Dev/telegram-amiga/core/tg_https.c Work:Dev/telegram-amiga/core/tg_json.c Work:Dev/telegram-amiga/core/tg_telegram.c Work:Dev/telegram-amiga/core/tg_tls.c
