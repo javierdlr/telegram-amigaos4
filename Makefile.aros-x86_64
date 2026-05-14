@@ -4,14 +4,35 @@
 # Experimental AROS x86_64 build file.
 #
 # This is meant for native AROS x86_64 builds first. Cross-build users can
-# override CC, CFLAGS, LDFLAGS and LDLIBS from the command line once a matching
-# SDK/toolchain is available on the host.
+# set AROS_SDK_ROOT and AROS_TOOLCHAIN when a matching SDK/toolchain is
+# available on the host.
 
+ifdef AROS_TOOLCHAIN
+CC = $(AROS_TOOLCHAIN)/x86_64-aros-gcc
+else
 CC ?= gcc
+endif
 CFLAGS ?= -Wall -Wextra -O2 -Iinclude
 TARGET ?= build/aros-x86_64/telegram-test
 SRC := src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_file.c core/tg_http.c core/tg_https.c core/tg_json.c core/tg_telegram.c core/tg_log.c core/tg_net.c core/tg_tls.c platforms/aros/tg_platform_aros.c
 ENABLE_TLS ?= 0
+SDK_GCC_ROOT ?= $(AROS_TOOLCHAIN)/lib/gcc/x86_64-aros/10.5.0
+
+ifneq ($(AROS_SDK_ROOT),)
+CFLAGS += -D__AROS__
+CPPFLAGS += -nostdinc \
+	-isystem "$(SDK_GCC_ROOT)/include" \
+	-isystem "$(SDK_GCC_ROOT)/include-fixed" \
+	-I"$(AROS_SDK_ROOT)/include/aros/posixc" \
+	-I"$(AROS_SDK_ROOT)/include/aros/stdc" \
+	-I"$(AROS_SDK_ROOT)/include"
+LDFLAGS += -nostdlib \
+	-L"$(AROS_SDK_ROOT)/lib" \
+	-L"$(SDK_GCC_ROOT)"
+LDSTART := "$(AROS_SDK_ROOT)/lib/startup.o"
+LDLIBS += -lautoinit -lcrtprog -lcrt -lstdlib -lstdc.static \
+	-lamiga -laros -ldos -lexec -lutility -lgcc -lautoinit -lamiga
+endif
 
 ifeq ($(ENABLE_TLS),1)
 CFLAGS += -DTG_ENABLE_TLS=1
@@ -24,7 +45,7 @@ all: $(TARGET)
 
 $(TARGET): $(SRC) include/tg_app.h include/tg_bot.h include/tg_config.h include/tg_file.h include/tg_http.h include/tg_https.h include/tg_json.h include/tg_telegram.h include/tg_log.h include/tg_net.h include/tg_platform.h include/tg_tls.h
 	mkdir -p "$(dir $@)"
-	$(CC) $(CFLAGS) $(LDFLAGS) -o "$@" $(SRC) $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(LDSTART) -o "$@" $(SRC) $(LDLIBS)
 
 clean:
 	rm -f "$(TARGET)"

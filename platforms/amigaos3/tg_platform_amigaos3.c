@@ -5,16 +5,9 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 #ifndef TG_AMIGAOS3_ENABLE_AMISSL
 #define TG_AMIGAOS3_ENABLE_AMISSL 0
-#endif
-
-#if defined(__amigaos3__) && TG_AMIGAOS3_ENABLE_AMISSL
-#ifndef __USE_NEW_TIMEVAL__
-#define __USE_NEW_TIMEVAL__
-#endif
 #endif
 
 #if defined(__amigaos3__)
@@ -23,7 +16,13 @@
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#endif
+
+#if defined(__amigaos3__)
 #include <proto/dos.h>
+#include <unistd.h>
+#else
+#include <unistd.h>
 #endif
 
 #if defined(__amigaos3__) && TG_AMIGAOS3_ENABLE_AMISSL
@@ -86,8 +85,15 @@ void tg_platform_log(const char *level, const char *message)
 void tg_platform_sleep_seconds(unsigned long seconds)
 {
 #if defined(__amigaos3__)
+    unsigned long ticks;
+
     if (seconds > 0) {
-        sleep(seconds);
+        if (seconds > (2147483647UL / 50UL)) {
+            ticks = 2147483647UL;
+        } else {
+            ticks = seconds * 50UL;
+        }
+        Delay((LONG)ticks);
     }
 #else
     if (seconds > 0) {

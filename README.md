@@ -194,8 +194,10 @@ Experimental AROS x86_64 builds can start from:
 make -f Makefile.aros-x86_64 all ENABLE_TLS=1
 ```
 
-This target is not validated yet and should use the same OpenSSL-based TLS path
-once a matching AROS x86_64 SDK/toolchain is available. See
+The offline cross-build path is available when `AROS_SDK_ROOT` and
+`AROS_TOOLCHAIN` point at a matching AROS x86_64 SDK/toolchain. Runtime
+validation and TLS are still pending; OpenSSL headers/libraries must be present
+in the x86_64 SDK before `ENABLE_TLS=1` can work. See
 `docs/AROS_X86_64_TESTER.md`.
 
 Recommended AROS offline smoke test:

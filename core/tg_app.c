@@ -3833,6 +3833,10 @@ static int tg_run_telegram_send_message_self_test(void)
         "\r\n"
         "{\"ok\":true,\"result\":{\"message_id\":42,\"chat\":{\"id\":123},\"text\":\"Hello Amiga\"}}";
     static const char text[] = "Hello \"Amiga\"\nBackslash \\";
+    static const char expected_body[] =
+        "{\"chat_id\":\"123\",\"text\":\"Hello \\\"Amiga\\\"\\nBackslash \\\\\"}";
+    static const char expected_slash_body[] =
+        "{\"chat_id\":\"123\",\"text\":\"\\\\\"}";
     tg_bot_status bot_status;
     tg_bot_call_result result;
     char body[256];
@@ -3845,9 +3849,19 @@ static int tg_run_telegram_send_message_self_test(void)
                tg_bot_status_name(bot_status));
         return 2;
     }
-    if (strstr(body, "\"chat_id\":\"123\"") == 0 ||
-        strstr(body, "Hello \\\"Amiga\\\"\\nBackslash \\\\") == 0) {
+    if (strcmp(body, expected_body) != 0 ||
+        body_length != (unsigned long)strlen(expected_body)) {
         puts("telegram sendMessage self-test: body mismatch");
+        printf("telegram sendMessage body: %s\n", body);
+        return 2;
+    }
+    bot_status = tg_bot_build_send_message_body("123", "\\",
+                                                body, sizeof(body),
+                                                &body_length);
+    if (bot_status != TG_BOT_OK ||
+        strcmp(body, expected_slash_body) != 0 ||
+        body_length != (unsigned long)strlen(expected_slash_body)) {
+        puts("telegram sendMessage self-test: trailing slash mismatch");
         printf("telegram sendMessage body: %s\n", body);
         return 2;
     }
