@@ -85,6 +85,9 @@ make -f Makefile.aros-i386-abiv0 all ENABLE_TLS=0 \
 
 This hosted i386 path is currently useful for offline build smoke tests. It is
 not yet a replacement for the AROS One i386 alt-abiv0 live Telegram validation.
+With BebboSSHd AROS commit `eae8a99` or newer, the hosted i386 runtime has
+passed the full offline self-test list below over short non-interactive SSH
+commands.
 
 For initial AROS x86_64 experiments, use:
 
