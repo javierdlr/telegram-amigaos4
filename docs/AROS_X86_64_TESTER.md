@@ -12,9 +12,12 @@ needs a matching x86_64 AROS SDK/toolchain and target-side validation.
 - TLS backend planned: OpenSSL
 - Offline cross-build status: validated on a Linux server with the AROS x86_64
   GCC 10.5.0 toolchain and SDK.
-- Runtime status: hosted AROS x86_64 SSH is usable only while the hosted
-  runtime is running on the Linux server. `10.255.222.2:2222` is a TAP-internal
-  endpoint, not a permanent public service.
+- Runtime status: hosted AROS x86_64 SSH is usable for short non-interactive
+  commands while the hosted runtime is running on the Linux server.
+  `10.255.222.2:2222` is a TAP-internal endpoint, not a permanent public
+  service.
+- Offline target-side status: core self-tests have passed over hosted AROS
+  x86_64 SSH.
 - TLS build status: blocked until OpenSSL headers and libraries are available
   in the AROS x86_64 SDK/toolchain.
 - Live Telegram status: not validated
@@ -105,5 +108,5 @@ Current limitations:
 - Avoid remote redirection and pipes.
 - Avoid `RAM:` for persistent tests.
 - Interactive console mode is not validated on this SSH path.
-- If a command timeout leaves BebboSSHd unable to create its command output
-  file, restart the hosted runtime before continuing.
+- BebboSSHd x64 v0.3.1 or newer is required for larger command stack. Older
+  builds could run `telegram-test` out of stack during heavier self-tests.
