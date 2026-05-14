@@ -627,10 +627,12 @@ quit. The console uses the same `telegram-offset.txt`, `telegram-inbox.log` and
 `telegram-chats.txt` files as `telegram-client-default`. After `read` or
 `poll`, it prints the saved chat list automatically and suggests the
 `reply <index> <text>` form. Inside chat mode, type normal text to send to the
-selected chat. The console auto-reads every 5 seconds by default while waiting
-for input; use `/watch <seconds>` to change the interval, `/watch off` to
-disable it, or `/read`, `/poll`, `/p`, `/list`, `/chats`, `/last`, `/status`,
-`/back` and `/quit`.
+selected chat. Successful chat sends are quiet and print only `me: <text>`;
+HTTP/API diagnostics are still printed for explicit `send` and `reply`
+commands. The console auto-reads every 5 seconds by default while waiting for
+input; use `/watch <seconds>` to change the interval, `/watch off` to disable
+it, or `/read`, `/poll`, `/p`, `/list`, `/chats`, `/last`, `/status`, `/back`
+and `/quit`.
 
 List the saved chats:
 

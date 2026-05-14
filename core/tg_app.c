@@ -2610,6 +2610,10 @@ static int tg_run_telegram_send_chat_path(const char *token_file_path,
 static int tg_run_telegram_send_message_path(const char *token_file_path,
                                              const char *chat_id,
                                              const char *text);
+static int tg_run_telegram_send_message_path_verbose(const char *token_file_path,
+                                                     const char *chat_id,
+                                                     const char *text,
+                                                     int verbose);
 
 static int tg_print_last_inbox_line(const char *inbox_log_file_path)
 {
@@ -2925,7 +2929,8 @@ static int tg_run_client_console_chat_mode(const char *token_file_path,
             continue;
         }
 
-        rc = tg_run_telegram_send_message_path(token_file_path, chat_id, line);
+        rc = tg_run_telegram_send_message_path_verbose(token_file_path,
+                                                       chat_id, line, 0);
         if (rc != 0) {
             return rc;
         }
@@ -3883,6 +3888,15 @@ static int tg_run_telegram_send_message_path(const char *token_file_path,
                                              const char *chat_id,
                                              const char *text)
 {
+    return tg_run_telegram_send_message_path_verbose(token_file_path,
+                                                     chat_id, text, 1);
+}
+
+static int tg_run_telegram_send_message_path_verbose(const char *token_file_path,
+                                                     const char *chat_id,
+                                                     const char *text,
+                                                     int verbose)
+{
     tg_bot_status bot_status;
     tg_bot_call_result result;
     char error_buffer[256];
@@ -3900,13 +3914,22 @@ static int tg_run_telegram_send_message_path(const char *token_file_path,
         return 2;
     }
 
-    printf("telegram sendMessage: received %lu bytes\n", http_response_length);
-    printf("telegram http status: %d\n", result.response.http_status_code);
-    tg_print_telegram_response(&result.response.api);
+    if (verbose) {
+        printf("telegram sendMessage: received %lu bytes\n",
+               http_response_length);
+        printf("telegram http status: %d\n",
+               result.response.http_status_code);
+        tg_print_telegram_response(&result.response.api);
+    }
 
     if (result.response.http_status_code < 200 ||
         result.response.http_status_code > 299 ||
         !result.response.api.ok) {
+        if (!verbose) {
+            printf("telegram sendMessage: http status %d\n",
+                   result.response.http_status_code);
+            tg_print_telegram_response(&result.response.api);
+        }
         return 2;
     }
 

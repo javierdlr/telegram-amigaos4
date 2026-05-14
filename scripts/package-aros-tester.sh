@@ -49,6 +49,7 @@ Minimum offline test:
   telegram-test --telegram-inbox-self-test
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
+  telegram-test --telegram-console-self-test
   telegram-test --telegram-client-self-test
   telegram-test --telegram-tls-status
 
@@ -71,7 +72,13 @@ If this package was built with TLS enabled, optional supervised live tests are:
 
 Inside the console, use p/poll/read to poll, l/list to list saved chats,
 i/last/inbox to show the last inbox line, s/status to show local state,
-chat <index> to enter a simple line-oriented chat, r/send/reply <index> <text> to send a controlled reply, h/help for help and q/quit to quit. Inside chat mode, type normal text to send. It auto-reads every 5 seconds by default while waiting for input; use /watch <seconds> to change the interval, /watch off to disable it, or /read, /list, /last, /status, /back and /quit.
+chat <index>, open <index> or a bare numeric index to enter a line-oriented
+chat, r/send/reply <index> <text> to send a controlled reply, h/help for help
+and q/quit to quit. Inside chat mode, type normal text to send. Successful
+chat sends are quiet and print only me: <text>. It auto-reads every 5 seconds
+by default while waiting for input; use /watch <seconds> to change the
+interval, /watch off to disable it, or /read, /poll, /p, /list, /chats, /last,
+/status, /back and /quit.
 
 If this package was built with TLS disabled, live Telegram commands are expected
 to report unsupported.
