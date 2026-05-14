@@ -196,8 +196,10 @@ make -f Makefile.aros-x86_64 all ENABLE_TLS=1
 
 The offline cross-build path is available when `AROS_SDK_ROOT` and
 `AROS_TOOLCHAIN` point at a matching AROS x86_64 SDK/toolchain. Runtime
-validation and TLS are still pending; OpenSSL headers/libraries must be present
-in the x86_64 SDK before `ENABLE_TLS=1` can work. See
+validation uses a hosted AROS TAP endpoint that is available only while the
+runtime is running on the Linux server; it is not a permanent public service.
+TLS is still pending because OpenSSL headers/libraries must be present in the
+x86_64 SDK before `ENABLE_TLS=1` can work. See
 `docs/AROS_X86_64_TESTER.md`.
 
 Recommended AROS offline smoke test:

@@ -12,8 +12,9 @@ needs a matching x86_64 AROS SDK/toolchain and target-side validation.
 - TLS backend planned: OpenSSL
 - Offline cross-build status: validated on a Linux server with the AROS x86_64
   GCC 10.5.0 toolchain and SDK.
-- Runtime status: waiting for hosted AROS x86_64 SSH reachability before
-  target-side self-tests can be called validated.
+- Runtime status: hosted AROS x86_64 SSH is usable only while the hosted
+  runtime is running on the Linux server. `10.255.222.2:2222` is a TAP-internal
+  endpoint, not a permanent public service.
 - TLS build status: blocked until OpenSSL headers and libraries are available
   in the AROS x86_64 SDK/toolchain.
 - Live Telegram status: not validated
@@ -79,3 +80,30 @@ telegram-test --telegram-preflight
 
 Live Bot API tests should use only a disposable test bot token until the target
 has passed repeated HTTPS tests.
+
+## Hosted Runtime Access
+
+When the hosted AROS x86_64 runtime is running on the Linux server, short
+non-interactive commands can be executed from that server:
+
+```sh
+sshpass -p test ssh -p 2222 \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  -o PreferredAuthentications=password \
+  -o PubkeyAuthentication=no \
+  test@10.255.222.2 "C:Version"
+```
+
+`10.255.222.2:2222` is reachable only from inside the server while the TAP
+runtime is active. From another machine, use an SSH tunnel to the server first,
+then connect to the forwarded local port.
+
+Current limitations:
+
+- Use short non-interactive commands only.
+- Avoid remote redirection and pipes.
+- Avoid `RAM:` for persistent tests.
+- Interactive console mode is not validated on this SSH path.
+- If a command timeout leaves BebboSSHd unable to create its command output
+  file, restart the hosted runtime before continuing.
