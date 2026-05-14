@@ -13,7 +13,7 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/packages"}
 BINARY=${BINARY:-"$ROOT_DIR/build/amigaos4/telegram-test"}
 DATE_STAMP=$(date +%Y%m%d)
-COMMIT_ID=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 DRAWER_NAME="telegram-amiga-amigaos4-prealpha-$DATE_STAMP-$COMMIT_ID"
 DEST_DIR="$PACKAGE_ROOT/$DRAWER_NAME"
 

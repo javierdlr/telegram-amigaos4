@@ -15,7 +15,7 @@ AMISSL_API_VERSION=${AMISSL_API_VERSION:-AMISSL_V340}
 PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/packages"}
 TARGET=${TARGET:-"$ROOT_DIR/build/amigaos3/telegram-test-amissl"}
 DATE_STAMP=$(date +%Y%m%d)
-COMMIT_ID=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 DRAWER_NAME="telegram-amiga-amigaos3-prealpha-$DATE_STAMP-$COMMIT_ID"
 DEST_DIR="$PACKAGE_ROOT/$DRAWER_NAME"
 

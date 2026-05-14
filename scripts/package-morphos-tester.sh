@@ -14,7 +14,7 @@ PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/packages"}
 BINARY=${BINARY:-"$ROOT_DIR/build/morphos/telegram-test"}
 TLS_MODE=${TLS_MODE:-0}
 DATE_STAMP=$(date +%Y%m%d)
-COMMIT_ID=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 DRAWER_NAME="telegram-amiga-morphos-prealpha-$DATE_STAMP-$COMMIT_ID"
 DEST_DIR="$PACKAGE_ROOT/$DRAWER_NAME"
 
