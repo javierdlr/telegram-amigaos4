@@ -312,6 +312,31 @@ Execute scripts/BuildAmigaOS4Offline
 Execute scripts/BuildAmigaOS4AmiSSL
 ```
 
+AmigaOS 4.x can also be cross-built from macOS/Linux with the
+`walkero/amigagccondocker:os4-gcc11` container. The container ships AmiSSL
+headers and `libamisslauto.a`, while native OS4 builds normally use
+`libamisslstubs.a`. The Docker AmiSSL build therefore overrides the library
+selection:
+
+```sh
+cd /Users/kaffeine/amiga-dev/projects/os4-cross
+colima start
+rm -rf work/telegram-amiga
+rsync -a --exclude .git --exclude build \
+  /Users/kaffeine/amiga-dev/projects/telegram-amiga/ work/telegram-amiga/
+
+./bin/os4-run sh -lc 'cd telegram-amiga &&
+  make -f Makefile.amigaos4 clean all \
+    ENABLE_AMISSL=1 \
+    AMISSL_LIB=amisslauto \
+    AMISSL_LIBDIR=/opt/ppc-amigaos/ppc-amigaos/SDK/local/newlib/lib \
+    TARGET=build/os4-cross-amissl/telegram-test'
+```
+
+The Docker-built AmiSSL binary has passed the console, client and TLS-status
+self-tests on the QEMU AmigaOS 4.x target. Runtime validation on AmigaOS 4.x is
+still required before publishing a tester package.
+
 The QEMU test target has passed native GCC builds, offline self-tests, AmiSSL
 HTTPS, `--telegram-preflight`, `--telegram-getme`, read-only polling,
 controlled `sendMessage` and TLS certificate validation with an explicit CA

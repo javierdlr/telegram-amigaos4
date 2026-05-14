@@ -92,6 +92,47 @@ Build the AmiSSL-enabled HTTPS tester:
 make -f Makefile.amigaos4 clean all ENABLE_AMISSL=1
 ```
 
+## Cross-Build With Docker
+
+The project can be cross-built from macOS/Linux with the
+`walkero/amigagccondocker:os4-gcc11` container. The local helper workspace used
+for supervised testing is outside this repository:
+
+```text
+/Users/kaffeine/amiga-dev/projects/os4-cross
+```
+
+The container has AmiSSL headers and `libamisslauto.a`, but not
+`libamisslstubs.a`. Native AmigaOS 4.x builds keep using the default
+`AMISSL_LIB=amisslstubs`; Docker builds should override it:
+
+```sh
+cd /Users/kaffeine/amiga-dev/projects/os4-cross
+colima start
+rm -rf work/telegram-amiga
+rsync -a --exclude .git --exclude build \
+  /Users/kaffeine/amiga-dev/projects/telegram-amiga/ work/telegram-amiga/
+
+./bin/os4-run sh -lc 'cd telegram-amiga &&
+  make -f Makefile.amigaos4 clean all \
+    ENABLE_AMISSL=1 \
+    AMISSL_LIB=amisslauto \
+    AMISSL_LIBDIR=/opt/ppc-amigaos/ppc-amigaos/SDK/local/newlib/lib \
+    TARGET=build/os4-cross-amissl/telegram-test'
+```
+
+The resulting binary is an ELF PowerPC AmigaOS 4.x executable. The Docker-built
+AmiSSL binary has passed these QEMU AmigaOS 4.x checks:
+
+```text
+RAM:telegram-test-os4-cross --telegram-console-self-test
+RAM:telegram-test-os4-cross --telegram-client-self-test
+RAM:telegram-test-os4-cross --telegram-tls-status
+```
+
+Reboot the QEMU target before validation if previous SSH-driven Telegram tests
+timed out or left stale output in BebboSSHd.
+
 If `make` is not available but `gcc` is available, use the included AmigaDOS
 helper from the project drawer:
 
