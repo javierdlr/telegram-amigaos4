@@ -75,10 +75,11 @@ i/last/inbox to show the last inbox line, s/status to show local state,
 chat <index>, open <index> or a bare numeric index to enter a line-oriented
 chat, r/send/reply <index> <text> to send a controlled reply, h/help for help
 and q/quit to quit. Inside chat mode, type normal text to send. Successful
-chat sends are quiet and print only me: <text>. It auto-reads every 5 seconds
-by default while waiting for input; use /watch <seconds> to change the
-interval, /watch off to disable it, or /read, /poll, /p, /list, /chats, /last,
-/status, /back and /quit.
+chat sends are quiet and print only me: <text>. Use watch <seconds> in the
+top-level console to auto-read while waiting at the prompt, or watch off to
+disable it. Chat mode auto-reads every 5 seconds by default; use /watch
+<seconds>, /watch off, /read, /poll, /p, /list, /chats, /last, /status, /back
+and /quit.
 
 If this package was built with TLS disabled, live Telegram commands are expected
 to report unsupported.

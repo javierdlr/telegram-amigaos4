@@ -150,17 +150,23 @@ int tg_console_parse_watch_command(const char *line,
                                    unsigned long *watch_seconds)
 {
     const char *cursor;
+    unsigned long prefix_length;
     unsigned long seconds;
 
     if (line == 0 || watch_seconds == 0) {
         return 1;
     }
-    if (strncmp(line, "/watch", 6) != 0 ||
-        (line[6] != '\0' && line[6] != ' ' && line[6] != '\t')) {
+    if (strncmp(line, "/watch", 6) == 0 &&
+        (line[6] == '\0' || line[6] == ' ' || line[6] == '\t')) {
+        prefix_length = 6UL;
+    } else if (strncmp(line, "watch", 5) == 0 &&
+               (line[5] == '\0' || line[5] == ' ' || line[5] == '\t')) {
+        prefix_length = 5UL;
+    } else {
         return 1;
     }
 
-    cursor = line + 6;
+    cursor = line + prefix_length;
     while (*cursor == ' ' || *cursor == '\t') {
         ++cursor;
     }

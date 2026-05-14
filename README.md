@@ -126,7 +126,9 @@ Initial core modules:
   token, offset, inbox log and chat-state files. It never sends automatically.
   A saved chat can be opened with `chat <index>`, `open <index>` or just the
   numeric index; inside chat mode, normal text is sent to that chat and new
-  messages are polled with `/read` or the optional `/watch` interval.
+  messages are polled with `/read` or the optional `/watch` interval. The
+  top-level console can also use `watch <seconds>` to auto-read while waiting
+  at the prompt.
 
 TLS note: current TLS builds use SNI. Certificate validation is now available
 as an opt-in path with `--tls-verify`, `--tls-ca-file` and `--tls-ca-path`.
@@ -641,10 +643,12 @@ quit. The console uses the same `telegram-offset.txt`, `telegram-inbox.log` and
 `reply <index> <text>` form. Inside chat mode, type normal text to send to the
 selected chat. Successful chat sends are quiet and print only `me: <text>`;
 HTTP/API diagnostics are still printed for explicit `send` and `reply`
-commands. The console auto-reads every 5 seconds by default while waiting for
-input; use `/watch <seconds>` to change the interval, `/watch off` to disable
-it, or `/read`, `/poll`, `/p`, `/list`, `/chats`, `/last`, `/status`, `/back`
-and `/quit`.
+commands. Use `watch <seconds>` in the top-level console to auto-read while
+waiting at the prompt, or `watch off` to disable it. Inside chat mode, the
+console auto-reads every 5 seconds by default while waiting for input; use
+`/watch <seconds>` to change the interval, `/watch off` to disable it, or
+`/read`, `/poll`, `/p`, `/list`, `/chats`, `/last`, `/status`, `/back` and
+`/quit`.
 
 List the saved chats:
 

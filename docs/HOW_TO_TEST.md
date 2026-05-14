@@ -114,11 +114,12 @@ quit
 chat index with `reply <index> <text>`, or use `chat <index>`, `open <index>`
 or a bare numeric index to enter a line-oriented chat mode. In chat mode, type
 normal text to send it to the selected chat. Successful chat sends are quiet
-and print only `me: <text>`. It auto-reads every 5 seconds by default while
-waiting for input; use `/watch <seconds>` to change the interval, `/watch off`
-to disable it, `/read`/`/poll`/`/p` to poll immediately, `/list`/`/chats` to
-show chats, and `/back` or `/quit` to leave. The console never sends automatic
-replies.
+and print only `me: <text>`. Use `watch <seconds>` in the top-level console to
+auto-read while waiting at the prompt, or `watch off` to disable it. Chat mode
+auto-reads every 5 seconds by default while waiting for input; use
+`/watch <seconds>` to change the interval, `/watch off` to disable it,
+`/read`/`/poll`/`/p` to poll immediately, `/list`/`/chats` to show chats, and
+`/back` or `/quit` to leave. The console never sends automatic replies.
 
 ## 6. Report Results
 

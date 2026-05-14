@@ -2683,6 +2683,8 @@ static void tg_print_client_console_help(void)
 {
     puts("telegram client console commands:");
     puts("  p, poll, read           receive new messages");
+    puts("  watch <seconds>, watch off");
+    puts("                           auto-read while waiting at the prompt");
     puts("  l, list                 show saved chats");
     puts("  i, last, inbox          show last inbox line");
     puts("  s, status               show local files and offset");
@@ -2789,6 +2791,44 @@ static int tg_chat_set_watch_seconds(char *line, unsigned long *watch_seconds)
         return 0;
     }
     printf("telegram chat: auto-read every %lu second(s)\n", *watch_seconds);
+    return 0;
+}
+
+static unsigned long tg_console_initial_watch_seconds(const char *poll_seconds_text)
+{
+    unsigned long seconds;
+
+    if (poll_seconds_text != 0 &&
+        tg_parse_decimal_ulong(poll_seconds_text, &seconds) == 0 &&
+        seconds > 0UL) {
+        if (seconds > 3600UL) {
+            return 3600UL;
+        }
+        return seconds;
+    }
+    return 0UL;
+}
+
+static int tg_client_console_set_watch_seconds(const char *line,
+                                               unsigned long *watch_seconds)
+{
+    unsigned long seconds;
+
+    if (line == 0 || watch_seconds == 0) {
+        return 1;
+    }
+    if (tg_console_parse_watch_command(line, &seconds) != 0) {
+        puts("telegram client console: use watch <seconds <= 3600> or watch off");
+        return 0;
+    }
+
+    *watch_seconds = seconds;
+    if (*watch_seconds == 0UL) {
+        puts("telegram client console: auto-read disabled");
+        return 0;
+    }
+    printf("telegram client console: auto-read every %lu second(s)\n",
+           *watch_seconds);
     return 0;
 }
 
@@ -2960,6 +3000,7 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
     const char *resolved_offset_path;
     const char *resolved_inbox_path;
     const char *resolved_chats_path;
+    unsigned long watch_seconds;
     int index_is_ready;
     int rc;
 
@@ -2969,6 +3010,7 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
     if (max_iterations_text == 0) {
         max_iterations_text = tg_console_max_iterations_text;
     }
+    watch_seconds = tg_console_initial_watch_seconds(poll_seconds_text);
     if (tg_resolve_client_default_paths(config,
                                         &resolved_offset_path,
                                         &resolved_inbox_path,
@@ -2983,6 +3025,10 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
     printf("telegram offset file: %s\n", resolved_offset_path);
     printf("telegram inbox log file: %s\n", resolved_inbox_path);
     printf("telegram chat state file: %s\n", resolved_chats_path);
+    if (watch_seconds > 0UL) {
+        printf("telegram client console: auto-read every %lu second(s)\n",
+               watch_seconds);
+    }
     rc = tg_run_telegram_manual_client_paths(
         token_file_path,
         resolved_offset_path,
@@ -2998,6 +3044,21 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
     for (;;) {
         printf("telegram client> ");
         fflush(stdout);
+        if (watch_seconds > 0UL &&
+            !tg_platform_stdin_readable(watch_seconds)) {
+            puts("");
+            rc = tg_run_client_console_poll_once(
+                token_file_path,
+                resolved_offset_path,
+                resolved_inbox_path,
+                resolved_chats_path,
+                poll_seconds_text,
+                max_iterations_text);
+            if (rc != 0) {
+                return rc;
+            }
+            continue;
+        }
         if (fgets(line, sizeof(line), stdin) == 0) {
             puts("telegram client console: eof");
             return 0;
@@ -3018,6 +3079,22 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             tg_print_client_console_status(resolved_offset_path,
                                            resolved_inbox_path,
                                            resolved_chats_path);
+            continue;
+        }
+        if (strcmp(line, "watch") == 0) {
+            if (watch_seconds == 0UL) {
+                puts("telegram client console: auto-read disabled");
+            } else {
+                printf("telegram client console: auto-read every %lu second(s)\n",
+                       watch_seconds);
+            }
+            continue;
+        }
+        if (strncmp(line, "watch", 5) == 0 &&
+            (line[5] == ' ' || line[5] == '\t')) {
+            if (tg_client_console_set_watch_seconds(line, &watch_seconds) != 0) {
+                return 2;
+            }
             continue;
         }
         if (strcmp(line, "i") == 0 ||
@@ -3215,6 +3292,11 @@ static int tg_run_telegram_console_self_test(void)
     if (tg_console_parse_watch_command("/watch 7", &watch_seconds) != 0 ||
         watch_seconds != 7UL) {
         puts("telegram console self-test: watch parse failed");
+        return 2;
+    }
+    if (tg_console_parse_watch_command("watch 9", &watch_seconds) != 0 ||
+        watch_seconds != 9UL) {
+        puts("telegram console self-test: console watch parse failed");
         return 2;
     }
     if (tg_console_parse_watch_command("/watch off", &watch_seconds) != 0 ||
