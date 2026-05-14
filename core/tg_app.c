@@ -2682,7 +2682,8 @@ static void tg_print_client_console_help(void)
     puts("  l, list                 show saved chats");
     puts("  i, last, inbox          show last inbox line");
     puts("  s, status               show local files and offset");
-    puts("  chat <index>            open a simple send/read chat loop");
+    puts("  chat, open <index>      open a send/read chat loop");
+    puts("  <index>                 open saved chat by number");
     puts("  r, send, reply <index> <text>");
     puts("                           send to saved chat index");
     puts("  h, help                 show help");
@@ -2740,10 +2741,10 @@ static void tg_print_client_chat_help(void)
 {
     puts("telegram chat commands:");
     puts("  <text>                  send text to the selected chat");
-    puts("  /read                   receive new messages");
+    puts("  /read, /poll, /p        receive new messages");
     puts("  /watch <seconds>        set automatic receive interval");
     puts("  /watch off              disable automatic receive");
-    puts("  /list                   show saved chats");
+    puts("  /list, /chats           show saved chats");
     puts("  /last                   show last inbox line");
     puts("  /status                 show local files and offset");
     puts("  /help                   show chat commands");
@@ -2768,26 +2769,21 @@ static unsigned long tg_chat_initial_watch_seconds(const char *poll_seconds_text
 
 static int tg_chat_set_watch_seconds(char *line, unsigned long *watch_seconds)
 {
-    char *cursor;
     unsigned long seconds;
 
     if (line == 0 || watch_seconds == 0) {
         return 1;
     }
-    cursor = line + 6;
-    while (*cursor == ' ' || *cursor == '\t') {
-        ++cursor;
-    }
-    if (strcmp(cursor, "off") == 0) {
-        *watch_seconds = 0UL;
-        puts("telegram chat: auto-read disabled");
-        return 0;
-    }
-    if (tg_parse_decimal_ulong(cursor, &seconds) != 0 || seconds > 3600UL) {
+    if (tg_console_parse_watch_command(line, &seconds) != 0) {
         puts("telegram chat: use /watch <seconds <= 3600> or /watch off");
         return 0;
     }
+
     *watch_seconds = seconds;
+    if (*watch_seconds == 0UL) {
+        puts("telegram chat: auto-read disabled");
+        return 0;
+    }
     printf("telegram chat: auto-read every %lu second(s)\n", *watch_seconds);
     return 0;
 }
@@ -2822,6 +2818,7 @@ static int tg_run_client_console_chat_mode(const char *token_file_path,
     } else {
         puts("telegram chat: auto-read disabled");
     }
+    puts("telegram chat: type text to send; /read polls; /back returns");
     tg_print_client_chat_help();
     rc = tg_run_client_console_poll_once(token_file_path,
                                          offset_file_path,
@@ -2892,14 +2889,16 @@ static int tg_run_client_console_chat_mode(const char *token_file_path,
             }
             continue;
         }
-        if (strcmp(line, "/list") == 0) {
+        if (strcmp(line, "/list") == 0 || strcmp(line, "/chats") == 0) {
             rc = tg_print_client_console_chats(chat_state_file_path);
             if (rc != 0) {
                 return rc;
             }
             continue;
         }
-        if (strcmp(line, "/read") == 0) {
+        if (strcmp(line, "/read") == 0 ||
+            strcmp(line, "/poll") == 0 ||
+            strcmp(line, "/p") == 0) {
             rc = tg_run_client_console_poll_once(token_file_path,
                                                  offset_file_path,
                                                  inbox_log_file_path,
@@ -2952,9 +2951,11 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
     char inbox_path[256];
     char chats_path[256];
     char line[512];
+    char index_text[32];
     const char *resolved_offset_path;
     const char *resolved_inbox_path;
     const char *resolved_chats_path;
+    int index_is_ready;
     int rc;
 
     if (poll_seconds_text == 0) {
@@ -3050,15 +3051,28 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
             puts("telegram client console: use reply <index> <text>");
             continue;
         }
+        index_is_ready = 0;
         if (strncmp(line, "chat", 4) == 0 &&
             (line[4] == ' ' || line[4] == '\t')) {
-            char index_text[32];
-
             if (tg_console_parse_index_command(line, 4, index_text,
                                                sizeof(index_text)) != 0) {
                 puts("telegram client console: use chat <index>");
                 continue;
             }
+            index_is_ready = 1;
+        } else if (strncmp(line, "open", 4) == 0 &&
+                   (line[4] == ' ' || line[4] == '\t')) {
+            if (tg_console_parse_index_command(line, 4, index_text,
+                                               sizeof(index_text)) != 0) {
+                puts("telegram client console: use open <index>");
+                continue;
+            }
+            index_is_ready = 1;
+        } else if (tg_console_parse_index_command(line, 0, index_text,
+                                                  sizeof(index_text)) == 0) {
+            index_is_ready = 1;
+        }
+        if (index_is_ready) {
             rc = tg_run_client_console_chat_mode(
                 token_file_path,
                 resolved_offset_path,
@@ -3129,6 +3143,92 @@ static int tg_run_telegram_client_console(const tg_config *config)
         resolved_path,
         config->telegram_client_console_poll_seconds,
         config->telegram_client_console_max_iterations);
+}
+
+static int tg_run_telegram_console_self_test(void)
+{
+    char line[64];
+    char index_text[16];
+    char *message_text;
+    unsigned long watch_seconds;
+
+    strcpy(line, " \tread \r\n");
+    tg_console_trim_ascii_space(line);
+    if (strcmp(line, "read") != 0) {
+        puts("telegram console self-test: trim failed");
+        return 2;
+    }
+
+    strcpy(line, "reply 42 Hello console");
+    message_text = 0;
+    if (tg_console_parse_reply_command(line, 5, index_text,
+                                       sizeof(index_text),
+                                       &message_text) != 0 ||
+        strcmp(index_text, "42") != 0 ||
+        message_text == 0 ||
+        strcmp(message_text, "Hello console") != 0) {
+        puts("telegram console self-test: reply parse failed");
+        return 2;
+    }
+    strcpy(line, "send 42");
+    if (tg_console_parse_reply_command(line, 4, index_text,
+                                       sizeof(index_text),
+                                       &message_text) == 0) {
+        puts("telegram console self-test: empty send text accepted");
+        return 2;
+    }
+
+    strcpy(line, "chat 12");
+    if (tg_console_parse_index_command(line, 4, index_text,
+                                       sizeof(index_text)) != 0 ||
+        strcmp(index_text, "12") != 0) {
+        puts("telegram console self-test: chat parse failed");
+        return 2;
+    }
+    strcpy(line, "open 3");
+    if (tg_console_parse_index_command(line, 4, index_text,
+                                       sizeof(index_text)) != 0 ||
+        strcmp(index_text, "3") != 0) {
+        puts("telegram console self-test: open parse failed");
+        return 2;
+    }
+    strcpy(line, "7");
+    if (tg_console_parse_index_command(line, 0, index_text,
+                                       sizeof(index_text)) != 0 ||
+        strcmp(index_text, "7") != 0) {
+        puts("telegram console self-test: bare index parse failed");
+        return 2;
+    }
+    strcpy(line, "7 extra");
+    if (tg_console_parse_index_command(line, 0, index_text,
+                                       sizeof(index_text)) == 0) {
+        puts("telegram console self-test: invalid bare index accepted");
+        return 2;
+    }
+
+    watch_seconds = 0UL;
+    if (tg_console_parse_watch_command("/watch 7", &watch_seconds) != 0 ||
+        watch_seconds != 7UL) {
+        puts("telegram console self-test: watch parse failed");
+        return 2;
+    }
+    if (tg_console_parse_watch_command("/watch off", &watch_seconds) != 0 ||
+        watch_seconds != 0UL) {
+        puts("telegram console self-test: watch off parse failed");
+        return 2;
+    }
+    if (tg_console_parse_watch_command("/watch 0", &watch_seconds) != 0 ||
+        watch_seconds != 0UL) {
+        puts("telegram console self-test: watch zero parse failed");
+        return 2;
+    }
+    if (tg_console_parse_watch_command("/watch 3601", &watch_seconds) == 0) {
+        puts("telegram console self-test: oversized watch accepted");
+        return 2;
+    }
+
+    puts("telegram console self-test: ok");
+    return 0;
 }
 
 static int tg_run_telegram_client_self_test(void)
@@ -3236,14 +3336,14 @@ static int tg_run_telegram_client_self_test(void)
     }
     strcpy(watch_command_line, "/watch 7");
     watch_seconds = 0UL;
-    if (tg_chat_set_watch_seconds(watch_command_line, &watch_seconds) != 0 ||
+    if (tg_console_parse_watch_command(watch_command_line, &watch_seconds) != 0 ||
         watch_seconds != 7UL) {
         puts("telegram client self-test: console watch command parse failed");
         remove(chat_state_file_path);
         return 2;
     }
     strcpy(watch_command_line, "/watch off");
-    if (tg_chat_set_watch_seconds(watch_command_line, &watch_seconds) != 0 ||
+    if (tg_console_parse_watch_command(watch_command_line, &watch_seconds) != 0 ||
         watch_seconds != 0UL) {
         puts("telegram client self-test: console watch off parse failed");
         remove(chat_state_file_path);
@@ -4133,6 +4233,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_manual_client_default) {
         return tg_run_telegram_manual_client_default(&config);
+    }
+
+    if (config.run_telegram_console_self_test) {
+        return tg_run_telegram_console_self_test();
     }
 
     if (config.run_telegram_client_self_test) {

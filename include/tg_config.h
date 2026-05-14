@@ -167,6 +167,7 @@ typedef struct tg_config {
     int run_telegram_session_loop_default;
     int run_telegram_manual_client;
     int run_telegram_manual_client_default;
+    int run_telegram_console_self_test;
     int run_telegram_client_self_test;
     int run_telegram_client;
     int run_telegram_client_default;

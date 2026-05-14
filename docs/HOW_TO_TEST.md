@@ -104,14 +104,20 @@ read
 list
 reply 1 Hello from Telegram Amiga
 chat 1
+open 1
 last
 status
 quit
 ```
 
 `read` polls Telegram and then prints the saved chat list. Use the displayed
-chat index with `reply <index> <text>`, or use `chat <index>` to enter a
-line-oriented chat mode. In chat mode, type normal text to send it to the selected chat. It auto-reads every 5 seconds by default while waiting for input; use `/watch <seconds>` to change the interval, `/watch off` to disable it, `/read` to poll immediately, and `/back` or `/quit` to leave. The console never sends automatic replies.
+chat index with `reply <index> <text>`, or use `chat <index>`, `open <index>`
+or a bare numeric index to enter a line-oriented chat mode. In chat mode, type
+normal text to send it to the selected chat. It auto-reads every 5 seconds by
+default while waiting for input; use `/watch <seconds>` to change the interval,
+`/watch off` to disable it, `/read`/`/poll`/`/p` to poll immediately,
+`/list`/`/chats` to show chats, and `/back` or `/quit` to leave. The console
+never sends automatic replies.
 
 ## 6. Report Results
 

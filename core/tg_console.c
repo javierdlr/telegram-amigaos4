@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <limits.h>
 #include <string.h>
 
 #include "tg_console.h"
@@ -109,5 +110,69 @@ int tg_console_parse_index_command(char *line, unsigned long command_length,
 
     memcpy(index_buffer, index_start, index_length);
     index_buffer[index_length] = '\0';
+    return 0;
+}
+
+static int tg_console_parse_decimal_ulong(const char *text,
+                                          unsigned long *value)
+{
+    const char *cursor;
+    unsigned long result;
+
+    if (text == 0 || value == 0 || text[0] == '\0') {
+        return 1;
+    }
+
+    cursor = text;
+    result = 0UL;
+    while (*cursor >= '0' && *cursor <= '9') {
+        unsigned long digit;
+
+        digit = (unsigned long)(*cursor - '0');
+        if (result > (ULONG_MAX - digit) / 10UL) {
+            return 1;
+        }
+        result = result * 10UL + digit;
+        ++cursor;
+    }
+    while (*cursor == ' ' || *cursor == '\t') {
+        ++cursor;
+    }
+    if (*cursor != '\0') {
+        return 1;
+    }
+
+    *value = result;
+    return 0;
+}
+
+int tg_console_parse_watch_command(const char *line,
+                                   unsigned long *watch_seconds)
+{
+    const char *cursor;
+    unsigned long seconds;
+
+    if (line == 0 || watch_seconds == 0) {
+        return 1;
+    }
+    if (strncmp(line, "/watch", 6) != 0 ||
+        (line[6] != '\0' && line[6] != ' ' && line[6] != '\t')) {
+        return 1;
+    }
+
+    cursor = line + 6;
+    while (*cursor == ' ' || *cursor == '\t') {
+        ++cursor;
+    }
+    if (strcmp(cursor, "off") == 0) {
+        *watch_seconds = 0UL;
+        return 0;
+    }
+    if (tg_console_parse_decimal_ulong(cursor, &seconds) != 0 ||
+        seconds > 3600UL) {
+        return 1;
+    }
+
+    *watch_seconds = seconds;
     return 0;
 }

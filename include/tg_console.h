@@ -34,4 +34,14 @@ int tg_console_parse_index_command(char *line, unsigned long command_length,
                                    char *index_buffer,
                                    unsigned long index_buffer_size);
 
+/**
+ * Parses a chat-mode /watch command.
+ *
+ * line must contain the full command line. On success watch_seconds receives
+ * the requested interval in seconds, or 0 for "off". Values above 3600 seconds
+ * are rejected. The buffer is only read and no allocation is performed.
+ */
+int tg_console_parse_watch_command(const char *line,
+                                   unsigned long *watch_seconds);
+
 #endif
