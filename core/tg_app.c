@@ -1624,7 +1624,8 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
         } else if (output_mode == TG_READ_OUTPUT_CHAT ||
                    output_mode == TG_READ_OUTPUT_HUMAN) {
             tg_print_chat_update_summary(&update);
-            if (output_mode == TG_READ_OUTPUT_CHAT) {
+            if (output_mode == TG_READ_OUTPUT_CHAT ||
+                output_mode == TG_READ_OUTPUT_HUMAN) {
                 if (tg_append_inbox_log_line_mode(inbox_log_file_path,
                                                   &update, 0) != 0) {
                     return 2;
@@ -2303,7 +2304,7 @@ static int tg_text_client_human_poll_once_callback(
         client_config->token_file_path,
         client_config->offset_file_path,
         TG_READ_OUTPUT_HUMAN,
-        0,
+        client_config->inbox_log_file_path,
         client_config->chat_state_file_path);
 }
 
@@ -2441,11 +2442,10 @@ static int tg_run_telegram_human_chat(const tg_config *config)
                                         sizeof(selected_chat_path)) != 0) {
         return 2;
     }
-    (void)resolved_inbox_path;
 
     text_client_config.token_file_path = resolved_token_path;
     text_client_config.offset_file_path = resolved_offset_path;
-    text_client_config.inbox_log_file_path = 0;
+    text_client_config.inbox_log_file_path = resolved_inbox_path;
     text_client_config.chat_state_file_path = resolved_chats_path;
     text_client_config.selected_chat_file_path = resolved_selected_chat_path;
     text_client_config.poll_seconds_text = config->telegram_human_chat_poll_seconds;
