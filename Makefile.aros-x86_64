@@ -36,7 +36,7 @@ endif
 
 ifeq ($(ENABLE_TLS),1)
 CFLAGS += -DTG_ENABLE_TLS=1
-LDLIBS += -lssl -lcrypto
+LDLIBS := -lssl -lcrypto $(LDLIBS)
 endif
 
 .PHONY: all clean
