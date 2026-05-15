@@ -40,6 +40,7 @@ struct tg_text_client_config {
 };
 
 int tg_text_client_run(const tg_text_client_config *client_config);
+int tg_text_client_run_human(const tg_text_client_config *client_config);
 int tg_text_client_print_last_inbox_line(const char *inbox_log_file_path);
 int tg_text_client_print_chats(const char *chat_state_file_path);
 void tg_text_client_print_status(const tg_text_client_config *client_config);

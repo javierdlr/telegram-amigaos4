@@ -17,6 +17,7 @@
 
 static const char tg_text_client_console_poll_seconds_text[] = "0";
 static const char tg_text_client_console_max_iterations_text[] = "1";
+static const char tg_text_client_human_poll_seconds_text[] = "5";
 static const unsigned long tg_text_client_chat_default_watch_seconds = 5UL;
 
 static int tg_text_client_load_selected_chat(const char *path,
@@ -473,6 +474,114 @@ static int tg_text_client_select_chat_id(
 
     printf("telegram chat: selected chat id %s\n", selected_chat_id);
     return 0;
+}
+
+static int tg_text_client_select_chat_id_quiet(
+    const tg_text_client_config *client_config,
+    const char *chat_id,
+    char *selected_index,
+    unsigned long selected_index_size,
+    char *selected_chat_id,
+    unsigned long selected_chat_id_size)
+{
+    unsigned long chat_id_length;
+
+    if (client_config == 0 || selected_index == 0 || selected_index_size < 2 ||
+        selected_chat_id == 0 || selected_chat_id_size == 0 ||
+        !tg_text_client_is_chat_id_text(chat_id)) {
+        return 1;
+    }
+    chat_id_length = (unsigned long)strlen(chat_id);
+    if (chat_id_length + 1UL > selected_chat_id_size) {
+        return 1;
+    }
+
+    strcpy(selected_index, "0");
+    strcpy(selected_chat_id, chat_id);
+    return tg_text_client_save_selected_chat(client_config->selected_chat_file_path,
+                                             selected_index,
+                                             selected_chat_id);
+}
+
+static int tg_text_client_load_first_chat_id(const char *path,
+                                             char *chat_id,
+                                             unsigned long chat_id_size)
+{
+    tg_file_status file_status;
+    char content[16384];
+    unsigned long content_length;
+    unsigned long line_start;
+    unsigned long line_end;
+    unsigned long line_length;
+    char sender[128];
+    char date[64];
+    char text[512];
+
+    if (chat_id == 0 || chat_id_size == 0) {
+        return 1;
+    }
+    chat_id[0] = '\0';
+    file_status = tg_file_read_text(path, content, sizeof(content),
+                                    &content_length);
+    if (file_status != TG_FILE_OK) {
+        return 1;
+    }
+
+    line_start = 0UL;
+    while (line_start < content_length) {
+        line_end = line_start;
+        while (line_end < content_length &&
+               content[line_end] != '\n' &&
+               content[line_end] != '\r') {
+            ++line_end;
+        }
+        line_length = line_end - line_start;
+        if (line_length > 0UL &&
+            tg_client_state_parse_line(content + line_start, line_length,
+                                       chat_id, chat_id_size,
+                                       sender, sizeof(sender),
+                                       date, sizeof(date),
+                                       text, sizeof(text)) == 0) {
+            return 0;
+        }
+        line_start = line_end;
+        while (line_start < content_length &&
+               (content[line_start] == '\n' ||
+                content[line_start] == '\r')) {
+            ++line_start;
+        }
+    }
+    return 1;
+}
+
+static int tg_text_client_select_first_chat_quiet(
+    const tg_text_client_config *client_config,
+    char *selected_index,
+    unsigned long selected_index_size,
+    char *selected_chat_id,
+    unsigned long selected_chat_id_size)
+{
+    char chat_id[64];
+    unsigned long chat_id_length;
+
+    if (client_config == 0 || selected_index == 0 || selected_index_size < 2 ||
+        selected_chat_id == 0 || selected_chat_id_size == 0) {
+        return 1;
+    }
+    if (tg_text_client_load_first_chat_id(client_config->chat_state_file_path,
+                                          chat_id, sizeof(chat_id)) != 0) {
+        return 1;
+    }
+    chat_id_length = (unsigned long)strlen(chat_id);
+    if (chat_id_length + 1UL > selected_chat_id_size) {
+        return 1;
+    }
+
+    strcpy(selected_index, "1");
+    strcpy(selected_chat_id, chat_id);
+    return tg_text_client_save_selected_chat(client_config->selected_chat_file_path,
+                                             selected_index,
+                                             selected_chat_id);
 }
 
 static int tg_text_client_parse_send_id_command(
@@ -969,6 +1078,119 @@ int tg_text_client_run(const tg_text_client_config *client_config)
 
         puts("telegram text client: unknown command, use /help");
         tg_text_client_print_help();
+    }
+}
+
+int tg_text_client_run_human(const tg_text_client_config *client_config)
+{
+    char line[512];
+    char selected_index[32];
+    char selected_chat_id[64];
+    const char *poll_seconds_text;
+    unsigned long watch_seconds;
+    int rc;
+
+    if (client_config == 0 || client_config->token_file_path == 0 ||
+        client_config->offset_file_path == 0 ||
+        client_config->chat_state_file_path == 0 ||
+        client_config->selected_chat_file_path == 0) {
+        return 2;
+    }
+
+    poll_seconds_text = client_config->poll_seconds_text;
+    if (poll_seconds_text == 0) {
+        poll_seconds_text = tg_text_client_human_poll_seconds_text;
+    }
+    watch_seconds = tg_text_client_initial_watch_seconds(poll_seconds_text,
+                                                         5UL);
+    selected_index[0] = '\0';
+    selected_chat_id[0] = '\0';
+    if (tg_text_client_load_selected_chat(client_config->selected_chat_file_path,
+                                          selected_index,
+                                          sizeof(selected_index),
+                                          selected_chat_id,
+                                          sizeof(selected_chat_id)) != 0) {
+        selected_index[0] = '\0';
+        selected_chat_id[0] = '\0';
+    }
+
+    puts("Telegram Amiga");
+    puts("Type a message. Empty line checks for replies. Type quit to exit.");
+    rc = tg_text_client_poll_once(client_config);
+    if (rc != 0) {
+        return rc;
+    }
+    if (selected_chat_id[0] == '\0') {
+        (void)tg_text_client_select_first_chat_quiet(
+            client_config, selected_index, sizeof(selected_index),
+            selected_chat_id, sizeof(selected_chat_id));
+    }
+
+    for (;;) {
+        printf("> ");
+        fflush(stdout);
+        if (watch_seconds > 0UL &&
+            !tg_platform_stdin_readable(watch_seconds)) {
+            puts("");
+            rc = tg_text_client_poll_once(client_config);
+            if (rc != 0) {
+                return rc;
+            }
+            if (selected_chat_id[0] == '\0') {
+                (void)tg_text_client_select_first_chat_quiet(
+                    client_config, selected_index, sizeof(selected_index),
+                    selected_chat_id, sizeof(selected_chat_id));
+            }
+            continue;
+        }
+        if (fgets(line, sizeof(line), stdin) == 0) {
+            puts("");
+            return 0;
+        }
+        tg_console_trim_ascii_space(line);
+        if (line[0] == '\0') {
+            rc = tg_text_client_poll_once(client_config);
+            if (rc != 0) {
+                return rc;
+            }
+            if (selected_chat_id[0] == '\0') {
+                (void)tg_text_client_select_first_chat_quiet(
+                    client_config, selected_index, sizeof(selected_index),
+                    selected_chat_id, sizeof(selected_chat_id));
+            }
+            continue;
+        }
+        if (strcmp(line, "quit") == 0 || strcmp(line, "exit") == 0) {
+            puts("bye");
+            return 0;
+        }
+        if (selected_chat_id[0] == '\0') {
+            if (tg_text_client_is_chat_id_text(line) &&
+                tg_text_client_select_chat_id_quiet(
+                    client_config, line, selected_index,
+                    sizeof(selected_index), selected_chat_id,
+                    sizeof(selected_chat_id)) == 0) {
+                puts("chat selected");
+                continue;
+            }
+            if (tg_text_client_select_first_chat_quiet(
+                    client_config, selected_index, sizeof(selected_index),
+                    selected_chat_id, sizeof(selected_chat_id)) != 0) {
+                puts("No chat yet. Send a Telegram message to the bot, press Enter, or type the chat id.");
+                continue;
+            }
+        }
+
+        rc = tg_text_client_send_to_chat_id(client_config, selected_chat_id,
+                                            line, 0);
+        if (rc != 0) {
+            return rc;
+        }
+        printf("me: %s\n", line);
+        rc = tg_text_client_poll_once(client_config);
+        if (rc != 0) {
+            return rc;
+        }
     }
 }
 

@@ -93,6 +93,7 @@ void tg_config_init(tg_config *config)
     config->telegram_client_default_max_iterations = 0;
     config->telegram_client_console_poll_seconds = 0;
     config->telegram_client_console_max_iterations = 0;
+    config->telegram_human_chat_poll_seconds = 0;
     config->telegram_chats_file_path = 0;
     config->telegram_reply_default_index = 0;
     config->telegram_reply_default_text = 0;
@@ -168,6 +169,7 @@ void tg_config_init(tg_config *config)
     config->run_telegram_client = 0;
     config->run_telegram_client_default = 0;
     config->run_telegram_client_console = 0;
+    config->run_telegram_human_chat = 0;
     config->run_telegram_chats = 0;
     config->run_telegram_chats_default = 0;
     config->run_telegram_reply_default = 0;
@@ -527,6 +529,13 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
                 config->telegram_client_console_max_iterations = argv[i + 1];
                 ++i;
             }
+        } else if (strcmp(argv[i], "--telegram-human-chat") == 0 ||
+                   strcmp(argv[i], "--telegram-chat") == 0) {
+            config->run_telegram_human_chat = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->telegram_human_chat_poll_seconds = argv[i + 1];
+                ++i;
+            }
         } else if (strcmp(argv[i], "--telegram-chats") == 0) {
             if (i + 1 >= argc) {
                 return 1;
@@ -760,6 +769,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Short manual-client preview with default token and state files\n");
     fprintf(stream, "      --telegram-client-console [poll-seconds] [max-iterations]\n");
     fprintf(stream, "                         Interactive manual console using default files\n");
+    fprintf(stream, "      --telegram-human-chat [poll-seconds]\n");
+    fprintf(stream, "                         Minimal human chat mode using default files\n");
     fprintf(stream, "      --telegram-chats <chats-file>\n");
     fprintf(stream, "                         List chats saved by manual-client sessions\n");
     fprintf(stream, "      --telegram-chats-default\n");

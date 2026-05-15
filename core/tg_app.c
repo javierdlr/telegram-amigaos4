@@ -30,7 +30,8 @@
 typedef enum tg_read_output_mode {
     TG_READ_OUTPUT_STATE = 0,
     TG_READ_OUTPUT_INBOX = 1,
-    TG_READ_OUTPUT_CHAT = 2
+    TG_READ_OUTPUT_CHAT = 2,
+    TG_READ_OUTPUT_HUMAN = 3
 } tg_read_output_mode;
 
 static const char tg_default_token_file_name[] = "telegram-token.txt";
@@ -1548,7 +1549,8 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
         } else {
             puts("inbox offset loaded: none");
         }
-    } else if (output_mode == TG_READ_OUTPUT_CHAT) {
+    } else if (output_mode == TG_READ_OUTPUT_CHAT ||
+               output_mode == TG_READ_OUTPUT_HUMAN) {
         /* Chat mode keeps polling quiet unless a user-visible update arrives. */
     } else {
         if (offset[0] != '\0') {
@@ -1591,13 +1593,16 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
                     puts("inbox: no update to process");
                 } else if (output_mode == TG_READ_OUTPUT_CHAT) {
                     puts("chat: no new messages");
+                } else if (output_mode == TG_READ_OUTPUT_HUMAN) {
+                    /* Human chat mode stays quiet when there are no updates. */
                 } else {
                     puts("telegram read once state: no update to process");
                 }
             } else {
                 if (output_mode == TG_READ_OUTPUT_INBOX) {
                     printf("inbox processed: %lu update(s)\n", processed_count);
-                } else if (output_mode == TG_READ_OUTPUT_CHAT) {
+                } else if (output_mode == TG_READ_OUTPUT_CHAT ||
+                           output_mode == TG_READ_OUTPUT_HUMAN) {
                     /* The received messages were already printed. */
                 } else {
                     printf("telegram read once state: processed %lu update(s)\n",
@@ -1616,11 +1621,14 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
             if (tg_update_chat_state_file(chat_state_file_path, &update) != 0) {
                 return 2;
             }
-        } else if (output_mode == TG_READ_OUTPUT_CHAT) {
+        } else if (output_mode == TG_READ_OUTPUT_CHAT ||
+                   output_mode == TG_READ_OUTPUT_HUMAN) {
             tg_print_chat_update_summary(&update);
-            if (tg_append_inbox_log_line_mode(inbox_log_file_path,
-                                              &update, 0) != 0) {
-                return 2;
+            if (output_mode == TG_READ_OUTPUT_CHAT) {
+                if (tg_append_inbox_log_line_mode(inbox_log_file_path,
+                                                  &update, 0) != 0) {
+                    return 2;
+                }
             }
             if (tg_update_chat_state_file_mode(chat_state_file_path,
                                                &update, 0) != 0) {
@@ -1640,7 +1648,8 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
         }
         if (output_mode == TG_READ_OUTPUT_INBOX) {
             printf("inbox next offset: %s\n", next_offset);
-        } else if (output_mode == TG_READ_OUTPUT_CHAT) {
+        } else if (output_mode == TG_READ_OUTPUT_CHAT ||
+                   output_mode == TG_READ_OUTPUT_HUMAN) {
             /* Keep the persisted offset out of the interactive transcript. */
         } else {
             printf("telegram next offset: %s\n", next_offset);
@@ -1663,6 +1672,8 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
             printf("inbox update limit reached: %lu\n", TG_STATE_MAX_UPDATES);
         } else if (output_mode == TG_READ_OUTPUT_CHAT) {
             printf("chat: update limit reached: %lu\n", TG_STATE_MAX_UPDATES);
+        } else if (output_mode == TG_READ_OUTPUT_HUMAN) {
+            puts("more messages pending");
         } else {
             printf("telegram read once state: update limit reached: %lu\n",
                    TG_STATE_MAX_UPDATES);
@@ -1670,7 +1681,8 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
     }
     if (output_mode == TG_READ_OUTPUT_INBOX) {
         printf("inbox processed: %lu update(s)\n", processed_count);
-    } else if (output_mode == TG_READ_OUTPUT_CHAT) {
+    } else if (output_mode == TG_READ_OUTPUT_CHAT ||
+               output_mode == TG_READ_OUTPUT_HUMAN) {
         /* The received messages were already printed. */
     } else {
         printf("telegram read once state: processed %lu update(s)\n",
@@ -2282,6 +2294,19 @@ static int tg_text_client_poll_once_callback(
         client_config->chat_state_file_path);
 }
 
+static int tg_text_client_human_poll_once_callback(
+    const tg_text_client_config *client_config,
+    void *callback_context)
+{
+    (void)callback_context;
+    return tg_run_telegram_read_once_state_paths(
+        client_config->token_file_path,
+        client_config->offset_file_path,
+        TG_READ_OUTPUT_HUMAN,
+        0,
+        client_config->chat_state_file_path);
+}
+
 static int tg_app_text_client_send_chat_callback(
     const tg_text_client_config *client_config,
     const char *chat_id,
@@ -2383,6 +2408,54 @@ static int tg_run_telegram_client_console(const tg_config *config)
         resolved_path,
         config->telegram_client_console_poll_seconds,
         config->telegram_client_console_max_iterations);
+}
+
+static int tg_run_telegram_human_chat(const tg_config *config)
+{
+    char token_path[256];
+    char offset_path[256];
+    char inbox_path[256];
+    char chats_path[256];
+    char selected_chat_path[256];
+    const char *resolved_token_path;
+    const char *resolved_offset_path;
+    const char *resolved_inbox_path;
+    const char *resolved_chats_path;
+    const char *resolved_selected_chat_path;
+    tg_text_client_config text_client_config;
+
+    resolved_token_path = tg_default_token_file_path(config, token_path,
+                                                     sizeof(token_path));
+    if (resolved_token_path == 0) {
+        return 2;
+    }
+    if (tg_resolve_client_default_paths(config,
+                                        &resolved_offset_path,
+                                        &resolved_inbox_path,
+                                        &resolved_chats_path,
+                                        &resolved_selected_chat_path,
+                                        offset_path, sizeof(offset_path),
+                                        inbox_path, sizeof(inbox_path),
+                                        chats_path, sizeof(chats_path),
+                                        selected_chat_path,
+                                        sizeof(selected_chat_path)) != 0) {
+        return 2;
+    }
+    (void)resolved_inbox_path;
+
+    text_client_config.token_file_path = resolved_token_path;
+    text_client_config.offset_file_path = resolved_offset_path;
+    text_client_config.inbox_log_file_path = 0;
+    text_client_config.chat_state_file_path = resolved_chats_path;
+    text_client_config.selected_chat_file_path = resolved_selected_chat_path;
+    text_client_config.poll_seconds_text = config->telegram_human_chat_poll_seconds;
+    text_client_config.max_iterations_text = 0;
+    text_client_config.poll_once = tg_text_client_human_poll_once_callback;
+    text_client_config.send_chat_id = tg_app_text_client_send_chat_callback;
+    text_client_config.send_chat_index = tg_app_text_client_send_index_callback;
+    text_client_config.callback_context = 0;
+
+    return tg_text_client_run_human(&text_client_config);
 }
 
 static int tg_run_telegram_console_self_test(void)
@@ -3542,10 +3615,12 @@ int tg_app_run(int argc, char **argv)
                                       config.tls_ca_file,
                                       config.tls_ca_path);
 
-    puts("telegram-amiga bootstrap");
-    printf("platform: %s\n", tg_platform_name());
-    tg_log(TG_LOG_INFO, "core initialized");
-    printf("data dir: %s\n", config.data_dir);
+    if (!config.run_telegram_human_chat) {
+        puts("telegram-amiga bootstrap");
+        printf("platform: %s\n", tg_platform_name());
+        tg_log(TG_LOG_INFO, "core initialized");
+        printf("data dir: %s\n", config.data_dir);
+    }
 
     if (config.run_net_test) {
         net_error[0] = '\0';
@@ -3730,6 +3805,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_client_console) {
         return tg_run_telegram_client_console(&config);
+    }
+
+    if (config.run_telegram_human_chat) {
+        return tg_run_telegram_human_chat(&config);
     }
 
     if (config.run_telegram_chats) {
