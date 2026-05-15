@@ -164,6 +164,7 @@ void tg_config_init(tg_config *config)
     config->run_telegram_console_self_test = 0;
     config->run_telegram_client_state_self_test = 0;
     config->run_telegram_client_self_test = 0;
+    config->run_telegram_text_client_self_test = 0;
     config->run_telegram_client = 0;
     config->run_telegram_client_default = 0;
     config->run_telegram_client_console = 0;
@@ -489,6 +490,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_telegram_client_state_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-client-self-test") == 0) {
             config->run_telegram_client_self_test = 1;
+        } else if (strcmp(argv[i], "--telegram-text-client-self-test") == 0) {
+            config->run_telegram_text_client_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-client") == 0) {
             if (i + 1 >= argc) {
                 return 1;
@@ -749,6 +752,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run built-in saved-chat state sample\n");
     fprintf(stream, "      --telegram-client-self-test\n");
     fprintf(stream, "                         Run built-in simplified client state sample\n");
+    fprintf(stream, "      --telegram-text-client-self-test\n");
+    fprintf(stream, "                         Run built-in text-client command/state sample\n");
     fprintf(stream, "      --telegram-client <file> [poll-seconds] [max-iterations]\n");
     fprintf(stream, "                         Manual-client preview using default local state files\n");
     fprintf(stream, "      --telegram-client-default [poll-seconds] [max-iterations]\n");

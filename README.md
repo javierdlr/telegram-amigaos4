@@ -94,6 +94,7 @@ Initial core modules:
 - `tg_config`: minimal command-line argument parsing
 - `tg_client_state`: one-line saved-chat state parsing, ordering and lookup
 - `tg_offset_state`: persistent update offset loading and saving
+- `tg_text_client`: manual text-client prompt, chat selection and command loop
 - `tg_bot`: Bot API orchestration helpers
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
@@ -125,12 +126,12 @@ Initial core modules:
 - `--telegram-preflight` checks the default token path and verifies HTTPS
   reachability to Telegram without sending the token.
 - `--telegram-client-console` starts a manual text console using the default
-  token, offset, inbox log and chat-state files. It never sends automatically.
-  A saved chat can be opened with `chat <index>`, `open <index>` or just the
-  numeric index; inside chat mode, normal text is sent to that chat and new
-  messages are polled with `/read` or the optional `/watch` interval. The
-  top-level console can also use `watch <seconds>` to auto-read while waiting
-  at the prompt.
+  token, offset, inbox log, chat-state and selected-chat files. It never sends
+  automatically. A saved chat can be opened with `/open <index>`,
+  `open <index>` or just the numeric index; inside chat mode, normal text is
+  sent to that chat and new messages are polled with `/read`, `/refresh` or the
+  optional `/watch` interval. The top-level prompt can use `/send <text>` for
+  the selected chat and persists the last selected chat locally.
 
 TLS note: current TLS builds use SNI. Certificate validation is now available
 as an opt-in path with `--tls-verify`, `--tls-ca-file` and `--tls-ca-path`.
@@ -219,6 +220,7 @@ telegram-test --telegram-send-message-self-test
 telegram-test --telegram-console-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
+telegram-test --telegram-text-client-self-test
 telegram-test --telegram-tls-status
 telegram-test --net-test example.com 80
 telegram-test --http-test example.com 80 /
@@ -490,6 +492,8 @@ Current options:
                       Run built-in saved-chat state sample
     --telegram-client-self-test
                       Run built-in simplified client state sample
+    --telegram-text-client-self-test
+                      Run built-in text-client command/state sample
     --telegram-client <file> [poll-seconds] [max-iterations]
                       Manual-client preview using default local state files
     --telegram-client-default [poll-seconds] [max-iterations]
@@ -558,6 +562,7 @@ telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
+telegram-test --telegram-text-client-self-test
 ```
 
 `telegram-echo-once` is intentionally not a permanent loop. Run it again with
@@ -643,23 +648,16 @@ For a small manual text console, run:
 telegram-test --telegram-client-console
 ```
 
-Console commands are `p`/`poll`/`read` to poll, `l`/`list` to list saved chats,
-`i`/`last`/`inbox` to show the last inbox log line, `s`/`status` to show local
-status, `chat <index>`, `open <index>` or a bare numeric index to enter a
-line-oriented chat,
-`r`/`send`/`reply <index> <text>` to send a controlled reply and `q`/`quit` to
-quit. The console uses the same `telegram-offset.txt`, `telegram-inbox.log` and
-`telegram-chats.txt` files as `telegram-client-default`. After `read` or
-`poll`, it prints the saved chat list automatically and suggests the
-`reply <index> <text>` form. Inside chat mode, type normal text to send to the
-selected chat. Successful chat sends are quiet and print only `me: <text>`;
-HTTP/API diagnostics are still printed for explicit `send` and `reply`
-commands. Use `watch <seconds>` in the top-level console to auto-read while
-waiting at the prompt, or `watch off` to disable it. Inside chat mode, the
-console auto-reads every 5 seconds by default while waiting for input; use
-`/watch <seconds>` to change the interval, `/watch off` to disable it, or
-`/read`, `/poll`, `/p`, `/list`, `/chats`, `/last`, `/status`, `/back` and
-`/quit`.
+Console commands are `/read`/`/refresh`/`p` to poll, `/chats`/`l` to list saved
+chats, `/last` to show the last inbox log line, `/status` to show local status,
+`/open <index>`, `open <index>` or a bare numeric index to enter a line-oriented
+chat, `/send <text>` to send to the selected chat, `reply <index> <text>` for
+explicit indexed sends and `/quit` to quit. The console uses
+`telegram-offset.txt`, `telegram-inbox.log`, `telegram-chats.txt` and
+`telegram-selected-chat.txt` in the active data directory. Inside chat mode,
+type normal text to send to the selected chat. Successful chat sends are quiet
+and print only `me: <text>`. Use `/watch <seconds>` in the top-level prompt or
+chat mode to auto-read while waiting, or `/watch off` to disable it.
 
 List the saved chats:
 

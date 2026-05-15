@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # AROS Tester Notes
 
-Telegram Amiga is not a usable end-user Telegram client yet. On AROS, the
+Telegram Amiga now includes a pre-alpha manual text client. On AROS, the
 current tester can exercise the same Bot API based diagnostic flow used on the
 other targets: offline parser/state tests, TCP/HTTP diagnostics, HTTPS,
 `getMe`, read-only polling, saved-chat replies and controlled `sendMessage`.
@@ -113,6 +113,7 @@ telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
+telegram-test --telegram-text-client-self-test
 telegram-test --telegram-tls-status
 ```
 
@@ -166,16 +167,14 @@ telegram-test --data-dir PROGDIR: --telegram-client-default
 telegram-test --data-dir PROGDIR: --telegram-client-console
 ```
 
-Inside `telegram-client-console`, use `p`/`poll`/`read` to poll, `l`/`list` to
-list saved chats, `i`/`last`/`inbox` to show the last inbox log line,
-`s`/`status` to show local status, `chat <index>`, `open <index>` or a bare
-numeric index to enter a line-oriented chat, `r`/`send`/`reply <index> <text>`
-to send a controlled reply and `q`/`quit` to quit. Inside chat mode, type
-normal text to send. Use `watch <seconds>` in the top-level console to
-auto-read while waiting at the prompt, or `watch off` to disable it. Chat mode
-auto-reads every 5 seconds by default; use `/watch <seconds>`, `/watch off`,
-`/read`, `/poll`, `/p`, `/list`, `/chats`, `/last`, `/status`, `/back` and
-`/quit`. It does not send replies automatically.
+Inside `telegram-client-console`, use `/read` or `/refresh` to poll, `/chats`
+to list saved chats, `/last` to show the last inbox line, `/status` to show
+local status, `/open <index>` or a bare numeric index to enter a
+line-oriented chat, `/send <text>` to send to the selected chat and `/quit`
+to quit. The selected chat is persisted in `telegram-selected-chat.txt`.
+Inside chat mode, type normal text to send. Use `/watch <seconds>` in the
+top-level prompt or chat mode to auto-read while waiting, or `/watch off` to
+disable it. It does not send replies automatically.
 
 Once a chat has been saved by polling a message from the bot, send by saved
 chat index with:

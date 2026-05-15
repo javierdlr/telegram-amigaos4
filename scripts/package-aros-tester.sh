@@ -35,7 +35,7 @@ Telegram Amiga - AROS One i386 alt-abiv0 pre-alpha tester
 Build: $COMMIT_ID
 TLS enabled: $ENABLE_TLS
 
-This is not a usable Telegram client yet. It is a diagnostic tester for AROS.
+This is a pre-alpha manual text client tester for AROS.
 
 This package targets AROS One i386 alt-abiv0. Do not use it as proof that other
 AROS ABIs are compatible.
@@ -53,6 +53,7 @@ Minimum offline test:
   telegram-test --telegram-console-self-test
   telegram-test --telegram-client-state-self-test
   telegram-test --telegram-client-self-test
+  telegram-test --telegram-text-client-self-test
   telegram-test --telegram-tls-status
 
 Plain TCP/HTTP diagnostics, no Telegram token required:
@@ -72,16 +73,14 @@ If this package was built with TLS enabled, optional supervised live tests are:
   telegram-test --telegram-reply-default 1 "Hello from AROS"
   telegram-test --telegram-send-last-default "Hello from AROS"
 
-Inside the console, use p/poll/read to poll, l/list to list saved chats,
-i/last/inbox to show the last inbox line, s/status to show local state,
-chat <index>, open <index> or a bare numeric index to enter a line-oriented
-chat, r/send/reply <index> <text> to send a controlled reply, h/help for help
-and q/quit to quit. Inside chat mode, type normal text to send. Successful
-chat sends are quiet and print only me: <text>. Use watch <seconds> in the
-top-level console to auto-read while waiting at the prompt, or watch off to
-disable it. Chat mode auto-reads every 5 seconds by default; use /watch
-<seconds>, /watch off, /read, /poll, /p, /list, /chats, /last, /status, /back
-and /quit.
+Inside the console, use /read or /refresh to poll, /chats to list saved chats,
+/last to show the last inbox line, /status to show local state, /open <index>
+or a bare numeric index to enter a line-oriented chat, /send <text> to send
+to the selected chat, reply <index> <text> for an explicit indexed send and
+/quit to quit. The selected chat is persisted in telegram-selected-chat.txt.
+Inside chat mode, type normal text to send. Successful chat sends are quiet
+and print only me: <text>. Use /watch <seconds> in the top-level prompt or
+chat mode to auto-read while waiting, or /watch off to disable it.
 
 If this package was built with TLS disabled, live Telegram commands are expected
 to report unsupported.

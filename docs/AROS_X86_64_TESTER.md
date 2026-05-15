@@ -37,6 +37,7 @@ On an AROS x86_64 system with GCC and OpenSSL development files:
 make -f Makefile.aros-x86_64 clean all ENABLE_TLS=1
 build/aros-x86_64/telegram-test --telegram-client-state-self-test
 build/aros-x86_64/telegram-test --telegram-client-self-test
+build/aros-x86_64/telegram-test --telegram-text-client-self-test
 build/aros-x86_64/telegram-test --telegram-tls-status
 ```
 
@@ -46,6 +47,7 @@ If OpenSSL development files are not available yet, build the offline tester:
 make -f Makefile.aros-x86_64 clean all ENABLE_TLS=0
 build/aros-x86_64/telegram-test --telegram-client-state-self-test
 build/aros-x86_64/telegram-test --telegram-client-self-test
+build/aros-x86_64/telegram-test --telegram-text-client-self-test
 ```
 
 ## Linux Cross-Build Sketch
@@ -86,6 +88,7 @@ telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
+telegram-test --telegram-text-client-self-test
 telegram-test --telegram-tls-status
 ```
 

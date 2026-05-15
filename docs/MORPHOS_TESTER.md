@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 # MorphOS Tester Notes
 
 This document describes how to build and run the current MorphOS diagnostic
-tester. It is not a usable Telegram client yet. It is a pre-alpha technical
+tester. It includes a pre-alpha manual text client and remains a technical
 build for checking startup, local parsers, Bot API response handling and HTTPS
 reachability when a TLS-enabled build is used.
 
@@ -85,6 +85,7 @@ telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
+telegram-test --telegram-text-client-self-test
 telegram-test --telegram-tls-status
 ```
 
@@ -158,15 +159,15 @@ entry point. It uses these default files in the program drawer:
 iterations; use `telegram-client-default 2 5` to override that timing.
 
 `telegram-client-console` uses the same default files and starts a small manual
-console. Use `p`/`poll`/`read` to poll, `l`/`list` to list saved chats,
-`i`/`last`/`inbox` to show the last inbox log line, `s`/`status` to show local
-status, `chat <index>`, `open <index>` or a bare numeric index to enter a
-line-oriented chat, `r`/`send`/`reply <index> <text>` to send a controlled
-reply and `q`/`quit` to quit. Inside chat mode, type normal text to send. It
-auto-reads every 5 seconds by default while waiting for input; use
-`/watch <seconds>` to change the interval, `/watch off` to disable it, or
-`/read`, `/poll`, `/p`, `/list`, `/chats`, `/last`, `/status`, `/back` and
-`/quit`. It does not send replies automatically.
+console. Use `/read` or `/refresh` to poll, `/chats` to list saved chats,
+`/last` to show the last inbox log line, `/status` to show local status,
+`/open <index>` or a bare numeric index to enter a line-oriented chat,
+`/send <text>` to send to the selected chat and `/quit` to quit. The selected
+chat is persisted in `telegram-selected-chat.txt`. Inside chat mode, type
+normal text to send. It auto-reads every 5 seconds by default while waiting
+for input; use `/watch <seconds>` to change the interval, `/watch off` to
+disable it, or `/read`, `/refresh`, `/chats`, `/last`, `/status`, `/back`
+and `/quit`. It does not send replies automatically.
 
 List saved chats with:
 

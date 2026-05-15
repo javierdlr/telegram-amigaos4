@@ -22,6 +22,7 @@
 #include "tg_offset_state.h"
 #include "tg_platform.h"
 #include "tg_telegram.h"
+#include "tg_text_client.h"
 #include "tg_tls.h"
 
 #define TG_STATE_MAX_UPDATES 5UL
@@ -36,11 +37,11 @@ static const char tg_default_token_file_name[] = "telegram-token.txt";
 static const char tg_default_offset_file_name[] = "telegram-offset.txt";
 static const char tg_default_inbox_log_file_name[] = "telegram-inbox.log";
 static const char tg_default_chat_state_file_name[] = "telegram-chats.txt";
+static const char tg_default_selected_chat_file_name[] = "telegram-selected-chat.txt";
 static const char tg_default_poll_seconds_text[] = "5";
 static const char tg_default_max_iterations_text[] = "10";
 static const char tg_console_poll_seconds_text[] = "0";
 static const char tg_console_max_iterations_text[] = "1";
-static const unsigned long tg_chat_default_watch_seconds = 5UL;
 
 static int tg_run_http_test(const tg_config *config)
 {
@@ -2152,12 +2153,15 @@ static int tg_resolve_client_default_paths(const tg_config *config,
                                            const char **offset_file_path,
                                            const char **inbox_log_file_path,
                                            const char **chat_state_file_path,
+                                           const char **selected_chat_file_path,
                                            char *offset_buffer,
                                            unsigned long offset_buffer_size,
                                            char *inbox_buffer,
                                            unsigned long inbox_buffer_size,
                                            char *chat_buffer,
-                                           unsigned long chat_buffer_size)
+                                           unsigned long chat_buffer_size,
+                                           char *selected_chat_buffer,
+                                           unsigned long selected_chat_buffer_size)
 {
     *offset_file_path = tg_default_named_file_path(
         config, tg_default_offset_file_name, "offset",
@@ -2168,8 +2172,11 @@ static int tg_resolve_client_default_paths(const tg_config *config,
     *chat_state_file_path = tg_default_named_file_path(
         config, tg_default_chat_state_file_name, "chat state",
         chat_buffer, chat_buffer_size);
+    *selected_chat_file_path = tg_default_named_file_path(
+        config, tg_default_selected_chat_file_name, "selected chat",
+        selected_chat_buffer, selected_chat_buffer_size);
     if (*offset_file_path == 0 || *inbox_log_file_path == 0 ||
-        *chat_state_file_path == 0) {
+        *chat_state_file_path == 0 || *selected_chat_file_path == 0) {
         return 2;
     }
     return 0;
@@ -2183,9 +2190,11 @@ static int tg_run_telegram_client_paths(const tg_config *config,
     char offset_path[256];
     char inbox_path[256];
     char chats_path[256];
+    char selected_chat_path[256];
     const char *resolved_offset_path;
     const char *resolved_inbox_path;
     const char *resolved_chats_path;
+    const char *resolved_selected_chat_path;
 
     if (poll_seconds_text == 0) {
         poll_seconds_text = tg_default_poll_seconds_text;
@@ -2197,11 +2206,15 @@ static int tg_run_telegram_client_paths(const tg_config *config,
                                         &resolved_offset_path,
                                         &resolved_inbox_path,
                                         &resolved_chats_path,
+                                        &resolved_selected_chat_path,
                                         offset_path, sizeof(offset_path),
                                         inbox_path, sizeof(inbox_path),
-                                        chats_path, sizeof(chats_path)) != 0) {
+                                        chats_path, sizeof(chats_path),
+                                        selected_chat_path,
+                                        sizeof(selected_chat_path)) != 0) {
         return 2;
     }
+    (void)resolved_selected_chat_path;
 
     printf("telegram offset file: %s\n", resolved_offset_path);
     printf("telegram inbox log file: %s\n", resolved_inbox_path);
@@ -2256,376 +2269,52 @@ static int tg_run_telegram_send_message_path_verbose(const char *token_file_path
                                                      const char *text,
                                                      int verbose);
 
-static int tg_print_last_inbox_line(const char *inbox_log_file_path)
+static int tg_text_client_poll_once_callback(
+    const tg_text_client_config *client_config,
+    void *callback_context)
 {
-    tg_file_status file_status;
-    char content[16384];
-    unsigned long content_length;
-    unsigned long line_start;
-    unsigned long line_end;
-
-    file_status = tg_file_read_text(inbox_log_file_path, content,
-                                    sizeof(content), &content_length);
-    if (file_status == TG_FILE_OPEN_FAILED) {
-        puts("telegram inbox last: none");
-        return 0;
-    }
-    if (file_status != TG_FILE_OK) {
-        printf("telegram inbox last: read failed: %s\n",
-               tg_file_status_name(file_status));
-        return 2;
-    }
-    if (content_length == 0) {
-        puts("telegram inbox last: none");
-        return 0;
-    }
-
-    line_end = content_length;
-    while (line_end > 0 &&
-           (content[line_end - 1] == '\n' || content[line_end - 1] == '\r')) {
-        --line_end;
-    }
-    if (line_end == 0) {
-        puts("telegram inbox last: none");
-        return 0;
-    }
-    line_start = line_end;
-    while (line_start > 0 &&
-           content[line_start - 1] != '\n' &&
-           content[line_start - 1] != '\r') {
-        --line_start;
-    }
-
-    printf("telegram inbox last: %.*s\n",
-           (int)(line_end - line_start), content + line_start);
-    return 0;
+    (void)callback_context;
+    return tg_run_telegram_read_once_state_paths(
+        client_config->token_file_path,
+        client_config->offset_file_path,
+        TG_READ_OUTPUT_CHAT,
+        client_config->inbox_log_file_path,
+        client_config->chat_state_file_path);
 }
 
-static void tg_print_client_console_status(const char *offset_file_path,
-                                           const char *inbox_log_file_path,
-                                           const char *chat_state_file_path)
+static int tg_app_text_client_send_chat_callback(
+    const tg_text_client_config *client_config,
+    const char *chat_id,
+    const char *text,
+    int verbose,
+    void *callback_context)
 {
-    char offset[32];
-
-    printf("telegram offset file: %s\n", offset_file_path);
-    printf("telegram inbox log file: %s\n", inbox_log_file_path);
-    printf("telegram chat state file: %s\n", chat_state_file_path);
-    printf("tls certificate validation requested: %s\n",
-           tg_tls_certificate_validation_enabled() ? "yes" : "no");
-    if (tg_offset_state_load_file(offset_file_path, offset, sizeof(offset)) == 0 &&
-        offset[0] != '\0') {
-        printf("telegram offset: %s\n", offset);
-    } else {
-        puts("telegram offset: none");
-    }
+    (void)callback_context;
+    return tg_run_telegram_send_message_path_verbose(
+        client_config->token_file_path, chat_id, text, verbose);
 }
 
-static void tg_print_client_console_help(void)
-{
-    puts("telegram client console commands:");
-    puts("  p, poll, read           receive new messages");
-    puts("  watch <seconds>, watch off");
-    puts("                           auto-read while waiting at the prompt");
-    puts("  l, list                 show saved chats");
-    puts("  i, last, inbox          show last inbox line");
-    puts("  s, status               show local files and offset");
-    puts("  chat, open <index>      open a send/read chat loop");
-    puts("  <index>                 open saved chat by number");
-    puts("  r, send, reply <index> <text>");
-    puts("                           send to saved chat index");
-    puts("  h, help                 show help");
-    puts("  q, quit                 quit");
-}
-
-static int tg_print_client_console_chats(const char *chat_state_file_path)
-{
-    puts("telegram client console chats:");
-    return tg_client_state_for_each_line(chat_state_file_path,
-                                         tg_print_chat_line_callback, 0, 1);
-}
-
-static int tg_run_client_console_poll_once(const char *token_file_path,
-                                           const char *offset_file_path,
-                                           const char *inbox_log_file_path,
-                                           const char *chat_state_file_path,
-                                           const char *poll_seconds_text,
-                                           const char *max_iterations_text)
-{
-    (void)poll_seconds_text;
-    (void)max_iterations_text;
-    return tg_run_telegram_read_once_state_paths(token_file_path,
-                                                offset_file_path,
-                                                TG_READ_OUTPUT_CHAT,
-                                                inbox_log_file_path,
-                                                chat_state_file_path);
-}
-
-static int tg_run_client_console_send_command(const char *token_file_path,
-                                              const char *chats_file_path,
-                                              char *line,
-                                              unsigned long command_length,
-                                              const char *usage_text)
-{
-    char index_text[32];
-    char *reply_text;
-    int rc;
-
-    if (tg_console_parse_reply_command(line, command_length, index_text,
-                                       sizeof(index_text), &reply_text) != 0) {
-        printf("telegram client console: use %s\n", usage_text);
-        return 0;
-    }
-    rc = tg_run_telegram_send_chat_path(token_file_path, chats_file_path,
-                                        index_text, reply_text);
-    if (rc != 0) {
-        return rc;
-    }
-    puts("telegram client console: sent");
-    return 0;
-}
-
-static void tg_print_client_chat_help(void)
-{
-    puts("telegram chat commands:");
-    puts("  <text>                  send text to the selected chat");
-    puts("  /read, /poll, /p        receive new messages");
-    puts("  /watch <seconds>        set automatic receive interval");
-    puts("  /watch off              disable automatic receive");
-    puts("  /list, /chats           show saved chats");
-    puts("  /last                   show last inbox line");
-    puts("  /status                 show local files and offset");
-    puts("  /help                   show chat commands");
-    puts("  /back                   return to console");
-    puts("  /quit                   quit");
-}
-
-static unsigned long tg_chat_initial_watch_seconds(const char *poll_seconds_text)
-{
-    unsigned long seconds;
-
-    if (poll_seconds_text != 0 &&
-        tg_parse_decimal_ulong(poll_seconds_text, &seconds) == 0 &&
-        seconds > 0UL) {
-        if (seconds > 3600UL) {
-            return 3600UL;
-        }
-        return seconds;
-    }
-    return tg_chat_default_watch_seconds;
-}
-
-static int tg_chat_set_watch_seconds(char *line, unsigned long *watch_seconds)
-{
-    unsigned long seconds;
-
-    if (line == 0 || watch_seconds == 0) {
-        return 1;
-    }
-    if (tg_console_parse_watch_command(line, &seconds) != 0) {
-        puts("telegram chat: use /watch <seconds <= 3600> or /watch off");
-        return 0;
-    }
-
-    *watch_seconds = seconds;
-    if (*watch_seconds == 0UL) {
-        puts("telegram chat: auto-read disabled");
-        return 0;
-    }
-    printf("telegram chat: auto-read every %lu second(s)\n", *watch_seconds);
-    return 0;
-}
-
-static unsigned long tg_console_initial_watch_seconds(const char *poll_seconds_text)
-{
-    unsigned long seconds;
-
-    if (poll_seconds_text != 0 &&
-        tg_parse_decimal_ulong(poll_seconds_text, &seconds) == 0 &&
-        seconds > 0UL) {
-        if (seconds > 3600UL) {
-            return 3600UL;
-        }
-        return seconds;
-    }
-    return 0UL;
-}
-
-static int tg_client_console_set_watch_seconds(const char *line,
-                                               unsigned long *watch_seconds)
-{
-    unsigned long seconds;
-
-    if (line == 0 || watch_seconds == 0) {
-        return 1;
-    }
-    if (tg_console_parse_watch_command(line, &seconds) != 0) {
-        puts("telegram client console: use watch <seconds <= 3600> or watch off");
-        return 0;
-    }
-
-    *watch_seconds = seconds;
-    if (*watch_seconds == 0UL) {
-        puts("telegram client console: auto-read disabled");
-        return 0;
-    }
-    printf("telegram client console: auto-read every %lu second(s)\n",
-           *watch_seconds);
-    return 0;
-}
-
-static int tg_run_client_console_chat_mode(const char *token_file_path,
-                                           const char *offset_file_path,
-                                           const char *inbox_log_file_path,
-                                           const char *chat_state_file_path,
-                                           const char *poll_seconds_text,
-                                           const char *max_iterations_text,
-                                           const char *index_text)
+static int tg_app_text_client_send_index_callback(
+    const tg_text_client_config *client_config,
+    const char *index_text,
+    const char *text,
+    void *callback_context)
 {
     unsigned long index;
-    unsigned long watch_seconds;
     char chat_id[64];
-    char line[512];
-    int rc;
 
+    (void)callback_context;
     if (tg_parse_decimal_ulong(index_text, &index) != 0 || index == 0UL) {
-        puts("telegram chat: invalid chat index");
-        return 0;
+        puts("telegram text client: invalid chat index");
+        return 2;
     }
-    if (tg_client_state_find_chat_id_by_index(chat_state_file_path, index,
-                                              chat_id, sizeof(chat_id)) != 0) {
-        return 0;
+    if (tg_client_state_find_chat_id_by_index(client_config->chat_state_file_path,
+                                              index, chat_id,
+                                              sizeof(chat_id)) != 0) {
+        return 2;
     }
-
-    watch_seconds = tg_chat_initial_watch_seconds(poll_seconds_text);
-    printf("telegram chat: selected index %lu, chat %s\n", index, chat_id);
-    if (watch_seconds > 0UL) {
-        printf("telegram chat: auto-read every %lu second(s)\n", watch_seconds);
-    } else {
-        puts("telegram chat: auto-read disabled");
-    }
-    puts("telegram chat: type text to send; /read polls; /back returns");
-    tg_print_client_chat_help();
-    rc = tg_run_client_console_poll_once(token_file_path,
-                                         offset_file_path,
-                                         inbox_log_file_path,
-                                         chat_state_file_path,
-                                         poll_seconds_text,
-                                         max_iterations_text);
-    if (rc != 0) {
-        return rc;
-    }
-
-    for (;;) {
-        printf("telegram chat %lu> ", index);
-        fflush(stdout);
-        if (watch_seconds > 0UL &&
-            !tg_platform_stdin_readable(watch_seconds)) {
-            puts("");
-            rc = tg_run_client_console_poll_once(token_file_path,
-                                                 offset_file_path,
-                                                 inbox_log_file_path,
-                                                 chat_state_file_path,
-                                                 poll_seconds_text,
-                                                 max_iterations_text);
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (fgets(line, sizeof(line), stdin) == 0) {
-            puts("telegram chat: eof");
-            return 0;
-        }
-        tg_console_trim_ascii_space(line);
-        if (line[0] == '\0') {
-            rc = tg_run_client_console_poll_once(token_file_path,
-                                                 offset_file_path,
-                                                 inbox_log_file_path,
-                                                 chat_state_file_path,
-                                                 poll_seconds_text,
-                                                 max_iterations_text);
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (strcmp(line, "/back") == 0) {
-            puts("telegram chat: back");
-            return 0;
-        }
-        if (strcmp(line, "/quit") == 0) {
-            puts("telegram chat: quit");
-            return 1;
-        }
-        if (strcmp(line, "/help") == 0) {
-            tg_print_client_chat_help();
-            continue;
-        }
-        if (strcmp(line, "/status") == 0) {
-            tg_print_client_console_status(offset_file_path,
-                                           inbox_log_file_path,
-                                           chat_state_file_path);
-            continue;
-        }
-        if (strcmp(line, "/last") == 0) {
-            rc = tg_print_last_inbox_line(inbox_log_file_path);
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (strcmp(line, "/list") == 0 || strcmp(line, "/chats") == 0) {
-            rc = tg_print_client_console_chats(chat_state_file_path);
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (strcmp(line, "/read") == 0 ||
-            strcmp(line, "/poll") == 0 ||
-            strcmp(line, "/p") == 0) {
-            rc = tg_run_client_console_poll_once(token_file_path,
-                                                 offset_file_path,
-                                                 inbox_log_file_path,
-                                                 chat_state_file_path,
-                                                 poll_seconds_text,
-                                                 max_iterations_text);
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (strncmp(line, "/watch", 6) == 0 &&
-            (line[6] == '\0' || line[6] == ' ' || line[6] == '\t')) {
-            if (line[6] == '\0') {
-                printf("telegram chat: auto-read every %lu second(s)\n",
-                       watch_seconds);
-            } else if (tg_chat_set_watch_seconds(line, &watch_seconds) != 0) {
-                return 2;
-            }
-            continue;
-        }
-        if (line[0] == '/') {
-            puts("telegram chat: unknown command, use /help");
-            continue;
-        }
-
-        rc = tg_run_telegram_send_message_path_verbose(token_file_path,
-                                                       chat_id, line, 0);
-        if (rc != 0) {
-            return rc;
-        }
-        printf("me: %s\n", line);
-        rc = tg_run_client_console_poll_once(token_file_path,
-                                             offset_file_path,
-                                             inbox_log_file_path,
-                                             chat_state_file_path,
-                                             poll_seconds_text,
-                                             max_iterations_text);
-        if (rc != 0) {
-            return rc;
-        }
-    }
+    return tg_run_telegram_send_message_path_verbose(
+        client_config->token_file_path, chat_id, text, 0);
 }
 
 static int tg_run_telegram_client_console_paths(const tg_config *config,
@@ -2636,14 +2325,12 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
     char offset_path[256];
     char inbox_path[256];
     char chats_path[256];
-    char line[512];
-    char index_text[32];
+    char selected_chat_path[256];
     const char *resolved_offset_path;
     const char *resolved_inbox_path;
     const char *resolved_chats_path;
-    unsigned long watch_seconds;
-    int index_is_ready;
-    int rc;
+    const char *resolved_selected_chat_path;
+    tg_text_client_config text_client_config;
 
     if (poll_seconds_text == 0) {
         poll_seconds_text = tg_console_poll_seconds_text;
@@ -2651,202 +2338,32 @@ static int tg_run_telegram_client_console_paths(const tg_config *config,
     if (max_iterations_text == 0) {
         max_iterations_text = tg_console_max_iterations_text;
     }
-    watch_seconds = tg_console_initial_watch_seconds(poll_seconds_text);
     if (tg_resolve_client_default_paths(config,
                                         &resolved_offset_path,
                                         &resolved_inbox_path,
                                         &resolved_chats_path,
+                                        &resolved_selected_chat_path,
                                         offset_path, sizeof(offset_path),
                                         inbox_path, sizeof(inbox_path),
-                                        chats_path, sizeof(chats_path)) != 0) {
+                                        chats_path, sizeof(chats_path),
+                                        selected_chat_path,
+                                        sizeof(selected_chat_path)) != 0) {
         return 2;
     }
 
-    puts("telegram client console: manual mode");
-    printf("telegram offset file: %s\n", resolved_offset_path);
-    printf("telegram inbox log file: %s\n", resolved_inbox_path);
-    printf("telegram chat state file: %s\n", resolved_chats_path);
-    if (watch_seconds > 0UL) {
-        printf("telegram client console: auto-read every %lu second(s)\n",
-               watch_seconds);
-    }
-    rc = tg_run_telegram_manual_client_paths(
-        token_file_path,
-        resolved_offset_path,
-        resolved_inbox_path,
-        resolved_chats_path,
-        poll_seconds_text,
-        max_iterations_text);
-    if (rc != 0) {
-        return rc;
-    }
+    text_client_config.token_file_path = token_file_path;
+    text_client_config.offset_file_path = resolved_offset_path;
+    text_client_config.inbox_log_file_path = resolved_inbox_path;
+    text_client_config.chat_state_file_path = resolved_chats_path;
+    text_client_config.selected_chat_file_path = resolved_selected_chat_path;
+    text_client_config.poll_seconds_text = poll_seconds_text;
+    text_client_config.max_iterations_text = max_iterations_text;
+    text_client_config.poll_once = tg_text_client_poll_once_callback;
+    text_client_config.send_chat_id = tg_app_text_client_send_chat_callback;
+    text_client_config.send_chat_index = tg_app_text_client_send_index_callback;
+    text_client_config.callback_context = 0;
 
-    tg_print_client_console_help();
-    for (;;) {
-        printf("telegram client> ");
-        fflush(stdout);
-        if (watch_seconds > 0UL &&
-            !tg_platform_stdin_readable(watch_seconds)) {
-            puts("");
-            rc = tg_run_client_console_poll_once(
-                token_file_path,
-                resolved_offset_path,
-                resolved_inbox_path,
-                resolved_chats_path,
-                poll_seconds_text,
-                max_iterations_text);
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (fgets(line, sizeof(line), stdin) == 0) {
-            puts("telegram client console: eof");
-            return 0;
-        }
-        tg_console_trim_ascii_space(line);
-        if (line[0] == '\0') {
-            continue;
-        }
-        if (strcmp(line, "q") == 0 || strcmp(line, "quit") == 0) {
-            puts("telegram client console: quit");
-            return 0;
-        }
-        if (strcmp(line, "h") == 0 || strcmp(line, "help") == 0) {
-            tg_print_client_console_help();
-            continue;
-        }
-        if (strcmp(line, "s") == 0 || strcmp(line, "status") == 0) {
-            tg_print_client_console_status(resolved_offset_path,
-                                           resolved_inbox_path,
-                                           resolved_chats_path);
-            continue;
-        }
-        if (strcmp(line, "watch") == 0) {
-            if (watch_seconds == 0UL) {
-                puts("telegram client console: auto-read disabled");
-            } else {
-                printf("telegram client console: auto-read every %lu second(s)\n",
-                       watch_seconds);
-            }
-            continue;
-        }
-        if (strncmp(line, "watch", 5) == 0 &&
-            (line[5] == ' ' || line[5] == '\t')) {
-            if (tg_client_console_set_watch_seconds(line, &watch_seconds) != 0) {
-                return 2;
-            }
-            continue;
-        }
-        if (strcmp(line, "i") == 0 ||
-            strcmp(line, "last") == 0 ||
-            strcmp(line, "inbox") == 0) {
-            rc = tg_print_last_inbox_line(resolved_inbox_path);
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (strcmp(line, "l") == 0 || strcmp(line, "list") == 0) {
-            rc = tg_print_client_console_chats(resolved_chats_path);
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (strcmp(line, "p") == 0 ||
-            strcmp(line, "poll") == 0 ||
-            strcmp(line, "read") == 0) {
-            rc = tg_run_client_console_poll_once(
-                token_file_path,
-                resolved_offset_path,
-                resolved_inbox_path,
-                resolved_chats_path,
-                poll_seconds_text,
-                max_iterations_text);
-            if (rc != 0) {
-                return rc;
-            }
-            rc = tg_print_client_console_chats(resolved_chats_path);
-            if (rc != 0) {
-                return rc;
-            }
-            puts("telegram client console: use reply <index> <text>");
-            continue;
-        }
-        index_is_ready = 0;
-        if (strncmp(line, "chat", 4) == 0 &&
-            (line[4] == ' ' || line[4] == '\t')) {
-            if (tg_console_parse_index_command(line, 4, index_text,
-                                               sizeof(index_text)) != 0) {
-                puts("telegram client console: use chat <index>");
-                continue;
-            }
-            index_is_ready = 1;
-        } else if (strncmp(line, "open", 4) == 0 &&
-                   (line[4] == ' ' || line[4] == '\t')) {
-            if (tg_console_parse_index_command(line, 4, index_text,
-                                               sizeof(index_text)) != 0) {
-                puts("telegram client console: use open <index>");
-                continue;
-            }
-            index_is_ready = 1;
-        } else if (tg_console_parse_index_command(line, 0, index_text,
-                                                  sizeof(index_text)) == 0) {
-            index_is_ready = 1;
-        }
-        if (index_is_ready) {
-            rc = tg_run_client_console_chat_mode(
-                token_file_path,
-                resolved_offset_path,
-                resolved_inbox_path,
-                resolved_chats_path,
-                poll_seconds_text,
-                max_iterations_text,
-                index_text);
-            if (rc < 0) {
-                return 2;
-            }
-            if (rc > 0) {
-                puts("telegram client console: quit");
-                return 0;
-            }
-            continue;
-        }
-        if (line[0] == 'r' &&
-            (line[1] == ' ' || line[1] == '\t')) {
-            rc = tg_run_client_console_send_command(
-                token_file_path, resolved_chats_path, line, 1,
-                "r <index> <text>");
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (strncmp(line, "send", 4) == 0 &&
-            (line[4] == ' ' || line[4] == '\t')) {
-            rc = tg_run_client_console_send_command(
-                token_file_path, resolved_chats_path, line, 4,
-                "send <index> <text>");
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-        if (strncmp(line, "reply", 5) == 0 &&
-            (line[5] == ' ' || line[5] == '\t')) {
-            rc = tg_run_client_console_send_command(
-                token_file_path, resolved_chats_path, line, 5,
-                "reply <index> <text>");
-            if (rc != 0) {
-                return rc;
-            }
-            continue;
-        }
-
-        puts("telegram client console: unknown command, use h for help");
-        tg_print_client_console_help();
-    }
+    return tg_text_client_run(&text_client_config);
 }
 
 static int tg_run_telegram_client_console(const tg_config *config)
@@ -3125,6 +2642,12 @@ static int tg_run_telegram_client_state_self_test(void)
 static int tg_run_telegram_client_self_test(void)
 {
     static const char chat_state_file_path[] = "telegram-client-self-test-chats.txt";
+    static const char offset_file_path[] =
+        "telegram-client-self-test-offset.txt";
+    static const char inbox_log_file_path[] =
+        "telegram-client-self-test-inbox.log";
+    static const char selected_chat_file_path[] =
+        "telegram-client-self-test-selected-chat.txt";
     static const char updates_response[] =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: application/json\r\n"
@@ -3159,8 +2682,12 @@ static int tg_run_telegram_client_self_test(void)
     char *command_text;
     unsigned long index;
     unsigned long watch_seconds;
+    tg_text_client_config text_client_config;
 
     remove(chat_state_file_path);
+    remove(offset_file_path);
+    remove(inbox_log_file_path);
+    remove(selected_chat_file_path);
     bot_status = tg_bot_parse_get_updates_http_response(
         updates_response, (unsigned long)strlen(updates_response), &result);
     if (bot_status != TG_BOT_OK) {
@@ -3241,21 +2768,50 @@ static int tg_run_telegram_client_self_test(void)
         return 2;
     }
     puts("telegram client self-test status sample:");
-    tg_print_client_console_status("telegram-client-self-test-offset.txt",
-                                   "telegram-client-self-test-inbox.log",
-                                   chat_state_file_path);
-    if (tg_print_last_inbox_line("telegram-client-self-test-inbox.log") != 0) {
+    text_client_config.token_file_path = "telegram-client-self-test-token.txt";
+    text_client_config.offset_file_path = offset_file_path;
+    text_client_config.inbox_log_file_path = inbox_log_file_path;
+    text_client_config.chat_state_file_path = chat_state_file_path;
+    text_client_config.selected_chat_file_path = selected_chat_file_path;
+    text_client_config.poll_seconds_text = "0";
+    text_client_config.max_iterations_text = "1";
+    text_client_config.poll_once = 0;
+    text_client_config.send_chat_id = 0;
+    text_client_config.send_chat_index = 0;
+    text_client_config.callback_context = 0;
+    if (tg_offset_state_save_file(offset_file_path, "402") != 0 ||
+        tg_file_write_text(inbox_log_file_path,
+                           "sample inbox line\n", 18UL) != TG_FILE_OK ||
+        tg_file_write_text(selected_chat_file_path,
+                           "1|123\n", 6UL) != TG_FILE_OK) {
         remove(chat_state_file_path);
+        remove(offset_file_path);
+        remove(inbox_log_file_path);
+        remove(selected_chat_file_path);
+        return 2;
+    }
+    tg_text_client_print_status(&text_client_config);
+    if (tg_text_client_print_last_inbox_line(
+            inbox_log_file_path) != 0) {
+        remove(chat_state_file_path);
+        remove(offset_file_path);
+        remove(inbox_log_file_path);
+        remove(selected_chat_file_path);
         return 2;
     }
 
     puts("telegram client self-test chats:");
-    if (tg_client_state_for_each_line(chat_state_file_path,
-                                      tg_print_chat_line_callback, 0, 0) != 0) {
+    if (tg_text_client_print_chats(chat_state_file_path) != 0) {
         remove(chat_state_file_path);
+        remove(offset_file_path);
+        remove(inbox_log_file_path);
+        remove(selected_chat_file_path);
         return 2;
     }
     remove(chat_state_file_path);
+    remove(offset_file_path);
+    remove(inbox_log_file_path);
+    remove(selected_chat_file_path);
     puts("telegram client self-test: ok");
     return 0;
 }
@@ -4158,6 +3714,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_client_self_test) {
         return tg_run_telegram_client_self_test();
+    }
+
+    if (config.run_telegram_text_client_self_test) {
+        return tg_text_client_self_test();
     }
 
     if (config.run_telegram_client) {
