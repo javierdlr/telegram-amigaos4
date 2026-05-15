@@ -126,6 +126,7 @@ telegram-test --telegram-read-once-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
+telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
 telegram-test --telegram-tls-status
 ```

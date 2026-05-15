@@ -59,6 +59,7 @@ Minimum offline test:
   telegram-test --telegram-echo-once-self-test
   telegram-test --telegram-send-message-self-test
   telegram-test --telegram-console-self-test
+  telegram-test --telegram-client-state-self-test
   telegram-test --telegram-client-self-test
   telegram-test --telegram-tls-status
 

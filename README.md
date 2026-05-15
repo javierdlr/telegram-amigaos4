@@ -92,6 +92,7 @@ Minimal bootstrap:
 Initial core modules:
 
 - `tg_config`: minimal command-line argument parsing
+- `tg_client_state`: one-line saved-chat state parsing, ordering and lookup
 - `tg_bot`: Bot API orchestration helpers
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
@@ -152,7 +153,8 @@ Initial targets:
   64-bit; AROS One i386 alt-abiv0 is cross-built from macOS and has passed
   offline self-tests, TCP/HTTP, HTTPS, `preflight`, `getMe`, read-only polling,
   controlled `sendMessage` and TLS certificate validation in a VM. AROS
-  x86_64 now has an experimental build file, but no validated package yet.
+  x86_64 now has an experimental offline package path. TLS on x86_64 still
+  needs matching OpenSSL development files for the validated SDK/runtime pair.
 
 Build on MorphOS:
 
@@ -213,6 +215,7 @@ telegram-test --telegram-get-updates-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-send-message-self-test
 telegram-test --telegram-console-self-test
+telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
 telegram-test --telegram-tls-status
 telegram-test --net-test example.com 80
@@ -335,9 +338,8 @@ rsync -a --exclude .git --exclude build \
     TARGET=build/os4-cross-amissl/telegram-test'
 ```
 
-The Docker-built AmiSSL binary has passed the console, client and TLS-status
-self-tests on the QEMU AmigaOS 4.x target. Runtime validation on AmigaOS 4.x is
-still required before publishing a tester package.
+The Docker-built AmiSSL binary has passed the saved-chat state, console, client
+and TLS-status self-tests on the QEMU AmigaOS 4.x target.
 
 The QEMU test target has passed native GCC builds, offline self-tests, AmiSSL
 HTTPS, `--telegram-preflight`, `--telegram-getme`, read-only polling,
@@ -380,7 +382,8 @@ telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 Certificate validation requires a correct system date. If validation fails with
 an expired or not-yet-valid certificate error, check the target clock first.
 
-For the common tester checklist, see `docs/HOW_TO_TEST.md`.
+For the common tester checklist, see `docs/HOW_TO_TEST.md`. For development
+regression scope across targets, see `docs/TEST_MATRIX.md`.
 
 Before the reply command can work, send a message to the bot from Telegram and
 run `telegram-client-default` or `telegram-client-console` so
@@ -479,6 +482,8 @@ Current options:
                       Manual-client preview with default token file
     --telegram-console-self-test
                       Run built-in interactive console parser sample
+    --telegram-client-state-self-test
+                      Run built-in saved-chat state sample
     --telegram-client-self-test
                       Run built-in simplified client state sample
     --telegram-client <file> [poll-seconds] [max-iterations]
@@ -546,6 +551,7 @@ telegram-test --telegram-read-once-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
+telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
 ```
 

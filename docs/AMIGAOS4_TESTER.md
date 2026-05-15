@@ -126,6 +126,7 @@ AmiSSL binary has passed these QEMU AmigaOS 4.x checks:
 
 ```text
 RAM:telegram-test-os4-cross --telegram-console-self-test
+RAM:telegram-test-os4-cross --telegram-client-state-self-test
 RAM:telegram-test-os4-cross --telegram-client-self-test
 RAM:telegram-test-os4-cross --telegram-tls-status
 ```
@@ -196,6 +197,7 @@ telegram-test --telegram-read-once-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
+telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
 telegram-test --telegram-tls-status
 ```

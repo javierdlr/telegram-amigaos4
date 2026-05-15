@@ -9,6 +9,8 @@ Telegram Amiga is still a pre-alpha technical tester. Use a dedicated test bot
 and disposable tokens only. Do not publish tokens or screenshots that show
 tokens.
 
+For development regression scope across targets, see `docs/TEST_MATRIX.md`.
+
 ## 1. Offline Tests
 
 Run these first. They do not need a Telegram token:
@@ -21,6 +23,7 @@ telegram-test --telegram-read-once-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
+telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
 telegram-test --telegram-tls-status
 ```
