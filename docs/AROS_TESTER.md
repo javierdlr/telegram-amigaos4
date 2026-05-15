@@ -170,8 +170,10 @@ telegram-test --data-dir PROGDIR: --telegram-client-console
 Inside `telegram-client-console`, use `/read` or `/refresh` to poll, `/chats`
 to list saved chats, `/last` to show the last inbox line, `/status` to show
 local status, `/open <index>` or a bare numeric index to enter a
-line-oriented chat, `/send <text>` to send to the selected chat and `/quit`
-to quit. The selected chat is persisted in `telegram-selected-chat.txt`.
+line-oriented chat, `/send <text>` to send to the selected chat,
+`/send-id <chat-id> <text>` to send directly when the chat list is empty and
+`/quit` to quit. The selected chat is persisted in
+`telegram-selected-chat.txt`.
 Inside chat mode, type normal text to send. Use `/watch <seconds>` in the
 top-level prompt or chat mode to auto-read while waiting, or `/watch off` to
 disable it. It does not send replies automatically.

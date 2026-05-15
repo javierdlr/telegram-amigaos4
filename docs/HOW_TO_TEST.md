@@ -108,6 +108,7 @@ Useful commands:
 read
 list
 reply 1 Hello from Telegram Amiga
+/send-id 123456789 Hello from Telegram Amiga
 chat 1
 open 1
 last
@@ -119,7 +120,10 @@ quit
 chat index with `reply <index> <text>`, or use `chat <index>`, `open <index>`
 or a bare numeric index to enter a line-oriented chat mode. In chat mode, type
 normal text to send it to the selected chat. Successful chat sends are quiet
-and print only `me: <text>`. Use `watch <seconds>` in the top-level console to
+and print only `me: <text>`. If the chat list is still empty but you know the
+Telegram Bot API chat id, use `/send-id <chat-id> <text>`; this sends directly
+and saves that chat as the selected chat for later `/send <text>` commands.
+Use `watch <seconds>` in the top-level console to
 auto-read while waiting at the prompt, or `watch off` to disable it. Chat mode
 auto-reads every 5 seconds by default while waiting for input; use
 `/watch <seconds>` to change the interval, `/watch off` to disable it,

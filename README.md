@@ -131,7 +131,8 @@ Initial core modules:
   `open <index>` or just the numeric index; inside chat mode, normal text is
   sent to that chat and new messages are polled with `/read`, `/refresh` or the
   optional `/watch` interval. The top-level prompt can use `/send <text>` for
-  the selected chat and persists the last selected chat locally.
+  the selected chat, or `/send-id <chat-id> <text>` when no saved chat list is
+  available yet. The last selected chat is persisted locally.
 
 TLS note: current TLS builds use SNI. Certificate validation is now available
 as an opt-in path with `--tls-verify`, `--tls-ca-file` and `--tls-ca-path`.
@@ -651,7 +652,8 @@ telegram-test --telegram-client-console
 Console commands are `/read`/`/refresh`/`p` to poll, `/chats`/`l` to list saved
 chats, `/last` to show the last inbox log line, `/status` to show local status,
 `/open <index>`, `open <index>` or a bare numeric index to enter a line-oriented
-chat, `/send <text>` to send to the selected chat, `reply <index> <text>` for
+chat, `/send <text>` to send to the selected chat, `/send-id <chat-id> <text>`
+to send directly when the chat list is empty, `reply <index> <text>` for
 explicit indexed sends and `/quit` to quit. The console uses
 `telegram-offset.txt`, `telegram-inbox.log`, `telegram-chats.txt` and
 `telegram-selected-chat.txt` in the active data directory. Inside chat mode,

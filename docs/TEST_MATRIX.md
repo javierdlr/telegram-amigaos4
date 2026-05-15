@@ -83,11 +83,14 @@ telegram-test --telegram-getme-default
 telegram-test --telegram-client-default
 telegram-test --telegram-chats-default
 telegram-test --telegram-reply-default 1 "Hello from Telegram Amiga"
+telegram-test --telegram-client-console
 ```
 
 Before sending by chat index, send a message to the bot and run a receive
 command so `telegram-chats.txt` exists. Chat index `1` is the most recently
-updated chat.
+updated chat. Inside the manual console, `/send-id <chat-id> <text>` can be
+used when the tester already knows a Bot API chat id but the saved chat list is
+still empty; it also persists that chat as selected for later `/send <text>`.
 
 ## Target Cadence
 

@@ -71,8 +71,9 @@ If this package was built with TLS enabled, optional live tests are:
 Inside the console, use /read or /refresh to poll, /chats to list saved chats,
 /last to show the last inbox line, /status to show local state, /open <index>
 or a bare numeric index to enter a line-oriented chat, /send <text> to send
-to the selected chat, reply <index> <text> for an explicit indexed send and
-/quit to quit. The selected chat is persisted in telegram-selected-chat.txt.
+to the selected chat, /send-id <chat-id> <text> to send directly when the chat
+list is empty, reply <index> <text> for an explicit indexed send and /quit to
+quit. The selected chat is persisted in telegram-selected-chat.txt.
 Inside chat mode, type normal text to send. Successful chat sends are quiet
 and print only me: <text>. Use /watch <seconds> in the top-level prompt or
 chat mode to auto-read while waiting, or /watch off to disable it.
