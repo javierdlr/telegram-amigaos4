@@ -130,6 +130,7 @@ telegram-test --telegram-session-loop-default telegram-offset.txt telegram-inbox
 telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
 telegram-test --telegram-client-default
 telegram-test --telegram-client-console
+telegram-test --telegram-human-chat
 ```
 
 For receive tests, send a message to the bot from Telegram before running the
@@ -168,6 +169,12 @@ normal text to send. It auto-reads every 5 seconds by default while waiting
 for input; use `/watch <seconds>` to change the interval, `/watch off` to
 disable it, or `/read`, `/refresh`, `/chats`, `/last`, `/status`, `/back`
 and `/quit`. It does not send replies automatically.
+
+`telegram-human-chat` is the terse back-and-forth mode for human testing. Type
+normal text to send, press Enter on an empty line to check for replies, and
+type `quit` to exit. If no chat is selected yet, send a Telegram message to the
+bot and press Enter, or type the Bot API chat id once. This mode does not write
+`telegram-inbox.log`.
 
 List saved chats with:
 

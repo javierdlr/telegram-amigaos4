@@ -105,6 +105,7 @@ Useful commands:
   telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
   telegram-test --telegram-client-default
   telegram-test --telegram-client-console
+  telegram-test --telegram-human-chat
 
 Inside the console, use /read or /refresh to poll, /chats to list saved chats,
 /last to show the last inbox line, /status to show local state, /open <index>
@@ -115,6 +116,12 @@ quit. The selected chat is persisted in telegram-selected-chat.txt.
 Inside chat mode, type normal text to send. Successful chat sends are quiet
 and print only me: <text>. Use /watch <seconds> in the top-level prompt or
 chat mode to auto-read while waiting, or /watch off to disable it.
+
+For the terse human chat mode, run telegram-test --telegram-human-chat. Type
+normal text to send, press Enter on an empty line to check for replies, and
+type quit to exit. If no chat is selected yet, send a Telegram message to the
+bot and press Enter, or type the Bot API chat id once. This mode does not write
+telegram-inbox.log.
 
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default

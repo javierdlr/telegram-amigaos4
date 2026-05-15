@@ -133,6 +133,10 @@ Initial core modules:
   optional `/watch` interval. The top-level prompt can use `/send <text>` for
   the selected chat, or `/send-id <chat-id> <text>` when no saved chat list is
   available yet. The last selected chat is persisted locally.
+- `--telegram-human-chat` starts a minimal back-and-forth chat mode for human
+  testers. It uses the selected chat or the newest saved chat, sends normal
+  typed lines, receives with Enter or the optional polling interval, and does
+  not write the inbox log.
 
 TLS note: current TLS builds use SNI. Certificate validation is now available
 as an opt-in path with `--tls-verify`, `--tls-ca-file` and `--tls-ca-path`.
@@ -660,6 +664,17 @@ explicit indexed sends and `/quit` to quit. The console uses
 type normal text to send to the selected chat. Successful chat sends are quiet
 and print only `me: <text>`. Use `/watch <seconds>` in the top-level prompt or
 chat mode to auto-read while waiting, or `/watch off` to disable it.
+
+For a terse human chat mode, run:
+
+```text
+telegram-test --telegram-human-chat
+```
+
+Type normal text to send. Press Enter on an empty line to check for replies.
+Type `quit` to exit. If no chat is selected yet, send a Telegram message to the
+bot and press Enter, or type the Bot API chat id once to select it. This mode
+does not write `telegram-inbox.log`.
 
 List the saved chats:
 

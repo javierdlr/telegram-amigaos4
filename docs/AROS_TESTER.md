@@ -165,6 +165,7 @@ telegram-test --data-dir PROGDIR: --telegram-getme-default
 telegram-test --data-dir PROGDIR: --telegram-read-loop-default telegram-offset.txt 5 10
 telegram-test --data-dir PROGDIR: --telegram-client-default
 telegram-test --data-dir PROGDIR: --telegram-client-console
+telegram-test --data-dir PROGDIR: --telegram-human-chat
 ```
 
 Inside `telegram-client-console`, use `/read` or `/refresh` to poll, `/chats`
@@ -177,6 +178,13 @@ line-oriented chat, `/send <text>` to send to the selected chat,
 Inside chat mode, type normal text to send. Use `/watch <seconds>` in the
 top-level prompt or chat mode to auto-read while waiting, or `/watch off` to
 disable it. It does not send replies automatically.
+
+For a terse human chat, use
+`telegram-test --data-dir PROGDIR: --telegram-human-chat`. Type normal text to
+send, press Enter on an empty line to check for replies, and type `quit` to
+exit. If no chat is selected yet, send a Telegram message to the bot and press
+Enter, or type the Bot API chat id once. This mode does not write
+`telegram-inbox.log`.
 
 Once a chat has been saved by polling a message from the bot, send by saved
 chat index with:

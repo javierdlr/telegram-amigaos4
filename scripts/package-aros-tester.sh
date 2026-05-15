@@ -69,6 +69,7 @@ If this package was built with TLS enabled, optional supervised live tests are:
   telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
   telegram-test --telegram-client-default
   telegram-test --telegram-client-console
+  telegram-test --telegram-human-chat
   telegram-test --telegram-chats-default
   telegram-test --telegram-reply-default 1 "Hello from AROS"
   telegram-test --telegram-send-last-default "Hello from AROS"
@@ -82,6 +83,12 @@ quit. The selected chat is persisted in telegram-selected-chat.txt.
 Inside chat mode, type normal text to send. Successful chat sends are quiet
 and print only me: <text>. Use /watch <seconds> in the top-level prompt or
 chat mode to auto-read while waiting, or /watch off to disable it.
+
+For the terse human chat mode, run telegram-test --telegram-human-chat. Type
+normal text to send, press Enter on an empty line to check for replies, and
+type quit to exit. If no chat is selected yet, send a Telegram message to the
+bot and press Enter, or type the Bot API chat id once. This mode does not write
+telegram-inbox.log.
 
 If this package was built with TLS disabled, live Telegram commands are expected
 to report unsupported.

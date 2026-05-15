@@ -55,6 +55,7 @@ Useful live commands:
 telegram-test --telegram-getme-default
 telegram-test --telegram-client-default
 telegram-test --telegram-client-console
+telegram-test --telegram-human-chat
 telegram-test --telegram-chats-default
 telegram-test --telegram-reply-default 1 "Hello from AROS"
 ```
