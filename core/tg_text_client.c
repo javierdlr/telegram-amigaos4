@@ -25,6 +25,14 @@ static int tg_text_client_load_selected_chat(const char *path,
                                              char *chat_id,
                                              unsigned long chat_id_size);
 
+static const char *tg_text_client_selected_label(const char *index_text)
+{
+    if (index_text != 0 && strcmp(index_text, "0") == 0) {
+        return "id";
+    }
+    return index_text;
+}
+
 static int tg_text_client_is_decimal_text(const char *text)
 {
     if (text == 0 || text[0] == '\0') {
@@ -61,6 +69,17 @@ static int tg_text_client_parse_decimal_ulong(const char *text,
 
     *value = result;
     return 0;
+}
+
+static int tg_text_client_is_chat_id_text(const char *text)
+{
+    if (text == 0 || text[0] == '\0') {
+        return 0;
+    }
+    if (*text == '-') {
+        ++text;
+    }
+    return tg_text_client_is_decimal_text(text);
 }
 
 static int tg_text_client_print_chat_line(unsigned long index,
@@ -158,7 +177,8 @@ static void tg_text_client_print_selected_status(const char *path)
     if (tg_text_client_load_selected_chat(path, index_text, sizeof(index_text),
                                           chat_id, sizeof(chat_id)) == 0 &&
         index_text[0] != '\0') {
-        printf("telegram selected chat: %s (%s)\n", index_text, chat_id);
+        printf("telegram selected chat: %s (%s)\n",
+               tg_text_client_selected_label(index_text), chat_id);
     } else {
         puts("telegram selected chat: none");
     }
@@ -202,6 +222,8 @@ static void tg_text_client_print_help(void)
     puts("  /open <index>           open a send/read chat loop");
     puts("  <index>                 open saved chat by number");
     puts("  /send <text>            send to the selected chat");
+    puts("  /send-id <chat-id> <text>");
+    puts("                           send directly and select that chat");
     puts("  reply <index> <text>    send to saved chat index");
     puts("  /help                   show help");
     puts("  /quit                   quit");
@@ -419,6 +441,92 @@ static int tg_text_client_select_chat(const tg_text_client_config *client_config
     return 0;
 }
 
+static int tg_text_client_select_chat_id(
+    const tg_text_client_config *client_config,
+    const char *chat_id,
+    char *selected_index,
+    unsigned long selected_index_size,
+    char *selected_chat_id,
+    unsigned long selected_chat_id_size)
+{
+    unsigned long chat_id_length;
+
+    if (client_config == 0 || selected_index == 0 || selected_index_size < 2 ||
+        selected_chat_id == 0 || selected_chat_id_size == 0 ||
+        !tg_text_client_is_chat_id_text(chat_id)) {
+        puts("telegram chat: invalid chat id");
+        return 1;
+    }
+    chat_id_length = (unsigned long)strlen(chat_id);
+    if (chat_id_length + 1UL > selected_chat_id_size) {
+        puts("telegram chat: chat id too long");
+        return 1;
+    }
+
+    strcpy(selected_index, "0");
+    strcpy(selected_chat_id, chat_id);
+    if (tg_text_client_save_selected_chat(client_config->selected_chat_file_path,
+                                          selected_index,
+                                          selected_chat_id) != 0) {
+        return 1;
+    }
+
+    printf("telegram chat: selected chat id %s\n", selected_chat_id);
+    return 0;
+}
+
+static int tg_text_client_parse_send_id_command(
+    char *line,
+    unsigned long command_length,
+    char *chat_id_buffer,
+    unsigned long chat_id_buffer_size,
+    char **text_start)
+{
+    char *cursor;
+    char *chat_id_start;
+    unsigned long chat_id_length;
+
+    if (line == 0 || chat_id_buffer == 0 || chat_id_buffer_size == 0 ||
+        text_start == 0) {
+        return 1;
+    }
+
+    cursor = line + command_length;
+    while (*cursor == ' ' || *cursor == '\t') {
+        ++cursor;
+    }
+    chat_id_start = cursor;
+    if (*cursor == '-') {
+        ++cursor;
+    }
+    while (*cursor >= '0' && *cursor <= '9') {
+        ++cursor;
+    }
+    chat_id_length = (unsigned long)(cursor - chat_id_start);
+    if (chat_id_length == 0 || chat_id_length + 1UL > chat_id_buffer_size ||
+        (chat_id_length == 1UL && chat_id_start[0] == '-')) {
+        return 1;
+    }
+
+    memcpy(chat_id_buffer, chat_id_start, chat_id_length);
+    chat_id_buffer[chat_id_length] = '\0';
+    if (!tg_text_client_is_chat_id_text(chat_id_buffer)) {
+        return 1;
+    }
+    if (*cursor != ' ' && *cursor != '\t') {
+        return 1;
+    }
+
+    while (*cursor == ' ' || *cursor == '\t') {
+        ++cursor;
+    }
+    if (*cursor == '\0') {
+        return 1;
+    }
+    *text_start = cursor;
+    return 0;
+}
+
 static int tg_text_client_handle_index_send(
     const tg_text_client_config *client_config,
     char *line,
@@ -584,6 +692,8 @@ int tg_text_client_run(const tg_text_client_config *client_config)
     const char *poll_seconds_text;
     const char *max_iterations_text;
     const char *send_text;
+    char send_chat_id[64];
+    char *send_id_text;
     unsigned long watch_seconds;
     int index_is_ready;
     int rc;
@@ -633,7 +743,9 @@ int tg_text_client_run(const tg_text_client_config *client_config)
     tg_text_client_print_help();
     for (;;) {
         if (selected_index[0] != '\0') {
-            printf("tg:%s:%s> ", selected_index, selected_chat_id);
+            printf("tg:%s:%s> ",
+                   tg_text_client_selected_label(selected_index),
+                   selected_chat_id);
         } else {
             printf("tg> ");
         }
@@ -660,6 +772,10 @@ int tg_text_client_run(const tg_text_client_config *client_config)
             strcmp(line, "/quit") == 0) {
             puts("telegram text client: quit");
             return 0;
+        }
+        if (strcmp(line, "/back") == 0) {
+            puts("telegram text client: already at top level");
+            continue;
         }
         if (strcmp(line, "h") == 0 ||
             strcmp(line, "help") == 0 ||
@@ -779,6 +895,30 @@ int tg_text_client_run(const tg_text_client_config *client_config)
             continue;
         }
 
+        if (strncmp(line, "/send-id", 8) == 0 &&
+            (line[8] == ' ' || line[8] == '\t')) {
+            if (tg_text_client_parse_send_id_command(
+                    line, 8, send_chat_id, sizeof(send_chat_id),
+                    &send_id_text) != 0) {
+                puts("telegram text client: use /send-id <chat-id> <text>");
+                continue;
+            }
+            rc = tg_text_client_send_to_chat_id(client_config,
+                                                send_chat_id,
+                                                send_id_text, 0);
+            if (rc != 0) {
+                return rc;
+            }
+            if (tg_text_client_select_chat_id(client_config, send_chat_id,
+                                              selected_index,
+                                              sizeof(selected_index),
+                                              selected_chat_id,
+                                              sizeof(selected_chat_id)) != 0) {
+                return 2;
+            }
+            printf("me: %s\n", send_id_text);
+            continue;
+        }
         if (strncmp(line, "/send", 5) == 0 &&
             (line[5] == ' ' || line[5] == '\t')) {
             send_text = tg_text_client_send_text_from_line(line, 5);
@@ -841,11 +981,15 @@ int tg_text_client_self_test(void)
     char line[256];
     char index_text[32];
     char chat_id[64];
+    char direct_chat_id[64];
     char *message_text;
+    tg_text_client_config client_config;
     unsigned long watch_seconds;
 
     remove(chat_state_file_path);
     remove(selected_file_path);
+    memset(&client_config, 0, sizeof(client_config));
+    client_config.selected_chat_file_path = selected_file_path;
 
     if (tg_client_state_build_line("111", "Alice", "2026-05-15",
                                    "First", line, sizeof(line)) != 0 ||
@@ -902,6 +1046,42 @@ int tg_text_client_self_test(void)
         message_text == 0 ||
         strcmp(message_text, "Hello index") != 0) {
         puts("telegram text client self-test: reply parse failed");
+        remove(chat_state_file_path);
+        remove(selected_file_path);
+        return 2;
+    }
+    strcpy(line, "/send-id -123 Hello direct");
+    message_text = 0;
+    if (tg_text_client_parse_send_id_command(line, 8, chat_id,
+                                             sizeof(chat_id),
+                                             &message_text) != 0 ||
+        strcmp(chat_id, "-123") != 0 ||
+        message_text == 0 ||
+        strcmp(message_text, "Hello direct") != 0) {
+        puts("telegram text client self-test: send-id parse failed");
+        remove(chat_state_file_path);
+        remove(selected_file_path);
+        return 2;
+    }
+    strcpy(line, "/send-id -123Hello direct");
+    if (tg_text_client_parse_send_id_command(line, 8, chat_id,
+                                             sizeof(chat_id),
+                                             &message_text) == 0) {
+        puts("telegram text client self-test: send-id separator failed");
+        remove(chat_state_file_path);
+        remove(selected_file_path);
+        return 2;
+    }
+    strcpy(direct_chat_id, chat_id);
+    if (tg_text_client_select_chat_id(&client_config, direct_chat_id,
+                                      index_text, sizeof(index_text),
+                                      chat_id, sizeof(chat_id)) != 0 ||
+        tg_text_client_load_selected_chat(selected_file_path, index_text,
+                                          sizeof(index_text), chat_id,
+                                          sizeof(chat_id)) != 0 ||
+        strcmp(index_text, "0") != 0 || strcmp(chat_id, "-123") != 0 ||
+        strcmp(tg_text_client_selected_label(index_text), "id") != 0) {
+        puts("telegram text client self-test: direct chat selection failed");
         remove(chat_state_file_path);
         remove(selected_file_path);
         return 2;
