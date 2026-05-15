@@ -21,6 +21,7 @@ telegram-test --telegram-json-self-test
 telegram-test --telegram-http-self-test
 telegram-test --telegram-get-updates-self-test
 telegram-test --telegram-read-once-state-self-test
+telegram-test --telegram-offset-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-console-self-test
@@ -50,6 +51,7 @@ telegram-test --help
 telegram-test --telegram-json-self-test
 telegram-test --telegram-get-updates-self-test
 telegram-test --telegram-read-once-state-self-test
+telegram-test --telegram-offset-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-console-self-test

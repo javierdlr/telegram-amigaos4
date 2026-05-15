@@ -19,6 +19,7 @@
 #include "tg_json.h"
 #include "tg_log.h"
 #include "tg_net.h"
+#include "tg_offset_state.h"
 #include "tg_platform.h"
 #include "tg_telegram.h"
 #include "tg_tls.h"
@@ -863,66 +864,6 @@ static const char *tg_default_named_file_path(const tg_config *config,
     return buffer;
 }
 
-static int tg_load_offset_file(const char *path, char *offset,
-                               unsigned long offset_size)
-{
-    tg_file_status file_status;
-    unsigned long offset_length;
-
-    if (offset == 0 || offset_size == 0) {
-        return 1;
-    }
-    offset[0] = '\0';
-
-    file_status = tg_file_read_text(path, offset, offset_size, &offset_length);
-    if (file_status == TG_FILE_OPEN_FAILED) {
-        return 0;
-    }
-    if (file_status != TG_FILE_OK) {
-        printf("telegram offset file: failed: %s\n",
-               tg_file_status_name(file_status));
-        return 1;
-    }
-
-    tg_console_trim_ascii_space(offset);
-    if (offset[0] != '\0' && !tg_is_decimal_text(offset)) {
-        puts("telegram offset file: invalid offset");
-        return 1;
-    }
-
-    return 0;
-}
-
-static int tg_save_offset_file(const char *path, const char *offset)
-{
-    tg_file_status file_status;
-    char line[40];
-    unsigned long offset_length;
-
-    if (path == 0 || offset == 0 || !tg_is_decimal_text(offset)) {
-        return 1;
-    }
-
-    offset_length = (unsigned long)strlen(offset);
-    if (offset_length + 2 > sizeof(line)) {
-        return 1;
-    }
-
-    strcpy(line, offset);
-    line[offset_length] = '\n';
-    line[offset_length + 1] = '\0';
-
-    file_status = tg_file_write_text(path, line, offset_length + 1);
-    if (file_status != TG_FILE_OK) {
-        printf("telegram offset file: write failed: %s\n",
-               tg_file_status_name(file_status));
-        return 1;
-    }
-
-    printf("telegram offset saved: %s\n", offset);
-    return 0;
-}
-
 static int tg_run_telegram_json_test_text(const char *json)
 {
     tg_telegram_status telegram_status;
@@ -1531,8 +1472,8 @@ static int tg_run_telegram_read_once_state_self_test(void)
                tg_bot_status_name(bot_status));
         return 2;
     }
-    if (tg_save_offset_file(offset_file_path, next_offset) != 0 ||
-        tg_load_offset_file(offset_file_path, saved_offset,
+    if (tg_offset_state_save_file(offset_file_path, next_offset) != 0 ||
+        tg_offset_state_load_file(offset_file_path, saved_offset,
                             sizeof(saved_offset)) != 0 ||
         strcmp(saved_offset, "201") != 0) {
         puts("telegram read once state self-test: first offset file failed");
@@ -1556,8 +1497,8 @@ static int tg_run_telegram_read_once_state_self_test(void)
         remove(offset_file_path);
         return 2;
     }
-    if (tg_save_offset_file(offset_file_path, next_offset) != 0 ||
-        tg_load_offset_file(offset_file_path, saved_offset,
+    if (tg_offset_state_save_file(offset_file_path, next_offset) != 0 ||
+        tg_offset_state_load_file(offset_file_path, saved_offset,
                             sizeof(saved_offset)) != 0 ||
         strcmp(saved_offset, "202") != 0) {
         puts("telegram read once state self-test: second offset file failed");
@@ -1597,7 +1538,7 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
     unsigned long index;
     unsigned long processed_count;
 
-    if (tg_load_offset_file(offset_file_path, offset, sizeof(offset)) != 0) {
+    if (tg_offset_state_load_file(offset_file_path, offset, sizeof(offset)) != 0) {
         return 2;
     }
     if (output_mode == TG_READ_OUTPUT_INBOX) {
@@ -1703,7 +1644,7 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
         } else {
             printf("telegram next offset: %s\n", next_offset);
         }
-        if (tg_save_offset_file(offset_file_path, next_offset) != 0) {
+        if (tg_offset_state_save_file(offset_file_path, next_offset) != 0) {
             return 2;
         }
         ++processed_count;
@@ -2371,7 +2312,7 @@ static void tg_print_client_console_status(const char *offset_file_path,
     printf("telegram chat state file: %s\n", chat_state_file_path);
     printf("tls certificate validation requested: %s\n",
            tg_tls_certificate_validation_enabled() ? "yes" : "no");
-    if (tg_load_offset_file(offset_file_path, offset, sizeof(offset)) == 0 &&
+    if (tg_offset_state_load_file(offset_file_path, offset, sizeof(offset)) == 0 &&
         offset[0] != '\0') {
         printf("telegram offset: %s\n", offset);
     } else {
@@ -3018,6 +2959,46 @@ static int tg_run_telegram_console_self_test(void)
     return 0;
 }
 
+static int tg_run_telegram_offset_state_self_test(void)
+{
+    static const char offset_file_path[] =
+        "telegram-offset-state-self-test.tmp";
+    char offset[32];
+
+    remove(offset_file_path);
+    if (tg_offset_state_load_file(offset_file_path, offset,
+                                  sizeof(offset)) != 0 ||
+        offset[0] != '\0') {
+        puts("telegram offset state self-test: missing file failed");
+        remove(offset_file_path);
+        return 2;
+    }
+    if (tg_offset_state_save_file(offset_file_path, "12345") != 0 ||
+        tg_offset_state_load_file(offset_file_path, offset,
+                                  sizeof(offset)) != 0 ||
+        strcmp(offset, "12345") != 0) {
+        puts("telegram offset state self-test: save/load failed");
+        remove(offset_file_path);
+        return 2;
+    }
+    if (tg_file_write_text(offset_file_path, "12x\n", 4UL) != TG_FILE_OK ||
+        tg_offset_state_load_file(offset_file_path, offset,
+                                  sizeof(offset)) == 0) {
+        puts("telegram offset state self-test: invalid offset accepted");
+        remove(offset_file_path);
+        return 2;
+    }
+    if (tg_offset_state_save_file(offset_file_path, "abc") == 0) {
+        puts("telegram offset state self-test: invalid save accepted");
+        remove(offset_file_path);
+        return 2;
+    }
+
+    remove(offset_file_path);
+    puts("telegram offset state self-test: ok");
+    return 0;
+}
+
 typedef struct tg_client_state_self_test_context {
     unsigned long count;
 } tg_client_state_self_test_context;
@@ -3515,7 +3496,7 @@ static int tg_run_telegram_echo_once_state_paths(const char *token_file_path,
     unsigned long processed_count;
     unsigned long sent_count;
 
-    if (tg_load_offset_file(offset_file_path, offset, sizeof(offset)) != 0) {
+    if (tg_offset_state_load_file(offset_file_path, offset, sizeof(offset)) != 0) {
         return 2;
     }
     if (offset[0] != '\0') {
@@ -3576,7 +3557,7 @@ static int tg_run_telegram_echo_once_state_paths(const char *token_file_path,
 
         if (!update.has_message || !update.has_text) {
             puts("telegram echo once state: update has no text message");
-            if (tg_save_offset_file(offset_file_path, next_offset) != 0) {
+            if (tg_offset_state_save_file(offset_file_path, next_offset) != 0) {
                 return 2;
             }
             ++processed_count;
@@ -3608,7 +3589,7 @@ static int tg_run_telegram_echo_once_state_paths(const char *token_file_path,
             return 2;
         }
 
-        if (tg_save_offset_file(offset_file_path, next_offset) != 0) {
+        if (tg_offset_state_save_file(offset_file_path, next_offset) != 0) {
             return 2;
         }
         ++processed_count;
@@ -4161,6 +4142,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_telegram_manual_client_default) {
         return tg_run_telegram_manual_client_default(&config);
+    }
+
+    if (config.run_telegram_offset_state_self_test) {
+        return tg_run_telegram_offset_state_self_test();
     }
 
     if (config.run_telegram_console_self_test) {

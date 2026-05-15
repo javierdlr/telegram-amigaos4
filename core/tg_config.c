@@ -160,6 +160,7 @@ void tg_config_init(tg_config *config)
     config->run_telegram_session_loop_default = 0;
     config->run_telegram_manual_client = 0;
     config->run_telegram_manual_client_default = 0;
+    config->run_telegram_offset_state_self_test = 0;
     config->run_telegram_console_self_test = 0;
     config->run_telegram_client_state_self_test = 0;
     config->run_telegram_client_self_test = 0;
@@ -480,6 +481,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->telegram_manual_client_default_poll_seconds = argv[i + 4];
             config->telegram_manual_client_default_max_iterations = argv[i + 5];
             i += 5;
+        } else if (strcmp(argv[i], "--telegram-offset-state-self-test") == 0) {
+            config->run_telegram_offset_state_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-console-self-test") == 0) {
             config->run_telegram_console_self_test = 1;
         } else if (strcmp(argv[i], "--telegram-client-state-self-test") == 0) {
@@ -738,6 +741,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Poll read-only updates, then list saved chats\n");
     fprintf(stream, "      --telegram-manual-client-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>\n");
     fprintf(stream, "                         Manual-client preview with default token file\n");
+    fprintf(stream, "      --telegram-offset-state-self-test\n");
+    fprintf(stream, "                         Run built-in offset persistence sample\n");
     fprintf(stream, "      --telegram-console-self-test\n");
     fprintf(stream, "                         Run built-in interactive console parser sample\n");
     fprintf(stream, "      --telegram-client-state-self-test\n");

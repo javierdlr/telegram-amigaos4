@@ -93,6 +93,7 @@ Initial core modules:
 
 - `tg_config`: minimal command-line argument parsing
 - `tg_client_state`: one-line saved-chat state parsing, ordering and lookup
+- `tg_offset_state`: persistent update offset loading and saving
 - `tg_bot`: Bot API orchestration helpers
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
@@ -212,6 +213,7 @@ Recommended AROS offline smoke test:
 ```text
 telegram-test --telegram-json-self-test
 telegram-test --telegram-get-updates-self-test
+telegram-test --telegram-offset-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-send-message-self-test
 telegram-test --telegram-console-self-test
@@ -480,6 +482,8 @@ Current options:
                       Poll read-only updates, then list saved chats
     --telegram-manual-client-default <offset-file> <inbox-log> <chats-file> <poll-seconds> <max-iterations>
                       Manual-client preview with default token file
+    --telegram-offset-state-self-test
+                      Run built-in offset persistence sample
     --telegram-console-self-test
                       Run built-in interactive console parser sample
     --telegram-client-state-self-test
@@ -548,6 +552,7 @@ telegram-test --help
 telegram-test --telegram-json-self-test
 telegram-test --telegram-get-updates-self-test
 telegram-test --telegram-read-once-state-self-test
+telegram-test --telegram-offset-state-self-test
 telegram-test --telegram-inbox-self-test
 telegram-test --telegram-echo-once-self-test
 telegram-test --telegram-send-message-self-test
