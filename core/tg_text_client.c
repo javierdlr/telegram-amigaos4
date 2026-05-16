@@ -1127,11 +1127,8 @@ int tg_text_client_run_human(const tg_text_client_config *client_config)
     }
 
     for (;;) {
-        printf("> ");
-        fflush(stdout);
         if (watch_seconds > 0UL &&
             !tg_platform_stdin_readable(watch_seconds)) {
-            puts("");
             rc = tg_text_client_poll_once(client_config);
             if (rc != 0) {
                 return rc;
@@ -1144,7 +1141,6 @@ int tg_text_client_run_human(const tg_text_client_config *client_config)
             continue;
         }
         if (fgets(line, sizeof(line), stdin) == 0) {
-            puts("");
             return 0;
         }
         tg_console_trim_ascii_space(line);
