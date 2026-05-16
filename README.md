@@ -175,6 +175,21 @@ using OpenSSL, and has passed live `preflight`, `getMe` and read-only polling
 on real MorphOS. See `docs/MORPHOS_TESTER.md` for target-side test
 instructions.
 
+Experimental MorphOS cross-build with Docker/pkgsrc:
+
+```sh
+ACCEPT_MORPHOS_SDK_LICENSE=1 \
+ACCEPT_LHA_LICENSE=1 \
+scripts/docker-morphos-cross-image.sh
+scripts/docker-morphos-cross-build.sh
+```
+
+This builds with pkgsrc `cross/ppc-morphos-gcc` and writes
+`build/morphos-cross/telegram-test`. The TLS-disabled cross-built binary has
+passed offline runtime self-tests on real MorphOS; TLS-enabled live Bot API
+validation still uses the native MorphOS build as the reference path. See
+`docs/MORPHOS_CROSS_BUILD.md`.
+
 Remote build from the Mac:
 
 ```sh
@@ -738,6 +753,8 @@ Current Makefiles and helpers:
 - `scripts/package-amigaos3-tester.sh`
 - `scripts/package-amigaos4-tester.sh`
 - `scripts/package-aros-tester.sh`
+- `scripts/docker-morphos-cross-image.sh`
+- `scripts/docker-morphos-cross-build.sh`
 - `scripts/BuildAmigaOS4Offline`
 - `scripts/BuildAmigaOS4AmiSSL`
 - `scripts/RunAmigaOS3Preflight`

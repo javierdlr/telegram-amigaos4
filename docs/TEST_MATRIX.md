@@ -113,6 +113,8 @@ MorphOS:
 
 - Use for Level 2 after portable workflow changes.
 - Use Level 3/4 for OpenSSL/TLS behavior and manual console/send workflows.
+- Docker/pkgsrc cross-builds are experimental until the resulting
+  `build/morphos-cross/telegram-test` binary passes MorphOS runtime self-tests.
 
 AmigaOS 4.x:
 

@@ -1,0 +1,8 @@
+.git
+build
+*.local.md
+telegram-token.txt
+telegram-*.log
+telegram-offset.txt
+telegram-chats.txt
+telegram-selected-chat.txt

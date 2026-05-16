@@ -83,6 +83,21 @@ Use `Execute`; it is tolerant of ZIP extraction clearing script protection
 bits. `RunMorphOSHumanChat` starts the quiet human chat mode without requiring
 the user to type long command-line options.
 
+## Experimental Docker Cross-Build
+
+There is also an experimental Docker/pkgsrc cross-build path:
+
+```sh
+scripts/docker-morphos-cross-image.sh
+scripts/docker-morphos-cross-build.sh
+```
+
+It builds `build/morphos-cross/telegram-test` with pkgsrc
+`cross/ppc-morphos-gcc`. A Docker-built TLS-disabled binary has passed offline
+runtime self-tests on real MorphOS. Keep using the native MorphOS SDK build as
+the reference path for TLS-enabled live Bot API tests until the cross-built TLS
+path is validated. See `docs/MORPHOS_CROSS_BUILD.md`.
+
 ## First Offline Test
 
 Run these commands before any live token test:
