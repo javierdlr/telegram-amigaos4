@@ -29,8 +29,12 @@ mkdir -p "$DEST_DIR"
 
 cp "$BINARY" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/MORPHOS_TESTER.md" "$DEST_DIR/README.md"
+cp "$ROOT_DIR/docs/USER_RUNBOOK.md" "$DEST_DIR/USER_RUNBOOK.md"
 cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
 cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
+cp "$ROOT_DIR/scripts/RunMorphOSPreflight" "$DEST_DIR/RunMorphOSPreflight"
+cp "$ROOT_DIR/scripts/RunMorphOSGetMe" "$DEST_DIR/RunMorphOSGetMe"
+cp "$ROOT_DIR/scripts/RunMorphOSHumanChat" "$DEST_DIR/RunMorphOSHumanChat"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - MorphOS pre-alpha tester
@@ -56,6 +60,9 @@ Minimum offline test:
 
 If this package was built with TLS enabled, optional live tests are:
 
+  Execute RunMorphOSPreflight
+  Execute RunMorphOSGetMe
+  Execute RunMorphOSHumanChat
   telegram-test --telegram-preflight
   telegram-test --telegram-getme-default
   telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
@@ -79,11 +86,13 @@ Inside chat mode, type normal text to send. Successful chat sends are quiet
 and print only me: <text>. Use /watch <seconds> in the top-level prompt or
 chat mode to auto-read while waiting, or /watch off to disable it.
 
-For the terse human chat mode, run telegram-test --telegram-human-chat. Type
-normal text to send, press Enter on an empty line to check for replies, and
-type quit to exit. If no chat is selected yet, send a Telegram message to the
-bot and press Enter, or type the Bot API chat id once. This mode keeps log lines out of the chat
-transcript, but still appends telegram-inbox.log.
+For the terse human chat mode, run Execute RunMorphOSHumanChat, or run
+telegram-test --telegram-human-chat directly. Type normal text to send, press
+Enter on an empty line to check for replies, and type quit to exit. If no chat
+is selected yet, send a Telegram message to the bot and press Enter, or type
+the Bot API chat id once. This mode does not redraw a prompt, waits silently
+when there are no updates, keeps log lines out of the chat transcript, and
+still appends telegram-inbox.log.
 
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default
@@ -107,8 +116,9 @@ OpenSSL builds can request certificate validation with:
   telegram-test --tls-verify --tls-ca-file ca-bundle.crt --https-test api.telegram.org 443 /
   telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 
-Full platform notes are in README.md. The common checklist is in HOW_TO_TEST.md.
-TLS validation details are in TLS_CERTIFICATES.md.
+Quick user instructions are in USER_RUNBOOK.md. Full platform notes are in
+README.md. The common checklist is in HOW_TO_TEST.md. TLS validation details
+are in TLS_CERTIFICATES.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then

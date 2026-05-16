@@ -139,7 +139,8 @@ telegram-test --telegram-human-chat
 Type normal text to send, press Enter on an empty line to check for replies,
 and type `quit` to exit. If no chat is selected yet, send a Telegram message to
 the bot and press Enter, or type the Bot API chat id once. This mode does not
-write `telegram-inbox.log`.
+redraw a prompt, waits silently when there are no updates, keeps log lines out
+of the chat transcript, and still appends `telegram-inbox.log`.
 
 ## 6. Report Results
 

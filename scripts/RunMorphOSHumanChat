@@ -1,0 +1,27 @@
+; Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+; SPDX-License-Identifier: MIT
+;
+; MorphOS helper for the terse human chat mode.
+; Copy this script next to telegram-test and run:
+;
+;   Execute RunMorphOSHumanChat
+;
+; Or pass an explicit program path:
+;
+;   Execute RunMorphOSHumanChat Work:TelegramAmiga/telegram-test
+
+.KEY PROGRAM
+.BRA {
+.KET }
+
+Echo "Telegram Amiga MorphOS human chat"
+FailAt 21
+Stack 65536
+
+IF "{PROGRAM}" EQ ""
+    Protect telegram-test +e
+    telegram-test --telegram-human-chat
+ELSE
+    Protect {PROGRAM} +e
+    {PROGRAM} --telegram-human-chat
+ENDIF

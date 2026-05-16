@@ -41,6 +41,7 @@ mkdir -p "$DEST_DIR"
 
 cp "$TARGET" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AMIGAOS3_TESTER.md" "$DEST_DIR/README.md"
+cp "$ROOT_DIR/docs/USER_RUNBOOK.md" "$DEST_DIR/USER_RUNBOOK.md"
 cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
 cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
 cp "$ROOT_DIR/scripts/RunAmigaOS3Preflight" "$DEST_DIR/RunAmigaOS3Preflight"
@@ -83,6 +84,7 @@ telegram-token.txt. If the token is exposed, revoke it with BotFather /revoke.
 
 Useful commands:
 
+  Execute RunAmigaOS3Preflight
   Execute RunAmigaOS3GetMe
   Execute RunAmigaOS3HumanChat
   telegram-test --telegram-json-self-test
@@ -121,11 +123,13 @@ Inside chat mode, type normal text to send. Successful chat sends are quiet
 and print only me: <text>. Use /watch <seconds> in the top-level prompt or
 chat mode to auto-read while waiting, or /watch off to disable it.
 
-For the terse human chat mode, run telegram-test --telegram-human-chat. Type
-normal text to send, press Enter on an empty line to check for replies, and
-type quit to exit. If no chat is selected yet, send a Telegram message to the
-bot and press Enter, or type the Bot API chat id once. This mode keeps log lines out of the chat
-transcript, but still appends telegram-inbox.log.
+For the terse human chat mode, run Execute RunAmigaOS3HumanChat, or run
+telegram-test --telegram-human-chat directly. Type normal text to send, press
+Enter on an empty line to check for replies, and type quit to exit. If no chat
+is selected yet, send a Telegram message to the bot and press Enter, or type
+the Bot API chat id once. This mode does not redraw a prompt, waits silently
+when there are no updates, keeps log lines out of the chat transcript, and
+still appends telegram-inbox.log.
 
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default
@@ -148,8 +152,9 @@ telegram-client-default, then use telegram-chats-default and
 telegram-reply-default with the numbered chat index. Index 1 is the most
 recently updated chat.
 
-Full platform notes are in README.md. The common checklist is in HOW_TO_TEST.md.
-TLS validation details are in TLS_CERTIFICATES.md.
+Quick user instructions are in USER_RUNBOOK.md. Full platform notes are in
+README.md. The common checklist is in HOW_TO_TEST.md. TLS validation details
+are in TLS_CERTIFICATES.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then

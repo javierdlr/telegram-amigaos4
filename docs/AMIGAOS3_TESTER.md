@@ -294,8 +294,9 @@ and `/quit`. It does not send replies automatically.
 `telegram-human-chat` is the terse back-and-forth mode for human testing. Type
 normal text to send, press Enter on an empty line to check for replies, and
 type `quit` to exit. If no chat is selected yet, send a Telegram message to the
-bot and press Enter, or type the Bot API chat id once. This mode keeps log lines out of the chat
-transcript, but still appends `telegram-inbox.log`.
+bot and press Enter, or type the Bot API chat id once. This mode does not
+redraw a prompt, waits silently when there are no updates, keeps log lines out
+of the chat transcript, and still appends `telegram-inbox.log`.
 
 List saved chats with:
 

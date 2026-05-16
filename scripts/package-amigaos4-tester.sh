@@ -28,10 +28,14 @@ mkdir -p "$DEST_DIR"
 
 cp "$BINARY" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AMIGAOS4_TESTER.md" "$DEST_DIR/README.md"
+cp "$ROOT_DIR/docs/USER_RUNBOOK.md" "$DEST_DIR/USER_RUNBOOK.md"
 cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
 cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
 cp "$ROOT_DIR/scripts/BuildAmigaOS4Offline" "$DEST_DIR/BuildAmigaOS4Offline"
 cp "$ROOT_DIR/scripts/BuildAmigaOS4AmiSSL" "$DEST_DIR/BuildAmigaOS4AmiSSL"
+cp "$ROOT_DIR/scripts/RunAmigaOS4Preflight" "$DEST_DIR/RunAmigaOS4Preflight"
+cp "$ROOT_DIR/scripts/RunAmigaOS4GetMe" "$DEST_DIR/RunAmigaOS4GetMe"
+cp "$ROOT_DIR/scripts/RunAmigaOS4HumanChat" "$DEST_DIR/RunAmigaOS4HumanChat"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AmigaOS 4.x pre-alpha tester
@@ -59,10 +63,13 @@ Minimum offline test:
 
 Preflight check, without sending a token:
 
+  Execute RunAmigaOS4Preflight
   telegram-test --telegram-preflight
 
 Live read-only test, after creating telegram-token.txt in the same drawer:
 
+  Execute RunAmigaOS4GetMe
+  Execute RunAmigaOS4HumanChat
   telegram-test --telegram-getme-default
   telegram-test --telegram-read-loop-default telegram-offset.txt 5 10
   telegram-test --telegram-manual-client-default telegram-offset.txt telegram-inbox.log telegram-chats.txt 5 10
@@ -80,11 +87,13 @@ Inside chat mode, type normal text to send. Successful chat sends are quiet
 and print only me: <text>. Use /watch <seconds> in the top-level prompt or
 chat mode to auto-read while waiting, or /watch off to disable it.
 
-For the terse human chat mode, run telegram-test --telegram-human-chat. Type
-normal text to send, press Enter on an empty line to check for replies, and
-type quit to exit. If no chat is selected yet, send a Telegram message to the
-bot and press Enter, or type the Bot API chat id once. This mode keeps log lines out of the chat
-transcript, but still appends telegram-inbox.log.
+For the terse human chat mode, run Execute RunAmigaOS4HumanChat, or run
+telegram-test --telegram-human-chat directly. Type normal text to send, press
+Enter on an empty line to check for replies, and type quit to exit. If no chat
+is selected yet, send a Telegram message to the bot and press Enter, or type
+the Bot API chat id once. This mode does not redraw a prompt, waits silently
+when there are no updates, keeps log lines out of the chat transcript, and
+still appends telegram-inbox.log.
 
 Manual send by saved chat index:
 
@@ -112,8 +121,9 @@ until this path has more independent target-side testing.
   telegram-test --tls-verify --tls-ca-file ca-bundle.crt --https-test api.telegram.org 443 /
   telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
 
-Full platform notes are in README.md. The common checklist is in HOW_TO_TEST.md.
-TLS validation details are in TLS_CERTIFICATES.md.
+Quick user instructions are in USER_RUNBOOK.md. Full platform notes are in
+README.md. The common checklist is in HOW_TO_TEST.md. TLS validation details
+are in TLS_CERTIFICATES.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then

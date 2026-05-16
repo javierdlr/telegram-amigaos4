@@ -285,9 +285,8 @@ scripts/package-amigaos3-tester.sh
 The script builds the system-AmiSSL 68k tester and creates a local package under
 `build/packages/`. See `docs/AMIGAOS3_TESTER.md` for target-side requirements,
 commands and reporting notes. The package does not include Telegram tokens or
-AmiSSL runtime files. The package includes `RunAmigaOS3Preflight`, an AmigaDOS
-helper that auto-detects common AmiSSL drawers, sets stack, runs `Avail FLUSH`
-and starts `--telegram-preflight`.
+AmiSSL runtime files. The package includes `RunAmigaOS3Preflight`,
+`RunAmigaOS3GetMe` and `RunAmigaOS3HumanChat` helper scripts.
 
 AROS tester package:
 
@@ -297,7 +296,8 @@ scripts/package-aros-tester.sh
 
 The script cross-builds an AROS One i386 alt-abiv0 tester and creates a local
 package under `build/packages/`. The default package keeps TLS disabled. Use
-`ENABLE_TLS=1` to build the OpenSSL-enabled AROS tester.
+`ENABLE_TLS=1` to build the OpenSSL-enabled AROS tester. The package includes
+`RunAROSPreflight`, `RunAROSGetMe` and `RunAROSHumanChat` helper scripts.
 
 Experimental AROS x86_64 package:
 
@@ -319,7 +319,8 @@ scripts/package-amigaos4-tester.sh
 The AmigaOS 4.x TCP backend is enabled in native builds. HTTPS is enabled when
 building with `ENABLE_AMISSL=1` and requires the OS4 SDK headers plus the
 AmiSSL SDK package. On an OS4 target with the SDK installed, the helper scripts
-can also be used directly:
+can also be used directly. Tester packages include `RunAmigaOS4Preflight`,
+`RunAmigaOS4GetMe` and `RunAmigaOS4HumanChat`.
 
 ```text
 Execute scripts/BuildAmigaOS4Offline
@@ -365,7 +366,8 @@ scripts/package-morphos-tester.sh
 The script packages a MorphOS binary that was built on MorphOS and copied back
 to `build/morphos/telegram-test`. The package is written under
 `build/packages/`, which is ignored by git, and does not include Telegram tokens
-or OpenSSL runtime files.
+or OpenSSL runtime files. The package includes `RunMorphOSPreflight`,
+`RunMorphOSGetMe` and `RunMorphOSHumanChat` helper scripts.
 
 ## Quick Start
 
@@ -674,8 +676,8 @@ telegram-test --telegram-human-chat
 Type normal text to send. Press Enter on an empty line to check for replies.
 Type `quit` to exit. If no chat is selected yet, send a Telegram message to the
 bot and press Enter, or type the Bot API chat id once to select it. This mode
-keeps log lines out of the chat transcript, but still appends
-`telegram-inbox.log`.
+does not redraw a prompt, waits silently when there are no updates, keeps log
+lines out of the chat transcript, and still appends `telegram-inbox.log`.
 
 List the saved chats:
 
@@ -739,6 +741,17 @@ Current Makefiles and helpers:
 - `scripts/BuildAmigaOS4Offline`
 - `scripts/BuildAmigaOS4AmiSSL`
 - `scripts/RunAmigaOS3Preflight`
+- `scripts/RunAmigaOS3GetMe`
+- `scripts/RunAmigaOS3HumanChat`
+- `scripts/RunMorphOSPreflight`
+- `scripts/RunMorphOSGetMe`
+- `scripts/RunMorphOSHumanChat`
+- `scripts/RunAmigaOS4Preflight`
+- `scripts/RunAmigaOS4GetMe`
+- `scripts/RunAmigaOS4HumanChat`
+- `scripts/RunAROSPreflight`
+- `scripts/RunAROSGetMe`
+- `scripts/RunAROSHumanChat`
 
 ## License
 

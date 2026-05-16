@@ -128,6 +128,19 @@ supervised AROS One i386 alt-abiv0 checks. Certificate validation is disabled
 unless `--tls-verify` is supplied, so use unverified TLS only with test bots
 and disposable tokens.
 
+TLS-enabled tester packages also include helper scripts for the user-facing
+flow:
+
+```text
+Execute RunAROSPreflight
+Execute RunAROSGetMe
+Execute RunAROSHumanChat
+```
+
+Use `Execute`; it is tolerant of ZIP extraction clearing script protection
+bits. The helpers pass `--data-dir PROGDIR:` so token and state files stay next
+to `telegram-test`.
+
 Plain network diagnostics:
 
 ```text
@@ -183,8 +196,9 @@ For a terse human chat, use
 `telegram-test --data-dir PROGDIR: --telegram-human-chat`. Type normal text to
 send, press Enter on an empty line to check for replies, and type `quit` to
 exit. If no chat is selected yet, send a Telegram message to the bot and press
-Enter, or type the Bot API chat id once. This mode keeps log lines out of the chat
-transcript, but still appends `telegram-inbox.log`.
+Enter, or type the Bot API chat id once. This mode does not redraw a prompt,
+waits silently when there are no updates, keeps log lines out of the chat
+transcript, and still appends `telegram-inbox.log`.
 
 Once a chat has been saved by polling a message from the bot, send by saved
 chat index with:
