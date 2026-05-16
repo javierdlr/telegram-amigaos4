@@ -19,6 +19,11 @@ DRAWER_NAME="telegram-amiga-aros-x86_64-prealpha-$DATE_STAMP-$COMMIT_ID"
 DEST_DIR="$PACKAGE_ROOT/$DRAWER_NAME"
 
 if [ "${BUILD:-1}" = "1" ]; then
+    if [ -z "${AROS_TOOLCHAIN:-}" ] || [ -z "${AROS_SDK_ROOT:-}" ]; then
+        echo "AROS x86_64 packaging needs a real AROS x86_64 SDK/toolchain." >&2
+        echo "Set AROS_TOOLCHAIN and AROS_SDK_ROOT, or pass BUILD=0 TARGET=/path/to/an existing AROS binary." >&2
+        exit 1
+    fi
     make -C "$ROOT_DIR" -f Makefile.aros-x86_64 \
         clean all \
         ENABLE_TLS="$ENABLE_TLS" \
@@ -28,6 +33,11 @@ fi
 if [ ! -f "$TARGET" ]; then
     echo "AROS x86_64 binary not found: $TARGET" >&2
     echo "Build it first with Makefile.aros-x86_64 or pass TARGET=/path/to/telegram-test." >&2
+    exit 1
+fi
+
+if command -v file >/dev/null 2>&1 && file "$TARGET" | grep -qi 'Mach-O'; then
+    echo "Refusing to package host Mach-O binary as AROS x86_64: $TARGET" >&2
     exit 1
 fi
 
