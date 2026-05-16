@@ -23,5 +23,7 @@ int tg_offset_state_load_file(const char *path,
  * Returns 0 on success.
  */
 int tg_offset_state_save_file(const char *path, const char *offset);
+int tg_offset_state_save_file_mode(const char *path, const char *offset,
+                                   int verbose);
 
 #endif

@@ -84,7 +84,8 @@ int tg_offset_state_load_file(const char *path,
     return 0;
 }
 
-int tg_offset_state_save_file(const char *path, const char *offset)
+int tg_offset_state_save_file_mode(const char *path, const char *offset,
+                                   int verbose)
 {
     tg_file_status file_status;
     char line[40];
@@ -111,6 +112,13 @@ int tg_offset_state_save_file(const char *path, const char *offset)
         return 1;
     }
 
-    printf("telegram offset saved: %s\n", offset);
+    if (verbose) {
+        printf("telegram offset saved: %s\n", offset);
+    }
     return 0;
+}
+
+int tg_offset_state_save_file(const char *path, const char *offset)
+{
+    return tg_offset_state_save_file_mode(path, offset, 1);
 }

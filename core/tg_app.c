@@ -1655,7 +1655,10 @@ static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
         } else {
             printf("telegram next offset: %s\n", next_offset);
         }
-        if (tg_offset_state_save_file(offset_file_path, next_offset) != 0) {
+        if (tg_offset_state_save_file_mode(
+                offset_file_path, next_offset,
+                output_mode != TG_READ_OUTPUT_CHAT &&
+                output_mode != TG_READ_OUTPUT_HUMAN) != 0) {
             return 2;
         }
         ++processed_count;
