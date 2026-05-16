@@ -45,7 +45,7 @@ ELSE
 ENDIF
 
 IF "{PROGRAM}" EQ ""
-    Echo "Program: PROGDIR:telegram-test"
+    Echo "Program: telegram-test"
 ELSE
     Echo "Program: {PROGRAM}"
 ENDIF
@@ -60,7 +60,9 @@ IF EXISTS LIBS:amisslmaster.library
 ENDIF
 
 IF "{PROGRAM}" EQ ""
-    PROGDIR:telegram-test --telegram-preflight
+    Protect telegram-test +e
+    telegram-test --telegram-preflight
 ELSE
+    Protect {PROGRAM} +e
     {PROGRAM} --telegram-preflight
 ENDIF

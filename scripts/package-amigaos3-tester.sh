@@ -44,6 +44,8 @@ cp "$ROOT_DIR/docs/AMIGAOS3_TESTER.md" "$DEST_DIR/README.md"
 cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
 cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
 cp "$ROOT_DIR/scripts/RunAmigaOS3Preflight" "$DEST_DIR/RunAmigaOS3Preflight"
+cp "$ROOT_DIR/scripts/RunAmigaOS3GetMe" "$DEST_DIR/RunAmigaOS3GetMe"
+cp "$ROOT_DIR/scripts/RunAmigaOS3HumanChat" "$DEST_DIR/RunAmigaOS3HumanChat"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AmigaOS 3.x pre-alpha tester
@@ -81,6 +83,8 @@ telegram-token.txt. If the token is exposed, revoke it with BotFather /revoke.
 
 Useful commands:
 
+  Execute RunAmigaOS3GetMe
+  Execute RunAmigaOS3HumanChat
   telegram-test --telegram-json-self-test
   telegram-test --telegram-get-updates-self-test
   telegram-test --telegram-read-once-state-self-test

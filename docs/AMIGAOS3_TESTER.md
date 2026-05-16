@@ -92,18 +92,23 @@ Stack 65536
 Avail FLUSH
 ```
 
-The tester package also includes an AmigaDOS helper script:
+The tester package also includes AmigaDOS helper scripts:
 
 ```text
 Execute RunAmigaOS3Preflight
+Execute RunAmigaOS3GetMe
+Execute RunAmigaOS3HumanChat
 ```
 
-Use `Execute`; running the script directly may require Amiga protection bits
-that can be lost when unpacking ZIP archives. If you want to run it directly,
-set them manually:
+Use `Execute`; the helpers set stack and restore the executable bit on
+`telegram-test` after ZIP extraction. Running the scripts directly may require
+Amiga protection bits that can be lost when unpacking ZIP archives. If you want
+to run them directly, set them manually:
 
 ```text
 Protect RunAmigaOS3Preflight +se
+Protect RunAmigaOS3GetMe +se
+Protect RunAmigaOS3HumanChat +se
 ```
 
 By default it auto-detects only `SYS:AmiSSL` and otherwise uses the existing
@@ -197,6 +202,7 @@ with BotFather using `/revoke` and create a new one.
 Check the token:
 
 ```text
+Execute RunAmigaOS3GetMe
 telegram-test --telegram-getme-default
 ```
 
