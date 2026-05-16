@@ -166,7 +166,7 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
         return TG_NET_INVALID_ARGUMENT;
     }
 
-    host_entry = gethostbyname(host);
+    host_entry = gethostbyname((const unsigned char *)host);
     if (host_entry == 0 || host_entry->h_addr_list == 0 || host_entry->h_addr_list[0] == 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, "host lookup failed");
         return TG_NET_RESOLVE_FAILED;

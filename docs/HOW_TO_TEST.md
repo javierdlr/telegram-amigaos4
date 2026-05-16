@@ -94,9 +94,23 @@ telegram-inbox.log
 telegram-chats.txt
 ```
 
-## 5. Manual Console
+## 5. Human Chat
 
-Start the minimal text console:
+For normal human testing, prefer the terse human chat mode:
+
+```text
+telegram-test --telegram-human-chat
+```
+
+Type normal text to send, press Enter on an empty line to check for replies,
+and type `quit` to exit. If no chat is selected yet, send a Telegram message to
+the bot and press Enter, or type the Bot API chat id once. This mode does not
+redraw a prompt, waits silently when there are no updates, keeps log lines out
+of the chat transcript, and still appends `telegram-inbox.log`.
+
+## 6. Manual Console
+
+Use the manual console for diagnostics or explicit command testing:
 
 ```text
 telegram-test --telegram-client-console
@@ -130,19 +144,7 @@ auto-reads every 5 seconds by default while waiting for input; use
 `/read`/`/poll`/`/p` to poll immediately, `/list`/`/chats` to show chats, and
 `/back` or `/quit` to leave. The console never sends automatic replies.
 
-For the terse human chat mode:
-
-```text
-telegram-test --telegram-human-chat
-```
-
-Type normal text to send, press Enter on an empty line to check for replies,
-and type `quit` to exit. If no chat is selected yet, send a Telegram message to
-the bot and press Enter, or type the Bot API chat id once. This mode does not
-redraw a prompt, waits silently when there are no updates, keeps log lines out
-of the chat transcript, and still appends `telegram-inbox.log`.
-
-## 6. Report Results
+## 7. Report Results
 
 Please include:
 

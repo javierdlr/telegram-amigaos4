@@ -92,7 +92,7 @@ command so `telegram-chats.txt` exists. Chat index `1` is the most recently
 updated chat. Inside the manual console, `/send-id <chat-id> <text>` can be
 used when the tester already knows a Bot API chat id but the saved chat list is
 still empty; it also persists that chat as selected for later `/send <text>`.
-Use `--telegram-human-chat` for the terse no-slash tester flow after the saved
+Use `--telegram-human-chat` as the preferred human tester flow after the saved
 chat state exists, or after typing a known Bot API chat id once.
 
 ## Target Cadence
@@ -113,8 +113,8 @@ MorphOS:
 
 - Use for Level 2 after portable workflow changes.
 - Use Level 3/4 for OpenSSL/TLS behavior and manual console/send workflows.
-- Docker/pkgsrc cross-builds are experimental until the resulting
-  `build/morphos-cross/telegram-test` binary passes MorphOS runtime self-tests.
+- Docker/pkgsrc cross-builds have passed TLS-disabled offline self-tests on
+  real MorphOS. TLS-enabled cross-builds still need live Bot API validation.
 
 AmigaOS 4.x:
 

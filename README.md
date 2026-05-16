@@ -682,7 +682,8 @@ type normal text to send to the selected chat. Successful chat sends are quiet
 and print only `me: <text>`. Use `/watch <seconds>` in the top-level prompt or
 chat mode to auto-read while waiting, or `/watch off` to disable it.
 
-For a terse human chat mode, run:
+For the recommended human tester flow, use the packaged `Run...HumanChat`
+helper for the target. From a raw shell, run:
 
 ```text
 telegram-test --telegram-human-chat

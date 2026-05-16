@@ -29,6 +29,9 @@ show the token.
 
 ## 3. Run The Friendly Helpers
 
+This is the recommended user-facing path. The longer command-line options are
+for diagnostics and bug reports.
+
 Use `Execute`; ZIP extraction can lose script protection bits on Amiga-like
 systems.
 
@@ -65,7 +68,8 @@ Execute RunAROSHumanChat
 ```
 
 `Preflight` checks HTTPS reachability without using the bot token. `GetMe`
-checks that the token works. `HumanChat` starts the terse back-and-forth chat.
+checks that the token works. `HumanChat` starts the terse back-and-forth chat
+and is the main mode for human testing.
 
 ## 4. Human Chat Behavior
 
