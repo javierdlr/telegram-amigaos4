@@ -36,7 +36,11 @@ Current MTProto code is offline by default:
 - `auth_key_id` and initial `server_salt` metadata derivation;
 - MTProto 2.0 encrypted-message framing and response decryption;
 - supervised encrypted `ping`/`pong` probe after auth-key creation;
-- platform RNG plumbing for probes, with no persistent-key save path yet;
+- platform RNG plumbing for probes;
+- curated auth-key file save/load helpers that refuse to save when secure RNG
+  is unavailable;
+- offline `auth.sendCode`, `auth.signIn`, `invokeWithLayer`, `rpc_result` and
+  `rpc_error` serialization/parsing scaffolding;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
 - local MTProto session-state save/load skeleton.
 
@@ -65,6 +69,7 @@ mtproto tl self-test: ok
 mtproto envelope self-test: ok
 mtproto encrypted self-test: ok
 mtproto transport self-test: ok
+mtproto login self-test: ok
 mtproto probe self-test: ok
 mtproto crypto self-test: ok
 mtproto session self-test: ok
@@ -76,7 +81,9 @@ mtproto self-test: ok
 MTProto remains separate from the Bot API path:
 
 - no Bot API command depends on MTProto modules;
-- no MTProto code performs live auth or stores real Telegram user sessions yet;
+- no MTProto command performs live user auth yet;
+- auth-key save/load helpers exist, but no command writes a real user auth key
+  yet;
 - shared network/TLS/file helpers may be reused only after Bot API regression
   tests stay green;
 - target-side validation starts only after offline MTProto self-tests are stable.
@@ -109,10 +116,10 @@ Important constraints for this codebase:
 
 Next MTProto work should stay behind explicit self-tests:
 
-1. add curated storage for the auth key itself, with a strict no-save path when
-   platform RNG is unavailable;
-2. add `auth.sendCode`/`auth.signIn` scaffolding behind explicit API-id/hash
-   input;
+1. add an explicit `auth.sendCode` probe command requiring API id/hash and
+   phone;
+2. add a code-entry command for `auth.signIn`;
 3. add SRP password support before treating 2FA accounts as usable;
-4. keep Bot API and MTProto user login commands separate until login,
+4. add session-file UX and warnings for plaintext local auth-key storage;
+5. keep Bot API and MTProto user login commands separate until login,
    encrypted RPC parsing and session persistence are covered by tests.

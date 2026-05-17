@@ -13,7 +13,8 @@ typedef enum tg_mtproto_session_status {
     TG_MTPROTO_SESSION_INVALID_ARGUMENT = 1,
     TG_MTPROTO_SESSION_FILE_ERROR = 2,
     TG_MTPROTO_SESSION_PARSE_ERROR = 3,
-    TG_MTPROTO_SESSION_BUFFER_TOO_SMALL = 4
+    TG_MTPROTO_SESSION_BUFFER_TOO_SMALL = 4,
+    TG_MTPROTO_SESSION_RNG_UNAVAILABLE = 5
 } tg_mtproto_session_status;
 
 typedef struct tg_mtproto_session {
@@ -37,6 +38,15 @@ tg_mtproto_session_status tg_mtproto_session_save(const char *path,
                                                   const tg_mtproto_session *session);
 tg_mtproto_session_status tg_mtproto_session_load(const char *path,
                                                   tg_mtproto_session *session);
+tg_mtproto_session_status tg_mtproto_session_save_authorization(
+    const char *path,
+    const tg_mtproto_session *session,
+    const unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH],
+    int secure_random_available);
+tg_mtproto_session_status tg_mtproto_session_load_authorization(
+    const char *path,
+    tg_mtproto_session *session,
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH]);
 const char *tg_mtproto_session_status_name(tg_mtproto_session_status status);
 int tg_mtproto_session_self_test(void);
 

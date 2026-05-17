@@ -11,6 +11,7 @@
 #include "tg_mtproto_dc.h"
 #include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_envelope.h"
+#include "tg_mtproto_login.h"
 #include "tg_mtproto_message_id.h"
 #include "tg_mtproto_probe.h"
 #include "tg_mtproto_rsa.h"
@@ -67,6 +68,12 @@ int tg_mtproto_self_test(void)
         return 2;
     }
     puts("mtproto transport self-test: ok");
+
+    if (tg_mtproto_login_self_test() != 0) {
+        puts("mtproto login self-test: failed");
+        return 2;
+    }
+    puts("mtproto login self-test: ok");
 
     if (tg_mtproto_probe_self_test() != 0) {
         puts("mtproto probe self-test: failed");

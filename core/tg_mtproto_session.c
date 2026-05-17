@@ -231,6 +231,112 @@ tg_mtproto_session_status tg_mtproto_session_load(const char *path,
     return TG_MTPROTO_SESSION_OK;
 }
 
+tg_mtproto_session_status tg_mtproto_session_save_authorization(
+    const char *path,
+    const tg_mtproto_session *session,
+    const unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH],
+    int secure_random_available)
+{
+    char text[1152];
+    char sid[17];
+    char key_hex[(TG_MTPROTO_AUTH_KEY_LENGTH * 2U) + 1U];
+    int written;
+
+    if (path == 0 || path[0] == '\0' || session == 0 || auth_key == 0) {
+        return TG_MTPROTO_SESSION_INVALID_ARGUMENT;
+    }
+    if (!secure_random_available) {
+        return TG_MTPROTO_SESSION_RNG_UNAVAILABLE;
+    }
+
+    tg_mtproto_hex_bytes(sid, session->session_id, sizeof(session->session_id));
+    tg_mtproto_hex_bytes(key_hex, auth_key, TG_MTPROTO_AUTH_KEY_LENGTH);
+    written = sprintf(text,
+                      "mtproto-authorization-v1\n"
+                      "dc_id=%lu\n"
+                      "auth_key_id_hi=%08lx\n"
+                      "auth_key_id_lo=%08lx\n"
+                      "server_salt_hi=%08lx\n"
+                      "server_salt_lo=%08lx\n"
+                      "session_id=%s\n"
+                      "auth_key=%s\n",
+                      session->dc_id,
+                      session->auth_key_id_hi & 0xffffffffUL,
+                      session->auth_key_id_lo & 0xffffffffUL,
+                      session->server_salt_hi & 0xffffffffUL,
+                      session->server_salt_lo & 0xffffffffUL,
+                      sid,
+                      key_hex);
+    if (written <= 0 || written >= (int)sizeof(text)) {
+        return TG_MTPROTO_SESSION_BUFFER_TOO_SMALL;
+    }
+    if (tg_file_write_text(path, text, (unsigned long)written) != TG_FILE_OK) {
+        return TG_MTPROTO_SESSION_FILE_ERROR;
+    }
+    return TG_MTPROTO_SESSION_OK;
+}
+
+tg_mtproto_session_status tg_mtproto_session_load_authorization(
+    const char *path,
+    tg_mtproto_session *session,
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH])
+{
+    char text[1152];
+    unsigned long text_length;
+    const char *value;
+    tg_mtproto_session loaded;
+    unsigned char loaded_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+
+    if (path == 0 || path[0] == '\0' || session == 0 || auth_key == 0) {
+        return TG_MTPROTO_SESSION_INVALID_ARGUMENT;
+    }
+    if (tg_file_read_text(path, text, sizeof(text), &text_length) != TG_FILE_OK) {
+        return TG_MTPROTO_SESSION_FILE_ERROR;
+    }
+    if (strncmp(text, "mtproto-authorization-v1\n",
+                strlen("mtproto-authorization-v1\n")) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+
+    tg_mtproto_session_init(&loaded);
+    value = tg_mtproto_line_value(text, "dc_id");
+    if (value == 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+    loaded.dc_id = strtoul(value, 0, 10);
+
+    value = tg_mtproto_line_value(text, "auth_key_id_hi");
+    if (tg_mtproto_parse_hex32(value, &loaded.auth_key_id_hi) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+    value = tg_mtproto_line_value(text, "auth_key_id_lo");
+    if (tg_mtproto_parse_hex32(value, &loaded.auth_key_id_lo) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+    value = tg_mtproto_line_value(text, "server_salt_hi");
+    if (tg_mtproto_parse_hex32(value, &loaded.server_salt_hi) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+    value = tg_mtproto_line_value(text, "server_salt_lo");
+    if (tg_mtproto_parse_hex32(value, &loaded.server_salt_lo) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+    value = tg_mtproto_line_value(text, "session_id");
+    if (tg_mtproto_parse_hex_bytes(value, loaded.session_id,
+                                   sizeof(loaded.session_id)) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+    value = tg_mtproto_line_value(text, "auth_key");
+    if (tg_mtproto_parse_hex_bytes(value, loaded_key,
+                                   TG_MTPROTO_AUTH_KEY_LENGTH) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+
+    *session = loaded;
+    memcpy(auth_key, loaded_key, TG_MTPROTO_AUTH_KEY_LENGTH);
+    return TG_MTPROTO_SESSION_OK;
+}
+
 const char *tg_mtproto_session_status_name(tg_mtproto_session_status status)
 {
     switch (status) {
@@ -244,6 +350,8 @@ const char *tg_mtproto_session_status_name(tg_mtproto_session_status status)
         return "parse-error";
     case TG_MTPROTO_SESSION_BUFFER_TOO_SMALL:
         return "buffer-too-small";
+    case TG_MTPROTO_SESSION_RNG_UNAVAILABLE:
+        return "rng-unavailable";
     default:
         return "unknown";
     }
@@ -258,6 +366,7 @@ int tg_mtproto_session_self_test(void)
     unsigned char new_nonce[32];
     unsigned char server_nonce[16];
     unsigned char session_id[8];
+    unsigned char loaded_key[TG_MTPROTO_AUTH_KEY_LENGTH];
     int i;
 
     tg_mtproto_session_init(&session);
@@ -304,6 +413,33 @@ int tg_mtproto_session_self_test(void)
         loaded.server_salt_hi != 0x33333333UL ||
         loaded.server_salt_lo != 0x33333333UL ||
         memcmp(loaded.session_id, session_id, sizeof(session_id)) != 0) {
+        return 2;
+    }
+
+    remove(path);
+    if (tg_mtproto_session_save_authorization(path, &loaded, auth_key, 0) !=
+            TG_MTPROTO_SESSION_RNG_UNAVAILABLE ||
+        tg_mtproto_session_load_authorization(path, &session, loaded_key) !=
+            TG_MTPROTO_SESSION_FILE_ERROR) {
+        remove(path);
+        return 2;
+    }
+    if (tg_mtproto_session_save_authorization(path, &loaded, auth_key, 1) !=
+            TG_MTPROTO_SESSION_OK ||
+        tg_mtproto_session_load_authorization(path, &session, loaded_key) !=
+            TG_MTPROTO_SESSION_OK) {
+        remove(path);
+        return 2;
+    }
+    remove(path);
+    if (session.dc_id != loaded.dc_id ||
+        session.auth_key_id_hi != loaded.auth_key_id_hi ||
+        session.auth_key_id_lo != loaded.auth_key_id_lo ||
+        session.server_salt_hi != loaded.server_salt_hi ||
+        session.server_salt_lo != loaded.server_salt_lo ||
+        memcmp(session.session_id, loaded.session_id,
+               sizeof(session.session_id)) != 0 ||
+        memcmp(loaded_key, auth_key, sizeof(auth_key)) != 0) {
         return 2;
     }
 

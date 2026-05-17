@@ -37,7 +37,11 @@ Implemented and covered by offline self-tests:
 - `auth_key_id` and initial `server_salt` metadata derivation;
 - MTProto 2.0 encrypted-message framing and response decryption;
 - supervised encrypted `ping`/`pong` probe after auth-key creation;
-- platform RNG plumbing for probes, with no persistent-key save path yet.
+- platform RNG plumbing for probes;
+- curated auth-key file save/load helpers that refuse to save when secure RNG
+  is unavailable;
+- offline `auth.sendCode`, `auth.signIn`, `invokeWithLayer`, `rpc_result` and
+  `rpc_error` serialization/parsing scaffolding.
 
 Run the offline suite:
 
@@ -56,6 +60,7 @@ mtproto tl self-test: ok
 mtproto envelope self-test: ok
 mtproto encrypted self-test: ok
 mtproto transport self-test: ok
+mtproto login self-test: ok
 mtproto probe self-test: ok
 mtproto crypto self-test: ok
 mtproto session self-test: ok
@@ -86,6 +91,11 @@ metadata and sends one encrypted MTProto `ping`, accepting either a direct
 Use this only as a connectivity/protocol-shape check. It is not a login flow
 and it does not create or persist an authorization key.
 
+Login method builders are present for offline verification only. The branch
+does not yet expose a command that sends `auth.sendCode`, to avoid accidental
+SMS/login attempts before auth-key storage and the human code-entry flow are
+complete.
+
 ## Branch Rules
 
 - Keep MTProto behind explicit commands and self-tests until auth-key creation
@@ -99,10 +109,10 @@ and it does not create or persist an authorization key.
 
 The next development loop should add:
 
-- curated storage for the auth key itself, with a strict no-save path when
-  platform RNG is unavailable;
-- `auth.sendCode`/`auth.signIn` scaffolding behind explicit API-id/hash input;
-- SRP password support before treating 2FA accounts as usable.
+- an explicit `auth.sendCode` probe command requiring API id/hash and phone;
+- a code-entry command for `auth.signIn`;
+- SRP password support before treating 2FA accounts as usable;
+- session-file UX and warnings for plaintext local auth-key storage.
 
 ## References
 
