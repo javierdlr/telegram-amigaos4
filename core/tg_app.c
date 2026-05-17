@@ -3665,6 +3665,12 @@ int tg_app_run(int argc, char **argv)
                                        config.mtproto_probe_port, stdout);
     }
 
+    if (config.run_mtproto_req_dh_probe) {
+        return tg_mtproto_req_dh_probe(config.mtproto_probe_host,
+                                       config.mtproto_probe_port,
+                                       config.mtproto_probe_dc_id, stdout);
+    }
+
     if (config.run_telegram_tls_status) {
         return tg_run_telegram_tls_status();
     }

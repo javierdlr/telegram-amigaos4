@@ -11,12 +11,32 @@
 
 #define TG_MTPROTO_RSA_MODULUS_LENGTH 256U
 #define TG_MTPROTO_RSA_PADDED_LENGTH 256U
+#define TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX 1024U
+#define TG_MTPROTO_DH_VALUE_MAX 256U
 
 typedef struct tg_mtproto_public_key {
     tg_mtproto_fingerprint fingerprint;
     unsigned char modulus[TG_MTPROTO_RSA_MODULUS_LENGTH];
     unsigned long exponent;
 } tg_mtproto_public_key;
+
+typedef struct tg_mtproto_server_dh_params_ok {
+    unsigned char nonce[16];
+    unsigned char server_nonce[16];
+    unsigned char encrypted_answer[TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX];
+    unsigned long encrypted_answer_length;
+} tg_mtproto_server_dh_params_ok;
+
+typedef struct tg_mtproto_server_dh_inner_data {
+    unsigned char nonce[16];
+    unsigned char server_nonce[16];
+    unsigned long g;
+    unsigned char dh_prime[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned long dh_prime_length;
+    unsigned char g_a[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned long g_a_length;
+    unsigned long server_time;
+} tg_mtproto_server_dh_inner_data;
 
 const tg_mtproto_public_key *tg_mtproto_builtin_public_keys(
     unsigned int *count);
@@ -55,6 +75,19 @@ tg_mtproto_tl_status tg_mtproto_build_req_dh_params(
     unsigned long q_length,
     const tg_mtproto_fingerprint *fingerprint,
     const unsigned char encrypted_data[TG_MTPROTO_RSA_PADDED_LENGTH]);
+
+tg_mtproto_tl_status tg_mtproto_parse_server_dh_params_ok(
+    const unsigned char *payload,
+    unsigned long payload_length,
+    tg_mtproto_server_dh_params_ok *out);
+
+tg_mtproto_tl_status tg_mtproto_decrypt_server_dh_inner_data(
+    const unsigned char *encrypted_answer,
+    unsigned long encrypted_answer_length,
+    const unsigned char new_nonce[32],
+    const unsigned char expected_nonce[16],
+    const unsigned char expected_server_nonce[16],
+    tg_mtproto_server_dh_inner_data *out);
 
 int tg_mtproto_rsa_self_test(void);
 

@@ -452,6 +452,8 @@ Current options:
                       Run offline MTProto bootstrap samples
     --mtproto-req-pq-probe <host> <port>
                       Send supervised MTProto req_pq_multi TCP probe
+    --mtproto-req-dh-probe <host> <port> <dc-id>
+                      Send req_pq_multi then req_DH_params probe
     --telegram-tls-status
                       Print current TLS security status
     --json-test <json> <field>

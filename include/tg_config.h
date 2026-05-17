@@ -34,6 +34,7 @@ typedef struct tg_config {
     const char *https_test_path;
     const char *mtproto_probe_host;
     const char *mtproto_probe_port;
+    const char *mtproto_probe_dc_id;
     const char *json_test_input;
     const char *json_test_field;
     const char *telegram_json_test_input;
@@ -141,6 +142,7 @@ typedef struct tg_config {
     int run_https_test;
     int run_mtproto_self_test;
     int run_mtproto_req_pq_probe;
+    int run_mtproto_req_dh_probe;
     int run_telegram_tls_status;
     int run_json_test;
     int run_telegram_json_test;

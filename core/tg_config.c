@@ -27,6 +27,7 @@ void tg_config_init(tg_config *config)
     config->https_test_path = 0;
     config->mtproto_probe_host = 0;
     config->mtproto_probe_port = 0;
+    config->mtproto_probe_dc_id = 0;
     config->json_test_input = 0;
     config->json_test_field = 0;
     config->telegram_json_test_input = 0;
@@ -134,6 +135,7 @@ void tg_config_init(tg_config *config)
     config->run_https_test = 0;
     config->run_mtproto_self_test = 0;
     config->run_mtproto_req_pq_probe = 0;
+    config->run_mtproto_req_dh_probe = 0;
     config->run_telegram_tls_status = 0;
     config->run_json_test = 0;
     config->run_telegram_json_test = 0;
@@ -285,6 +287,15 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_probe_host = argv[i + 1];
             config->mtproto_probe_port = argv[i + 2];
             i += 2;
+        } else if (strcmp(argv[i], "--mtproto-req-dh-probe") == 0) {
+            if (i + 3 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_req_dh_probe = 1;
+            config->mtproto_probe_host = argv[i + 1];
+            config->mtproto_probe_port = argv[i + 2];
+            config->mtproto_probe_dc_id = argv[i + 3];
+            i += 3;
         } else if (strcmp(argv[i], "--telegram-tls-status") == 0) {
             config->run_telegram_tls_status = 1;
         } else if (strcmp(argv[i], "--json-test") == 0) {
@@ -709,6 +720,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run offline MTProto bootstrap samples\n");
     fprintf(stream, "      --mtproto-req-pq-probe <host> <port>\n");
     fprintf(stream, "                         Send supervised MTProto req_pq_multi TCP probe\n");
+    fprintf(stream, "      --mtproto-req-dh-probe <host> <port> <dc-id>\n");
+    fprintf(stream, "                         Send req_pq_multi then req_DH_params probe\n");
     fprintf(stream, "      --telegram-tls-status\n");
     fprintf(stream, "                         Print current TLS security status\n");
     fprintf(stream, "      --json-test <json> <field>\n");

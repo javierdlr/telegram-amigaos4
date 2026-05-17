@@ -28,6 +28,8 @@ Implemented and covered by offline self-tests:
 - built-in Telegram production RSA public key material;
 - `p_q_inner_data_dc` and `req_DH_params` serialization;
 - MTProto RSA_PAD with AES-256-IGE and raw RSA public encryption.
+- live `req_DH_params` probe with `server_DH_params_ok` parsing;
+- `server_DH_inner_data` AES-IGE decrypt plus nonce/hash validation.
 
 Run the offline suite:
 
@@ -54,16 +56,19 @@ mtproto self-test: ok
 ## Live Probe
 
 The branch can perform a supervised `req_pq_multi` probe against a raw MTProto
-TCP endpoint:
+TCP endpoint, or a two-step `req_pq_multi` plus `req_DH_params` probe:
 
 ```text
 telegram-test --mtproto-req-pq-probe <host> <port>
+telegram-test --mtproto-req-dh-probe <host> <port> <dc-id>
 ```
 
 This command does not use Telegram user credentials, bot tokens or saved user
 sessions. It opens a TCP connection, sends an abridged-transport plain
 `req_pq_multi` message, parses the `resPQ` response, validates the echoed nonce
-and factors `pq`.
+and factors `pq`. The `req_DH_params` probe additionally sends RSA_PAD
+`p_q_inner_data_dc`, parses `server_DH_params_ok`, decrypts
+`server_DH_inner_data` and validates the response hash and nonces.
 
 Use this only as a connectivity/protocol-shape check. It is not a login flow
 and it does not create or persist an authorization key.
@@ -81,10 +86,9 @@ and it does not create or persist an authorization key.
 
 The next development loop should add:
 
-- live `req_DH_params` submission behind an explicit probe command;
-- parsing `server_DH_params_ok`;
-- decrypting and validating `server_DH_inner_data`;
-- then a supervised auth-key handshake.
+- DH prime/g checks and known-prime cache;
+- `client_DH_inner_data` and `set_client_DH_params`;
+- final auth-key derivation and non-persistent supervised handshake check.
 
 ## References
 
