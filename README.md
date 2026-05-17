@@ -99,8 +99,8 @@ Initial core modules:
 - `tg_log`: portable logging delegated to the platform layer
 - `tg_mtproto`: experimental offline MTProto bootstrap modules for TL
   serialization, plain-message envelope/framing, DC bootstrap, message IDs,
-  `resPQ` parsing/factorization, SHA-1/SHA-256 test vectors and local
-  session-state skeleton
+  `resPQ` parsing/factorization, RSA_PAD, SHA-1/SHA-256 test vectors and
+  local session-state skeleton
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
 - `tg_json`: minimal top-level JSON field lookup plus JSON string escape decoding
 - `tg_net`: portable TCP API with MorphOS, AmigaOS 3.x, AmigaOS 4.x and AROS

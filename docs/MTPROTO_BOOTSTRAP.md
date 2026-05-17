@@ -24,6 +24,9 @@ Current MTProto code is offline by default:
 - `resPQ` parser with nonce validation;
 - `pq` factorization tests;
 - RSA public-key fingerprint selection against a known-fingerprint list;
+- built-in Telegram production RSA public key material;
+- `p_q_inner_data_dc` and `req_DH_params` serialization;
+- MTProto RSA_PAD with AES-256-IGE and raw RSA public encryption;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
 - local MTProto session-state save/load skeleton.
 
@@ -44,6 +47,7 @@ Expected output:
 mtproto dc self-test: ok
 mtproto message-id self-test: ok
 mtproto auth self-test: ok
+mtproto rsa self-test: ok
 mtproto tl self-test: ok
 mtproto envelope self-test: ok
 mtproto transport self-test: ok
@@ -88,7 +92,7 @@ Important constraints for this codebase:
 
 Next MTProto work should stay behind explicit self-tests:
 
-1. add built-in Telegram RSA public key material;
-2. build `req_DH_params`;
-3. add RSA_PAD encryption;
+1. add live `req_DH_params` submission behind an explicit probe command;
+2. parse `server_DH_params_ok`;
+3. decrypt and validate `server_DH_inner_data`;
 4. only then attempt a supervised auth-key handshake.

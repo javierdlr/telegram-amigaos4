@@ -24,7 +24,10 @@ Implemented and covered by offline self-tests:
 - supervised `req_pq_multi` probe packet builder;
 - `resPQ` parser with nonce validation;
 - `pq` factorization for 64-bit authorization bootstrap values;
-- RSA public-key fingerprint selection against a local known-fingerprint list.
+- RSA public-key fingerprint selection against a local known-fingerprint list;
+- built-in Telegram production RSA public key material;
+- `p_q_inner_data_dc` and `req_DH_params` serialization;
+- MTProto RSA_PAD with AES-256-IGE and raw RSA public encryption.
 
 Run the offline suite:
 
@@ -38,6 +41,7 @@ Expected output:
 mtproto dc self-test: ok
 mtproto message-id self-test: ok
 mtproto auth self-test: ok
+mtproto rsa self-test: ok
 mtproto tl self-test: ok
 mtproto envelope self-test: ok
 mtproto transport self-test: ok
@@ -77,9 +81,9 @@ and it does not create or persist an authorization key.
 
 The next development loop should add:
 
-- `req_DH_params` construction;
-- built-in Telegram RSA public key material and fingerprint checks;
-- RSA_PAD encryption;
+- live `req_DH_params` submission behind an explicit probe command;
+- parsing `server_DH_params_ok`;
+- decrypting and validating `server_DH_inner_data`;
 - then a supervised auth-key handshake.
 
 ## References

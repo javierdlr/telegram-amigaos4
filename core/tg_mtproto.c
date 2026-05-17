@@ -12,6 +12,7 @@
 #include "tg_mtproto_envelope.h"
 #include "tg_mtproto_message_id.h"
 #include "tg_mtproto_probe.h"
+#include "tg_mtproto_rsa.h"
 #include "tg_mtproto_session.h"
 #include "tg_mtproto_tl.h"
 #include "tg_mtproto_transport.h"
@@ -35,6 +36,12 @@ int tg_mtproto_self_test(void)
         return 2;
     }
     puts("mtproto auth self-test: ok");
+
+    if (tg_mtproto_rsa_self_test() != 0) {
+        puts("mtproto rsa self-test: failed");
+        return 2;
+    }
+    puts("mtproto rsa self-test: ok");
 
     if (tg_mtproto_tl_self_test() != 0) {
         puts("mtproto tl self-test: failed");
