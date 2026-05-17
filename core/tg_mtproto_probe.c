@@ -1496,6 +1496,99 @@ int tg_mtproto_auth_get_password(const char *host,
     return 0;
 }
 
+int tg_mtproto_auth_get_self(const char *host,
+                             const char *port,
+                             const char *api_id_text,
+                             const char *auth_file,
+                             const char *dc_id_text,
+                             FILE *stream)
+{
+    unsigned char query[64];
+    unsigned char wrapped_query[760];
+    unsigned long api_id;
+    unsigned long query_length;
+    tg_mtproto_auth_context context;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_session_status session_status;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_user_summary user;
+    long dc_id;
+    static const char label[] = "mtproto users.getUsers(self)";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 || tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0 ||
+        tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
+        if (stream != 0) {
+            fputs("mtproto users.getUsers(self): invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+    if (tg_mtproto_load_auth_context(host, port, auth_file, &context, stream,
+                                     label) != 0) {
+        return 2;
+    }
+    context.session.dc_id = (unsigned long)dc_id;
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_users_get_self(&writer) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    query_length = writer.length;
+    if (tg_mtproto_build_initialized_query(&writer, wrapped_query,
+                                           sizeof(wrapped_query), api_id,
+                                           query, query_length) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: init-connection-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        &result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
+    tg_mtproto_close_auth_context(&context);
+
+    session_status = tg_mtproto_session_save_authorization(
+        auth_file, &context.session, context.auth_key, 1);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (tg_mtproto_parse_user_vector_first(result.result_constructor,
+                                           result.result_body,
+                                           result.result_body_length,
+                                           &user) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: user-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    fprintf(stream, "%s: id 0x%08lx%08lx\n", label, user.id_hi, user.id_lo);
+    fprintf(stream, "%s: self %s bot %s\n", label,
+            user.is_self ? "yes" : "no", user.is_bot ? "yes" : "no");
+    if (user.first_name[0] != '\0' || user.last_name[0] != '\0') {
+        fprintf(stream, "%s: name %s %s\n", label, user.first_name,
+                user.last_name);
+    }
+    if (user.username[0] != '\0') {
+        fprintf(stream, "%s: username %s\n", label, user.username);
+    }
+    return 0;
+}
+
 int tg_mtproto_auth_forget(const char *auth_file,
                            const char *code_hash_file,
                            FILE *stream)

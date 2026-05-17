@@ -49,6 +49,20 @@ typedef struct tg_mtproto_password_summary {
     int has_password;
 } tg_mtproto_password_summary;
 
+typedef struct tg_mtproto_user_summary {
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long flags2;
+    unsigned long id_hi;
+    unsigned long id_lo;
+    int is_self;
+    int is_bot;
+    char first_name[96];
+    char last_name[96];
+    char username[96];
+    char phone[64];
+} tg_mtproto_user_summary;
+
 tg_mtproto_tl_status tg_mtproto_build_invoke_with_layer(
     tg_mtproto_tl_writer *writer,
     unsigned long layer,
@@ -81,6 +95,9 @@ tg_mtproto_tl_status tg_mtproto_build_help_get_config(
     tg_mtproto_tl_writer *writer);
 
 tg_mtproto_tl_status tg_mtproto_build_account_get_password(
+    tg_mtproto_tl_writer *writer);
+
+tg_mtproto_tl_status tg_mtproto_build_users_get_self(
     tg_mtproto_tl_writer *writer);
 
 tg_mtproto_tl_status tg_mtproto_build_msgs_ack(
@@ -123,6 +140,12 @@ tg_mtproto_tl_status tg_mtproto_parse_account_password_summary(
     const unsigned char *body,
     unsigned long body_length,
     tg_mtproto_password_summary *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_user_vector_first(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_user_summary *out);
 
 int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor);
 

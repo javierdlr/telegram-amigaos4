@@ -15,6 +15,8 @@
 #define TG_AUTH_SIGN_IN_CONSTRUCTOR 0x8d52a951UL
 #define TG_HELP_GET_CONFIG_CONSTRUCTOR 0xc4f9186bUL
 #define TG_ACCOUNT_GET_PASSWORD_CONSTRUCTOR 0x548a30f5UL
+#define TG_USERS_GET_USERS_CONSTRUCTOR 0x0d91a548UL
+#define TG_INPUT_USER_SELF_CONSTRUCTOR 0xf7c1b13fUL
 #define TG_MSGS_ACK_CONSTRUCTOR 0x62d6b459UL
 #define TG_VECTOR_CONSTRUCTOR 0x1cb5c415UL
 #define TG_RPC_RESULT_CONSTRUCTOR 0xf35c6d01UL
@@ -28,6 +30,7 @@
 #define TG_AUTH_AUTHORIZATION_SIGNUP_REQUIRED_CONSTRUCTOR 0x44747e9aUL
 #define TG_CONFIG_CONSTRUCTOR 0xcc1a241eUL
 #define TG_ACCOUNT_PASSWORD_CONSTRUCTOR 0x957b50fbUL
+#define TG_USER_CONSTRUCTOR 0x020b1422UL
 
 static tg_mtproto_tl_status tg_write_string(tg_mtproto_tl_writer *writer,
                                             const char *text)
@@ -299,6 +302,24 @@ tg_mtproto_tl_status tg_mtproto_build_account_get_password(
     return tg_mtproto_tl_write_u32(writer, TG_ACCOUNT_GET_PASSWORD_CONSTRUCTOR);
 }
 
+tg_mtproto_tl_status tg_mtproto_build_users_get_self(
+    tg_mtproto_tl_writer *writer)
+{
+    tg_mtproto_tl_status status;
+
+    status = tg_mtproto_tl_write_u32(writer, TG_USERS_GET_USERS_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_VECTOR_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_INPUT_USER_SELF_CONSTRUCTOR);
+    }
+    return status;
+}
+
 tg_mtproto_tl_status tg_mtproto_build_msgs_ack(
     tg_mtproto_tl_writer *writer,
     const unsigned long *msg_id_hi,
@@ -529,6 +550,70 @@ tg_mtproto_tl_status tg_mtproto_parse_account_password_summary(
     return TG_MTPROTO_TL_OK;
 }
 
+tg_mtproto_tl_status tg_mtproto_parse_user_vector_first(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_user_summary *out)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long count;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+
+    if (body == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    if (constructor != TG_VECTOR_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    memset(out, 0, sizeof(*out));
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &count) != TG_MTPROTO_TL_OK ||
+        count == 0UL ||
+        tg_mtproto_tl_read_u32(&reader, &out->constructor) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (out->constructor != TG_USER_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_mtproto_tl_read_u32(&reader, &out->flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &out->flags2) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(&reader, &out->id_hi, &out->id_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    out->is_self = (out->flags & (1UL << 10)) != 0UL;
+    out->is_bot = (out->flags & (1UL << 14)) != 0UL;
+    if ((out->flags & 1UL) != 0UL &&
+        tg_mtproto_tl_read_u64(&reader, &access_hash_hi, &access_hash_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 2UL) != 0UL &&
+        tg_read_string_copy(&reader, out->first_name,
+                            sizeof(out->first_name)) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 4UL) != 0UL &&
+        tg_read_string_copy(&reader, out->last_name,
+                            sizeof(out->last_name)) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 8UL) != 0UL &&
+        tg_read_string_copy(&reader, out->username,
+                            sizeof(out->username)) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 16UL) != 0UL &&
+        tg_read_string_copy(&reader, out->phone,
+                            sizeof(out->phone)) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
 int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor)
 {
     return constructor == TG_AUTH_AUTHORIZATION_CONSTRUCTOR ||
@@ -564,6 +649,7 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_password_summary password;
     tg_mtproto_rpc_result result;
     tg_mtproto_sent_code sent_code;
+    tg_mtproto_user_summary user;
     tg_mtproto_tl_writer writer;
 
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
@@ -681,6 +767,15 @@ int tg_mtproto_login_self_test(void)
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_users_get_self(&writer) != TG_MTPROTO_TL_OK ||
+        writer.length != 16UL ||
+        query[0] != 0x48U || query[1] != 0xa5U ||
+        query[2] != 0x91U || query[3] != 0x0dU ||
+        query[12] != 0x3fU || query[13] != 0xb1U ||
+        query[14] != 0xc1U || query[15] != 0xf7U) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_msgs_ack(&writer, &bad_msg.bad_msg_id_hi,
                                   &bad_msg.bad_msg_id_lo, 1UL) !=
             TG_MTPROTO_TL_OK ||
@@ -714,6 +809,26 @@ int tg_mtproto_login_self_test(void)
             &password) != TG_MTPROTO_TL_OK ||
         !password.has_recovery || !password.has_secure_values ||
         !password.has_password) {
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, rpc, sizeof(rpc));
+    if (tg_mtproto_tl_write_u32(&writer, 1UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_USER_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, (1UL << 10) | 2UL | 8UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0UL, 12345UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "Test") != TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "tester") != TG_MTPROTO_TL_OK ||
+        tg_mtproto_parse_user_vector_first(TG_VECTOR_CONSTRUCTOR, rpc,
+                                           writer.length, &user) !=
+            TG_MTPROTO_TL_OK ||
+        !user.is_self || user.is_bot || user.id_lo != 12345UL ||
+        strcmp(user.first_name, "Test") != 0 ||
+        strcmp(user.username, "tester") != 0) {
         return 2;
     }
 

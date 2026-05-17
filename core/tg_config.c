@@ -149,6 +149,7 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_sign_in = 0;
     config->run_mtproto_auth_get_config = 0;
     config->run_mtproto_auth_get_password = 0;
+    config->run_mtproto_auth_get_self = 0;
     config->run_mtproto_auth_forget = 0;
     config->run_telegram_tls_status = 0;
     config->run_json_test = 0;
@@ -354,6 +355,17 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
                 return 1;
             }
             config->run_mtproto_auth_get_password = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_id = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            i += 5;
+        } else if (strcmp(argv[i], "--mtproto-auth-get-self") == 0) {
+            if (i + 5 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_get_self = 1;
             config->mtproto_auth_host = argv[i + 1];
             config->mtproto_auth_port = argv[i + 2];
             config->mtproto_auth_api_id = argv[i + 3];
@@ -805,6 +817,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Call help.getConfig with saved MTProto auth state\n");
     fprintf(stream, "      --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Probe account.getPassword SRP metadata\n");
+    fprintf(stream, "      --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>\n");
+    fprintf(stream, "                         Call users.getUsers(inputUserSelf) with saved auth state\n");
     fprintf(stream, "      --mtproto-auth-forget <auth-file> [code-hash-file]\n");
     fprintf(stream, "                         Delete local MTProto auth test files\n");
     fprintf(stream, "      --telegram-tls-status\n");

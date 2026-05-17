@@ -44,7 +44,8 @@ Current MTProto code is offline by default:
   serialization/parsing scaffolding;
 - explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
   the Bot API path;
-- saved-session `help.getConfig` and `account.getPassword` probes;
+- saved-session `help.getConfig`, `account.getPassword` and
+  `users.getUsers(inputUserSelf)` probes;
 - best-effort `msgs_ack` for encrypted RPC responses and containers;
 - local session-forget command for plaintext auth test files;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
@@ -65,6 +66,7 @@ telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash>
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 ```
 
@@ -75,10 +77,12 @@ human-entered code. `SESSION_PASSWORD_NEEDED` is reported as unsupported until
 SRP password login is implemented.
 
 After sign-in, `help.getConfig` is the first saved-session read-only probe.
-`account.getPassword` only confirms whether Telegram exposes SRP metadata; it
-does not compute or send the SRP password proof yet. Encrypted RPC responses are
-acknowledged with best-effort `msgs_ack` messages before closing the connection.
-Use `auth.forget` to remove plaintext local auth-key test files.
+`users.getUsers(inputUserSelf)` prints a minimal current-user summary and
+confirms that the saved session represents a user identity. `account.getPassword`
+only confirms whether Telegram exposes SRP metadata; it does not compute or send
+the SRP password proof yet. Encrypted RPC responses are acknowledged with
+best-effort `msgs_ack` messages before closing the connection. Use `auth.forget`
+to remove plaintext local auth-key test files.
 
 Run:
 
@@ -134,6 +138,9 @@ The bootstrap follows the official Telegram MTProto documentation:
 - <https://core.telegram.org/method/auth.signIn>
 - <https://core.telegram.org/method/help.getConfig>
 - <https://core.telegram.org/method/account.getPassword>
+- <https://core.telegram.org/method/users.getUsers>
+- <https://core.telegram.org/constructor/inputUserSelf>
+- <https://core.telegram.org/api/srp>
 
 Important constraints for this codebase:
 
@@ -153,7 +160,7 @@ Next MTProto work should stay behind explicit self-tests:
    phone number;
 2. add full SRP password proof generation before treating 2FA accounts as
    usable;
-3. add a first authenticated account/user RPC after sign-in;
+3. validate `users.getUsers(inputUserSelf)` after sign-in;
 4. validate saved-session commands on AmigaOS3, MorphOS and AROS;
 5. keep Bot API and MTProto user login commands separate until login,
    encrypted RPC parsing and session persistence are covered by tests.

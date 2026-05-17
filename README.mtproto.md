@@ -45,7 +45,8 @@ Implemented and covered by offline self-tests:
   serialization/parsing scaffolding;
 - explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
   the Bot API client path;
-- saved-session `help.getConfig` and `account.getPassword` probes;
+- saved-session `help.getConfig`, `account.getPassword` and
+  `users.getUsers(inputUserSelf)` probes;
 - best-effort `msgs_ack` for encrypted RPC responses and containers;
 - local session-forget command for plaintext auth test files.
 
@@ -106,6 +107,7 @@ telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash>
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 ```
 
@@ -118,7 +120,9 @@ the human-entered code.
 These commands do not implement SRP password login yet. If Telegram returns
 `SESSION_PASSWORD_NEEDED`, the account requires 2FA support that is still
 pending. `account.getPassword` is present only to confirm whether SRP metadata
-is available; it does not compute or submit the password proof yet.
+is available; it does not compute or submit the password proof yet. After a
+successful login, `users.getUsers(inputUserSelf)` prints a minimal current-user
+summary without storing a peer database.
 
 The auth file contains a plaintext MTProto auth key. Keep it local, use only
 disposable test accounts at this stage, and delete it with
@@ -140,7 +144,7 @@ The next development loop should add:
 - real-account validation with a disposable Telegram API id/hash and a test
   phone number;
 - full SRP password proof generation before treating 2FA accounts as usable;
-- a first authenticated account/user RPC after sign-in;
+- real-account validation of `users.getUsers(inputUserSelf)` after sign-in;
 - target-side validation of saved-session commands on AmigaOS3, MorphOS and
   AROS.
 
@@ -157,3 +161,6 @@ The next development loop should add:
 - <https://core.telegram.org/method/auth.signIn>
 - <https://core.telegram.org/method/help.getConfig>
 - <https://core.telegram.org/method/account.getPassword>
+- <https://core.telegram.org/method/users.getUsers>
+- <https://core.telegram.org/constructor/inputUserSelf>
+- <https://core.telegram.org/api/srp>
