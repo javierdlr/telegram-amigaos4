@@ -37,6 +37,21 @@ int tg_mtproto_auth_sign_in(const char *host,
                             const char *phone_code,
                             const char *dc_id_text,
                             FILE *stream);
+int tg_mtproto_auth_get_config(const char *host,
+                               const char *port,
+                               const char *api_id_text,
+                               const char *auth_file,
+                               const char *dc_id_text,
+                               FILE *stream);
+int tg_mtproto_auth_get_password(const char *host,
+                                 const char *port,
+                                 const char *api_id_text,
+                                 const char *auth_file,
+                                 const char *dc_id_text,
+                                 FILE *stream);
+int tg_mtproto_auth_forget(const char *auth_file,
+                           const char *code_hash_file,
+                           FILE *stream);
 int tg_mtproto_probe_self_test(void);
 
 #endif

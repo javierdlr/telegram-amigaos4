@@ -44,6 +44,9 @@ Current MTProto code is offline by default:
   serialization/parsing scaffolding;
 - explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
   the Bot API path;
+- saved-session `help.getConfig` and `account.getPassword` probes;
+- best-effort `msgs_ack` for encrypted RPC responses and containers;
+- local session-forget command for plaintext auth test files;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
 - local MTProto session-state save/load skeleton.
 
@@ -60,6 +63,9 @@ The optional user-auth commands are:
 ```text
 telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> <auth-file> <code-hash-file>
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
+telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 ```
 
 `auth.sendCode` creates and saves a plaintext local auth-key file only after a
@@ -67,6 +73,12 @@ successful Telegram response, and only when secure random bytes are available.
 `auth.signIn` reuses that file plus the saved `phone_code_hash` and the
 human-entered code. `SESSION_PASSWORD_NEEDED` is reported as unsupported until
 SRP password login is implemented.
+
+After sign-in, `help.getConfig` is the first saved-session read-only probe.
+`account.getPassword` only confirms whether Telegram exposes SRP metadata; it
+does not compute or send the SRP password proof yet. Encrypted RPC responses are
+acknowledged with best-effort `msgs_ack` messages before closing the connection.
+Use `auth.forget` to remove plaintext local auth-key test files.
 
 Run:
 
@@ -100,6 +112,7 @@ MTProto remains separate from the Bot API path:
 - live MTProto user-auth commands are explicit and separate from Bot API
   commands;
 - auth-key files are plaintext local test artifacts and must not be committed;
+- local auth-key deletion is explicit through `--mtproto-auth-forget`;
 - shared network/TLS/file helpers may be reused only after Bot API regression
   tests stay green;
 - target-side validation starts only after offline MTProto self-tests are stable.
@@ -119,6 +132,8 @@ The bootstrap follows the official Telegram MTProto documentation:
 - <https://core.telegram.org/mtproto/security_guidelines>
 - <https://core.telegram.org/method/auth.sendCode>
 - <https://core.telegram.org/method/auth.signIn>
+- <https://core.telegram.org/method/help.getConfig>
+- <https://core.telegram.org/method/account.getPassword>
 
 Important constraints for this codebase:
 
@@ -136,8 +151,9 @@ Next MTProto work should stay behind explicit self-tests:
 
 1. validate the auth commands with a disposable Telegram API id/hash and a test
    phone number;
-2. add SRP password support before treating 2FA accounts as usable;
-3. improve session-file UX and warnings for plaintext local auth-key storage;
-4. add the first authenticated read-only user RPC after sign-in;
+2. add full SRP password proof generation before treating 2FA accounts as
+   usable;
+3. add a first authenticated account/user RPC after sign-in;
+4. validate saved-session commands on AmigaOS3, MorphOS and AROS;
 5. keep Bot API and MTProto user login commands separate until login,
    encrypted RPC parsing and session persistence are covered by tests.

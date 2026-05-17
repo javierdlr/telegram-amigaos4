@@ -154,6 +154,9 @@ typedef struct tg_config {
     int run_mtproto_req_dh_probe;
     int run_mtproto_auth_send_code;
     int run_mtproto_auth_sign_in;
+    int run_mtproto_auth_get_config;
+    int run_mtproto_auth_get_password;
+    int run_mtproto_auth_forget;
     int run_telegram_tls_status;
     int run_json_test;
     int run_telegram_json_test;

@@ -35,6 +35,20 @@ typedef struct tg_mtproto_sent_code {
     char phone_code_hash[128];
 } tg_mtproto_sent_code;
 
+typedef struct tg_mtproto_config_summary {
+    unsigned long date;
+    unsigned long expires;
+    unsigned long test_mode_constructor;
+    unsigned long this_dc;
+} tg_mtproto_config_summary;
+
+typedef struct tg_mtproto_password_summary {
+    unsigned long flags;
+    int has_recovery;
+    int has_secure_values;
+    int has_password;
+} tg_mtproto_password_summary;
+
 tg_mtproto_tl_status tg_mtproto_build_invoke_with_layer(
     tg_mtproto_tl_writer *writer,
     unsigned long layer,
@@ -63,6 +77,18 @@ tg_mtproto_tl_status tg_mtproto_build_auth_sign_in(
     const char *phone_code_hash,
     const char *phone_code);
 
+tg_mtproto_tl_status tg_mtproto_build_help_get_config(
+    tg_mtproto_tl_writer *writer);
+
+tg_mtproto_tl_status tg_mtproto_build_account_get_password(
+    tg_mtproto_tl_writer *writer);
+
+tg_mtproto_tl_status tg_mtproto_build_msgs_ack(
+    tg_mtproto_tl_writer *writer,
+    const unsigned long *msg_id_hi,
+    const unsigned long *msg_id_lo,
+    unsigned long msg_id_count);
+
 tg_mtproto_tl_status tg_mtproto_parse_rpc_result(
     const unsigned char *body,
     unsigned long body_length,
@@ -85,6 +111,18 @@ tg_mtproto_tl_status tg_mtproto_parse_auth_sent_code(
     const unsigned char *body,
     unsigned long body_length,
     tg_mtproto_sent_code *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_config_summary(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_config_summary *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_account_password_summary(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_password_summary *out);
 
 int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor);
 

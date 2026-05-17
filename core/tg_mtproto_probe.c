@@ -27,6 +27,8 @@
 #define TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR 0x5e002502UL
 #define TG_MTPROTO_AUTH_SENT_CODE_SUCCESS_CONSTRUCTOR 0x2390fe44UL
 #define TG_MTPROTO_AUTH_SENT_CODE_PAYMENT_REQUIRED_CONSTRUCTOR 0xd7a2fcf9UL
+#define TG_MTPROTO_CONFIG_CONSTRUCTOR 0xcc1a241eUL
+#define TG_MTPROTO_ACCOUNT_PASSWORD_CONSTRUCTOR 0x957b50fbUL
 
 typedef struct tg_mtproto_auth_context {
     tg_net_connection connection;
@@ -394,6 +396,140 @@ static int tg_mtproto_find_bad_msg(
     return 0;
 }
 
+static void tg_mtproto_collect_ack_ids(
+    const tg_mtproto_encrypted_message *message,
+    unsigned long *ack_hi,
+    unsigned long *ack_lo,
+    unsigned long ack_capacity,
+    unsigned long *ack_count)
+{
+    unsigned long count;
+    unsigned long index;
+    unsigned long offset;
+    unsigned long nested_length;
+
+    if (ack_count != 0) {
+        *ack_count = 0;
+    }
+    if (message == 0 || ack_hi == 0 || ack_lo == 0 || ack_count == 0 ||
+        ack_capacity == 0UL) {
+        return;
+    }
+
+    ack_hi[0] = message->message_id_hi;
+    ack_lo[0] = message->message_id_lo;
+    *ack_count = 1UL;
+
+    if (message->body_length < 8UL ||
+        tg_mtproto_read_u32_le(message->body) !=
+            TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
+        return;
+    }
+
+    count = tg_mtproto_read_u32_le(message->body + 4U);
+    offset = 8UL;
+    for (index = 0UL; index < count && *ack_count < ack_capacity; ++index) {
+        if (message->body_length - offset < 16UL) {
+            return;
+        }
+        ack_lo[*ack_count] = tg_mtproto_read_u32_le(message->body + offset);
+        ack_hi[*ack_count] = tg_mtproto_read_u32_le(message->body + offset + 4U);
+        nested_length = tg_mtproto_read_u32_le(message->body + offset + 12U);
+        offset += 16UL;
+        if (nested_length > message->body_length - offset) {
+            return;
+        }
+        ++(*ack_count);
+        offset += nested_length;
+    }
+}
+
+static int tg_mtproto_send_encrypted_service(
+    tg_mtproto_auth_context *context,
+    const unsigned char *body,
+    unsigned long body_length,
+    FILE *stream,
+    const char *label)
+{
+    unsigned char encrypted_padding[64];
+    unsigned char payload[1024];
+    unsigned char packet[1100];
+    unsigned long encrypted_padding_length;
+    unsigned long payload_length;
+    tg_mtproto_message_id msg_id;
+    tg_mtproto_tl_writer writer;
+    tg_net_status net_status;
+    char error_buffer[160];
+
+    if (context == 0 || !context->connection_open || body == 0 ||
+        body_length == 0UL || stream == 0 || label == 0) {
+        return 2;
+    }
+
+    encrypted_padding_length = 12UL;
+    while (((32UL + body_length + encrypted_padding_length) % 16UL) != 0UL) {
+        ++encrypted_padding_length;
+    }
+    if (!tg_mtproto_secure_random(encrypted_padding,
+                                  encrypted_padding_length)) {
+        fprintf(stream, "%s: service-secure-rng-unavailable\n", label);
+        return 2;
+    }
+    tg_mtproto_client_message_id((unsigned long)time(0), 20UL,
+                                 &context->last_msg_id, &msg_id);
+    context->last_msg_id = msg_id;
+    tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+    if (tg_mtproto_write_encrypted_message(
+            &writer, context->auth_key, context->session.server_salt_hi,
+            context->session.server_salt_lo, context->session.session_id,
+            msg_id.hi, msg_id.lo, context->session.seq_no - 1UL,
+            body, body_length, encrypted_padding,
+            encrypted_padding_length) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: service-build-failed\n", label);
+        return 2;
+    }
+    payload_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, packet, sizeof(packet));
+    if (tg_mtproto_write_abridged_packet(&writer, payload, payload_length) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: service-transport-build-failed\n", label);
+        return 2;
+    }
+    error_buffer[0] = '\0';
+    net_status = tg_mtproto_send_all(&context->connection, packet,
+                                     writer.length, error_buffer,
+                                     sizeof(error_buffer));
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "%s: service-send-failed (%s)\n", label,
+                tg_net_status_name(net_status));
+        return 2;
+    }
+    return 0;
+}
+
+static void tg_mtproto_ack_server_messages(
+    tg_mtproto_auth_context *context,
+    const unsigned long *ack_hi,
+    const unsigned long *ack_lo,
+    unsigned long ack_count,
+    FILE *stream,
+    const char *label)
+{
+    unsigned char body[256];
+    tg_mtproto_tl_writer writer;
+
+    if (ack_count == 0UL) {
+        return;
+    }
+    tg_mtproto_tl_writer_init(&writer, body, sizeof(body));
+    if (tg_mtproto_build_msgs_ack(&writer, ack_hi, ack_lo, ack_count) !=
+        TG_MTPROTO_TL_OK) {
+        return;
+    }
+    (void)tg_mtproto_send_encrypted_service(context, body, writer.length,
+                                            stream, label);
+}
+
 static int tg_mtproto_send_encrypted_query(
     tg_mtproto_auth_context *context,
     const unsigned char *body,
@@ -412,6 +548,9 @@ static int tg_mtproto_send_encrypted_query(
     unsigned int attempt;
     unsigned int receive_attempt;
     unsigned long response_constructor;
+    unsigned long ack_hi[16];
+    unsigned long ack_lo[16];
+    unsigned long ack_count;
     tg_mtproto_bad_msg_notification bad_msg;
     tg_mtproto_encrypted_message decrypted;
     tg_mtproto_message_id request_msg_id;
@@ -489,7 +628,11 @@ static int tg_mtproto_send_encrypted_query(
                                            request_msg_id.hi,
                                            request_msg_id.lo,
                                            rpc_result)) {
+                tg_mtproto_collect_ack_ids(&decrypted, ack_hi, ack_lo,
+                                           16UL, &ack_count);
                 context->session.seq_no += 2UL;
+                tg_mtproto_ack_server_messages(context, ack_hi, ack_lo,
+                                               ack_count, stream, label);
                 return 0;
             }
             if (tg_mtproto_find_bad_msg(decrypted.body, decrypted.body_length,
@@ -916,6 +1059,32 @@ static int tg_mtproto_print_rpc_error(const char *label,
     return 1;
 }
 
+static int tg_mtproto_build_initialized_query(tg_mtproto_tl_writer *writer,
+                                              unsigned char *wrapped_query,
+                                              unsigned long wrapped_capacity,
+                                              unsigned long api_id,
+                                              const unsigned char *query,
+                                              unsigned long query_length)
+{
+    unsigned char initialized_query[640];
+    tg_mtproto_tl_status status;
+
+    tg_mtproto_tl_writer_init(writer, initialized_query,
+                              sizeof(initialized_query));
+    status = tg_mtproto_build_init_connection(writer, api_id, "Amiga",
+                                              "portable", "0.1", "en",
+                                              query, query_length);
+    if (status != TG_MTPROTO_TL_OK) {
+        return 1;
+    }
+    query_length = writer->length;
+    tg_mtproto_tl_writer_init(writer, wrapped_query, wrapped_capacity);
+    status = tg_mtproto_build_invoke_with_layer(writer, 214UL,
+                                                initialized_query,
+                                                query_length);
+    return status == TG_MTPROTO_TL_OK ? 0 : 1;
+}
+
 int tg_mtproto_auth_send_code(const char *host,
                               const char *port,
                               const char *dc_id_text,
@@ -1162,6 +1331,192 @@ int tg_mtproto_auth_sign_in(const char *host,
 
     fprintf(stream, "%s: signed in\n", label);
     fprintf(stream, "%s: auth state updated\n", label);
+    return 0;
+}
+
+int tg_mtproto_auth_get_config(const char *host,
+                               const char *port,
+                               const char *api_id_text,
+                               const char *auth_file,
+                               const char *dc_id_text,
+                               FILE *stream)
+{
+    unsigned char query[32];
+    unsigned char wrapped_query[760];
+    unsigned long api_id;
+    tg_mtproto_auth_context context;
+    tg_mtproto_config_summary config;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_session_status session_status;
+    tg_mtproto_tl_writer writer;
+    long dc_id;
+    static const char label[] = "mtproto help.getConfig";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 || tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0 ||
+        tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
+        if (stream != 0) {
+            fputs("mtproto help.getConfig: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+    if (tg_mtproto_load_auth_context(host, port, auth_file, &context, stream,
+                                     label) != 0) {
+        return 2;
+    }
+    context.session.dc_id = (unsigned long)dc_id;
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_help_get_config(&writer) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_build_initialized_query(&writer, wrapped_query,
+                                           sizeof(wrapped_query), api_id,
+                                           query, 4UL) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        &result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
+    tg_mtproto_close_auth_context(&context);
+
+    session_status = tg_mtproto_session_save_authorization(
+        auth_file, &context.session, context.auth_key, 1);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (tg_mtproto_parse_config_summary(result.result_constructor,
+                                        result.result_body,
+                                        result.result_body_length,
+                                        &config) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: config-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    fprintf(stream, "%s: this_dc %lu\n", label, config.this_dc);
+    fprintf(stream, "%s: date %lu expires %lu\n", label, config.date,
+            config.expires);
+    return 0;
+}
+
+int tg_mtproto_auth_get_password(const char *host,
+                                 const char *port,
+                                 const char *api_id_text,
+                                 const char *auth_file,
+                                 const char *dc_id_text,
+                                 FILE *stream)
+{
+    unsigned char query[32];
+    unsigned char wrapped_query[760];
+    unsigned long api_id;
+    tg_mtproto_auth_context context;
+    tg_mtproto_password_summary password;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_session_status session_status;
+    tg_mtproto_tl_writer writer;
+    long dc_id;
+    static const char label[] = "mtproto account.getPassword";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 || tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0 ||
+        tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
+        if (stream != 0) {
+            fputs("mtproto account.getPassword: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+    if (tg_mtproto_load_auth_context(host, port, auth_file, &context, stream,
+                                     label) != 0) {
+        return 2;
+    }
+    context.session.dc_id = (unsigned long)dc_id;
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_account_get_password(&writer) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_build_initialized_query(&writer, wrapped_query,
+                                           sizeof(wrapped_query), api_id,
+                                           query, 4UL) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        &result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
+    tg_mtproto_close_auth_context(&context);
+
+    session_status = tg_mtproto_session_save_authorization(
+        auth_file, &context.session, context.auth_key, 1);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (tg_mtproto_parse_account_password_summary(result.result_constructor,
+                                                  result.result_body,
+                                                  result.result_body_length,
+                                                  &password) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: password-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    fprintf(stream, "%s: has_password %s\n", label,
+            password.has_password ? "yes" : "no");
+    fprintf(stream, "%s: srp_check unsupported\n", label);
+    return 0;
+}
+
+int tg_mtproto_auth_forget(const char *auth_file,
+                           const char *code_hash_file,
+                           FILE *stream)
+{
+    int removed;
+
+    if (stream == 0 || auth_file == 0 || auth_file[0] == '\0') {
+        if (stream != 0) {
+            fputs("mtproto auth.forget: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+    removed = 0;
+    if (remove(auth_file) == 0) {
+        ++removed;
+    }
+    if (code_hash_file != 0 && code_hash_file[0] != '\0' &&
+        remove(code_hash_file) == 0) {
+        ++removed;
+    }
+    fprintf(stream, "mtproto auth.forget: removed %d file(s)\n", removed);
     return 0;
 }
 

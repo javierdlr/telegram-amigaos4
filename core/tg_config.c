@@ -147,6 +147,9 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_req_dh_probe = 0;
     config->run_mtproto_auth_send_code = 0;
     config->run_mtproto_auth_sign_in = 0;
+    config->run_mtproto_auth_get_config = 0;
+    config->run_mtproto_auth_get_password = 0;
+    config->run_mtproto_auth_forget = 0;
     config->run_telegram_tls_status = 0;
     config->run_json_test = 0;
     config->run_telegram_json_test = 0;
@@ -335,6 +338,39 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_code = argv[i + 7];
             config->mtproto_auth_dc_id = argv[i + 8];
             i += 8;
+        } else if (strcmp(argv[i], "--mtproto-auth-get-config") == 0) {
+            if (i + 5 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_get_config = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_id = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            i += 5;
+        } else if (strcmp(argv[i], "--mtproto-auth-get-password") == 0) {
+            if (i + 5 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_get_password = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_id = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            i += 5;
+        } else if (strcmp(argv[i], "--mtproto-auth-forget") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_forget = 1;
+            config->mtproto_auth_file = argv[i + 1];
+            ++i;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->mtproto_auth_code_hash_file = argv[i + 1];
+                ++i;
+            }
         } else if (strcmp(argv[i], "--telegram-tls-status") == 0) {
             config->run_telegram_tls_status = 1;
         } else if (strcmp(argv[i], "--json-test") == 0) {
@@ -765,6 +801,12 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Build auth key, send auth.sendCode and save login state\n");
     fprintf(stream, "      --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>\n");
     fprintf(stream, "                         Complete auth.signIn using saved login state\n");
+    fprintf(stream, "      --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>\n");
+    fprintf(stream, "                         Call help.getConfig with saved MTProto auth state\n");
+    fprintf(stream, "      --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>\n");
+    fprintf(stream, "                         Probe account.getPassword SRP metadata\n");
+    fprintf(stream, "      --mtproto-auth-forget <auth-file> [code-hash-file]\n");
+    fprintf(stream, "                         Delete local MTProto auth test files\n");
     fprintf(stream, "      --telegram-tls-status\n");
     fprintf(stream, "                         Print current TLS security status\n");
     fprintf(stream, "      --json-test <json> <field>\n");

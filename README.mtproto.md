@@ -44,7 +44,10 @@ Implemented and covered by offline self-tests:
   `rpc_result`, `rpc_error`, `bad_msg_notification` and `bad_server_salt`
   serialization/parsing scaffolding;
 - explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
-  the Bot API client path.
+  the Bot API client path;
+- saved-session `help.getConfig` and `account.getPassword` probes;
+- best-effort `msgs_ack` for encrypted RPC responses and containers;
+- local session-forget command for plaintext auth test files.
 
 Run the offline suite:
 
@@ -101,6 +104,9 @@ User-auth commands are explicit and intended for supervised testing only:
 ```text
 telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> <auth-file> <code-hash-file>
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
+telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 ```
 
 `auth.sendCode` creates a fresh MTProto auth key, sends the login-code request,
@@ -111,7 +117,12 @@ the human-entered code.
 
 These commands do not implement SRP password login yet. If Telegram returns
 `SESSION_PASSWORD_NEEDED`, the account requires 2FA support that is still
-pending.
+pending. `account.getPassword` is present only to confirm whether SRP metadata
+is available; it does not compute or submit the password proof yet.
+
+The auth file contains a plaintext MTProto auth key. Keep it local, use only
+disposable test accounts at this stage, and delete it with
+`--mtproto-auth-forget` when a test is done.
 
 ## Branch Rules
 
@@ -128,10 +139,10 @@ The next development loop should add:
 
 - real-account validation with a disposable Telegram API id/hash and a test
   phone number;
-- SRP password support before treating 2FA accounts as usable;
-- safer session-file UX, including clearer plaintext-auth-key warnings and
-  target-specific RNG notes;
-- a first authenticated read-only user RPC after sign-in.
+- full SRP password proof generation before treating 2FA accounts as usable;
+- a first authenticated account/user RPC after sign-in;
+- target-side validation of saved-session commands on AmigaOS3, MorphOS and
+  AROS.
 
 ## References
 
@@ -144,3 +155,5 @@ The next development loop should add:
 - <https://core.telegram.org/mtproto/service_messages>
 - <https://core.telegram.org/method/auth.sendCode>
 - <https://core.telegram.org/method/auth.signIn>
+- <https://core.telegram.org/method/help.getConfig>
+- <https://core.telegram.org/method/account.getPassword>
