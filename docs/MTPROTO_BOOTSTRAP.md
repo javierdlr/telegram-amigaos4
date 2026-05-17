@@ -11,15 +11,22 @@ yet.
 
 ## Scope
 
-Current MTProto code is offline-only:
+Current MTProto code is offline by default:
 
 - TL little-endian primitive writer/reader;
 - TL `bytes`/`string` length and 4-byte padding handling;
 - `req_pq_multi` constructor serialization sample;
 - MTProto plain-message envelope sample with `auth_key_id = 0`;
 - TCP abridged and intermediate transport init plus packet framing samples;
+- static bootstrap DC name mapping based on Telegram web endpoint names;
+- deterministic client `msg_id` generation rules;
+- supervised `req_pq_multi` probe packet builder;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
 - local MTProto session-state save/load skeleton.
+
+The optional `--mtproto-req-pq-probe <host> <port>` command is a supervised
+connectivity check only. It does not perform user login and it does not create
+or persist an authorization key.
 
 Run:
 
@@ -30,9 +37,12 @@ telegram-test --mtproto-self-test
 Expected output:
 
 ```text
+mtproto dc self-test: ok
+mtproto message-id self-test: ok
 mtproto tl self-test: ok
 mtproto envelope self-test: ok
 mtproto transport self-test: ok
+mtproto probe self-test: ok
 mtproto crypto self-test: ok
 mtproto session self-test: ok
 mtproto self-test: ok
@@ -55,6 +65,7 @@ The bootstrap follows the official Telegram MTProto documentation:
 - <https://core.telegram.org/mtproto>
 - <https://core.telegram.org/mtproto/description>
 - <https://core.telegram.org/mtproto/serialize>
+- <https://core.telegram.org/mtproto/transports>
 - <https://core.telegram.org/mtproto/auth_key>
 - <https://core.telegram.org/mtproto/samples-auth_key>
 
@@ -65,12 +76,15 @@ Important constraints for this codebase:
 - Large number byte strings used by auth-key creation are big-endian payloads.
 - SHA-1 is still needed during authorization-key creation.
 - SHA-256 is required by MTProto 2.0 encrypted message handling.
+- Static DC names are only bootstrap metadata. Full DC options must later come
+  from Telegram configuration methods after the auth-key path exists.
 
 ## Next Steps
 
 Next MTProto work should stay behind explicit self-tests:
 
-1. add Telegram DC endpoint configuration without user credentials;
-2. add deterministic message id generation tests;
-3. add factorization and RSA fingerprint plumbing for auth-key creation;
-4. only then attempt a supervised live `req_pq_multi` exchange.
+1. parse `resPQ` responses and validate the echoed nonce;
+2. add `pq` factorization tests;
+3. add public RSA fingerprint matching;
+4. build `req_DH_params`;
+5. only then attempt a supervised auth-key handshake.

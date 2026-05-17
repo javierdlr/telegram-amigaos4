@@ -19,6 +19,7 @@
 #include "tg_json.h"
 #include "tg_log.h"
 #include "tg_mtproto.h"
+#include "tg_mtproto_probe.h"
 #include "tg_net.h"
 #include "tg_offset_state.h"
 #include "tg_platform.h"
@@ -3657,6 +3658,11 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_mtproto_self_test) {
         return tg_mtproto_self_test();
+    }
+
+    if (config.run_mtproto_req_pq_probe) {
+        return tg_mtproto_req_pq_probe(config.mtproto_probe_host,
+                                       config.mtproto_probe_port, stdout);
     }
 
     if (config.run_telegram_tls_status) {
