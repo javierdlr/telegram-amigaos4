@@ -9,11 +9,19 @@
 
 #define TG_MTPROTO_CURRENT_LAYER 214UL
 #define TG_INVOKE_WITH_LAYER_CONSTRUCTOR 0xda9b0d0dUL
+#define TG_INIT_CONNECTION_CONSTRUCTOR 0xc1cd5ea9UL
 #define TG_CODE_SETTINGS_CONSTRUCTOR 0xad253d78UL
 #define TG_AUTH_SEND_CODE_CONSTRUCTOR 0xa677244fUL
 #define TG_AUTH_SIGN_IN_CONSTRUCTOR 0x8d52a951UL
 #define TG_RPC_RESULT_CONSTRUCTOR 0xf35c6d01UL
 #define TG_RPC_ERROR_CONSTRUCTOR 0x2144ca19UL
+#define TG_BAD_MSG_NOTIFICATION_CONSTRUCTOR 0xa7eff811UL
+#define TG_BAD_SERVER_SALT_CONSTRUCTOR 0xedab447bUL
+#define TG_AUTH_SENT_CODE_CONSTRUCTOR 0x5e002502UL
+#define TG_AUTH_SENT_CODE_SUCCESS_CONSTRUCTOR 0x2390fe44UL
+#define TG_AUTH_SENT_CODE_PAYMENT_REQUIRED_CONSTRUCTOR 0xd7a2fcf9UL
+#define TG_AUTH_AUTHORIZATION_CONSTRUCTOR 0x2ea2c0d4UL
+#define TG_AUTH_AUTHORIZATION_SIGNUP_REQUIRED_CONSTRUCTOR 0x44747e9aUL
 
 static tg_mtproto_tl_status tg_write_string(tg_mtproto_tl_writer *writer,
                                             const char *text)
@@ -23,6 +31,123 @@ static tg_mtproto_tl_status tg_write_string(tg_mtproto_tl_writer *writer,
     }
     return tg_mtproto_tl_write_bytes(writer, (const unsigned char *)text,
                                      (unsigned long)strlen(text));
+}
+
+static tg_mtproto_tl_status tg_read_string_copy(tg_mtproto_tl_reader *reader,
+                                                char *buffer,
+                                                unsigned long buffer_size)
+{
+    const unsigned char *bytes;
+    unsigned long length;
+    unsigned long copy_length;
+    tg_mtproto_tl_status status;
+
+    if (buffer == 0 || buffer_size == 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    buffer[0] = '\0';
+    status = tg_mtproto_tl_read_bytes(reader, &bytes, &length);
+    if (status != TG_MTPROTO_TL_OK) {
+        return status;
+    }
+    copy_length = length;
+    if (copy_length >= buffer_size) {
+        copy_length = buffer_size - 1UL;
+    }
+    memcpy(buffer, bytes, (size_t)copy_length);
+    buffer[copy_length] = '\0';
+    return TG_MTPROTO_TL_OK;
+}
+
+static tg_mtproto_tl_status tg_skip_string(tg_mtproto_tl_reader *reader)
+{
+    const unsigned char *bytes;
+    unsigned long length;
+
+    return tg_mtproto_tl_read_bytes(reader, &bytes, &length);
+}
+
+static tg_mtproto_tl_status tg_skip_auth_sent_code_type(
+    tg_mtproto_tl_reader *reader,
+    unsigned long *type_constructor)
+{
+    unsigned long constructor;
+    unsigned long flags;
+    tg_mtproto_tl_status status;
+
+    status = tg_mtproto_tl_read_u32(reader, &constructor);
+    if (status != TG_MTPROTO_TL_OK) {
+        return status;
+    }
+    if (type_constructor != 0) {
+        *type_constructor = constructor;
+    }
+
+    switch (constructor) {
+    case 0x3dbb5986UL: /* auth.sentCodeTypeApp */
+    case 0xc000bba2UL: /* auth.sentCodeTypeSms */
+    case 0x5353e5a7UL: /* auth.sentCodeTypeCall */
+        return tg_mtproto_tl_read_u32(reader, &flags);
+    case 0xab03c6d9UL: /* auth.sentCodeTypeFlashCall */
+        return tg_skip_string(reader);
+    case 0x82006484UL: /* auth.sentCodeTypeMissedCall */
+    case 0xd9565c39UL: /* auth.sentCodeTypeFragmentSms */
+        status = tg_skip_string(reader);
+        if (status == TG_MTPROTO_TL_OK) {
+            status = tg_mtproto_tl_read_u32(reader, &flags);
+        }
+        return status;
+    case 0xf450f59bUL: /* auth.sentCodeTypeEmailCode */
+        status = tg_mtproto_tl_read_u32(reader, &flags);
+        if (status == TG_MTPROTO_TL_OK) {
+            status = tg_skip_string(reader);
+        }
+        if (status == TG_MTPROTO_TL_OK) {
+            status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        if (status == TG_MTPROTO_TL_OK && (flags & 8UL) != 0UL) {
+            status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        if (status == TG_MTPROTO_TL_OK && (flags & 16UL) != 0UL) {
+            status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        return status;
+    case 0xa5491deaUL: /* auth.sentCodeTypeSetUpEmailRequired */
+        return tg_mtproto_tl_read_u32(reader, &flags);
+    case 0x009fd736UL: /* auth.sentCodeTypeFirebaseSms */
+        status = tg_mtproto_tl_read_u32(reader, &flags);
+        if (status == TG_MTPROTO_TL_OK && (flags & 1UL) != 0UL) {
+            status = tg_skip_string(reader);
+        }
+        if (status == TG_MTPROTO_TL_OK && (flags & 4UL) != 0UL) {
+            status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        if (status == TG_MTPROTO_TL_OK && (flags & 4UL) != 0UL) {
+            status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        if (status == TG_MTPROTO_TL_OK && (flags & 4UL) != 0UL) {
+            status = tg_skip_string(reader);
+        }
+        if (status == TG_MTPROTO_TL_OK && (flags & 2UL) != 0UL) {
+            status = tg_skip_string(reader);
+        }
+        if (status == TG_MTPROTO_TL_OK && (flags & 2UL) != 0UL) {
+            status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        if (status == TG_MTPROTO_TL_OK) {
+            status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        return status;
+    case 0xa416ac81UL: /* auth.sentCodeTypeSmsWord */
+    case 0xb37794afUL: /* auth.sentCodeTypeSmsPhrase */
+        status = tg_mtproto_tl_read_u32(reader, &flags);
+        if (status == TG_MTPROTO_TL_OK && (flags & 1UL) != 0UL) {
+            status = tg_skip_string(reader);
+        }
+        return status;
+    default:
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
 }
 
 tg_mtproto_tl_status tg_mtproto_build_invoke_with_layer(
@@ -39,6 +164,56 @@ tg_mtproto_tl_status tg_mtproto_build_invoke_with_layer(
     status = tg_mtproto_tl_write_u32(writer, TG_INVOKE_WITH_LAYER_CONSTRUCTOR);
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u32(writer, layer);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_raw(writer, query, query_length);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_init_connection(
+    tg_mtproto_tl_writer *writer,
+    unsigned long api_id,
+    const char *device_model,
+    const char *system_version,
+    const char *app_version,
+    const char *lang_code,
+    const unsigned char *query,
+    unsigned long query_length)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || device_model == 0 || system_version == 0 ||
+        app_version == 0 || lang_code == 0 ||
+        (query == 0 && query_length > 0UL) ||
+        device_model[0] == '\0' || system_version[0] == '\0' ||
+        app_version[0] == '\0' || lang_code[0] == '\0') {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer, TG_INIT_CONNECTION_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, api_id);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, device_model);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, system_version);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, app_version);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, lang_code);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, "");
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, lang_code);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_raw(writer, query, query_length);
@@ -170,6 +345,98 @@ tg_mtproto_tl_status tg_mtproto_parse_rpc_error(
     return TG_MTPROTO_TL_OK;
 }
 
+tg_mtproto_tl_status tg_mtproto_parse_bad_msg_notification(
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_bad_msg_notification *out)
+{
+    tg_mtproto_tl_reader reader;
+
+    if (body == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    memset(out, 0, sizeof(*out));
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &out->constructor) !=
+            TG_MTPROTO_TL_OK ||
+        (out->constructor != TG_BAD_MSG_NOTIFICATION_CONSTRUCTOR &&
+         out->constructor != TG_BAD_SERVER_SALT_CONSTRUCTOR) ||
+        tg_mtproto_tl_read_u64(&reader, &out->bad_msg_id_hi,
+                               &out->bad_msg_id_lo) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &out->bad_msg_seqno) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &out->error_code) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (out->constructor == TG_BAD_SERVER_SALT_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u64(&reader, &out->new_server_salt_hi,
+                                   &out->new_server_salt_lo) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        out->has_new_server_salt = 1;
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
+tg_mtproto_tl_status tg_mtproto_parse_auth_sent_code(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_sent_code *out)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long flags;
+    unsigned long unused;
+    tg_mtproto_tl_status status;
+
+    if (body == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    memset(out, 0, sizeof(*out));
+    out->constructor = constructor;
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+
+    if (constructor == TG_AUTH_SENT_CODE_PAYMENT_REQUIRED_CONSTRUCTOR) {
+        status = tg_skip_string(&reader);
+        if (status == TG_MTPROTO_TL_OK) {
+            status = tg_read_string_copy(&reader, out->phone_code_hash,
+                                         sizeof(out->phone_code_hash));
+        }
+        return status;
+    }
+    if (constructor == TG_AUTH_SENT_CODE_SUCCESS_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_OK;
+    }
+    if (constructor != TG_AUTH_SENT_CODE_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+
+    status = tg_mtproto_tl_read_u32(&reader, &flags);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_skip_auth_sent_code_type(&reader, &out->type_constructor);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_read_string_copy(&reader, out->phone_code_hash,
+                                     sizeof(out->phone_code_hash));
+    }
+    if (status == TG_MTPROTO_TL_OK && (flags & 2UL) != 0UL) {
+        status = tg_mtproto_tl_read_u32(&reader, &unused);
+    }
+    if (status == TG_MTPROTO_TL_OK && (flags & 4UL) != 0UL) {
+        status = tg_mtproto_tl_read_u32(&reader, &out->timeout);
+        out->has_timeout = 1;
+    }
+    return status;
+}
+
+int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor)
+{
+    return constructor == TG_AUTH_AUTHORIZATION_CONSTRUCTOR ||
+           constructor == TG_AUTH_AUTHORIZATION_SIGNUP_REQUIRED_CONSTRUCTOR;
+}
+
 int tg_mtproto_login_self_test(void)
 {
     static const unsigned char expected_send_code[] = {
@@ -189,11 +456,14 @@ int tg_mtproto_login_self_test(void)
         0x05U, '1', '2', '3', '4', '5', 0x00U, 0x00U
     };
     unsigned char query[128];
+    unsigned char initialized[192];
     unsigned char wrapped[160];
     unsigned char rpc[64];
     char error_text[32];
     long error_code;
+    tg_mtproto_bad_msg_notification bad_msg;
     tg_mtproto_rpc_result result;
+    tg_mtproto_sent_code sent_code;
     tg_mtproto_tl_writer writer;
 
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
@@ -212,6 +482,16 @@ int tg_mtproto_login_self_test(void)
         wrapped[0] != 0x0dU || wrapped[1] != 0x0dU ||
         wrapped[2] != 0x9bU || wrapped[3] != 0xdaU ||
         wrapped[4] != 214U) {
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, initialized, sizeof(initialized));
+    if (tg_mtproto_build_init_connection(&writer, 42UL, "Amiga",
+                                         "portable", "0.1", "en", query,
+                                         sizeof(expected_send_code)) !=
+            TG_MTPROTO_TL_OK ||
+        initialized[0] != 0xa9U || initialized[1] != 0x5eU ||
+        initialized[2] != 0xcdU || initialized[3] != 0xc1U) {
         return 2;
     }
 
@@ -251,6 +531,37 @@ int tg_mtproto_login_self_test(void)
             TG_MTPROTO_TL_OK ||
         error_code != 400L ||
         strcmp(error_text, "PHONE_NUMBER_INVALID") != 0) {
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, rpc, sizeof(rpc));
+    if (tg_mtproto_tl_write_u32(&writer, TG_BAD_SERVER_SALT_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0x01020304UL, 0x05060708UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 1UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 48UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0x99aabbccUL, 0xddeeff00UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_parse_bad_msg_notification(rpc, writer.length, &bad_msg) !=
+            TG_MTPROTO_TL_OK ||
+        bad_msg.error_code != 48UL ||
+        bad_msg.new_server_salt_hi != 0x99aabbccUL ||
+        bad_msg.new_server_salt_lo != 0xddeeff00UL ||
+        !bad_msg.has_new_server_salt) {
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, rpc, sizeof(rpc));
+    if (tg_mtproto_tl_write_u32(&writer, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0x3dbb5986UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 5UL) != TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "hash") != TG_MTPROTO_TL_OK ||
+        tg_mtproto_parse_auth_sent_code(TG_AUTH_SENT_CODE_CONSTRUCTOR, rpc,
+                                        writer.length, &sent_code) !=
+            TG_MTPROTO_TL_OK ||
+        sent_code.type_constructor != 0x3dbb5986UL ||
+        strcmp(sent_code.phone_code_hash, "hash") != 0) {
         return 2;
     }
 

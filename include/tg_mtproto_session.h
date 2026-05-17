@@ -23,6 +23,7 @@ typedef struct tg_mtproto_session {
     unsigned long auth_key_id_lo;
     unsigned long server_salt_hi;
     unsigned long server_salt_lo;
+    unsigned long seq_no;
     unsigned char session_id[8];
 } tg_mtproto_session;
 

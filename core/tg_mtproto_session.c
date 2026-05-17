@@ -19,6 +19,7 @@ void tg_mtproto_session_init(tg_mtproto_session *session)
         session->auth_key_id_lo = 0;
         session->server_salt_hi = 0;
         session->server_salt_lo = 0;
+        session->seq_no = 1;
         memset(session->session_id, 0, sizeof(session->session_id));
     }
 }
@@ -258,6 +259,7 @@ tg_mtproto_session_status tg_mtproto_session_save_authorization(
                       "auth_key_id_lo=%08lx\n"
                       "server_salt_hi=%08lx\n"
                       "server_salt_lo=%08lx\n"
+                      "seq_no=%lu\n"
                       "session_id=%s\n"
                       "auth_key=%s\n",
                       session->dc_id,
@@ -265,6 +267,7 @@ tg_mtproto_session_status tg_mtproto_session_save_authorization(
                       session->auth_key_id_lo & 0xffffffffUL,
                       session->server_salt_hi & 0xffffffffUL,
                       session->server_salt_lo & 0xffffffffUL,
+                      session->seq_no,
                       sid,
                       key_hex);
     if (written <= 0 || written >= (int)sizeof(text)) {
@@ -321,6 +324,10 @@ tg_mtproto_session_status tg_mtproto_session_load_authorization(
     if (tg_mtproto_parse_hex32(value, &loaded.server_salt_lo) != 0) {
         return TG_MTPROTO_SESSION_PARSE_ERROR;
     }
+    value = tg_mtproto_line_value(text, "seq_no");
+    if (value != 0) {
+        loaded.seq_no = strtoul(value, 0, 10);
+    }
     value = tg_mtproto_line_value(text, "session_id");
     if (tg_mtproto_parse_hex_bytes(value, loaded.session_id,
                                    sizeof(loaded.session_id)) != 0) {
@@ -375,6 +382,7 @@ int tg_mtproto_session_self_test(void)
     session.auth_key_id_lo = 0x55667788UL;
     session.server_salt_hi = 0x99aabbccUL;
     session.server_salt_lo = 0xddeeff00UL;
+    session.seq_no = 7UL;
     for (i = 0; i < 8; ++i) {
         session.session_id[i] = (unsigned char)(0xa0 + i);
     }
@@ -437,6 +445,7 @@ int tg_mtproto_session_self_test(void)
         session.auth_key_id_lo != loaded.auth_key_id_lo ||
         session.server_salt_hi != loaded.server_salt_hi ||
         session.server_salt_lo != loaded.server_salt_lo ||
+        session.seq_no != loaded.seq_no ||
         memcmp(session.session_id, loaded.session_id,
                sizeof(session.session_id)) != 0 ||
         memcmp(loaded_key, auth_key, sizeof(auth_key)) != 0) {

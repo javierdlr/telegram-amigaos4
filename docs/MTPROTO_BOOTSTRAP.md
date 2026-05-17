@@ -6,8 +6,8 @@ SPDX-License-Identifier: MIT
 # MTProto Bootstrap
 
 This branch starts the MTProto work as an isolated experimental path. It does
-not replace the stable Bot API tester and does not perform Telegram user login
-yet.
+not replace the stable Bot API tester. User-login commands now exist, but they
+are explicit supervised probes rather than a general-purpose client.
 
 ## Scope
 
@@ -39,8 +39,11 @@ Current MTProto code is offline by default:
 - platform RNG plumbing for probes;
 - curated auth-key file save/load helpers that refuse to save when secure RNG
   is unavailable;
-- offline `auth.sendCode`, `auth.signIn`, `invokeWithLayer`, `rpc_result` and
-  `rpc_error` serialization/parsing scaffolding;
+- `initConnection`, `invokeWithLayer`, `auth.sendCode`, `auth.signIn`,
+  `rpc_result`, `rpc_error`, `bad_msg_notification` and `bad_server_salt`
+  serialization/parsing scaffolding;
+- explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
+  the Bot API path;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
 - local MTProto session-state save/load skeleton.
 
@@ -51,6 +54,19 @@ or persist an authorization key. The DH probe reaches `dh_gen_ok`, derives the
 auth key in process memory, validates Telegram's final nonce hash, sends one
 encrypted MTProto `ping`, validates the encrypted `pong`, and then discards the
 key.
+
+The optional user-auth commands are:
+
+```text
+telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> <auth-file> <code-hash-file>
+telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
+```
+
+`auth.sendCode` creates and saves a plaintext local auth-key file only after a
+successful Telegram response, and only when secure random bytes are available.
+`auth.signIn` reuses that file plus the saved `phone_code_hash` and the
+human-entered code. `SESSION_PASSWORD_NEEDED` is reported as unsupported until
+SRP password login is implemented.
 
 Run:
 
@@ -81,9 +97,9 @@ mtproto self-test: ok
 MTProto remains separate from the Bot API path:
 
 - no Bot API command depends on MTProto modules;
-- no MTProto command performs live user auth yet;
-- auth-key save/load helpers exist, but no command writes a real user auth key
-  yet;
+- live MTProto user-auth commands are explicit and separate from Bot API
+  commands;
+- auth-key files are plaintext local test artifacts and must not be committed;
 - shared network/TLS/file helpers may be reused only after Bot API regression
   tests stay green;
 - target-side validation starts only after offline MTProto self-tests are stable.
@@ -101,6 +117,8 @@ The bootstrap follows the official Telegram MTProto documentation:
 - <https://core.telegram.org/schema/mtproto>
 - <https://core.telegram.org/mtproto/service_messages>
 - <https://core.telegram.org/mtproto/security_guidelines>
+- <https://core.telegram.org/method/auth.sendCode>
+- <https://core.telegram.org/method/auth.signIn>
 
 Important constraints for this codebase:
 
@@ -116,10 +134,10 @@ Important constraints for this codebase:
 
 Next MTProto work should stay behind explicit self-tests:
 
-1. add an explicit `auth.sendCode` probe command requiring API id/hash and
-   phone;
-2. add a code-entry command for `auth.signIn`;
-3. add SRP password support before treating 2FA accounts as usable;
-4. add session-file UX and warnings for plaintext local auth-key storage;
+1. validate the auth commands with a disposable Telegram API id/hash and a test
+   phone number;
+2. add SRP password support before treating 2FA accounts as usable;
+3. improve session-file UX and warnings for plaintext local auth-key storage;
+4. add the first authenticated read-only user RPC after sign-in;
 5. keep Bot API and MTProto user login commands separate until login,
    encrypted RPC parsing and session persistence are covered by tests.

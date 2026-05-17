@@ -10,13 +10,31 @@
 #include "tg_mtproto_auth.h"
 #include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_envelope.h"
+#include "tg_mtproto_login.h"
 #include "tg_mtproto_message_id.h"
 #include "tg_mtproto_probe.h"
 #include "tg_mtproto_rsa.h"
 #include "tg_mtproto_session.h"
 #include "tg_mtproto_transport.h"
+#include "tg_file.h"
 #include "tg_net.h"
 #include "tg_platform.h"
+
+#define TG_MTPROTO_RPC_RESULT_CONSTRUCTOR 0xf35c6d01UL
+#define TG_MTPROTO_RPC_ERROR_CONSTRUCTOR 0x2144ca19UL
+#define TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR 0x73f1f8dcUL
+#define TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR 0x3072cfa1UL
+#define TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR 0x5e002502UL
+#define TG_MTPROTO_AUTH_SENT_CODE_SUCCESS_CONSTRUCTOR 0x2390fe44UL
+#define TG_MTPROTO_AUTH_SENT_CODE_PAYMENT_REQUIRED_CONSTRUCTOR 0xd7a2fcf9UL
+
+typedef struct tg_mtproto_auth_context {
+    tg_net_connection connection;
+    tg_mtproto_session session;
+    tg_mtproto_message_id last_msg_id;
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    int connection_open;
+} tg_mtproto_auth_context;
 
 static void tg_mtproto_probe_random(unsigned char *bytes, unsigned long length)
 {
@@ -33,6 +51,11 @@ static void tg_mtproto_probe_random(unsigned char *bytes, unsigned long length)
         seed = (seed * 1103515245UL) + 12345UL;
         bytes[i] = (unsigned char)((seed >> 16) & 0xffUL);
     }
+}
+
+static int tg_mtproto_secure_random(unsigned char *bytes, unsigned long length)
+{
+    return tg_platform_random_bytes(bytes, length);
 }
 
 static void tg_mtproto_probe_nonce(unsigned char nonce[16])
@@ -215,6 +238,930 @@ static int tg_mtproto_parse_dc_id(const char *text, long *dc_id)
         return 1;
     }
     *dc_id = value;
+    return 0;
+}
+
+static int tg_mtproto_parse_ulong_arg(const char *text, unsigned long *out)
+{
+    char *endptr;
+    unsigned long value;
+
+    if (text == 0 || text[0] == '\0' || out == 0) {
+        return 1;
+    }
+    value = strtoul(text, &endptr, 10);
+    if (endptr == text || *endptr != '\0') {
+        return 1;
+    }
+    *out = value;
+    return 0;
+}
+
+static void tg_mtproto_close_auth_context(tg_mtproto_auth_context *context)
+{
+    if (context != 0 && context->connection_open) {
+        tg_net_close(&context->connection);
+        context->connection_open = 0;
+    }
+}
+
+static int tg_mtproto_find_rpc_result_direct(
+    const unsigned char *body,
+    unsigned long body_length,
+    unsigned long request_msg_id_hi,
+    unsigned long request_msg_id_lo,
+    tg_mtproto_rpc_result *out)
+{
+    tg_mtproto_rpc_result result;
+
+    if (tg_mtproto_parse_rpc_result(body, body_length, &result) !=
+            TG_MTPROTO_TL_OK) {
+        return 0;
+    }
+    if (result.request_msg_id_hi != request_msg_id_hi ||
+        result.request_msg_id_lo != request_msg_id_lo) {
+        return 0;
+    }
+    if (out != 0) {
+        *out = result;
+    }
+    return 1;
+}
+
+static int tg_mtproto_find_rpc_result(
+    const unsigned char *body,
+    unsigned long body_length,
+    unsigned long request_msg_id_hi,
+    unsigned long request_msg_id_lo,
+    tg_mtproto_rpc_result *out)
+{
+    unsigned long count;
+    unsigned long index;
+    unsigned long offset;
+    unsigned long nested_length;
+
+    if (tg_mtproto_find_rpc_result_direct(body, body_length, request_msg_id_hi,
+                                          request_msg_id_lo, out)) {
+        return 1;
+    }
+    if (body == 0 || body_length < 8UL ||
+        tg_mtproto_read_u32_le(body) != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
+        return 0;
+    }
+    count = tg_mtproto_read_u32_le(body + 4U);
+    offset = 8UL;
+    for (index = 0UL; index < count; ++index) {
+        if (body_length - offset < 16UL) {
+            return 0;
+        }
+        nested_length = tg_mtproto_read_u32_le(body + offset + 12U);
+        offset += 16UL;
+        if (nested_length > body_length - offset) {
+            return 0;
+        }
+        if (tg_mtproto_find_rpc_result_direct(body + offset, nested_length,
+                                              request_msg_id_hi,
+                                              request_msg_id_lo, out)) {
+            return 1;
+        }
+        offset += nested_length;
+    }
+    return 0;
+}
+
+static int tg_mtproto_find_bad_msg_direct(
+    const unsigned char *body,
+    unsigned long body_length,
+    unsigned long request_msg_id_hi,
+    unsigned long request_msg_id_lo,
+    tg_mtproto_bad_msg_notification *out)
+{
+    tg_mtproto_bad_msg_notification notification;
+
+    if (tg_mtproto_parse_bad_msg_notification(body, body_length,
+                                              &notification) !=
+            TG_MTPROTO_TL_OK) {
+        return 0;
+    }
+    if (notification.bad_msg_id_hi != request_msg_id_hi ||
+        notification.bad_msg_id_lo != request_msg_id_lo) {
+        return 0;
+    }
+    if (out != 0) {
+        *out = notification;
+    }
+    return 1;
+}
+
+static int tg_mtproto_find_bad_msg(
+    const unsigned char *body,
+    unsigned long body_length,
+    unsigned long request_msg_id_hi,
+    unsigned long request_msg_id_lo,
+    tg_mtproto_bad_msg_notification *out)
+{
+    unsigned long count;
+    unsigned long index;
+    unsigned long offset;
+    unsigned long nested_length;
+
+    if (tg_mtproto_find_bad_msg_direct(body, body_length, request_msg_id_hi,
+                                       request_msg_id_lo, out)) {
+        return 1;
+    }
+    if (body == 0 || body_length < 8UL ||
+        tg_mtproto_read_u32_le(body) != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
+        return 0;
+    }
+    count = tg_mtproto_read_u32_le(body + 4U);
+    offset = 8UL;
+    for (index = 0UL; index < count; ++index) {
+        if (body_length - offset < 16UL) {
+            return 0;
+        }
+        nested_length = tg_mtproto_read_u32_le(body + offset + 12U);
+        offset += 16UL;
+        if (nested_length > body_length - offset) {
+            return 0;
+        }
+        if (tg_mtproto_find_bad_msg_direct(body + offset, nested_length,
+                                           request_msg_id_hi,
+                                           request_msg_id_lo, out)) {
+            return 1;
+        }
+        offset += nested_length;
+    }
+    return 0;
+}
+
+static int tg_mtproto_send_encrypted_query(
+    tg_mtproto_auth_context *context,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_rpc_result *rpc_result,
+    FILE *stream,
+    const char *label)
+{
+    unsigned char encrypted_padding[64];
+    unsigned char payload[3072];
+    unsigned char packet[3200];
+    unsigned char response[4096];
+    unsigned long encrypted_padding_length;
+    unsigned long payload_length;
+    unsigned long response_length;
+    unsigned int attempt;
+    unsigned int receive_attempt;
+    unsigned long response_constructor;
+    tg_mtproto_bad_msg_notification bad_msg;
+    tg_mtproto_encrypted_message decrypted;
+    tg_mtproto_message_id request_msg_id;
+    tg_mtproto_tl_writer writer;
+    tg_net_status net_status;
+    char error_buffer[160];
+
+    if (context == 0 || !context->connection_open || body == 0 ||
+        body_length == 0UL || rpc_result == 0 || stream == 0 ||
+        label == 0) {
+        return 2;
+    }
+
+    for (attempt = 0U; attempt < 2U; ++attempt) {
+        encrypted_padding_length = 12UL;
+        while (((32UL + body_length + encrypted_padding_length) % 16UL) !=
+               0UL) {
+            ++encrypted_padding_length;
+        }
+        if (!tg_mtproto_secure_random(encrypted_padding,
+                                      encrypted_padding_length)) {
+            fprintf(stream, "%s: secure-rng-unavailable\n", label);
+            return 2;
+        }
+        tg_mtproto_client_message_id((unsigned long)time(0), 16UL,
+                                     &context->last_msg_id, &request_msg_id);
+        context->last_msg_id = request_msg_id;
+
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        if (tg_mtproto_write_encrypted_message(
+                &writer, context->auth_key, context->session.server_salt_hi,
+                context->session.server_salt_lo, context->session.session_id,
+                request_msg_id.hi, request_msg_id.lo,
+                context->session.seq_no, body, body_length,
+                encrypted_padding, encrypted_padding_length) !=
+            TG_MTPROTO_TL_OK) {
+            fprintf(stream, "%s: encrypted-query-build-failed\n", label);
+            return 2;
+        }
+        payload_length = writer.length;
+
+        tg_mtproto_tl_writer_init(&writer, packet, sizeof(packet));
+        if (tg_mtproto_write_abridged_packet(&writer, payload, payload_length) !=
+            TG_MTPROTO_TL_OK) {
+            fprintf(stream, "%s: transport-build-failed\n", label);
+            return 2;
+        }
+
+        error_buffer[0] = '\0';
+        net_status = tg_mtproto_send_all(&context->connection, packet,
+                                         writer.length, error_buffer,
+                                         sizeof(error_buffer));
+        memset(&bad_msg, 0, sizeof(bad_msg));
+        for (receive_attempt = 0U; receive_attempt < 3U; ++receive_attempt) {
+            if (net_status == TG_NET_OK) {
+                net_status = tg_mtproto_recv_abridged_packet(
+                    &context->connection, response, sizeof(response),
+                    &response_length, error_buffer, sizeof(error_buffer));
+            }
+            if (net_status != TG_NET_OK) {
+                fprintf(stream, "%s: transport-failed (%s)\n", label,
+                        tg_net_status_name(net_status));
+                return 2;
+            }
+            if (tg_mtproto_decrypt_encrypted_message(response, response_length,
+                                                     context->auth_key,
+                                                     &decrypted) !=
+                TG_MTPROTO_TL_OK) {
+                fprintf(stream, "%s: encrypted-response-decrypt-failed\n",
+                        label);
+                return 2;
+            }
+            if (tg_mtproto_find_rpc_result(decrypted.body,
+                                           decrypted.body_length,
+                                           request_msg_id.hi,
+                                           request_msg_id.lo,
+                                           rpc_result)) {
+                context->session.seq_no += 2UL;
+                return 0;
+            }
+            if (tg_mtproto_find_bad_msg(decrypted.body, decrypted.body_length,
+                                        request_msg_id.hi, request_msg_id.lo,
+                                        &bad_msg)) {
+                if (bad_msg.has_new_server_salt &&
+                    bad_msg.error_code == 48UL) {
+                    context->session.server_salt_hi =
+                        bad_msg.new_server_salt_hi;
+                    context->session.server_salt_lo =
+                        bad_msg.new_server_salt_lo;
+                    break;
+                }
+                fprintf(stream, "%s: bad-msg error-code %lu\n", label,
+                        bad_msg.error_code);
+                return 2;
+            }
+            response_constructor = decrypted.body_length >= 4UL ?
+                tg_mtproto_read_u32_le(decrypted.body) : 0UL;
+            if (response_constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR &&
+                response_constructor != 0x9ec20908UL) {
+                fprintf(stream,
+                        "%s: encrypted-response-unexpected constructor 0x%08lx\n",
+                        label, response_constructor);
+                return 2;
+            }
+        }
+        if (bad_msg.has_new_server_salt && bad_msg.error_code == 48UL) {
+            continue;
+        }
+        fprintf(stream, "%s: rpc-response-not-received\n", label);
+        return 2;
+    }
+
+    fprintf(stream, "%s: bad-server-salt-retry-failed\n", label);
+    return 2;
+}
+
+static int tg_mtproto_open_auth_context(const char *host,
+                                        const char *port,
+                                        const char *dc_id_text,
+                                        tg_mtproto_auth_context *context,
+                                        FILE *stream,
+                                        const char *label)
+{
+    unsigned char nonce[16];
+    unsigned char new_nonce[32];
+    unsigned char padding[96];
+    unsigned char temp_key[32];
+    unsigned char p_bytes[4];
+    unsigned char q_bytes[4];
+    unsigned char inner_data[160];
+    unsigned char encrypted_data[TG_MTPROTO_RSA_PADDED_LENGTH];
+    unsigned char client_encrypted[TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX];
+    unsigned char b[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char client_padding[15];
+    unsigned char session_id[8];
+    unsigned char body[384];
+    unsigned char payload[512];
+    unsigned char packet[600];
+    unsigned char response[1200];
+    unsigned long body_length;
+    unsigned long client_encrypted_length;
+    unsigned long payload_length;
+    unsigned long response_length;
+    unsigned long constructor;
+    unsigned long p;
+    unsigned long q;
+    unsigned int i;
+    long dc_id;
+    tg_mtproto_message_id first_msg_id;
+    tg_mtproto_message_id second_msg_id;
+    tg_mtproto_message_id third_msg_id;
+    tg_mtproto_res_pq res_pq;
+    tg_mtproto_server_dh_params_ok params_ok;
+    tg_mtproto_server_dh_inner_data inner;
+    tg_mtproto_set_client_dh_answer dh_answer;
+    tg_mtproto_tl_writer writer;
+    tg_net_status net_status;
+    const tg_mtproto_public_key *public_key;
+    char error_buffer[160];
+
+    if (host == 0 || port == 0 || context == 0 || stream == 0 ||
+        label == 0 || tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0) {
+        fprintf(stream, "%s: invalid-arguments\n", label);
+        return 2;
+    }
+    memset(context, 0, sizeof(*context));
+
+    if (!tg_mtproto_secure_random(nonce, sizeof(nonce)) ||
+        !tg_mtproto_secure_random(new_nonce, sizeof(new_nonce)) ||
+        !tg_mtproto_secure_random(padding, sizeof(padding)) ||
+        !tg_mtproto_secure_random(temp_key, sizeof(temp_key)) ||
+        !tg_mtproto_secure_random(b, sizeof(b)) ||
+        !tg_mtproto_secure_random(client_padding, sizeof(client_padding)) ||
+        !tg_mtproto_secure_random(session_id, sizeof(session_id))) {
+        fprintf(stream, "%s: secure-rng-unavailable\n", label);
+        return 2;
+    }
+
+    tg_mtproto_client_message_id((unsigned long)time(0), 4UL, 0,
+                                 &first_msg_id);
+    tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+    if (tg_mtproto_build_req_pq_multi(&writer, first_msg_id.hi,
+                                      first_msg_id.lo, nonce) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: req-pq-build-failed\n", label);
+        return 2;
+    }
+    payload_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, packet, sizeof(packet));
+    if (tg_mtproto_write_abridged_init(&writer) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_write_abridged_packet(&writer, payload, payload_length) !=
+            TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: req-pq-transport-build-failed\n", label);
+        return 2;
+    }
+
+    error_buffer[0] = '\0';
+    net_status = tg_net_connect(&context->connection, host, port, error_buffer,
+                                sizeof(error_buffer));
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "%s: connect-failed (%s)\n", label,
+                tg_net_status_name(net_status));
+        return 2;
+    }
+    context->connection_open = 1;
+
+    net_status = tg_mtproto_send_all(&context->connection, packet,
+                                     writer.length, error_buffer,
+                                     sizeof(error_buffer));
+    if (net_status == TG_NET_OK) {
+        net_status = tg_mtproto_recv_abridged_packet(
+            &context->connection, response, sizeof(response), &response_length,
+            error_buffer, sizeof(error_buffer));
+    }
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "%s: req-pq-failed (%s)\n", label,
+                tg_net_status_name(net_status));
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+
+    constructor = response_length >= 24UL ?
+        tg_mtproto_read_u32_le(response + 20) : 0UL;
+    if (constructor != 0x05162463UL ||
+        tg_mtproto_parse_res_pq(response, response_length, &res_pq) !=
+            TG_MTPROTO_TL_OK ||
+        !tg_mtproto_res_pq_nonce_matches(&res_pq, nonce) ||
+        tg_mtproto_pq_factor(res_pq.pq, res_pq.pq_length, &p, &q) != 0) {
+        fprintf(stream, "%s: res-pq-parse-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+
+    public_key = tg_mtproto_select_public_key(&res_pq);
+    if (public_key == 0) {
+        fprintf(stream, "%s: rsa-key-not-found\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+
+    tg_mtproto_u32_be(p, p_bytes);
+    tg_mtproto_u32_be(q, q_bytes);
+    tg_mtproto_tl_writer_init(&writer, inner_data, sizeof(inner_data));
+    if (tg_mtproto_build_p_q_inner_data_dc(&writer, res_pq.pq,
+                                           res_pq.pq_length, p_bytes,
+                                           sizeof(p_bytes), q_bytes,
+                                           sizeof(q_bytes), nonce,
+                                           res_pq.server_nonce, new_nonce,
+                                           dc_id) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: inner-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+
+    for (i = 0U; i < 32U; ++i) {
+        if (tg_mtproto_rsa_pad(inner_data, writer.length, padding, temp_key,
+                               public_key, encrypted_data) ==
+            TG_MTPROTO_TL_OK) {
+            break;
+        }
+        if (!tg_mtproto_secure_random(temp_key, sizeof(temp_key))) {
+            fprintf(stream, "%s: secure-rng-unavailable\n", label);
+            tg_mtproto_close_auth_context(context);
+            return 2;
+        }
+    }
+    if (i == 32U) {
+        fprintf(stream, "%s: rsa-pad-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, body, sizeof(body));
+    if (tg_mtproto_build_req_dh_params(&writer, nonce, res_pq.server_nonce,
+                                       p_bytes, sizeof(p_bytes), q_bytes,
+                                       sizeof(q_bytes),
+                                       &public_key->fingerprint,
+                                       encrypted_data) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: req-dh-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    body_length = writer.length;
+    tg_mtproto_client_message_id((unsigned long)time(0), 8UL, &first_msg_id,
+                                 &second_msg_id);
+    tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+    if (tg_mtproto_write_plain_message(&writer, second_msg_id.hi,
+                                       second_msg_id.lo, body,
+                                       body_length) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: req-dh-envelope-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    payload_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, packet, sizeof(packet));
+    if (tg_mtproto_write_abridged_packet(&writer, payload, payload_length) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: req-dh-transport-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+
+    net_status = tg_mtproto_send_all(&context->connection, packet,
+                                     writer.length, error_buffer,
+                                     sizeof(error_buffer));
+    if (net_status == TG_NET_OK) {
+        net_status = tg_mtproto_recv_abridged_packet(
+            &context->connection, response, sizeof(response), &response_length,
+            error_buffer, sizeof(error_buffer));
+    }
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "%s: req-dh-failed (%s)\n", label,
+                tg_net_status_name(net_status));
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    constructor = response_length >= 24UL ?
+        tg_mtproto_read_u32_le(response + 20) : 0UL;
+    if (constructor != 0xd0e8075cUL ||
+        tg_mtproto_parse_server_dh_params_ok(response, response_length,
+                                             &params_ok) != TG_MTPROTO_TL_OK ||
+        memcmp(params_ok.nonce, nonce, 16U) != 0 ||
+        memcmp(params_ok.server_nonce, res_pq.server_nonce, 16U) != 0 ||
+        tg_mtproto_decrypt_server_dh_inner_data(
+            params_ok.encrypted_answer, params_ok.encrypted_answer_length,
+            new_nonce, nonce, res_pq.server_nonce, &inner) !=
+            TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: server-dh-parse-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    if (!tg_mtproto_check_dh_params(&inner)) {
+        fprintf(stream, "%s: dh-params-check-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+
+    if (tg_mtproto_build_client_dh_request(&inner, new_nonce, b,
+                                           client_padding, client_encrypted,
+                                           &client_encrypted_length,
+                                           context->auth_key) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: client-dh-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, body, sizeof(body));
+    if (tg_mtproto_build_set_client_dh_params(
+            &writer, nonce, res_pq.server_nonce, client_encrypted,
+            client_encrypted_length) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: set-client-dh-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    body_length = writer.length;
+    tg_mtproto_client_message_id((unsigned long)time(0), 12UL,
+                                 &second_msg_id, &third_msg_id);
+    tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+    if (tg_mtproto_write_plain_message(&writer, third_msg_id.hi,
+                                       third_msg_id.lo, body,
+                                       body_length) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: set-client-envelope-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    payload_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, packet, sizeof(packet));
+    if (tg_mtproto_write_abridged_packet(&writer, payload, payload_length) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: set-client-transport-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    net_status = tg_mtproto_send_all(&context->connection, packet,
+                                     writer.length, error_buffer,
+                                     sizeof(error_buffer));
+    if (net_status == TG_NET_OK) {
+        net_status = tg_mtproto_recv_abridged_packet(
+            &context->connection, response, sizeof(response), &response_length,
+            error_buffer, sizeof(error_buffer));
+    }
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "%s: set-client-dh-failed (%s)\n", label,
+                tg_net_status_name(net_status));
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    if (tg_mtproto_parse_set_client_dh_answer(response, response_length,
+                                              &dh_answer) !=
+        TG_MTPROTO_TL_OK ||
+        !tg_mtproto_verify_dh_gen_ok(&dh_answer, nonce, res_pq.server_nonce,
+                                     new_nonce, context->auth_key)) {
+        fprintf(stream, "%s: dh-gen-not-ok\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+
+    tg_mtproto_session_from_auth_key(&context->session, (unsigned long)dc_id,
+                                     context->auth_key, new_nonce,
+                                     res_pq.server_nonce,
+                                     session_id);
+    context->session.seq_no = 1UL;
+    context->last_msg_id = third_msg_id;
+    return 0;
+}
+
+static int tg_mtproto_load_auth_context(const char *host,
+                                        const char *port,
+                                        const char *auth_file,
+                                        tg_mtproto_auth_context *context,
+                                        FILE *stream,
+                                        const char *label)
+{
+    tg_mtproto_session_status session_status;
+    tg_net_status net_status;
+    tg_mtproto_tl_writer writer;
+    unsigned char init_packet[1];
+    char error_buffer[160];
+
+    if (host == 0 || port == 0 || auth_file == 0 || context == 0 ||
+        stream == 0 || label == 0) {
+        fprintf(stream, "%s: invalid-arguments\n", label);
+        return 2;
+    }
+    memset(context, 0, sizeof(*context));
+    session_status = tg_mtproto_session_load_authorization(
+        auth_file, &context->session, context->auth_key);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-load-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+
+    tg_mtproto_client_message_id((unsigned long)time(0), 4UL, 0,
+                                 &context->last_msg_id);
+    error_buffer[0] = '\0';
+    net_status = tg_net_connect(&context->connection, host, port, error_buffer,
+                                sizeof(error_buffer));
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "%s: connect-failed (%s)\n", label,
+                tg_net_status_name(net_status));
+        return 2;
+    }
+    context->connection_open = 1;
+    tg_mtproto_tl_writer_init(&writer, init_packet, sizeof(init_packet));
+    if (tg_mtproto_write_abridged_init(&writer) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: transport-init-build-failed\n", label);
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    net_status = tg_mtproto_send_all(&context->connection, init_packet,
+                                     writer.length, error_buffer,
+                                     sizeof(error_buffer));
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "%s: transport-init-failed (%s)\n", label,
+                tg_net_status_name(net_status));
+        tg_mtproto_close_auth_context(context);
+        return 2;
+    }
+    return 0;
+}
+
+static void tg_mtproto_trim_line(char *text)
+{
+    unsigned long length;
+
+    if (text == 0) {
+        return;
+    }
+    length = (unsigned long)strlen(text);
+    while (length > 0UL &&
+           (text[length - 1U] == '\n' || text[length - 1U] == '\r' ||
+            text[length - 1U] == ' ' || text[length - 1U] == '\t')) {
+        text[length - 1U] = '\0';
+        --length;
+    }
+}
+
+static int tg_mtproto_print_rpc_error(const char *label,
+                                      const tg_mtproto_rpc_result *result,
+                                      FILE *stream)
+{
+    char error_message[128];
+    long error_code;
+
+    if (result == 0 || stream == 0 || label == 0 ||
+        result->result_constructor != TG_MTPROTO_RPC_ERROR_CONSTRUCTOR ||
+        tg_mtproto_parse_rpc_error(result->result_body - 4U,
+                                   result->result_body_length + 4U,
+                                   &error_code, error_message,
+                                   sizeof(error_message)) !=
+            TG_MTPROTO_TL_OK) {
+        return 0;
+    }
+    if (strcmp(error_message, "SESSION_PASSWORD_NEEDED") == 0 ||
+        strcmp(error_message, "PHONE_PASSWORD_PROTECTED") == 0) {
+        fprintf(stream, "%s: two-factor-password-required\n", label);
+    } else {
+        fprintf(stream, "%s: rpc-error %ld %s\n", label, error_code,
+                error_message);
+    }
+    return 1;
+}
+
+int tg_mtproto_auth_send_code(const char *host,
+                              const char *port,
+                              const char *dc_id_text,
+                              const char *api_id_text,
+                              const char *api_hash,
+                              const char *phone_number,
+                              const char *auth_file,
+                              const char *code_hash_file,
+                              FILE *stream)
+{
+    unsigned char query[512];
+    unsigned char initialized_query[640];
+    unsigned char wrapped_query[760];
+    unsigned long api_id;
+    unsigned long query_length;
+    tg_file_status file_status;
+    tg_mtproto_auth_context context;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_sent_code sent_code;
+    tg_mtproto_session_status session_status;
+    tg_mtproto_tl_writer writer;
+    static const char label[] = "mtproto auth.sendCode";
+
+    if (stream == 0 || host == 0 || port == 0 || dc_id_text == 0 ||
+        api_id_text == 0 || api_hash == 0 || phone_number == 0 ||
+        auth_file == 0 || code_hash_file == 0 ||
+        tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
+        if (stream != 0) {
+            fputs("mtproto auth.sendCode: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+
+    if (tg_mtproto_open_auth_context(host, port, dc_id_text, &context, stream,
+                                     label) != 0) {
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_auth_send_code(&writer, phone_number, api_id,
+                                        api_hash) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    query_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, initialized_query,
+                              sizeof(initialized_query));
+    if (tg_mtproto_build_init_connection(&writer, api_id, "Amiga",
+                                         "portable", "0.1", "en", query,
+                                         query_length) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: init-connection-build-failed\n", label);
+        return 2;
+    }
+    query_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, wrapped_query, sizeof(wrapped_query));
+    if (tg_mtproto_build_invoke_with_layer(&writer, 214UL, initialized_query,
+                                           query_length) !=
+        TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: invoke-layer-build-failed\n", label);
+        return 2;
+    }
+
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        &result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
+    tg_mtproto_close_auth_context(&context);
+
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (result.result_constructor != TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR &&
+        result.result_constructor !=
+            TG_MTPROTO_AUTH_SENT_CODE_PAYMENT_REQUIRED_CONSTRUCTOR &&
+        result.result_constructor !=
+            TG_MTPROTO_AUTH_SENT_CODE_SUCCESS_CONSTRUCTOR) {
+        fprintf(stream, "%s: unexpected-result 0x%08lx\n", label,
+                result.result_constructor);
+        return 2;
+    }
+    if (tg_mtproto_parse_auth_sent_code(result.result_constructor,
+                                        result.result_body,
+                                        result.result_body_length,
+                                        &sent_code) != TG_MTPROTO_TL_OK ||
+        sent_code.phone_code_hash[0] == '\0') {
+        fprintf(stream, "%s: sent-code-parse-failed\n", label);
+        return 2;
+    }
+
+    session_status = tg_mtproto_session_save_authorization(
+        auth_file, &context.session, context.auth_key, 1);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+    file_status = tg_file_write_text(code_hash_file, sent_code.phone_code_hash,
+                                     (unsigned long)strlen(
+                                         sent_code.phone_code_hash));
+    if (file_status == TG_FILE_OK) {
+        file_status = tg_file_append_text(code_hash_file, "\n", 1UL);
+    }
+    if (file_status != TG_FILE_OK) {
+        fprintf(stream, "%s: code-hash-save-failed (%s)\n", label,
+                tg_file_status_name(file_status));
+        return 2;
+    }
+
+    fprintf(stream, "%s: code sent\n", label);
+    fprintf(stream, "%s: auth state saved\n", label);
+    fprintf(stream, "%s: phone_code_hash saved\n", label);
+    return 0;
+}
+
+int tg_mtproto_auth_sign_in(const char *host,
+                            const char *port,
+                            const char *api_id_text,
+                            const char *auth_file,
+                            const char *phone_number,
+                            const char *code_hash_file,
+                            const char *phone_code,
+                            const char *dc_id_text,
+                            FILE *stream)
+{
+    unsigned char query[512];
+    unsigned char initialized_query[640];
+    unsigned char wrapped_query[760];
+    char code_hash[160];
+    unsigned long code_hash_length;
+    unsigned long api_id;
+    unsigned long query_length;
+    tg_file_status file_status;
+    tg_mtproto_auth_context context;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_session_status session_status;
+    tg_mtproto_tl_writer writer;
+    long dc_id;
+    static const char label[] = "mtproto auth.signIn";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 ||
+        phone_number == 0 || code_hash_file == 0 || phone_code == 0 ||
+        tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0 ||
+        tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
+        if (stream != 0) {
+            fputs("mtproto auth.signIn: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+
+    file_status = tg_file_read_text(code_hash_file, code_hash,
+                                    sizeof(code_hash), &code_hash_length);
+    if (file_status != TG_FILE_OK) {
+        fprintf(stream, "%s: code-hash-load-failed (%s)\n", label,
+                tg_file_status_name(file_status));
+        return 2;
+    }
+    tg_mtproto_trim_line(code_hash);
+    if (code_hash[0] == '\0') {
+        fprintf(stream, "%s: code-hash-empty\n", label);
+        return 2;
+    }
+
+    if (tg_mtproto_load_auth_context(host, port, auth_file, &context, stream,
+                                     label) != 0) {
+        return 2;
+    }
+    context.session.dc_id = (unsigned long)dc_id;
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_auth_sign_in(&writer, phone_number, code_hash,
+                                      phone_code) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    query_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, initialized_query,
+                              sizeof(initialized_query));
+    if (tg_mtproto_build_init_connection(&writer, api_id, "Amiga",
+                                         "portable", "0.1", "en", query,
+                                         query_length) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: init-connection-build-failed\n", label);
+        return 2;
+    }
+    query_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, wrapped_query, sizeof(wrapped_query));
+    if (tg_mtproto_build_invoke_with_layer(&writer, 214UL, initialized_query,
+                                           query_length) !=
+        TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: invoke-layer-build-failed\n", label);
+        return 2;
+    }
+
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        &result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
+    tg_mtproto_close_auth_context(&context);
+
+    session_status = tg_mtproto_session_save_authorization(
+        auth_file, &context.session, context.auth_key, 1);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (!tg_mtproto_is_auth_authorization_constructor(
+            result.result_constructor)) {
+        fprintf(stream, "%s: unexpected-result 0x%08lx\n", label,
+                result.result_constructor);
+        return 2;
+    }
+    if (result.result_constructor ==
+            0x44747e9aUL) {
+        fprintf(stream, "%s: signup-required-not-supported\n", label);
+        return 2;
+    }
+
+    fprintf(stream, "%s: signed in\n", label);
+    fprintf(stream, "%s: auth state updated\n", label);
     return 0;
 }
 

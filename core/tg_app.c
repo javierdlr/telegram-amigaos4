@@ -3671,6 +3671,30 @@ int tg_app_run(int argc, char **argv)
                                        config.mtproto_probe_dc_id, stdout);
     }
 
+    if (config.run_mtproto_auth_send_code) {
+        return tg_mtproto_auth_send_code(config.mtproto_auth_host,
+                                         config.mtproto_auth_port,
+                                         config.mtproto_auth_dc_id,
+                                         config.mtproto_auth_api_id,
+                                         config.mtproto_auth_api_hash,
+                                         config.mtproto_auth_phone,
+                                         config.mtproto_auth_file,
+                                         config.mtproto_auth_code_hash_file,
+                                         stdout);
+    }
+
+    if (config.run_mtproto_auth_sign_in) {
+        return tg_mtproto_auth_sign_in(config.mtproto_auth_host,
+                                       config.mtproto_auth_port,
+                                       config.mtproto_auth_api_id,
+                                       config.mtproto_auth_file,
+                                       config.mtproto_auth_phone,
+                                       config.mtproto_auth_code_hash_file,
+                                       config.mtproto_auth_code,
+                                       config.mtproto_auth_dc_id,
+                                       stdout);
+    }
+
     if (config.run_telegram_tls_status) {
         return tg_run_telegram_tls_status();
     }

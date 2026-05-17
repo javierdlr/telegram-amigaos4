@@ -40,8 +40,11 @@ Implemented and covered by offline self-tests:
 - platform RNG plumbing for probes;
 - curated auth-key file save/load helpers that refuse to save when secure RNG
   is unavailable;
-- offline `auth.sendCode`, `auth.signIn`, `invokeWithLayer`, `rpc_result` and
-  `rpc_error` serialization/parsing scaffolding.
+- `initConnection`, `invokeWithLayer`, `auth.sendCode`, `auth.signIn`,
+  `rpc_result`, `rpc_error`, `bad_msg_notification` and `bad_server_salt`
+  serialization/parsing scaffolding;
+- explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
+  the Bot API client path.
 
 Run the offline suite:
 
@@ -91,10 +94,24 @@ metadata and sends one encrypted MTProto `ping`, accepting either a direct
 Use this only as a connectivity/protocol-shape check. It is not a login flow
 and it does not create or persist an authorization key.
 
-Login method builders are present for offline verification only. The branch
-does not yet expose a command that sends `auth.sendCode`, to avoid accidental
-SMS/login attempts before auth-key storage and the human code-entry flow are
-complete.
+## Experimental User Auth
+
+User-auth commands are explicit and intended for supervised testing only:
+
+```text
+telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> <auth-file> <code-hash-file>
+telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
+```
+
+`auth.sendCode` creates a fresh MTProto auth key, sends the login-code request,
+then saves the plaintext local auth-key file and the `phone_code_hash` file only
+after Telegram accepts the request. Saving is refused when the platform backend
+cannot provide secure random bytes. `auth.signIn` loads those files and sends
+the human-entered code.
+
+These commands do not implement SRP password login yet. If Telegram returns
+`SESSION_PASSWORD_NEEDED`, the account requires 2FA support that is still
+pending.
 
 ## Branch Rules
 
@@ -109,10 +126,12 @@ complete.
 
 The next development loop should add:
 
-- an explicit `auth.sendCode` probe command requiring API id/hash and phone;
-- a code-entry command for `auth.signIn`;
+- real-account validation with a disposable Telegram API id/hash and a test
+  phone number;
 - SRP password support before treating 2FA accounts as usable;
-- session-file UX and warnings for plaintext local auth-key storage.
+- safer session-file UX, including clearer plaintext-auth-key warnings and
+  target-specific RNG notes;
+- a first authenticated read-only user RPC after sign-in.
 
 ## References
 
@@ -123,3 +142,5 @@ The next development loop should add:
 - <https://core.telegram.org/mtproto/samples-auth_key>
 - <https://core.telegram.org/schema/mtproto>
 - <https://core.telegram.org/mtproto/service_messages>
+- <https://core.telegram.org/method/auth.sendCode>
+- <https://core.telegram.org/method/auth.signIn>
