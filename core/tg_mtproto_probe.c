@@ -8,18 +8,24 @@
 #include <time.h>
 
 #include "tg_mtproto_auth.h"
+#include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_envelope.h"
 #include "tg_mtproto_message_id.h"
 #include "tg_mtproto_probe.h"
 #include "tg_mtproto_rsa.h"
+#include "tg_mtproto_session.h"
 #include "tg_mtproto_transport.h"
 #include "tg_net.h"
+#include "tg_platform.h"
 
 static void tg_mtproto_probe_random(unsigned char *bytes, unsigned long length)
 {
     static unsigned long seed = 0;
     unsigned long i;
 
+    if (tg_platform_random_bytes(bytes, length)) {
+        return;
+    }
     if (seed == 0UL) {
         seed = (unsigned long)time(0);
     }
@@ -147,6 +153,52 @@ static void tg_mtproto_u32_be(unsigned long value, unsigned char bytes[4])
     bytes[1] = (unsigned char)((value >> 16) & 0xffUL);
     bytes[2] = (unsigned char)((value >> 8) & 0xffUL);
     bytes[3] = (unsigned char)(value & 0xffUL);
+}
+
+static int tg_mtproto_body_is_expected_pong(const unsigned char *body,
+                                            unsigned long body_length,
+                                            unsigned long ping_id_hi,
+                                            unsigned long ping_id_lo)
+{
+    return body != 0 && body_length >= 20UL &&
+           tg_mtproto_read_u32_le(body) == 0x347773c5UL &&
+           tg_mtproto_read_u32_le(body + 12U) == ping_id_lo &&
+           tg_mtproto_read_u32_le(body + 16U) == ping_id_hi;
+}
+
+static int tg_mtproto_container_has_expected_pong(
+    const unsigned char *body,
+    unsigned long body_length,
+    unsigned long ping_id_hi,
+    unsigned long ping_id_lo)
+{
+    unsigned long count;
+    unsigned long index;
+    unsigned long offset;
+    unsigned long nested_length;
+
+    if (body == 0 || body_length < 8UL ||
+        tg_mtproto_read_u32_le(body) != 0x73f1f8dcUL) {
+        return 0;
+    }
+    count = tg_mtproto_read_u32_le(body + 4U);
+    offset = 8UL;
+    for (index = 0UL; index < count; ++index) {
+        if (body_length - offset < 16UL) {
+            return 0;
+        }
+        nested_length = tg_mtproto_read_u32_le(body + offset + 12U);
+        offset += 16UL;
+        if (nested_length > body_length - offset) {
+            return 0;
+        }
+        if (tg_mtproto_body_is_expected_pong(body + offset, nested_length,
+                                             ping_id_hi, ping_id_lo)) {
+            return 1;
+        }
+        offset += nested_length;
+    }
+    return 0;
 }
 
 static int tg_mtproto_parse_dc_id(const char *text, long *dc_id)
@@ -312,6 +364,9 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
     unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
     unsigned char b[TG_MTPROTO_DH_VALUE_MAX];
     unsigned char client_padding[15];
+    unsigned char session_id[8];
+    unsigned char ping_id_bytes[8];
+    unsigned char encrypted_padding[64];
     unsigned char body[384];
     unsigned char payload[512];
     unsigned char packet[600];
@@ -319,8 +374,11 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
     unsigned long body_length;
     unsigned long client_encrypted_length;
     unsigned long payload_length;
+    unsigned long encrypted_padding_length;
     unsigned long response_length;
     unsigned long constructor;
+    unsigned long ping_id_hi;
+    unsigned long ping_id_lo;
     unsigned long p;
     unsigned long q;
     unsigned int i;
@@ -332,6 +390,8 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
     tg_mtproto_server_dh_params_ok params_ok;
     tg_mtproto_server_dh_inner_data inner;
     tg_mtproto_set_client_dh_answer dh_answer;
+    tg_mtproto_encrypted_message decrypted;
+    tg_mtproto_session session;
     tg_mtproto_tl_writer writer;
     tg_net_connection connection;
     tg_net_status net_status;
@@ -567,8 +627,8 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
                                                      error_buffer,
                                                      sizeof(error_buffer));
     }
-    tg_net_close(&connection);
     if (net_status != TG_NET_OK) {
+        tg_net_close(&connection);
         fprintf(stream, "mtproto req_DH_params probe: set-client-dh-failed (%s)\n",
                 tg_net_status_name(net_status));
         return 2;
@@ -582,6 +642,7 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
     if (tg_mtproto_parse_set_client_dh_answer(response, response_length,
                                               &dh_answer) !=
         TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
         fputs("mtproto req_DH_params probe: set-client-dh-parse-failed\n",
               stream);
         return 2;
@@ -591,11 +652,102 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
         fprintf(stream,
                 "mtproto req_DH_params probe: dh-gen-not-ok constructor 0x%08lx\n",
                 dh_answer.constructor);
+        tg_net_close(&connection);
         return 2;
     }
     fputs("mtproto req_DH_params probe: dh_gen_ok, auth_key derived in memory only\n",
           stream);
-    return 0;
+
+    tg_mtproto_probe_random(session_id, sizeof(session_id));
+    tg_mtproto_session_from_auth_key(&session, (unsigned long)dc_id, auth_key,
+                                     new_nonce, res_pq.server_nonce,
+                                     session_id);
+    tg_mtproto_probe_random(ping_id_bytes, sizeof(ping_id_bytes));
+    ping_id_lo = tg_mtproto_read_u32_le(ping_id_bytes);
+    ping_id_hi = tg_mtproto_read_u32_le(ping_id_bytes + 4U);
+    tg_mtproto_tl_writer_init(&writer, body, sizeof(body));
+    if (tg_mtproto_tl_write_u32(&writer, 0x7abe77ecUL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, ping_id_hi, ping_id_lo) !=
+            TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
+        fputs("mtproto req_DH_params probe: ping-build-failed\n", stream);
+        return 2;
+    }
+    body_length = writer.length;
+    encrypted_padding_length = 12UL;
+    while (((32UL + body_length + encrypted_padding_length) % 16UL) != 0UL) {
+        ++encrypted_padding_length;
+    }
+    tg_mtproto_probe_random(encrypted_padding, encrypted_padding_length);
+    tg_mtproto_client_message_id((unsigned long)time(0), 16UL,
+                                 &third_msg_id, &third_msg_id);
+    tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+    if (tg_mtproto_write_encrypted_message(
+            &writer, auth_key, session.server_salt_hi,
+            session.server_salt_lo, session.session_id, third_msg_id.hi,
+            third_msg_id.lo, 1UL, body, body_length,
+            encrypted_padding, encrypted_padding_length) !=
+        TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
+        fputs("mtproto req_DH_params probe: encrypted-ping-build-failed\n",
+              stream);
+        return 2;
+    }
+    payload_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, packet, sizeof(packet));
+    if (tg_mtproto_write_abridged_packet(&writer, payload, payload_length) !=
+        TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
+        fputs("mtproto req_DH_params probe: encrypted-ping-transport-build-failed\n",
+              stream);
+        return 2;
+    }
+    net_status = tg_mtproto_send_all(&connection, packet, writer.length,
+                                     error_buffer, sizeof(error_buffer));
+    if (net_status == TG_NET_OK) {
+        net_status = tg_mtproto_recv_abridged_packet(&connection, response,
+                                                     sizeof(response),
+                                                     &response_length,
+                                                     error_buffer,
+                                                     sizeof(error_buffer));
+    }
+    tg_net_close(&connection);
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "mtproto req_DH_params probe: encrypted-ping-failed (%s)\n",
+                tg_net_status_name(net_status));
+        return 2;
+    }
+    if (tg_mtproto_decrypt_encrypted_message(response, response_length,
+                                             auth_key, &decrypted) !=
+        TG_MTPROTO_TL_OK) {
+        fputs("mtproto req_DH_params probe: encrypted-response-decrypt-failed\n",
+              stream);
+        return 2;
+    }
+    constructor = decrypted.body_length >= 4UL ?
+        tg_mtproto_read_u32_le(decrypted.body) : 0UL;
+    fprintf(stream,
+            "mtproto req_DH_params probe: encrypted response %lu bytes, constructor 0x%08lx\n",
+            decrypted.body_length, constructor);
+    if (tg_mtproto_body_is_expected_pong(decrypted.body,
+                                         decrypted.body_length, ping_id_hi,
+                                         ping_id_lo) ||
+        tg_mtproto_container_has_expected_pong(decrypted.body,
+                                               decrypted.body_length,
+                                               ping_id_hi, ping_id_lo)) {
+        fputs("mtproto req_DH_params probe: encrypted ping pong ok\n",
+              stream);
+        return 0;
+    }
+    if (constructor == 0xedab447bUL) {
+        fputs("mtproto req_DH_params probe: bad_server_salt received\n",
+              stream);
+        return 2;
+    }
+    fputs("mtproto req_DH_params probe: encrypted-ping-unexpected-response\n",
+          stream);
+    return 2;
 }
 
 int tg_mtproto_probe_self_test(void)

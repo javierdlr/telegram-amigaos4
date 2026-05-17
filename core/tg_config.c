@@ -721,7 +721,7 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "      --mtproto-req-pq-probe <host> <port>\n");
     fprintf(stream, "                         Send supervised MTProto req_pq_multi TCP probe\n");
     fprintf(stream, "      --mtproto-req-dh-probe <host> <port> <dc-id>\n");
-    fprintf(stream, "                         Send req_pq_multi then req_DH_params probe\n");
+    fprintf(stream, "                         Build auth key then send encrypted ping probe\n");
     fprintf(stream, "      --telegram-tls-status\n");
     fprintf(stream, "                         Print current TLS security status\n");
     fprintf(stream, "      --json-test <json> <field>\n");

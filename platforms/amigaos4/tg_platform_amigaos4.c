@@ -7,6 +7,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#if !defined(__amigaos4__)
+#include <fcntl.h>
+#endif
+
 #ifndef TG_AMIGAOS4_ENABLE_AMISSL
 #define TG_AMIGAOS4_ENABLE_AMISSL 0
 #endif
@@ -91,6 +95,41 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
 #else
     (void)timeout_seconds;
     return 0;
+#endif
+}
+
+int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
+{
+#if defined(__amigaos4__)
+    (void)bytes;
+    (void)byte_count;
+    return 0;
+#else
+    int fd;
+    unsigned long offset;
+    long got;
+
+    if (bytes == 0) {
+        return 0;
+    }
+    if (byte_count == 0) {
+        return 1;
+    }
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        return 0;
+    }
+    offset = 0;
+    while (offset < byte_count) {
+        got = read(fd, bytes + offset, byte_count - offset);
+        if (got <= 0) {
+            close(fd);
+            return 0;
+        }
+        offset += (unsigned long)got;
+    }
+    close(fd);
+    return 1;
 #endif
 }
 

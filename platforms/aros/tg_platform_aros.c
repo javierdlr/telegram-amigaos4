@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
@@ -33,10 +34,6 @@ struct Library *SocketBase = 0;
 #endif
 
 #include "tg_platform.h"
-
-#if !defined(__AROS__)
-#include <fcntl.h>
-#endif
 
 const char *tg_platform_name(void)
 {
@@ -82,6 +79,35 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
     rc = select(1, &read_fds, 0, 0, &timeout);
     return rc > 0 && FD_ISSET(0, &read_fds);
 #endif
+}
+
+int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
+{
+    int fd;
+    unsigned long offset;
+    long got;
+
+    if (bytes == 0) {
+        return 0;
+    }
+    if (byte_count == 0) {
+        return 1;
+    }
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        return 0;
+    }
+    offset = 0;
+    while (offset < byte_count) {
+        got = read(fd, bytes + offset, byte_count - offset);
+        if (got <= 0) {
+            close(fd);
+            return 0;
+        }
+        offset += (unsigned long)got;
+    }
+    close(fd);
+    return 1;
 }
 
 static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer_size,

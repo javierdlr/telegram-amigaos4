@@ -48,6 +48,15 @@ void tg_platform_sleep_seconds(unsigned long seconds);
 int tg_platform_stdin_readable(unsigned long timeout_seconds);
 
 /**
+ * Fills bytes with platform-provided random data.
+ *
+ * Returns non-zero on success. A zero return means the platform backend does
+ * not currently expose a suitable source; callers that create persistent
+ * secrets must fail closed in that case.
+ */
+int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count);
+
+/**
  * Platform TCP connect implementation used by tg_net_connect().
  *
  * On success, connection must contain a valid platform_handle and is_open must

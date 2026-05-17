@@ -13,6 +13,14 @@ void tg_mtproto_sha1(const unsigned char *data, unsigned long data_length,
                      unsigned char digest[TG_MTPROTO_SHA1_LENGTH]);
 void tg_mtproto_sha256(const unsigned char *data, unsigned long data_length,
                        unsigned char digest[TG_MTPROTO_SHA256_LENGTH]);
+void tg_mtproto_aes256_ige_encrypt(unsigned char *data,
+                                   unsigned long length,
+                                   const unsigned char key[32],
+                                   const unsigned char iv[32]);
+void tg_mtproto_aes256_ige_decrypt(unsigned char *data,
+                                   unsigned long length,
+                                   const unsigned char key[32],
+                                   const unsigned char iv[32]);
 int tg_mtproto_crypto_self_test(void);
 
 #endif

@@ -33,7 +33,11 @@ Implemented and covered by offline self-tests:
 - DH prime/g and public-value range validation against Telegram's known
   authorization prime;
 - `client_DH_inner_data` and `set_client_DH_params` serialization;
-- final `dh_gen_ok` parsing and non-persistent auth-key derivation.
+- final `dh_gen_ok` parsing and non-persistent auth-key derivation;
+- `auth_key_id` and initial `server_salt` metadata derivation;
+- MTProto 2.0 encrypted-message framing and response decryption;
+- supervised encrypted `ping`/`pong` probe after auth-key creation;
+- platform RNG plumbing for probes, with no persistent-key save path yet.
 
 Run the offline suite:
 
@@ -50,6 +54,7 @@ mtproto auth self-test: ok
 mtproto rsa self-test: ok
 mtproto tl self-test: ok
 mtproto envelope self-test: ok
+mtproto encrypted self-test: ok
 mtproto transport self-test: ok
 mtproto probe self-test: ok
 mtproto crypto self-test: ok
@@ -74,7 +79,9 @@ and factors `pq`. The `req_DH_params` probe additionally sends RSA_PAD
 `p_q_inner_data_dc`, parses `server_DH_params_ok`, decrypts
 `server_DH_inner_data`, validates the response hash, nonces, DH prime and
 generator, sends `set_client_DH_params`, parses `dh_gen_ok`, and derives the
-temporary auth key in process memory.
+temporary auth key in process memory. It then derives the initial session
+metadata and sends one encrypted MTProto `ping`, accepting either a direct
+`pong` or a container holding the expected `pong`.
 
 Use this only as a connectivity/protocol-shape check. It is not a login flow
 and it does not create or persist an authorization key.
@@ -92,9 +99,10 @@ and it does not create or persist an authorization key.
 
 The next development loop should add:
 
-- a persistent-session skeleton for auth-key metadata and server salt;
-- encrypted-message framing for the first authenticated MTProto method;
-- secure platform RNG plumbing before any persisted auth key is allowed.
+- curated storage for the auth key itself, with a strict no-save path when
+  platform RNG is unavailable;
+- `auth.sendCode`/`auth.signIn` scaffolding behind explicit API-id/hash input;
+- SRP password support before treating 2FA accounts as usable.
 
 ## References
 
@@ -103,3 +111,5 @@ The next development loop should add:
 - <https://core.telegram.org/mtproto/serialize>
 - <https://core.telegram.org/mtproto/transports>
 - <https://core.telegram.org/mtproto/samples-auth_key>
+- <https://core.telegram.org/schema/mtproto>
+- <https://core.telegram.org/mtproto/service_messages>

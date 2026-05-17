@@ -61,6 +61,35 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
     return WaitForChar(Input(), (long)timeout_microseconds) != 0;
 }
 
+int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
+{
+    int fd;
+    unsigned long offset;
+    long got;
+
+    if (bytes == 0) {
+        return 0;
+    }
+    if (byte_count == 0) {
+        return 1;
+    }
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        return 0;
+    }
+    offset = 0;
+    while (offset < byte_count) {
+        got = read(fd, bytes + offset, byte_count - offset);
+        if (got <= 0) {
+            close(fd);
+            return 0;
+        }
+        offset += (unsigned long)got;
+    }
+    close(fd);
+    return 1;
+}
+
 static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer_size,
                                   const char *message)
 {

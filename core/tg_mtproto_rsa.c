@@ -304,7 +304,7 @@ static void tg_aes256_decrypt_block(const unsigned char in[16],
     memcpy(out, state, 16U);
 }
 
-static void tg_aes256_ige_encrypt(unsigned char *data,
+void tg_mtproto_aes256_ige_encrypt(unsigned char *data,
                                   unsigned long length,
                                   const unsigned char key[32],
                                   const unsigned char iv[32])
@@ -333,7 +333,7 @@ static void tg_aes256_ige_encrypt(unsigned char *data,
     }
 }
 
-static void tg_aes256_ige_decrypt(unsigned char *data,
+void tg_mtproto_aes256_ige_decrypt(unsigned char *data,
                                   unsigned long length,
                                   const unsigned char key[32],
                                   const unsigned char iv[32])
@@ -688,7 +688,7 @@ tg_mtproto_tl_status tg_mtproto_rsa_pad(
            TG_MTPROTO_SHA256_LENGTH);
 
     memset(iv, 0, sizeof(iv));
-    tg_aes256_ige_encrypt(data_with_hash, sizeof(data_with_hash), temp_key, iv);
+    tg_mtproto_aes256_ige_encrypt(data_with_hash, sizeof(data_with_hash), temp_key, iv);
     tg_mtproto_sha256(data_with_hash, sizeof(data_with_hash), digest);
     for (i = 0U; i < 32U; ++i) {
         encrypted_data[i] = (unsigned char)(temp_key[i] ^ digest[i]);
@@ -913,7 +913,7 @@ tg_mtproto_tl_status tg_mtproto_decrypt_server_dh_inner_data(
 
     memcpy(decrypted, encrypted_answer, (size_t)encrypted_answer_length);
     tg_mtproto_dh_tmp_aes(new_nonce, expected_server_nonce, key, iv);
-    tg_aes256_ige_decrypt(decrypted, encrypted_answer_length, key, iv);
+    tg_mtproto_aes256_ige_decrypt(decrypted, encrypted_answer_length, key, iv);
 
     status = tg_mtproto_parse_server_dh_inner_data(decrypted + 20U,
                                                    encrypted_answer_length - 20UL,
@@ -1057,7 +1057,7 @@ tg_mtproto_tl_status tg_mtproto_build_client_dh_request(
     }
     total_length += pad_length;
     tg_mtproto_dh_tmp_aes(new_nonce, inner->server_nonce, key, iv);
-    tg_aes256_ige_encrypt(data_with_hash, total_length, key, iv);
+    tg_mtproto_aes256_ige_encrypt(data_with_hash, total_length, key, iv);
     memcpy(encrypted_data, data_with_hash, (size_t)total_length);
     *encrypted_data_length = total_length;
     return TG_MTPROTO_TL_OK;
@@ -1292,7 +1292,7 @@ int tg_mtproto_rsa_self_test(void)
     memset(answer_with_hash + TG_MTPROTO_SHA1_LENGTH + writer.length, 0,
            sizeof(answer_with_hash) - TG_MTPROTO_SHA1_LENGTH - writer.length);
     tg_mtproto_dh_tmp_aes(temp_key, keys[0].modulus + 16U, tmp_aes_key, iv);
-    tg_aes256_ige_encrypt(answer_with_hash, sizeof(answer_with_hash),
+    tg_mtproto_aes256_ige_encrypt(answer_with_hash, sizeof(answer_with_hash),
                           tmp_aes_key, iv);
     tg_mtproto_tl_writer_init(&writer, req, sizeof(req));
     if (tg_mtproto_tl_write_u64(&writer, 0UL, 0UL) != TG_MTPROTO_TL_OK ||

@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "tg_file.h"
+#include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_session.h"
 
 void tg_mtproto_session_init(tg_mtproto_session *session)
@@ -20,6 +21,28 @@ void tg_mtproto_session_init(tg_mtproto_session *session)
         session->server_salt_lo = 0;
         memset(session->session_id, 0, sizeof(session->session_id));
     }
+}
+
+void tg_mtproto_session_from_auth_key(
+    tg_mtproto_session *session,
+    unsigned long dc_id,
+    const unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH],
+    const unsigned char new_nonce[32],
+    const unsigned char server_nonce[16],
+    const unsigned char session_id[8])
+{
+    if (session == 0 || auth_key == 0 || new_nonce == 0 ||
+        server_nonce == 0 || session_id == 0) {
+        return;
+    }
+    tg_mtproto_session_init(session);
+    session->dc_id = dc_id;
+    tg_mtproto_auth_key_id(auth_key, &session->auth_key_id_hi,
+                           &session->auth_key_id_lo);
+    tg_mtproto_initial_server_salt(new_nonce, server_nonce,
+                                   &session->server_salt_hi,
+                                   &session->server_salt_lo);
+    memcpy(session->session_id, session_id, sizeof(session->session_id));
 }
 
 static int tg_mtproto_hex_value(char ch)
@@ -231,6 +254,10 @@ int tg_mtproto_session_self_test(void)
     static const char path[] = "mtproto-session-self-test.tmp";
     tg_mtproto_session session;
     tg_mtproto_session loaded;
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    unsigned char new_nonce[32];
+    unsigned char server_nonce[16];
+    unsigned char session_id[8];
     int i;
 
     tg_mtproto_session_init(&session);
@@ -258,6 +285,25 @@ int tg_mtproto_session_self_test(void)
         loaded.server_salt_lo != session.server_salt_lo ||
         memcmp(loaded.session_id, session.session_id,
                sizeof(session.session_id)) != 0) {
+        return 2;
+    }
+
+    for (i = 0; i < (int)sizeof(auth_key); ++i) {
+        auth_key[i] = (unsigned char)i;
+    }
+    memset(new_nonce, 0x11, sizeof(new_nonce));
+    memset(server_nonce, 0x22, sizeof(server_nonce));
+    for (i = 0; i < (int)sizeof(session_id); ++i) {
+        session_id[i] = (unsigned char)(0xb0 + i);
+    }
+    tg_mtproto_session_from_auth_key(&loaded, 4UL, auth_key, new_nonce,
+                                     server_nonce, session_id);
+    if (loaded.dc_id != 4UL ||
+        loaded.auth_key_id_hi != 0xc8df57a4UL ||
+        loaded.auth_key_id_lo != 0x6e58d132UL ||
+        loaded.server_salt_hi != 0x33333333UL ||
+        loaded.server_salt_lo != 0x33333333UL ||
+        memcmp(loaded.session_id, session_id, sizeof(session_id)) != 0) {
         return 2;
     }
 
