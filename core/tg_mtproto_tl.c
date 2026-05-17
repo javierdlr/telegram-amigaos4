@@ -58,6 +58,22 @@ tg_mtproto_tl_status tg_mtproto_tl_write_u32(tg_mtproto_tl_writer *writer,
     return TG_MTPROTO_TL_OK;
 }
 
+tg_mtproto_tl_status tg_mtproto_tl_write_u8(tg_mtproto_tl_writer *writer,
+                                            unsigned long value)
+{
+    tg_mtproto_tl_status status;
+
+    if (value > 0xffUL) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    status = tg_mtproto_tl_reserve(writer, 1);
+    if (status != TG_MTPROTO_TL_OK) {
+        return status;
+    }
+    writer->buffer[writer->length++] = (unsigned char)value;
+    return TG_MTPROTO_TL_OK;
+}
+
 tg_mtproto_tl_status tg_mtproto_tl_write_u64(tg_mtproto_tl_writer *writer,
                                              unsigned long hi,
                                              unsigned long lo)

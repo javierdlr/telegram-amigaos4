@@ -16,6 +16,8 @@ Current MTProto code is offline-only:
 - TL little-endian primitive writer/reader;
 - TL `bytes`/`string` length and 4-byte padding handling;
 - `req_pq_multi` constructor serialization sample;
+- MTProto plain-message envelope sample with `auth_key_id = 0`;
+- TCP abridged and intermediate transport init plus packet framing samples;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
 - local MTProto session-state save/load skeleton.
 
@@ -29,6 +31,8 @@ Expected output:
 
 ```text
 mtproto tl self-test: ok
+mtproto envelope self-test: ok
+mtproto transport self-test: ok
 mtproto crypto self-test: ok
 mtproto session self-test: ok
 mtproto self-test: ok
@@ -66,8 +70,7 @@ Important constraints for this codebase:
 
 Next MTProto work should stay behind explicit self-tests:
 
-1. add `req_pq_multi` plain-message envelope construction;
-2. add TCP abridged/intermediate transport framing tests;
-3. add Telegram DC endpoint configuration without user credentials;
-4. add factorization and RSA fingerprint plumbing for auth-key creation;
-5. only then attempt a supervised live `req_pq_multi` exchange.
+1. add Telegram DC endpoint configuration without user credentials;
+2. add deterministic message id generation tests;
+3. add factorization and RSA fingerprint plumbing for auth-key creation;
+4. only then attempt a supervised live `req_pq_multi` exchange.

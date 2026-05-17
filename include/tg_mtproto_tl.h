@@ -35,6 +35,8 @@ void tg_mtproto_tl_reader_init(tg_mtproto_tl_reader *reader,
 
 tg_mtproto_tl_status tg_mtproto_tl_write_u32(tg_mtproto_tl_writer *writer,
                                              unsigned long value);
+tg_mtproto_tl_status tg_mtproto_tl_write_u8(tg_mtproto_tl_writer *writer,
+                                            unsigned long value);
 tg_mtproto_tl_status tg_mtproto_tl_write_u64(tg_mtproto_tl_writer *writer,
                                              unsigned long hi,
                                              unsigned long lo);
