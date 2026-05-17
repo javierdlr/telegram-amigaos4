@@ -13,6 +13,11 @@
 #define TG_RSA_HASHED_LENGTH 224U
 #define TG_SERVER_DH_PARAMS_OK_CONSTRUCTOR 0xd0e8075cUL
 #define TG_SERVER_DH_INNER_DATA_CONSTRUCTOR 0xb5890dbaUL
+#define TG_SET_CLIENT_DH_PARAMS_CONSTRUCTOR 0xf5045f1fUL
+#define TG_CLIENT_DH_INNER_DATA_CONSTRUCTOR 0x6643b654UL
+#define TG_DH_GEN_OK_CONSTRUCTOR 0x3bcbf734UL
+#define TG_DH_GEN_RETRY_CONSTRUCTOR 0x46dc1fb9UL
+#define TG_DH_GEN_FAIL_CONSTRUCTOR 0xa69dae02UL
 
 static const unsigned char tg_aes_sbox[256] = {
     0x63U,0x7cU,0x77U,0x7bU,0xf2U,0x6bU,0x6fU,0xc5U,0x30U,0x01U,0x67U,0x2bU,0xfeU,0xd7U,0xabU,0x76U,
@@ -60,6 +65,25 @@ static const tg_mtproto_public_key tg_builtin_keys[] = {
         },
         65537UL
     }
+};
+
+static const unsigned char tg_known_dh_prime[256] = {
+            0xc7U, 0x1cU, 0xaeU, 0xb9U, 0xc6U, 0xb1U, 0xc9U, 0x04U, 0x8eU, 0x6cU, 0x52U, 0x2fU, 0x70U, 0xf1U, 0x3fU, 0x73U,
+            0x98U, 0x0dU, 0x40U, 0x23U, 0x8eU, 0x3eU, 0x21U, 0xc1U, 0x49U, 0x34U, 0xd0U, 0x37U, 0x56U, 0x3dU, 0x93U, 0x0fU,
+            0x48U, 0x19U, 0x8aU, 0x0aU, 0xa7U, 0xc1U, 0x40U, 0x58U, 0x22U, 0x94U, 0x93U, 0xd2U, 0x25U, 0x30U, 0xf4U, 0xdbU,
+            0xfaU, 0x33U, 0x6fU, 0x6eU, 0x0aU, 0xc9U, 0x25U, 0x13U, 0x95U, 0x43U, 0xaeU, 0xd4U, 0x4cU, 0xceU, 0x7cU, 0x37U,
+            0x20U, 0xfdU, 0x51U, 0xf6U, 0x94U, 0x58U, 0x70U, 0x5aU, 0xc6U, 0x8cU, 0xd4U, 0xfeU, 0x6bU, 0x6bU, 0x13U, 0xabU,
+            0xdcU, 0x97U, 0x46U, 0x51U, 0x29U, 0x69U, 0x32U, 0x84U, 0x54U, 0xf1U, 0x8fU, 0xafU, 0x8cU, 0x59U, 0x5fU, 0x64U,
+            0x24U, 0x77U, 0xfeU, 0x96U, 0xbbU, 0x2aU, 0x94U, 0x1dU, 0x5bU, 0xcdU, 0x1dU, 0x4aU, 0xc8U, 0xccU, 0x49U, 0x88U,
+            0x07U, 0x08U, 0xfaU, 0x9bU, 0x37U, 0x8eU, 0x3cU, 0x4fU, 0x3aU, 0x90U, 0x60U, 0xbeU, 0xe6U, 0x7cU, 0xf9U, 0xa4U,
+            0xa4U, 0xa6U, 0x95U, 0x81U, 0x10U, 0x51U, 0x90U, 0x7eU, 0x16U, 0x27U, 0x53U, 0xb5U, 0x6bU, 0x0fU, 0x6bU, 0x41U,
+            0x0dU, 0xbaU, 0x74U, 0xd8U, 0xa8U, 0x4bU, 0x2aU, 0x14U, 0xb3U, 0x14U, 0x4eU, 0x0eU, 0xf1U, 0x28U, 0x47U, 0x54U,
+            0xfdU, 0x17U, 0xedU, 0x95U, 0x0dU, 0x59U, 0x65U, 0xb4U, 0xb9U, 0xddU, 0x46U, 0x58U, 0x2dU, 0xb1U, 0x17U, 0x8dU,
+            0x16U, 0x9cU, 0x6bU, 0xc4U, 0x65U, 0xb0U, 0xd6U, 0xffU, 0x9cU, 0xa3U, 0x92U, 0x8fU, 0xefU, 0x5bU, 0x9aU, 0xe4U,
+            0xe4U, 0x18U, 0xfcU, 0x15U, 0xe8U, 0x3eU, 0xbeU, 0xa0U, 0xf8U, 0x7fU, 0xa9U, 0xffU, 0x5eU, 0xedU, 0x70U, 0x05U,
+            0x0dU, 0xedU, 0x28U, 0x49U, 0xf4U, 0x7bU, 0xf9U, 0x59U, 0xd9U, 0x56U, 0x85U, 0x0cU, 0xe9U, 0x29U, 0x85U, 0x1fU,
+            0x0dU, 0x81U, 0x15U, 0xf6U, 0x35U, 0xb1U, 0x05U, 0xeeU, 0x2eU, 0x4eU, 0x15U, 0xd0U, 0x4bU, 0x24U, 0x54U, 0xbfU,
+            0x6fU, 0x4fU, 0xadU, 0xf0U, 0x34U, 0xb1U, 0x04U, 0x03U, 0x11U, 0x9cU, 0xd8U, 0xe3U, 0xb9U, 0x2fU, 0xccU, 0x5bU
 };
 
 static unsigned char tg_xtime(unsigned char x)
@@ -457,6 +481,103 @@ static void tg_rsa_public_encrypt_raw(
     memcpy(output, result, TG_MTPROTO_RSA_MODULUS_LENGTH);
 }
 
+static void tg_big_mod_exp_bytes(
+    const unsigned char base[TG_MTPROTO_DH_VALUE_MAX],
+    const unsigned char exponent[TG_MTPROTO_DH_VALUE_MAX],
+    const unsigned char modulus[TG_MTPROTO_DH_VALUE_MAX],
+    unsigned char output[TG_MTPROTO_DH_VALUE_MAX])
+{
+    unsigned char result[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char power[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned int bit;
+
+    memset(result, 0, sizeof(result));
+    result[TG_MTPROTO_DH_VALUE_MAX - 1U] = 1U;
+    memcpy(power, base, sizeof(power));
+    while (tg_big_cmp(power, modulus) >= 0) {
+        tg_big_sub(power, modulus);
+    }
+
+    for (bit = 0U; bit < TG_MTPROTO_DH_VALUE_MAX * 8U; ++bit) {
+        if (tg_big_bit(exponent, bit)) {
+            tg_big_mod_mul(result, power, modulus, result);
+        }
+        tg_big_mod_mul(power, power, modulus, power);
+    }
+
+    memcpy(output, result, TG_MTPROTO_DH_VALUE_MAX);
+}
+
+static unsigned long tg_trim_leading_zeroes(const unsigned char *data,
+                                            unsigned long data_length)
+{
+    unsigned long offset;
+
+    offset = 0UL;
+    while (offset + 1UL < data_length && data[offset] == 0U) {
+        ++offset;
+    }
+    return offset;
+}
+
+static int tg_big_greater_than_one(const unsigned char *value,
+                                   unsigned long value_length)
+{
+    unsigned long i;
+
+    if (value == 0 || value_length == 0) {
+        return 0;
+    }
+    for (i = 0UL; i + 1UL < value_length; ++i) {
+        if (value[i] != 0U) {
+            return 1;
+        }
+    }
+    return value[value_length - 1UL] > 1U;
+}
+
+static int tg_big_less_than_prime_minus_one(const unsigned char *value,
+                                            unsigned long value_length,
+                                            const unsigned char *prime)
+{
+    unsigned char limit[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char padded[TG_MTPROTO_DH_VALUE_MAX];
+
+    if (value == 0 || prime == 0 || value_length == 0 ||
+        value_length > TG_MTPROTO_DH_VALUE_MAX) {
+        return 0;
+    }
+    memcpy(limit, prime, sizeof(limit));
+    limit[TG_MTPROTO_DH_VALUE_MAX - 1U] =
+        (unsigned char)(limit[TG_MTPROTO_DH_VALUE_MAX - 1U] - 1U);
+    memset(padded, 0, sizeof(padded));
+    memcpy(padded + TG_MTPROTO_DH_VALUE_MAX - value_length, value,
+           (size_t)value_length);
+    return tg_big_cmp(padded, limit) < 0;
+}
+
+static int tg_big_within_dh_public_range(const unsigned char *value,
+                                         unsigned long value_length,
+                                         const unsigned char *prime)
+{
+    unsigned char lower[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char upper[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char padded[TG_MTPROTO_DH_VALUE_MAX];
+
+    if (value == 0 || prime == 0 || value_length == 0 ||
+        value_length > TG_MTPROTO_DH_VALUE_MAX) {
+        return 0;
+    }
+    memset(lower, 0, sizeof(lower));
+    lower[7] = 1U;
+    memcpy(upper, prime, sizeof(upper));
+    tg_big_sub(upper, lower);
+    memset(padded, 0, sizeof(padded));
+    memcpy(padded + TG_MTPROTO_DH_VALUE_MAX - value_length, value,
+           (size_t)value_length);
+    return tg_big_cmp(padded, lower) >= 0 && tg_big_cmp(padded, upper) <= 0;
+}
+
 const tg_mtproto_public_key *tg_mtproto_builtin_public_keys(
     unsigned int *count)
 {
@@ -811,6 +932,219 @@ tg_mtproto_tl_status tg_mtproto_decrypt_server_dh_inner_data(
     return TG_MTPROTO_TL_OK;
 }
 
+int tg_mtproto_check_dh_params(const tg_mtproto_server_dh_inner_data *inner)
+{
+    if (inner == 0 ||
+        inner->g < 2UL || inner->g > 7UL ||
+        inner->dh_prime_length != TG_MTPROTO_DH_VALUE_MAX ||
+        memcmp(inner->dh_prime, tg_known_dh_prime,
+               TG_MTPROTO_DH_VALUE_MAX) != 0 ||
+        !tg_big_greater_than_one(inner->g_a, inner->g_a_length) ||
+        !tg_big_less_than_prime_minus_one(inner->g_a, inner->g_a_length,
+                                          inner->dh_prime) ||
+        !tg_big_within_dh_public_range(inner->g_a, inner->g_a_length,
+                                       inner->dh_prime)) {
+        return 0;
+    }
+    return 1;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_set_client_dh_params(
+    tg_mtproto_tl_writer *writer,
+    const unsigned char nonce[16],
+    const unsigned char server_nonce[16],
+    const unsigned char *encrypted_data,
+    unsigned long encrypted_data_length)
+{
+    tg_mtproto_tl_status status;
+
+    if (nonce == 0 || server_nonce == 0 || encrypted_data == 0 ||
+        encrypted_data_length == 0UL ||
+        encrypted_data_length > TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX ||
+        (encrypted_data_length % 16UL) != 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_SET_CLIENT_DH_PARAMS_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_raw(writer, nonce, 16UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_raw(writer, server_nonce, 16UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_bytes(writer, encrypted_data,
+                                           encrypted_data_length);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_client_dh_request(
+    const tg_mtproto_server_dh_inner_data *inner,
+    const unsigned char new_nonce[32],
+    const unsigned char b[TG_MTPROTO_DH_VALUE_MAX],
+    const unsigned char padding[15],
+    unsigned char encrypted_data[TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX],
+    unsigned long *encrypted_data_length,
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH])
+{
+    unsigned char base[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char g_a[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char g_b[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char inner_data[360];
+    unsigned char data_with_hash[TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX];
+    unsigned char key[32];
+    unsigned char iv[32];
+    unsigned char digest[TG_MTPROTO_SHA1_LENGTH];
+    unsigned long g_b_offset;
+    unsigned long inner_length;
+    unsigned long total_length;
+    unsigned long pad_length;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_tl_status status;
+
+    if (inner == 0 || new_nonce == 0 || b == 0 || padding == 0 ||
+        encrypted_data == 0 || encrypted_data_length == 0 ||
+        auth_key == 0 || !tg_mtproto_check_dh_params(inner)) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+
+    memset(base, 0, sizeof(base));
+    base[TG_MTPROTO_DH_VALUE_MAX - 1U] = (unsigned char)inner->g;
+    tg_big_mod_exp_bytes(base, b, inner->dh_prime, g_b);
+
+    memset(g_a, 0, sizeof(g_a));
+    memcpy(g_a + TG_MTPROTO_DH_VALUE_MAX - inner->g_a_length, inner->g_a,
+           (size_t)inner->g_a_length);
+    tg_big_mod_exp_bytes(g_a, b, inner->dh_prime, auth_key);
+
+    g_b_offset = tg_trim_leading_zeroes(g_b, sizeof(g_b));
+    tg_mtproto_tl_writer_init(&writer, inner_data, sizeof(inner_data));
+    status = tg_mtproto_tl_write_u32(&writer,
+                                     TG_CLIENT_DH_INNER_DATA_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_raw(&writer, inner->nonce, 16UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_raw(&writer, inner->server_nonce, 16UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(&writer, 0UL, 0UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_bytes(
+            &writer, g_b + g_b_offset,
+            (unsigned long)(sizeof(g_b) - g_b_offset));
+    }
+    if (status != TG_MTPROTO_TL_OK) {
+        return status;
+    }
+
+    inner_length = writer.length;
+    total_length = TG_MTPROTO_SHA1_LENGTH + inner_length;
+    pad_length = (16UL - (total_length % 16UL)) % 16UL;
+    if (pad_length > 15UL ||
+        total_length + pad_length > TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX) {
+        return TG_MTPROTO_TL_BUFFER_TOO_SMALL;
+    }
+
+    tg_mtproto_sha1(inner_data, inner_length, digest);
+    memcpy(data_with_hash, digest, TG_MTPROTO_SHA1_LENGTH);
+    memcpy(data_with_hash + TG_MTPROTO_SHA1_LENGTH, inner_data,
+           (size_t)inner_length);
+    if (pad_length > 0UL) {
+        memcpy(data_with_hash + total_length, padding, (size_t)pad_length);
+    }
+    total_length += pad_length;
+    tg_mtproto_dh_tmp_aes(new_nonce, inner->server_nonce, key, iv);
+    tg_aes256_ige_encrypt(data_with_hash, total_length, key, iv);
+    memcpy(encrypted_data, data_with_hash, (size_t)total_length);
+    *encrypted_data_length = total_length;
+    return TG_MTPROTO_TL_OK;
+}
+
+tg_mtproto_tl_status tg_mtproto_parse_set_client_dh_answer(
+    const unsigned char *payload,
+    unsigned long payload_length,
+    tg_mtproto_set_client_dh_answer *out)
+{
+    tg_mtproto_tl_reader reader;
+    const unsigned char *raw;
+    unsigned long auth_hi;
+    unsigned long auth_lo;
+    unsigned long msg_hi;
+    unsigned long msg_lo;
+    unsigned long message_length;
+    unsigned long constructor;
+
+    if (payload == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    memset(out, 0, sizeof(*out));
+    tg_mtproto_tl_reader_init(&reader, payload, payload_length);
+    if (tg_mtproto_tl_read_u64(&reader, &auth_hi, &auth_lo) !=
+            TG_MTPROTO_TL_OK ||
+        auth_hi != 0UL || auth_lo != 0UL ||
+        tg_mtproto_tl_read_u64(&reader, &msg_hi, &msg_lo) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &message_length) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (message_length != 52UL ||
+        message_length > payload_length ||
+        payload_length - 20UL < message_length) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_mtproto_tl_read_u32(&reader, &constructor) != TG_MTPROTO_TL_OK ||
+        (constructor != TG_DH_GEN_OK_CONSTRUCTOR &&
+         constructor != TG_DH_GEN_RETRY_CONSTRUCTOR &&
+         constructor != TG_DH_GEN_FAIL_CONSTRUCTOR)) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    out->constructor = constructor;
+    if (tg_mtproto_tl_read_raw(&reader, &raw, 16UL) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_TRUNCATED;
+    }
+    memcpy(out->nonce, raw, 16U);
+    if (tg_mtproto_tl_read_raw(&reader, &raw, 16UL) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_TRUNCATED;
+    }
+    memcpy(out->server_nonce, raw, 16U);
+    if (tg_mtproto_tl_read_raw(&reader, &raw, 16UL) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_TRUNCATED;
+    }
+    memcpy(out->new_nonce_hash, raw, 16U);
+    if (reader.offset != 20UL + message_length) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
+int tg_mtproto_verify_dh_gen_ok(const tg_mtproto_set_client_dh_answer *answer,
+                                const unsigned char expected_nonce[16],
+                                const unsigned char expected_server_nonce[16],
+                                const unsigned char new_nonce[32],
+                                const unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH])
+{
+    unsigned char auth_key_hash[TG_MTPROTO_SHA1_LENGTH];
+    unsigned char input[41];
+    unsigned char digest[TG_MTPROTO_SHA1_LENGTH];
+
+    if (answer == 0 || expected_nonce == 0 || expected_server_nonce == 0 ||
+        new_nonce == 0 || auth_key == 0 ||
+        answer->constructor != TG_DH_GEN_OK_CONSTRUCTOR ||
+        memcmp(answer->nonce, expected_nonce, 16U) != 0 ||
+        memcmp(answer->server_nonce, expected_server_nonce, 16U) != 0) {
+        return 0;
+    }
+    tg_mtproto_sha1(auth_key, TG_MTPROTO_AUTH_KEY_LENGTH, auth_key_hash);
+    memcpy(input, new_nonce, 32U);
+    input[32] = 1U;
+    memcpy(input + 33U, auth_key_hash, 8U);
+    tg_mtproto_sha1(input, sizeof(input), digest);
+    return memcmp(answer->new_nonce_hash, digest + 4U, 16U) == 0;
+}
+
 int tg_mtproto_rsa_self_test(void)
 {
     static const unsigned char aes_key[32] = {
@@ -853,13 +1187,23 @@ int tg_mtproto_rsa_self_test(void)
     unsigned char req[384];
     unsigned char answer[128];
     unsigned char answer_with_hash[144];
+    unsigned char client_encrypted[TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX];
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    unsigned char b[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char client_padding[15];
+    unsigned char final_hash_input[41];
+    unsigned char auth_key_hash[TG_MTPROTO_SHA1_LENGTH];
     unsigned char padding[96];
     unsigned char temp_key[32];
     unsigned char tmp_aes_key[32];
     unsigned char iv[32];
     unsigned char digest[TG_MTPROTO_SHA1_LENGTH];
+    unsigned long body_length;
+    unsigned long client_encrypted_length;
     tg_mtproto_server_dh_params_ok params_ok;
     tg_mtproto_server_dh_inner_data inner_data;
+    tg_mtproto_server_dh_inner_data dh_check;
+    tg_mtproto_set_client_dh_answer dh_answer;
     tg_mtproto_tl_writer writer;
     unsigned int key_count;
     unsigned int i;
@@ -975,6 +1319,74 @@ int tg_mtproto_rsa_self_test(void)
         inner_data.dh_prime_length != 16UL ||
         inner_data.g_a_length != 16UL ||
         inner_data.server_time != 0x6777e5ebUL) {
+        return 2;
+    }
+
+    memset(&dh_check, 0, sizeof(dh_check));
+    memcpy(dh_check.nonce, keys[0].modulus, 16U);
+    memcpy(dh_check.server_nonce, keys[0].modulus + 16U, 16U);
+    dh_check.g = 3UL;
+    memcpy(dh_check.dh_prime, tg_known_dh_prime, sizeof(tg_known_dh_prime));
+    dh_check.dh_prime_length = sizeof(tg_known_dh_prime);
+    dh_check.g_a[7] = 1U;
+    dh_check.g_a_length = sizeof(dh_check.g_a);
+    dh_check.server_time = 0x6777e5ebUL;
+    memset(b, 0, sizeof(b));
+    b[sizeof(b) - 1U] = 3U;
+    for (i = 0U; i < sizeof(client_padding); ++i) {
+        client_padding[i] = (unsigned char)(0x55U + i);
+    }
+    memset(auth_key, 0, sizeof(auth_key));
+    if (!tg_mtproto_check_dh_params(&dh_check) ||
+        tg_mtproto_build_client_dh_request(&dh_check, temp_key, b,
+                                           client_padding, client_encrypted,
+                                           &client_encrypted_length,
+                                           auth_key) != TG_MTPROTO_TL_OK ||
+        client_encrypted_length == 0UL ||
+        (client_encrypted_length % 16UL) != 0UL ||
+        !tg_big_greater_than_one(auth_key, sizeof(auth_key))) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, req, sizeof(req));
+    if (tg_mtproto_build_set_client_dh_params(
+            &writer, dh_check.nonce, dh_check.server_nonce,
+            client_encrypted, client_encrypted_length) != TG_MTPROTO_TL_OK ||
+        writer.length < 40UL ||
+        req[0] != 0x1fU || req[1] != 0x5fU ||
+        req[2] != 0x04U || req[3] != 0xf5U) {
+        return 2;
+    }
+
+    tg_mtproto_sha1(auth_key, sizeof(auth_key), auth_key_hash);
+    memcpy(final_hash_input, temp_key, 32U);
+    final_hash_input[32] = 1U;
+    memcpy(final_hash_input + 33U, auth_key_hash, 8U);
+    tg_mtproto_sha1(final_hash_input, sizeof(final_hash_input), digest);
+    tg_mtproto_tl_writer_init(&writer, answer, sizeof(answer));
+    if (tg_mtproto_tl_write_u32(&writer, TG_DH_GEN_OK_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_raw(&writer, dh_check.nonce, 16UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_raw(&writer, dh_check.server_nonce, 16UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_raw(&writer, digest + 4U, 16UL) !=
+            TG_MTPROTO_TL_OK) {
+        return 2;
+    }
+    body_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, req, sizeof(req));
+    if (tg_mtproto_tl_write_u64(&writer, 0UL, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0x6777e5ebUL, 0x00059768UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, body_length) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_raw(&writer, answer, body_length) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_parse_set_client_dh_answer(req, writer.length,
+                                              &dh_answer) !=
+            TG_MTPROTO_TL_OK ||
+        !tg_mtproto_verify_dh_gen_ok(&dh_answer, dh_check.nonce,
+                                     dh_check.server_nonce, temp_key,
+                                     auth_key)) {
         return 2;
     }
 

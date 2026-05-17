@@ -29,14 +29,19 @@ Current MTProto code is offline by default:
 - MTProto RSA_PAD with AES-256-IGE and raw RSA public encryption;
 - live `req_DH_params` probe with `server_DH_params_ok` parsing;
 - `server_DH_inner_data` AES-IGE decrypt plus nonce/hash validation;
+- DH prime/g and public-value range validation against Telegram's known
+  authorization prime;
+- `client_DH_inner_data` and `set_client_DH_params` serialization;
+- `dh_gen_ok` parsing and non-persistent auth-key derivation;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
 - local MTProto session-state save/load skeleton.
 
 The optional `--mtproto-req-pq-probe <host> <port>` and
 `--mtproto-req-dh-probe <host> <port> <dc-id>` commands are supervised
 connectivity checks only. They do not perform user login and they do not create
-or persist an authorization key. The DH probe reaches `server_DH_inner_data`
-decrypt/validation and then stops.
+or persist an authorization key. The DH probe reaches `dh_gen_ok`, derives the
+auth key in process memory, validates Telegram's final nonce hash, and then
+discards the key.
 
 Run:
 
@@ -95,7 +100,9 @@ Important constraints for this codebase:
 
 Next MTProto work should stay behind explicit self-tests:
 
-1. add DH prime/g checks and known-prime cache;
-2. build `client_DH_inner_data` and `set_client_DH_params`;
-3. derive the final auth key;
-4. only then attempt a supervised non-persistent auth-key handshake check.
+1. add a persistent-session skeleton for auth-key metadata and server salt;
+2. add encrypted-message framing for the first authenticated MTProto method;
+3. replace the supervised probe RNG with platform secure RNG before any
+   persisted auth key is allowed;
+4. keep user login separate until encrypted request/response handling is
+   covered by offline and live tests.

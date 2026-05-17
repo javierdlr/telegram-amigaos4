@@ -13,6 +13,7 @@
 #define TG_MTPROTO_RSA_PADDED_LENGTH 256U
 #define TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX 1024U
 #define TG_MTPROTO_DH_VALUE_MAX 256U
+#define TG_MTPROTO_AUTH_KEY_LENGTH 256U
 
 typedef struct tg_mtproto_public_key {
     tg_mtproto_fingerprint fingerprint;
@@ -37,6 +38,13 @@ typedef struct tg_mtproto_server_dh_inner_data {
     unsigned long g_a_length;
     unsigned long server_time;
 } tg_mtproto_server_dh_inner_data;
+
+typedef struct tg_mtproto_set_client_dh_answer {
+    unsigned long constructor;
+    unsigned char nonce[16];
+    unsigned char server_nonce[16];
+    unsigned char new_nonce_hash[16];
+} tg_mtproto_set_client_dh_answer;
 
 const tg_mtproto_public_key *tg_mtproto_builtin_public_keys(
     unsigned int *count);
@@ -88,6 +96,35 @@ tg_mtproto_tl_status tg_mtproto_decrypt_server_dh_inner_data(
     const unsigned char expected_nonce[16],
     const unsigned char expected_server_nonce[16],
     tg_mtproto_server_dh_inner_data *out);
+
+int tg_mtproto_check_dh_params(const tg_mtproto_server_dh_inner_data *inner);
+
+tg_mtproto_tl_status tg_mtproto_build_set_client_dh_params(
+    tg_mtproto_tl_writer *writer,
+    const unsigned char nonce[16],
+    const unsigned char server_nonce[16],
+    const unsigned char *encrypted_data,
+    unsigned long encrypted_data_length);
+
+tg_mtproto_tl_status tg_mtproto_build_client_dh_request(
+    const tg_mtproto_server_dh_inner_data *inner,
+    const unsigned char new_nonce[32],
+    const unsigned char b[TG_MTPROTO_DH_VALUE_MAX],
+    const unsigned char padding[15],
+    unsigned char encrypted_data[TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX],
+    unsigned long *encrypted_data_length,
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH]);
+
+tg_mtproto_tl_status tg_mtproto_parse_set_client_dh_answer(
+    const unsigned char *payload,
+    unsigned long payload_length,
+    tg_mtproto_set_client_dh_answer *out);
+
+int tg_mtproto_verify_dh_gen_ok(const tg_mtproto_set_client_dh_answer *answer,
+                                const unsigned char expected_nonce[16],
+                                const unsigned char expected_server_nonce[16],
+                                const unsigned char new_nonce[32],
+                                const unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH]);
 
 int tg_mtproto_rsa_self_test(void);
 

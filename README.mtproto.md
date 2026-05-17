@@ -27,9 +27,13 @@ Implemented and covered by offline self-tests:
 - RSA public-key fingerprint selection against a local known-fingerprint list;
 - built-in Telegram production RSA public key material;
 - `p_q_inner_data_dc` and `req_DH_params` serialization;
-- MTProto RSA_PAD with AES-256-IGE and raw RSA public encryption.
+- MTProto RSA_PAD with AES-256-IGE and raw RSA public encryption;
 - live `req_DH_params` probe with `server_DH_params_ok` parsing;
-- `server_DH_inner_data` AES-IGE decrypt plus nonce/hash validation.
+- `server_DH_inner_data` AES-IGE decrypt plus nonce/hash validation;
+- DH prime/g and public-value range validation against Telegram's known
+  authorization prime;
+- `client_DH_inner_data` and `set_client_DH_params` serialization;
+- final `dh_gen_ok` parsing and non-persistent auth-key derivation.
 
 Run the offline suite:
 
@@ -56,7 +60,7 @@ mtproto self-test: ok
 ## Live Probe
 
 The branch can perform a supervised `req_pq_multi` probe against a raw MTProto
-TCP endpoint, or a two-step `req_pq_multi` plus `req_DH_params` probe:
+TCP endpoint, or a supervised full authorization-key bootstrap probe:
 
 ```text
 telegram-test --mtproto-req-pq-probe <host> <port>
@@ -68,7 +72,9 @@ sessions. It opens a TCP connection, sends an abridged-transport plain
 `req_pq_multi` message, parses the `resPQ` response, validates the echoed nonce
 and factors `pq`. The `req_DH_params` probe additionally sends RSA_PAD
 `p_q_inner_data_dc`, parses `server_DH_params_ok`, decrypts
-`server_DH_inner_data` and validates the response hash and nonces.
+`server_DH_inner_data`, validates the response hash, nonces, DH prime and
+generator, sends `set_client_DH_params`, parses `dh_gen_ok`, and derives the
+temporary auth key in process memory.
 
 Use this only as a connectivity/protocol-shape check. It is not a login flow
 and it does not create or persist an authorization key.
@@ -86,9 +92,9 @@ and it does not create or persist an authorization key.
 
 The next development loop should add:
 
-- DH prime/g checks and known-prime cache;
-- `client_DH_inner_data` and `set_client_DH_params`;
-- final auth-key derivation and non-persistent supervised handshake check.
+- a persistent-session skeleton for auth-key metadata and server salt;
+- encrypted-message framing for the first authenticated MTProto method;
+- secure platform RNG plumbing before any persisted auth key is allowed.
 
 ## References
 

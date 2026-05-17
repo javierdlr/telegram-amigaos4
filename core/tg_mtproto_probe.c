@@ -308,11 +308,16 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
     unsigned char q_bytes[4];
     unsigned char inner_data[160];
     unsigned char encrypted_data[TG_MTPROTO_RSA_PADDED_LENGTH];
+    unsigned char client_encrypted[TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX];
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    unsigned char b[TG_MTPROTO_DH_VALUE_MAX];
+    unsigned char client_padding[15];
     unsigned char body[384];
     unsigned char payload[512];
     unsigned char packet[600];
     unsigned char response[1200];
     unsigned long body_length;
+    unsigned long client_encrypted_length;
     unsigned long payload_length;
     unsigned long response_length;
     unsigned long constructor;
@@ -322,9 +327,11 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
     long dc_id;
     tg_mtproto_message_id first_msg_id;
     tg_mtproto_message_id second_msg_id;
+    tg_mtproto_message_id third_msg_id;
     tg_mtproto_res_pq res_pq;
     tg_mtproto_server_dh_params_ok params_ok;
     tg_mtproto_server_dh_inner_data inner;
+    tg_mtproto_set_client_dh_answer dh_answer;
     tg_mtproto_tl_writer writer;
     tg_net_connection connection;
     tg_net_status net_status;
@@ -473,8 +480,8 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
                                                      error_buffer,
                                                      sizeof(error_buffer));
     }
-    tg_net_close(&connection);
     if (net_status != TG_NET_OK) {
+        tg_net_close(&connection);
         fprintf(stream, "mtproto req_DH_params probe: req-dh-failed (%s)\n",
                 tg_net_status_name(net_status));
         return 2;
@@ -494,6 +501,7 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
             params_ok.encrypted_answer, params_ok.encrypted_answer_length,
             new_nonce, nonce, res_pq.server_nonce, &inner) !=
             TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
         fputs("mtproto req_DH_params probe: server-dh-parse-failed\n", stream);
         return 2;
     }
@@ -502,6 +510,91 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
             "mtproto req_DH_params probe: g %lu, dh_prime %lu bytes, g_a %lu bytes, server_time %lu\n",
             inner.g, inner.dh_prime_length, inner.g_a_length,
             inner.server_time);
+
+    if (!tg_mtproto_check_dh_params(&inner)) {
+        tg_net_close(&connection);
+        fputs("mtproto req_DH_params probe: dh-params-check-failed\n",
+              stream);
+        return 2;
+    }
+    tg_mtproto_probe_random(b, sizeof(b));
+    tg_mtproto_probe_random(client_padding, sizeof(client_padding));
+    if (tg_mtproto_build_client_dh_request(&inner, new_nonce, b,
+                                           client_padding, client_encrypted,
+                                           &client_encrypted_length,
+                                           auth_key) != TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
+        fputs("mtproto req_DH_params probe: client-dh-build-failed\n",
+              stream);
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, body, sizeof(body));
+    if (tg_mtproto_build_set_client_dh_params(
+            &writer, nonce, res_pq.server_nonce, client_encrypted,
+            client_encrypted_length) != TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
+        fputs("mtproto req_DH_params probe: set-client-dh-build-failed\n",
+              stream);
+        return 2;
+    }
+    body_length = writer.length;
+    tg_mtproto_client_message_id((unsigned long)time(0), 12UL,
+                                 &second_msg_id, &third_msg_id);
+    tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+    if (tg_mtproto_write_plain_message(&writer, third_msg_id.hi,
+                                       third_msg_id.lo, body,
+                                       body_length) != TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
+        fputs("mtproto req_DH_params probe: set-client-envelope-failed\n",
+              stream);
+        return 2;
+    }
+    payload_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, packet, sizeof(packet));
+    if (tg_mtproto_write_abridged_packet(&writer, payload, payload_length) !=
+        TG_MTPROTO_TL_OK) {
+        tg_net_close(&connection);
+        fputs("mtproto req_DH_params probe: set-client-transport-build-failed\n",
+              stream);
+        return 2;
+    }
+    net_status = tg_mtproto_send_all(&connection, packet, writer.length,
+                                     error_buffer, sizeof(error_buffer));
+    if (net_status == TG_NET_OK) {
+        net_status = tg_mtproto_recv_abridged_packet(&connection, response,
+                                                     sizeof(response),
+                                                     &response_length,
+                                                     error_buffer,
+                                                     sizeof(error_buffer));
+    }
+    tg_net_close(&connection);
+    if (net_status != TG_NET_OK) {
+        fprintf(stream, "mtproto req_DH_params probe: set-client-dh-failed (%s)\n",
+                tg_net_status_name(net_status));
+        return 2;
+    }
+
+    constructor = response_length >= 24UL ?
+        tg_mtproto_read_u32_le(response + 20) : 0UL;
+    fprintf(stream,
+            "mtproto req_DH_params probe: final received %lu bytes, constructor 0x%08lx\n",
+            response_length, constructor);
+    if (tg_mtproto_parse_set_client_dh_answer(response, response_length,
+                                              &dh_answer) !=
+        TG_MTPROTO_TL_OK) {
+        fputs("mtproto req_DH_params probe: set-client-dh-parse-failed\n",
+              stream);
+        return 2;
+    }
+    if (!tg_mtproto_verify_dh_gen_ok(&dh_answer, nonce, res_pq.server_nonce,
+                                     new_nonce, auth_key)) {
+        fprintf(stream,
+                "mtproto req_DH_params probe: dh-gen-not-ok constructor 0x%08lx\n",
+                dh_answer.constructor);
+        return 2;
+    }
+    fputs("mtproto req_DH_params probe: dh_gen_ok, auth_key derived in memory only\n",
+          stream);
     return 0;
 }
 
