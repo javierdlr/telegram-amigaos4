@@ -97,6 +97,8 @@ Initial core modules:
 - `tg_text_client`: manual text-client prompt, chat selection and command loop
 - `tg_bot`: Bot API orchestration helpers
 - `tg_log`: portable logging delegated to the platform layer
+- `tg_mtproto`: experimental offline MTProto bootstrap modules for TL
+  serialization, SHA-1/SHA-256 test vectors and local session-state skeleton
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
 - `tg_json`: minimal top-level JSON field lookup plus JSON string escape decoding
 - `tg_net`: portable TCP API with MorphOS, AmigaOS 3.x, AmigaOS 4.x and AROS
@@ -444,6 +446,8 @@ Current options:
                       Run built-in HTTP POST request builder sample
     --https-test <host> <port> <path>
                       Test TLS connect/send/recv with HTTP/1.0
+    --mtproto-self-test
+                      Run offline MTProto TL/hash/session samples
     --telegram-tls-status
                       Print current TLS security status
     --json-test <json> <field>
@@ -585,6 +589,7 @@ telegram-test --telegram-send-message-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
 telegram-test --telegram-text-client-self-test
+telegram-test --mtproto-self-test
 ```
 
 `telegram-echo-once` is intentionally not a permanent loop. Run it again with

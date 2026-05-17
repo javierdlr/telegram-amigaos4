@@ -137,6 +137,7 @@ typedef struct tg_config {
     int run_http_test;
     int run_http_post_self_test;
     int run_https_test;
+    int run_mtproto_self_test;
     int run_telegram_tls_status;
     int run_json_test;
     int run_telegram_json_test;
