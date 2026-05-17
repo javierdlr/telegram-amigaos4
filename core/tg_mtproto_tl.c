@@ -173,6 +173,40 @@ tg_mtproto_tl_status tg_mtproto_tl_read_u32(tg_mtproto_tl_reader *reader,
     return TG_MTPROTO_TL_OK;
 }
 
+tg_mtproto_tl_status tg_mtproto_tl_read_u64(tg_mtproto_tl_reader *reader,
+                                            unsigned long *hi,
+                                            unsigned long *lo)
+{
+    tg_mtproto_tl_status status;
+
+    if (hi == 0 || lo == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+
+    status = tg_mtproto_tl_read_u32(reader, lo);
+    if (status != TG_MTPROTO_TL_OK) {
+        return status;
+    }
+    return tg_mtproto_tl_read_u32(reader, hi);
+}
+
+tg_mtproto_tl_status tg_mtproto_tl_read_raw(tg_mtproto_tl_reader *reader,
+                                            const unsigned char **data,
+                                            unsigned long data_length)
+{
+    if (reader == 0 || reader->buffer == 0 || data == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    if (reader->offset > reader->length ||
+        reader->length - reader->offset < data_length) {
+        return TG_MTPROTO_TL_TRUNCATED;
+    }
+
+    *data = reader->buffer + reader->offset;
+    reader->offset += data_length;
+    return TG_MTPROTO_TL_OK;
+}
+
 tg_mtproto_tl_status tg_mtproto_tl_read_bytes(tg_mtproto_tl_reader *reader,
                                               const unsigned char **data,
                                               unsigned long *data_length)
@@ -250,8 +284,11 @@ int tg_mtproto_tl_self_test(void)
     tg_mtproto_tl_writer writer;
     tg_mtproto_tl_reader reader;
     const unsigned char *decoded;
+    const unsigned char *raw;
     unsigned long decoded_length;
     unsigned long constructor;
+    unsigned long hi;
+    unsigned long lo;
 
     tg_mtproto_tl_writer_init(&writer, buffer, sizeof(buffer));
     if (tg_mtproto_tl_write_u32(&writer, 0xbe7e8ef1UL) != TG_MTPROTO_TL_OK ||
@@ -265,6 +302,23 @@ int tg_mtproto_tl_self_test(void)
     if (tg_mtproto_tl_read_u32(&reader, &constructor) != TG_MTPROTO_TL_OK ||
         constructor != 0xbe7e8ef1UL ||
         reader.offset != 4UL) {
+        return 2;
+    }
+    if (tg_mtproto_tl_read_raw(&reader, &raw, sizeof(nonce)) !=
+            TG_MTPROTO_TL_OK ||
+        memcmp(raw, nonce, sizeof(nonce)) != 0 ||
+        reader.offset != sizeof(expected_req_pq)) {
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, buffer, sizeof(buffer));
+    if (tg_mtproto_tl_write_u64(&writer, 0x11223344UL, 0x55667788UL) !=
+        TG_MTPROTO_TL_OK) {
+        return 2;
+    }
+    tg_mtproto_tl_reader_init(&reader, buffer, writer.length);
+    if (tg_mtproto_tl_read_u64(&reader, &hi, &lo) != TG_MTPROTO_TL_OK ||
+        hi != 0x11223344UL || lo != 0x55667788UL) {
         return 2;
     }
 

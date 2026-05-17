@@ -6,6 +6,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "tg_mtproto_auth.h"
 #include "tg_mtproto_envelope.h"
 #include "tg_mtproto_message_id.h"
 #include "tg_mtproto_probe.h"
@@ -168,7 +169,10 @@ int tg_mtproto_req_pq_probe(const char *host, const char *port, FILE *stream)
     unsigned long payload_length;
     unsigned long response_length;
     unsigned long constructor;
+    unsigned long p;
+    unsigned long q;
     tg_mtproto_message_id msg_id;
+    tg_mtproto_res_pq res_pq;
     tg_mtproto_tl_writer writer;
     tg_net_connection connection;
     tg_net_status net_status;
@@ -235,6 +239,26 @@ int tg_mtproto_req_pq_probe(const char *host, const char *port, FILE *stream)
     if (constructor != 0x05162463UL) {
         return 2;
     }
+    if (tg_mtproto_parse_res_pq(response, response_length, &res_pq) !=
+            TG_MTPROTO_TL_OK ||
+        !tg_mtproto_res_pq_nonce_matches(&res_pq, nonce)) {
+        fputs("mtproto req_pq probe: resPQ-parse-failed\n", stream);
+        return 2;
+    }
+
+    fprintf(stream,
+            "mtproto req_pq probe: pq-bytes %lu, fingerprints %u\n",
+            res_pq.pq_length, res_pq.fingerprint_count);
+    if (res_pq.fingerprint_count > 0U) {
+        fprintf(stream,
+                "mtproto req_pq probe: first-fingerprint 0x%08lx%08lx\n",
+                res_pq.fingerprints[0].hi, res_pq.fingerprints[0].lo);
+    }
+    if (tg_mtproto_pq_factor(res_pq.pq, res_pq.pq_length, &p, &q) != 0) {
+        fputs("mtproto req_pq probe: pq-factor-failed\n", stream);
+        return 2;
+    }
+    fprintf(stream, "mtproto req_pq probe: p %lu q %lu\n", p, q);
 
     return 0;
 }

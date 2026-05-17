@@ -21,12 +21,16 @@ Current MTProto code is offline by default:
 - static bootstrap DC name mapping based on Telegram web endpoint names;
 - deterministic client `msg_id` generation rules;
 - supervised `req_pq_multi` probe packet builder;
+- `resPQ` parser with nonce validation;
+- `pq` factorization tests;
+- RSA public-key fingerprint selection against a known-fingerprint list;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
 - local MTProto session-state save/load skeleton.
 
 The optional `--mtproto-req-pq-probe <host> <port>` command is a supervised
 connectivity check only. It does not perform user login and it does not create
-or persist an authorization key.
+or persist an authorization key. It parses `resPQ`, validates the echoed nonce
+and factors `pq`.
 
 Run:
 
@@ -39,6 +43,7 @@ Expected output:
 ```text
 mtproto dc self-test: ok
 mtproto message-id self-test: ok
+mtproto auth self-test: ok
 mtproto tl self-test: ok
 mtproto envelope self-test: ok
 mtproto transport self-test: ok
@@ -83,8 +88,7 @@ Important constraints for this codebase:
 
 Next MTProto work should stay behind explicit self-tests:
 
-1. parse `resPQ` responses and validate the echoed nonce;
-2. add `pq` factorization tests;
-3. add public RSA fingerprint matching;
-4. build `req_DH_params`;
-5. only then attempt a supervised auth-key handshake.
+1. add built-in Telegram RSA public key material;
+2. build `req_DH_params`;
+3. add RSA_PAD encryption;
+4. only then attempt a supervised auth-key handshake.

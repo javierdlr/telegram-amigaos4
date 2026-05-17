@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include "tg_mtproto.h"
+#include "tg_mtproto_auth.h"
 #include "tg_mtproto_crypto.h"
 #include "tg_mtproto_dc.h"
 #include "tg_mtproto_envelope.h"
@@ -28,6 +29,12 @@ int tg_mtproto_self_test(void)
         return 2;
     }
     puts("mtproto message-id self-test: ok");
+
+    if (tg_mtproto_auth_self_test() != 0) {
+        puts("mtproto auth self-test: failed");
+        return 2;
+    }
+    puts("mtproto auth self-test: ok");
 
     if (tg_mtproto_tl_self_test() != 0) {
         puts("mtproto tl self-test: failed");

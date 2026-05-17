@@ -21,7 +21,10 @@ Implemented and covered by offline self-tests:
 - local session-state save/load skeleton;
 - static bootstrap DC name mapping for the official web endpoint names;
 - deterministic client `msg_id` generation rules;
-- supervised `req_pq_multi` probe packet builder.
+- supervised `req_pq_multi` probe packet builder;
+- `resPQ` parser with nonce validation;
+- `pq` factorization for 64-bit authorization bootstrap values;
+- RSA public-key fingerprint selection against a local known-fingerprint list.
 
 Run the offline suite:
 
@@ -34,6 +37,7 @@ Expected output:
 ```text
 mtproto dc self-test: ok
 mtproto message-id self-test: ok
+mtproto auth self-test: ok
 mtproto tl self-test: ok
 mtproto envelope self-test: ok
 mtproto transport self-test: ok
@@ -54,8 +58,8 @@ telegram-test --mtproto-req-pq-probe <host> <port>
 
 This command does not use Telegram user credentials, bot tokens or saved user
 sessions. It opens a TCP connection, sends an abridged-transport plain
-`req_pq_multi` message and checks whether the first response constructor is
-`resPQ`.
+`req_pq_multi` message, parses the `resPQ` response, validates the echoed nonce
+and factors `pq`.
 
 Use this only as a connectivity/protocol-shape check. It is not a login flow
 and it does not create or persist an authorization key.
@@ -73,10 +77,9 @@ and it does not create or persist an authorization key.
 
 The next development loop should add:
 
-- `resPQ` parsing with nonce validation;
-- `pq` factorization tests;
-- public RSA fingerprint matching;
 - `req_DH_params` construction;
+- built-in Telegram RSA public key material and fingerprint checks;
+- RSA_PAD encryption;
 - then a supervised auth-key handshake.
 
 ## References

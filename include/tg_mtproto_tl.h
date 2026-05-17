@@ -49,6 +49,12 @@ tg_mtproto_tl_status tg_mtproto_tl_write_bytes(tg_mtproto_tl_writer *writer,
 
 tg_mtproto_tl_status tg_mtproto_tl_read_u32(tg_mtproto_tl_reader *reader,
                                             unsigned long *value);
+tg_mtproto_tl_status tg_mtproto_tl_read_u64(tg_mtproto_tl_reader *reader,
+                                            unsigned long *hi,
+                                            unsigned long *lo);
+tg_mtproto_tl_status tg_mtproto_tl_read_raw(tg_mtproto_tl_reader *reader,
+                                            const unsigned char **data,
+                                            unsigned long data_length);
 tg_mtproto_tl_status tg_mtproto_tl_read_bytes(tg_mtproto_tl_reader *reader,
                                               const unsigned char **data,
                                               unsigned long *data_length);
