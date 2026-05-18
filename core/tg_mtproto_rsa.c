@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include "tg_mtproto_bigint.h"
 #include "tg_mtproto_crypto.h"
 #include "tg_mtproto_rsa.h"
 
@@ -406,162 +407,22 @@ void tg_mtproto_aes256_ige_decrypt(unsigned char *data,
     }
 }
 
-static int tg_big_cmp(const unsigned char *a, const unsigned char *b)
-{
-    unsigned int i;
-
-    for (i = 0U; i < TG_MTPROTO_RSA_MODULUS_LENGTH; ++i) {
-        if (a[i] < b[i]) {
-            return -1;
-        }
-        if (a[i] > b[i]) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static void tg_big_sub(unsigned char *a, const unsigned char *b)
-{
-    int i;
-    unsigned int borrow;
-
-    borrow = 0U;
-    for (i = (int)TG_MTPROTO_RSA_MODULUS_LENGTH - 1; i >= 0; --i) {
-        unsigned int av;
-        unsigned int bv;
-        av = (unsigned int)a[i];
-        bv = (unsigned int)b[i] + borrow;
-        if (av < bv) {
-            a[i] = (unsigned char)(256U + av - bv);
-            borrow = 1U;
-        } else {
-            a[i] = (unsigned char)(av - bv);
-            borrow = 0U;
-        }
-    }
-}
-
-static void tg_big_add_mod(unsigned char *a,
-                           const unsigned char *b,
-                           const unsigned char *modulus)
-{
-    int i;
-    unsigned int carry;
-    unsigned char original[TG_MTPROTO_RSA_MODULUS_LENGTH];
-
-    memcpy(original, a, sizeof(original));
-    carry = 0U;
-    for (i = (int)TG_MTPROTO_RSA_MODULUS_LENGTH - 1; i >= 0; --i) {
-        unsigned int sum;
-        sum = (unsigned int)a[i] + (unsigned int)b[i] + carry;
-        a[i] = (unsigned char)(sum & 0xffU);
-        carry = sum >> 8;
-    }
-    if (carry != 0U || tg_big_cmp(a, modulus) >= 0) {
-        if (carry != 0U && tg_big_cmp(original, a) > 0) {
-            tg_big_sub(a, modulus);
-        } else {
-            tg_big_sub(a, modulus);
-        }
-    }
-}
-
-static int tg_big_bit(const unsigned char *a, unsigned int bit)
-{
-    unsigned int byte_index;
-    unsigned int bit_index;
-
-    byte_index = TG_MTPROTO_RSA_MODULUS_LENGTH - 1U - (bit / 8U);
-    bit_index = bit % 8U;
-    return (a[byte_index] & (1U << bit_index)) != 0U;
-}
-
-static void tg_big_mod_mul(const unsigned char *a,
-                           const unsigned char *b,
-                           const unsigned char *modulus,
-                           unsigned char out[TG_MTPROTO_RSA_MODULUS_LENGTH])
-{
-    unsigned char result[TG_MTPROTO_RSA_MODULUS_LENGTH];
-    unsigned char addend[TG_MTPROTO_RSA_MODULUS_LENGTH];
-    unsigned int bit;
-
-    memset(result, 0, sizeof(result));
-    memcpy(addend, a, sizeof(addend));
-    while (tg_big_cmp(addend, modulus) >= 0) {
-        tg_big_sub(addend, modulus);
-    }
-    for (bit = 0U; bit < TG_MTPROTO_RSA_MODULUS_LENGTH * 8U; ++bit) {
-        if (tg_big_bit(b, bit)) {
-            tg_big_add_mod(result, addend, modulus);
-        }
-        tg_big_add_mod(addend, addend, modulus);
-    }
-    memcpy(out, result, TG_MTPROTO_RSA_MODULUS_LENGTH);
-}
-
 static void tg_rsa_public_encrypt_raw(
     const unsigned char input[TG_MTPROTO_RSA_MODULUS_LENGTH],
     const tg_mtproto_public_key *key,
     unsigned char output[TG_MTPROTO_RSA_MODULUS_LENGTH])
 {
-    unsigned char result[TG_MTPROTO_RSA_MODULUS_LENGTH];
-    unsigned char base[TG_MTPROTO_RSA_MODULUS_LENGTH];
-    unsigned long exponent;
-
-    memset(result, 0, sizeof(result));
-    result[TG_MTPROTO_RSA_MODULUS_LENGTH - 1U] = 1U;
-    memcpy(base, input, sizeof(base));
-    exponent = key->exponent;
-    while (exponent > 0UL) {
-        if ((exponent & 1UL) != 0UL) {
-            tg_big_mod_mul(result, base, key->modulus, result);
-        }
-        exponent >>= 1;
-        if (exponent > 0UL) {
-            tg_big_mod_mul(base, base, key->modulus, base);
-        }
-    }
-    memcpy(output, result, TG_MTPROTO_RSA_MODULUS_LENGTH);
-}
-
-static void tg_big_mod_exp_bytes(
-    const unsigned char base[TG_MTPROTO_DH_VALUE_MAX],
-    const unsigned char exponent[TG_MTPROTO_DH_VALUE_MAX],
-    const unsigned char modulus[TG_MTPROTO_DH_VALUE_MAX],
-    unsigned char output[TG_MTPROTO_DH_VALUE_MAX])
-{
-    unsigned char result[TG_MTPROTO_DH_VALUE_MAX];
-    unsigned char power[TG_MTPROTO_DH_VALUE_MAX];
-    unsigned int bit;
-
-    memset(result, 0, sizeof(result));
-    result[TG_MTPROTO_DH_VALUE_MAX - 1U] = 1U;
-    memcpy(power, base, sizeof(power));
-    while (tg_big_cmp(power, modulus) >= 0) {
-        tg_big_sub(power, modulus);
-    }
-
-    for (bit = 0U; bit < TG_MTPROTO_DH_VALUE_MAX * 8U; ++bit) {
-        if (tg_big_bit(exponent, bit)) {
-            tg_big_mod_mul(result, power, modulus, result);
-        }
-        tg_big_mod_mul(power, power, modulus, power);
-    }
-
-    memcpy(output, result, TG_MTPROTO_DH_VALUE_MAX);
-}
-
-static unsigned long tg_trim_leading_zeroes(const unsigned char *data,
-                                            unsigned long data_length)
-{
+    unsigned char exponent[4];
     unsigned long offset;
 
-    offset = 0UL;
-    while (offset + 1UL < data_length && data[offset] == 0U) {
-        ++offset;
-    }
-    return offset;
+    exponent[0] = (unsigned char)((key->exponent >> 24) & 0xffU);
+    exponent[1] = (unsigned char)((key->exponent >> 16) & 0xffU);
+    exponent[2] = (unsigned char)((key->exponent >> 8) & 0xffU);
+    exponent[3] = (unsigned char)(key->exponent & 0xffU);
+    offset = tg_mtproto_bigint_trim(exponent, sizeof(exponent));
+    tg_mtproto_bigint_mod_exp(input, exponent + offset,
+                              sizeof(exponent) - offset, key->modulus,
+                              output);
 }
 
 static int tg_big_greater_than_one(const unsigned char *value,
@@ -597,7 +458,7 @@ static int tg_big_less_than_prime_minus_one(const unsigned char *value,
     memset(padded, 0, sizeof(padded));
     memcpy(padded + TG_MTPROTO_DH_VALUE_MAX - value_length, value,
            (size_t)value_length);
-    return tg_big_cmp(padded, limit) < 0;
+    return tg_mtproto_bigint_cmp(padded, limit) < 0;
 }
 
 static int tg_big_within_dh_public_range(const unsigned char *value,
@@ -615,11 +476,12 @@ static int tg_big_within_dh_public_range(const unsigned char *value,
     memset(lower, 0, sizeof(lower));
     lower[7] = 1U;
     memcpy(upper, prime, sizeof(upper));
-    tg_big_sub(upper, lower);
+    tg_mtproto_bigint_sub(upper, lower);
     memset(padded, 0, sizeof(padded));
     memcpy(padded + TG_MTPROTO_DH_VALUE_MAX - value_length, value,
            (size_t)value_length);
-    return tg_big_cmp(padded, lower) >= 0 && tg_big_cmp(padded, upper) <= 0;
+    return tg_mtproto_bigint_cmp(padded, lower) >= 0 &&
+           tg_mtproto_bigint_cmp(padded, upper) <= 0;
 }
 
 const tg_mtproto_public_key *tg_mtproto_builtin_public_keys(
@@ -739,7 +601,7 @@ tg_mtproto_tl_status tg_mtproto_rsa_pad(
     }
     memcpy(encrypted_data + 32U, data_with_hash, sizeof(data_with_hash));
 
-    if (tg_big_cmp(encrypted_data, public_key->modulus) >= 0) {
+    if (tg_mtproto_bigint_cmp(encrypted_data, public_key->modulus) >= 0) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     tg_rsa_public_encrypt_raw(encrypted_data, public_key, encrypted_data);
@@ -1055,14 +917,16 @@ tg_mtproto_tl_status tg_mtproto_build_client_dh_request(
 
     memset(base, 0, sizeof(base));
     base[TG_MTPROTO_DH_VALUE_MAX - 1U] = (unsigned char)inner->g;
-    tg_big_mod_exp_bytes(base, b, inner->dh_prime, g_b);
+    tg_mtproto_bigint_mod_exp(base, b, TG_MTPROTO_DH_VALUE_MAX,
+                              inner->dh_prime, g_b);
 
     memset(g_a, 0, sizeof(g_a));
     memcpy(g_a + TG_MTPROTO_DH_VALUE_MAX - inner->g_a_length, inner->g_a,
            (size_t)inner->g_a_length);
-    tg_big_mod_exp_bytes(g_a, b, inner->dh_prime, auth_key);
+    tg_mtproto_bigint_mod_exp(g_a, b, TG_MTPROTO_DH_VALUE_MAX,
+                              inner->dh_prime, auth_key);
 
-    g_b_offset = tg_trim_leading_zeroes(g_b, sizeof(g_b));
+    g_b_offset = tg_mtproto_bigint_trim(g_b, sizeof(g_b));
     tg_mtproto_tl_writer_init(&writer, inner_data, sizeof(inner_data));
     status = tg_mtproto_tl_write_u32(&writer,
                                      TG_CLIENT_DH_INNER_DATA_CONSTRUCTOR);

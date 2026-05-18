@@ -7,6 +7,7 @@
 
 #include "tg_mtproto.h"
 #include "tg_mtproto_auth.h"
+#include "tg_mtproto_bigint.h"
 #include "tg_mtproto_crypto.h"
 #include "tg_mtproto_dc.h"
 #include "tg_mtproto_encrypted.h"
@@ -16,6 +17,7 @@
 #include "tg_mtproto_probe.h"
 #include "tg_mtproto_rsa.h"
 #include "tg_mtproto_session.h"
+#include "tg_mtproto_srp.h"
 #include "tg_mtproto_tl.h"
 #include "tg_mtproto_transport.h"
 
@@ -44,6 +46,12 @@ int tg_mtproto_self_test(void)
         return 2;
     }
     puts("mtproto rsa self-test: ok");
+
+    if (tg_mtproto_bigint_self_test() != 0) {
+        puts("mtproto bigint self-test: failed");
+        return 2;
+    }
+    puts("mtproto bigint self-test: ok");
 
     if (tg_mtproto_tl_self_test() != 0) {
         puts("mtproto tl self-test: failed");
@@ -86,6 +94,12 @@ int tg_mtproto_self_test(void)
         return 2;
     }
     puts("mtproto crypto self-test: ok");
+
+    if (tg_mtproto_srp_self_test() != 0) {
+        puts("mtproto srp self-test: failed");
+        return 2;
+    }
+    puts("mtproto srp self-test: ok");
 
     if (tg_mtproto_session_self_test() != 0) {
         puts("mtproto session self-test: failed");
