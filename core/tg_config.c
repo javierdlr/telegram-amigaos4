@@ -39,6 +39,7 @@ void tg_config_init(tg_config *config)
     config->mtproto_auth_code = 0;
     config->mtproto_auth_first_name = 0;
     config->mtproto_auth_last_name = 0;
+    config->mtproto_auth_password_file = 0;
     config->mtproto_auth_limit = 0;
     config->mtproto_auth_message = 0;
     config->json_test_input = 0;
@@ -154,6 +155,7 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_sign_up = 0;
     config->run_mtproto_auth_get_config = 0;
     config->run_mtproto_auth_get_password = 0;
+    config->run_mtproto_auth_check_password = 0;
     config->run_mtproto_auth_get_self = 0;
     config->run_mtproto_auth_get_dialogs = 0;
     config->run_mtproto_auth_get_history_self = 0;
@@ -384,6 +386,18 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_file = argv[i + 4];
             config->mtproto_auth_dc_id = argv[i + 5];
             i += 5;
+        } else if (strcmp(argv[i], "--mtproto-auth-check-password") == 0) {
+            if (i + 6 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_check_password = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_id = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            config->mtproto_auth_password_file = argv[i + 6];
+            i += 6;
         } else if (strcmp(argv[i], "--mtproto-auth-get-self") == 0) {
             if (i + 5 >= argc) {
                 return 1;
@@ -878,6 +892,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Call help.getConfig with saved MTProto auth state\n");
     fprintf(stream, "      --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Probe account.getPassword SRP metadata\n");
+    fprintf(stream, "      --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>\n");
+    fprintf(stream, "                         Complete SRP 2FA login using a local password file\n");
     fprintf(stream, "      --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Call users.getUsers(inputUserSelf) with saved auth state\n");
     fprintf(stream, "      --mtproto-auth-get-dialogs <host> <port> <api-id> <auth-file> <dc-id> <limit>\n");

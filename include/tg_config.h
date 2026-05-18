@@ -46,6 +46,7 @@ typedef struct tg_config {
     const char *mtproto_auth_code;
     const char *mtproto_auth_first_name;
     const char *mtproto_auth_last_name;
+    const char *mtproto_auth_password_file;
     const char *mtproto_auth_limit;
     const char *mtproto_auth_message;
     const char *json_test_input;
@@ -161,6 +162,7 @@ typedef struct tg_config {
     int run_mtproto_auth_sign_up;
     int run_mtproto_auth_get_config;
     int run_mtproto_auth_get_password;
+    int run_mtproto_auth_check_password;
     int run_mtproto_auth_get_self;
     int run_mtproto_auth_get_dialogs;
     int run_mtproto_auth_get_history_self;

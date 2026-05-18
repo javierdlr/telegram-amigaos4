@@ -15,6 +15,7 @@
 #include "tg_mtproto_probe.h"
 #include "tg_mtproto_rsa.h"
 #include "tg_mtproto_session.h"
+#include "tg_mtproto_srp.h"
 #include "tg_mtproto_transport.h"
 #include "tg_file.h"
 #include "tg_net.h"
@@ -1075,6 +1076,33 @@ static void tg_mtproto_trim_line(char *text)
     }
 }
 
+static void tg_mtproto_trim_newline(char *text)
+{
+    unsigned long length;
+
+    if (text == 0) {
+        return;
+    }
+    length = (unsigned long)strlen(text);
+    while (length > 0UL &&
+           (text[length - 1U] == '\n' || text[length - 1U] == '\r')) {
+        text[length - 1U] = '\0';
+        --length;
+    }
+}
+
+static void tg_mtproto_secure_zero(void *data, unsigned long length)
+{
+    volatile unsigned char *bytes;
+
+    bytes = (volatile unsigned char *)data;
+    while (length > 0UL) {
+        *bytes = 0U;
+        ++bytes;
+        --length;
+    }
+}
+
 static int tg_mtproto_print_rpc_error(const char *label,
                                       const tg_mtproto_rpc_result *result,
                                       FILE *stream)
@@ -1094,6 +1122,8 @@ static int tg_mtproto_print_rpc_error(const char *label,
     if (strcmp(error_message, "SESSION_PASSWORD_NEEDED") == 0 ||
         strcmp(error_message, "PHONE_PASSWORD_PROTECTED") == 0) {
         fprintf(stream, "%s: two-factor-password-required\n", label);
+    } else if (strcmp(error_message, "PASSWORD_HASH_INVALID") == 0) {
+        fprintf(stream, "%s: password-invalid\n", label);
     } else {
         fprintf(stream, "%s: rpc-error %ld %s\n", label, error_code,
                 error_message);
@@ -1741,6 +1771,196 @@ int tg_mtproto_auth_get_password(const char *host,
                 password.srp_id_hi, password.srp_id_lo);
     }
     fprintf(stream, "%s: srp_check pending\n", label);
+    return 0;
+}
+
+int tg_mtproto_auth_check_password(const char *host,
+                                   const char *port,
+                                   const char *api_id_text,
+                                   const char *auth_file,
+                                   const char *dc_id_text,
+                                   const char *password_file,
+                                   FILE *stream)
+{
+    unsigned char query[512];
+    unsigned char wrapped_query[760];
+    unsigned char random_a[TG_MTPROTO_SRP_VALUE_LENGTH];
+    char password_text[512];
+    unsigned long password_length;
+    unsigned long api_id;
+    tg_file_status file_status;
+    tg_mtproto_auth_context context;
+    tg_mtproto_password_summary password;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_session_status session_status;
+    tg_mtproto_srp_proof proof;
+    tg_mtproto_tl_writer writer;
+    long dc_id;
+    static const char label[] = "mtproto auth.checkPassword";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 || password_file == 0 ||
+        tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0 ||
+        tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
+        if (stream != 0) {
+            fputs("mtproto auth.checkPassword: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+
+    file_status = tg_file_read_text(password_file, password_text,
+                                    sizeof(password_text), &password_length);
+    if (file_status != TG_FILE_OK) {
+        fprintf(stream, "%s: password-file-load-failed (%s)\n", label,
+                tg_file_status_name(file_status));
+        return 2;
+    }
+    tg_mtproto_trim_newline(password_text);
+    password_length = (unsigned long)strlen(password_text);
+    if (password_length == 0UL) {
+        fprintf(stream, "%s: password-file-empty\n", label);
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        return 2;
+    }
+
+    if (tg_mtproto_load_auth_context(host, port, auth_file, &context, stream,
+                                     label) != 0) {
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        return 2;
+    }
+    context.session.dc_id = (unsigned long)dc_id;
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_account_get_password(&writer) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_build_initialized_query(&writer, wrapped_query,
+                                           sizeof(wrapped_query), api_id,
+                                           query, writer.length) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        fprintf(stream, "%s: get-password-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        &result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        tg_mtproto_close_auth_context(&context);
+        session_status = tg_mtproto_session_save_authorization(
+            auth_file, &context.session, context.auth_key, 1);
+        if (session_status != TG_MTPROTO_SESSION_OK) {
+            fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                    tg_mtproto_session_status_name(session_status));
+        } else if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        tg_mtproto_close_auth_context(&context);
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (tg_mtproto_parse_account_password_summary(result.result_constructor,
+                                                  result.result_body,
+                                                  result.result_body_length,
+                                                  &password) !=
+        TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        fprintf(stream, "%s: password-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    if (!password.has_password || !password.has_current_algo) {
+        tg_mtproto_close_auth_context(&context);
+        session_status = tg_mtproto_session_save_authorization(
+            auth_file, &context.session, context.auth_key, 1);
+        if (session_status != TG_MTPROTO_SESSION_OK) {
+            fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                    tg_mtproto_session_status_name(session_status));
+            tg_mtproto_secure_zero(password_text, sizeof(password_text));
+            return 2;
+        }
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        fprintf(stream, "%s: no password required\n", label);
+        fprintf(stream, "%s: auth state updated\n", label);
+        return 0;
+    }
+    if (!tg_mtproto_secure_random(random_a, sizeof(random_a))) {
+        tg_mtproto_close_auth_context(&context);
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        fprintf(stream, "%s: secure-rng-unavailable\n", label);
+        return 2;
+    }
+    if (tg_mtproto_srp_make_proof(&password,
+                                  (const unsigned char *)password_text,
+                                  password_length, random_a, &proof) !=
+        TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        tg_mtproto_secure_zero(random_a, sizeof(random_a));
+        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+        fprintf(stream, "%s: srp-proof-build-failed\n", label);
+        return 2;
+    }
+    tg_mtproto_secure_zero(random_a, sizeof(random_a));
+    tg_mtproto_secure_zero(password_text, sizeof(password_text));
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_auth_check_password_srp(
+            &writer, password.srp_id_hi, password.srp_id_lo,
+            proof.a, proof.a_length, proof.m1) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_build_initialized_query(&writer, wrapped_query,
+                                           sizeof(wrapped_query), api_id,
+                                           query, writer.length) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        tg_mtproto_secure_zero(&proof, sizeof(proof));
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    tg_mtproto_secure_zero(&proof, sizeof(proof));
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        &result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
+    tg_mtproto_close_auth_context(&context);
+
+    session_status = tg_mtproto_session_save_authorization(
+        auth_file, &context.session, context.auth_key, 1);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (!tg_mtproto_is_auth_authorization_constructor(
+            result.result_constructor)) {
+        fprintf(stream, "%s: unexpected-result 0x%08lx\n", label,
+                result.result_constructor);
+        return 2;
+    }
+    if (result.result_constructor == 0x44747e9aUL) {
+        fprintf(stream, "%s: signup-required\n", label);
+        return 2;
+    }
+
+    fprintf(stream, "%s: signed in\n", label);
+    fprintf(stream, "%s: auth state updated\n", label);
     return 0;
 }
 

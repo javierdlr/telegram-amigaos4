@@ -5,8 +5,10 @@ build/*
 !.gitkeep
 
 telegram-token.txt
+telegram-password.txt
 *.token
 *.token.txt
+*.password.txt
 *.local.md
 telegram-*-self-test.tmp
 

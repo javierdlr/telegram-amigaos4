@@ -59,6 +59,13 @@ int tg_mtproto_auth_get_password(const char *host,
                                  const char *auth_file,
                                  const char *dc_id_text,
                                  FILE *stream);
+int tg_mtproto_auth_check_password(const char *host,
+                                   const char *port,
+                                   const char *api_id_text,
+                                   const char *auth_file,
+                                   const char *dc_id_text,
+                                   const char *password_file,
+                                   FILE *stream);
 int tg_mtproto_auth_get_self(const char *host,
                              const char *port,
                              const char *api_id_text,

@@ -72,6 +72,7 @@ telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> 
 telegram-test --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <first-name> <last-name> <dc-id>
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>
 telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-dialogs <host> <port> <api-id> <auth-file> <dc-id> <limit>
 telegram-test --mtproto-auth-get-history-self <host> <port> <api-id> <auth-file> <dc-id> <limit>
@@ -82,9 +83,12 @@ telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 `auth.sendCode` creates and saves a plaintext local auth-key file only after a
 successful Telegram response, and only when secure random bytes are available.
 `auth.signIn` reuses that file plus the saved `phone_code_hash` and the
-human-entered code. `SESSION_PASSWORD_NEEDED` is reported as unsupported until
-SRP password login is implemented. `auth.signUp` is available for Test DC
-numbers that have a validated code hash but do not yet have a user record.
+human-entered code. If Telegram returns `SESSION_PASSWORD_NEEDED`, put the 2FA
+password in a local ignored file such as `telegram-password.txt` and run
+`auth.checkPassword`. The password is read from that file, not from argv, and
+the command prints only status lines.
+`auth.signUp` is available for Test DC numbers that have a validated code hash
+but do not yet have a user record.
 For Telegram Test DC endpoints, pass either the raw `10000 + dc` value or the
 `test:<dc>` shorthand, for example `test:2`.
 See [MTPROTO_TEST_DC.md](MTPROTO_TEST_DC.md) for the real Test DC command flow.
@@ -93,11 +97,9 @@ After sign-in, `help.getConfig` is the first saved-session read-only probe.
 `users.getUsers(inputUserSelf)` prints a minimal current-user summary and
 confirms that the saved session represents a user identity. `account.getPassword`
 parses the current SRP KDF constructor, salt lengths, `g`, prime length, SRP
-`B` length and `srp_id`; it does not compute or send the SRP password proof yet.
-The TL builders for `auth.checkPassword` and `InputCheckPasswordSRP` are present
-and covered by self-tests. SHA-512, HMAC-SHA512 and PBKDF2-HMAC-SHA512 are also
-implemented and covered by self-tests; the remaining 2FA work is the SRP modular
-exponentiation and proof assembly. `messages.getDialogs` and
+`B` length and `srp_id`. `auth.checkPassword` fetches those SRP parameters,
+derives the SRP proof in memory, sends `auth.checkPassword`, and saves the
+updated auth state on success. `messages.getDialogs` and
 `messages.getHistory(inputPeerSelf)` print constructor/count summaries, while
 `messages.sendMessage(inputPeerSelf)` sends a cautious first write probe to
 Saved Messages. Encrypted RPC responses are acknowledged with best-effort
