@@ -57,6 +57,9 @@ Then validate the saved session:
 ```text
 telegram-test --mtproto-auth-get-config <test-host> <test-port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-self <test-host> <test-port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-get-dialogs <test-host> <test-port> <api-id> <auth-file> <dc-id> 20
+telegram-test --mtproto-auth-get-history-self <test-host> <test-port> <api-id> <auth-file> <dc-id> 20
+telegram-test --mtproto-auth-send-self <test-host> <test-port> <api-id> <auth-file> <dc-id> "hello from amiga"
 ```
 
 Clean up local plaintext auth artifacts when done:

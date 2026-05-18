@@ -3735,6 +3735,36 @@ int tg_app_run(int argc, char **argv)
                                         stdout);
     }
 
+    if (config.run_mtproto_auth_get_dialogs) {
+        return tg_mtproto_auth_get_dialogs(config.mtproto_auth_host,
+                                           config.mtproto_auth_port,
+                                           config.mtproto_auth_api_id,
+                                           config.mtproto_auth_file,
+                                           config.mtproto_auth_dc_id,
+                                           config.mtproto_auth_limit,
+                                           stdout);
+    }
+
+    if (config.run_mtproto_auth_get_history_self) {
+        return tg_mtproto_auth_get_history_self(config.mtproto_auth_host,
+                                                config.mtproto_auth_port,
+                                                config.mtproto_auth_api_id,
+                                                config.mtproto_auth_file,
+                                                config.mtproto_auth_dc_id,
+                                                config.mtproto_auth_limit,
+                                                stdout);
+    }
+
+    if (config.run_mtproto_auth_send_self) {
+        return tg_mtproto_auth_send_self(config.mtproto_auth_host,
+                                         config.mtproto_auth_port,
+                                         config.mtproto_auth_api_id,
+                                         config.mtproto_auth_file,
+                                         config.mtproto_auth_dc_id,
+                                         config.mtproto_auth_message,
+                                         stdout);
+    }
+
     if (config.run_mtproto_auth_forget) {
         return tg_mtproto_auth_forget(config.mtproto_auth_file,
                                       config.mtproto_auth_code_hash_file,

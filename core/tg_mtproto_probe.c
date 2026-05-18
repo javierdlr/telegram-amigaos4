@@ -1085,6 +1085,64 @@ static int tg_mtproto_build_initialized_query(tg_mtproto_tl_writer *writer,
     return status == TG_MTPROTO_TL_OK ? 0 : 1;
 }
 
+static int tg_mtproto_send_saved_query(const char *host,
+                                       const char *port,
+                                       const char *api_id_text,
+                                       const char *auth_file,
+                                       const char *dc_id_text,
+                                       const unsigned char *query,
+                                       unsigned long query_length,
+                                       tg_mtproto_rpc_result *result,
+                                       FILE *stream,
+                                       const char *label)
+{
+    unsigned char wrapped_query[760];
+    unsigned long api_id;
+    tg_mtproto_auth_context context;
+    tg_mtproto_session_status session_status;
+    tg_mtproto_tl_writer writer;
+    long dc_id;
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 || query == 0 || query_length == 0UL ||
+        result == 0 || label == 0 ||
+        tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0 ||
+        tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: invalid-arguments\n", label);
+        }
+        return 2;
+    }
+    if (tg_mtproto_load_auth_context(host, port, auth_file, &context, stream,
+                                     label) != 0) {
+        return 2;
+    }
+    context.session.dc_id = (unsigned long)dc_id;
+
+    if (tg_mtproto_build_initialized_query(&writer, wrapped_query,
+                                           sizeof(wrapped_query), api_id,
+                                           query, query_length) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: init-connection-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
+    tg_mtproto_close_auth_context(&context);
+
+    session_status = tg_mtproto_session_save_authorization(
+        auth_file, &context.session, context.auth_key, 1);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+    return 0;
+}
+
 int tg_mtproto_auth_send_code(const char *host,
                               const char *port,
                               const char *dc_id_text,
@@ -1711,6 +1769,204 @@ int tg_mtproto_auth_get_self(const char *host,
     }
     if (user.username[0] != '\0') {
         fprintf(stream, "%s: username %s\n", label, user.username);
+    }
+    return 0;
+}
+
+int tg_mtproto_auth_get_dialogs(const char *host,
+                                const char *port,
+                                const char *api_id_text,
+                                const char *auth_file,
+                                const char *dc_id_text,
+                                const char *limit_text,
+                                FILE *stream)
+{
+    unsigned char query[64];
+    unsigned long limit;
+    tg_mtproto_dialogs_summary dialogs;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    static const char label[] = "mtproto messages.getDialogs";
+
+    if (stream == 0 || tg_mtproto_parse_ulong_arg(limit_text, &limit) != 0 ||
+        limit == 0UL || limit > 100UL) {
+        if (stream != 0) {
+            fputs("mtproto messages.getDialogs: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_dialogs(&writer, limit) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_saved_query(host, port, api_id_text, auth_file,
+                                    dc_id_text, query, writer.length, &result,
+                                    stream, label) != 0) {
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (tg_mtproto_parse_dialogs_summary(result.result_constructor,
+                                         result.result_body,
+                                         result.result_body_length,
+                                         &dialogs) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: dialogs-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    fprintf(stream, "%s: constructor 0x%08lx\n", label,
+            dialogs.constructor);
+    fprintf(stream, "%s: dialogs %lu messages %lu chats %lu users %lu\n",
+            label, dialogs.dialog_count, dialogs.message_count,
+            dialogs.chat_count, dialogs.user_count);
+    if (dialogs.is_slice || dialogs.is_not_modified) {
+        fprintf(stream, "%s: count %lu\n", label, dialogs.count);
+    }
+    return 0;
+}
+
+int tg_mtproto_auth_get_history_self(const char *host,
+                                     const char *port,
+                                     const char *api_id_text,
+                                     const char *auth_file,
+                                     const char *dc_id_text,
+                                     const char *limit_text,
+                                     FILE *stream)
+{
+    unsigned char query[64];
+    unsigned long limit;
+    tg_mtproto_messages_summary messages;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    static const char label[] = "mtproto messages.getHistory(self)";
+
+    if (stream == 0 || tg_mtproto_parse_ulong_arg(limit_text, &limit) != 0 ||
+        limit == 0UL || limit > 100UL) {
+        if (stream != 0) {
+            fputs("mtproto messages.getHistory(self): invalid-arguments\n",
+                  stream);
+        }
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_history_self(&writer, limit) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_saved_query(host, port, api_id_text, auth_file,
+                                    dc_id_text, query, writer.length, &result,
+                                    stream, label) != 0) {
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (tg_mtproto_parse_messages_summary(result.result_constructor,
+                                          result.result_body,
+                                          result.result_body_length,
+                                          &messages) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: messages-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    fprintf(stream, "%s: constructor 0x%08lx\n", label,
+            messages.constructor);
+    fprintf(stream, "%s: messages %lu chats %lu users %lu\n", label,
+            messages.message_count, messages.chat_count, messages.user_count);
+    if (messages.is_slice || messages.is_not_modified ||
+        messages.is_channel_messages) {
+        fprintf(stream, "%s: count %lu\n", label, messages.count);
+    }
+    return 0;
+}
+
+int tg_mtproto_auth_send_self(const char *host,
+                              const char *port,
+                              const char *api_id_text,
+                              const char *auth_file,
+                              const char *dc_id_text,
+                              const char *message,
+                              FILE *stream)
+{
+    unsigned char query[512];
+    unsigned char random_id[8];
+    unsigned long random_id_hi;
+    unsigned long random_id_lo;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_updates_summary updates;
+    static const char label[] = "mtproto messages.sendMessage(self)";
+
+    if (stream == 0 || message == 0 || message[0] == '\0') {
+        if (stream != 0) {
+            fputs("mtproto messages.sendMessage(self): invalid-arguments\n",
+                  stream);
+        }
+        return 2;
+    }
+    if (!tg_mtproto_secure_random(random_id, sizeof(random_id))) {
+        fprintf(stream, "%s: secure-rng-unavailable\n", label);
+        return 2;
+    }
+    random_id_lo = tg_mtproto_read_u32_le(random_id);
+    random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_send_self(&writer, message, random_id_hi,
+                                            random_id_lo) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_saved_query(host, port, api_id_text, auth_file,
+                                    dc_id_text, query, writer.length, &result,
+                                    stream, label) != 0) {
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (tg_mtproto_parse_updates_summary(result.result_constructor,
+                                         result.result_body,
+                                         result.result_body_length,
+                                         &updates) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: updates-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    fprintf(stream, "%s: constructor 0x%08lx\n", label,
+            updates.constructor);
+    if (updates.has_sent_message) {
+        fprintf(stream, "%s: message_id %lu date %lu\n", label, updates.id,
+                updates.date);
     }
     return 0;
 }

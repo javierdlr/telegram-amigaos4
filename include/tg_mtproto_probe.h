@@ -65,6 +65,27 @@ int tg_mtproto_auth_get_self(const char *host,
                              const char *auth_file,
                              const char *dc_id_text,
                              FILE *stream);
+int tg_mtproto_auth_get_dialogs(const char *host,
+                                const char *port,
+                                const char *api_id_text,
+                                const char *auth_file,
+                                const char *dc_id_text,
+                                const char *limit_text,
+                                FILE *stream);
+int tg_mtproto_auth_get_history_self(const char *host,
+                                     const char *port,
+                                     const char *api_id_text,
+                                     const char *auth_file,
+                                     const char *dc_id_text,
+                                     const char *limit_text,
+                                     FILE *stream);
+int tg_mtproto_auth_send_self(const char *host,
+                              const char *port,
+                              const char *api_id_text,
+                              const char *auth_file,
+                              const char *dc_id_text,
+                              const char *message,
+                              FILE *stream);
 int tg_mtproto_auth_forget(const char *auth_file,
                            const char *code_hash_file,
                            FILE *stream);

@@ -63,6 +63,37 @@ typedef struct tg_mtproto_user_summary {
     char phone[64];
 } tg_mtproto_user_summary;
 
+typedef struct tg_mtproto_dialogs_summary {
+    unsigned long constructor;
+    unsigned long count;
+    unsigned long dialog_count;
+    unsigned long message_count;
+    unsigned long chat_count;
+    unsigned long user_count;
+    int is_slice;
+    int is_not_modified;
+} tg_mtproto_dialogs_summary;
+
+typedef struct tg_mtproto_messages_summary {
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long count;
+    unsigned long message_count;
+    unsigned long chat_count;
+    unsigned long user_count;
+    int is_slice;
+    int is_not_modified;
+    int is_channel_messages;
+} tg_mtproto_messages_summary;
+
+typedef struct tg_mtproto_updates_summary {
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long id;
+    unsigned long date;
+    int has_sent_message;
+} tg_mtproto_updates_summary;
+
 tg_mtproto_tl_status tg_mtproto_build_invoke_with_layer(
     tg_mtproto_tl_writer *writer,
     unsigned long layer,
@@ -106,6 +137,20 @@ tg_mtproto_tl_status tg_mtproto_build_account_get_password(
 
 tg_mtproto_tl_status tg_mtproto_build_users_get_self(
     tg_mtproto_tl_writer *writer);
+
+tg_mtproto_tl_status tg_mtproto_build_messages_get_dialogs(
+    tg_mtproto_tl_writer *writer,
+    unsigned long limit);
+
+tg_mtproto_tl_status tg_mtproto_build_messages_get_history_self(
+    tg_mtproto_tl_writer *writer,
+    unsigned long limit);
+
+tg_mtproto_tl_status tg_mtproto_build_messages_send_self(
+    tg_mtproto_tl_writer *writer,
+    const char *message,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo);
 
 tg_mtproto_tl_status tg_mtproto_build_msgs_ack(
     tg_mtproto_tl_writer *writer,
@@ -153,6 +198,24 @@ tg_mtproto_tl_status tg_mtproto_parse_user_vector_first(
     const unsigned char *body,
     unsigned long body_length,
     tg_mtproto_user_summary *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_dialogs_summary(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_dialogs_summary *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_messages_summary(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_messages_summary *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_updates_summary(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_updates_summary *out);
 
 int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor);
 

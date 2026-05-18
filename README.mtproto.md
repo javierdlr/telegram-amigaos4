@@ -50,6 +50,8 @@ Implemented and covered by offline self-tests:
   signup-required;
 - saved-session `help.getConfig`, `account.getPassword` and
   `users.getUsers(inputUserSelf)` probes;
+- first saved-session `messages.getDialogs`, `messages.getHistory` on
+  `inputPeerSelf`, and `messages.sendMessage` to Saved Messages probes;
 - best-effort `msgs_ack` for encrypted RPC responses and containers;
 - local session-forget command for plaintext auth test files.
 
@@ -112,6 +114,9 @@ telegram-test --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> 
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-get-dialogs <host> <port> <api-id> <auth-file> <dc-id> <limit>
+telegram-test --mtproto-auth-get-history-self <host> <port> <api-id> <auth-file> <dc-id> <limit>
+telegram-test --mtproto-auth-send-self <host> <port> <api-id> <auth-file> <dc-id> <text>
 telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 ```
 
@@ -126,7 +131,10 @@ These commands do not implement SRP password login yet. If Telegram returns
 pending. `account.getPassword` is present only to confirm whether SRP metadata
 is available; it does not compute or submit the password proof yet. After a
 successful login, `users.getUsers(inputUserSelf)` prints a minimal current-user
-summary without storing a peer database.
+summary without storing a peer database. `messages.getDialogs` and
+`messages.getHistory(inputPeerSelf)` currently print constructor/count summaries
+only. `messages.sendMessage(inputPeerSelf)` sends to Saved Messages and is the
+first cautious write probe.
 
 For account-login development without a real phone number, use Telegram Test DC
 numbers and the procedure in [docs/MTPROTO_TEST_DC.md](docs/MTPROTO_TEST_DC.md).
@@ -152,6 +160,7 @@ The next development loop should add:
   phone number;
 - full SRP password proof generation before treating 2FA accounts as usable;
 - real-account validation of `users.getUsers(inputUserSelf)` after sign-in;
+- full peer parsing for dialogs, users/chats and selectable message history;
 - target-side validation of saved-session commands on AmigaOS3, MorphOS and
   AROS.
 
@@ -171,4 +180,8 @@ The next development loop should add:
 - <https://core.telegram.org/method/account.getPassword>
 - <https://core.telegram.org/method/users.getUsers>
 - <https://core.telegram.org/constructor/inputUserSelf>
+- <https://core.telegram.org/method/messages.getDialogs>
+- <https://core.telegram.org/method/messages.getHistory>
+- <https://core.telegram.org/method/messages.sendMessage>
+- <https://core.telegram.org/type/InputPeer>
 - <https://core.telegram.org/api/srp>

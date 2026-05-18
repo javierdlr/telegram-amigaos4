@@ -46,6 +46,8 @@ typedef struct tg_config {
     const char *mtproto_auth_code;
     const char *mtproto_auth_first_name;
     const char *mtproto_auth_last_name;
+    const char *mtproto_auth_limit;
+    const char *mtproto_auth_message;
     const char *json_test_input;
     const char *json_test_field;
     const char *telegram_json_test_input;
@@ -160,6 +162,9 @@ typedef struct tg_config {
     int run_mtproto_auth_get_config;
     int run_mtproto_auth_get_password;
     int run_mtproto_auth_get_self;
+    int run_mtproto_auth_get_dialogs;
+    int run_mtproto_auth_get_history_self;
+    int run_mtproto_auth_send_self;
     int run_mtproto_auth_forget;
     int run_telegram_tls_status;
     int run_json_test;
