@@ -131,10 +131,11 @@ the `test:<dc>` shorthand, for example `test:2`.
 
 These commands do not implement SRP password login yet. If Telegram returns
 `SESSION_PASSWORD_NEEDED`, the account requires 2FA support that is still
-pending. `account.getPassword` is present only to confirm whether SRP metadata
-is available; it does not compute or submit the password proof yet. After a
-successful login, `users.getUsers(inputUserSelf)` prints a minimal current-user
-summary without storing a peer database. `messages.getDialogs` and
+pending. `account.getPassword` parses the current SRP KDF constructor, salt
+lengths, `g`, prime length, SRP `B` length and `srp_id`, but it does not compute
+or submit the password proof yet. After a successful login,
+`users.getUsers(inputUserSelf)` prints a minimal current-user summary without
+storing a peer database. `messages.getDialogs` and
 `messages.getHistory(inputPeerSelf)` currently print constructor/count summaries
 only. `messages.sendMessage(inputPeerSelf)` sends to Saved Messages and is the
 first cautious write probe.

@@ -1728,7 +1728,19 @@ int tg_mtproto_auth_get_password(const char *host,
     fprintf(stream, "%s: ok\n", label);
     fprintf(stream, "%s: has_password %s\n", label,
             password.has_password ? "yes" : "no");
-    fprintf(stream, "%s: srp_check unsupported\n", label);
+    if (password.has_current_algo) {
+        fprintf(stream, "%s: current_algo 0x%08lx\n", label,
+                password.current_algo_constructor);
+    }
+    if (password.current_algo_constructor == 0x3a912d4aUL) {
+        fprintf(stream,
+                "%s: srp params salt1 %lu salt2 %lu p %lu B %lu g %lu srp_id 0x%08lx%08lx\n",
+                label, password.current_salt1_length,
+                password.current_salt2_length, password.current_p_length,
+                password.srp_b_length, password.current_g,
+                password.srp_id_hi, password.srp_id_lo);
+    }
+    fprintf(stream, "%s: srp_check pending\n", label);
     return 0;
 }
 

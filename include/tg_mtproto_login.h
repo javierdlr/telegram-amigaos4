@@ -8,6 +8,8 @@
 
 #include "tg_mtproto_tl.h"
 
+#define TG_MTPROTO_PASSWORD_BYTES_MAX 256U
+
 typedef struct tg_mtproto_rpc_result {
     unsigned long request_msg_id_hi;
     unsigned long request_msg_id_lo;
@@ -46,9 +48,22 @@ typedef struct tg_mtproto_config_summary {
 
 typedef struct tg_mtproto_password_summary {
     unsigned long flags;
+    unsigned long current_algo_constructor;
+    unsigned long current_g;
+    unsigned long current_salt1_length;
+    unsigned long current_salt2_length;
+    unsigned long current_p_length;
+    unsigned long srp_b_length;
+    unsigned long srp_id_hi;
+    unsigned long srp_id_lo;
     int has_recovery;
     int has_secure_values;
     int has_password;
+    int has_current_algo;
+    unsigned char current_salt1[TG_MTPROTO_PASSWORD_BYTES_MAX];
+    unsigned char current_salt2[TG_MTPROTO_PASSWORD_BYTES_MAX];
+    unsigned char current_p[TG_MTPROTO_PASSWORD_BYTES_MAX];
+    unsigned char srp_b[TG_MTPROTO_PASSWORD_BYTES_MAX];
 } tg_mtproto_password_summary;
 
 typedef struct tg_mtproto_user_summary {

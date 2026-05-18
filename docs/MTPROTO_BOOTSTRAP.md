@@ -92,8 +92,9 @@ See [MTPROTO_TEST_DC.md](MTPROTO_TEST_DC.md) for the real Test DC command flow.
 After sign-in, `help.getConfig` is the first saved-session read-only probe.
 `users.getUsers(inputUserSelf)` prints a minimal current-user summary and
 confirms that the saved session represents a user identity. `account.getPassword`
-only confirms whether Telegram exposes SRP metadata; it does not compute or send
-the SRP password proof yet. `messages.getDialogs` and
+parses the current SRP KDF constructor, salt lengths, `g`, prime length, SRP
+`B` length and `srp_id`; it does not compute or send the SRP password proof yet.
+`messages.getDialogs` and
 `messages.getHistory(inputPeerSelf)` print constructor/count summaries, while
 `messages.sendMessage(inputPeerSelf)` sends a cautious first write probe to
 Saved Messages. Encrypted RPC responses are acknowledged with best-effort
@@ -183,8 +184,8 @@ Important constraints for this codebase:
 Next MTProto work should stay behind explicit self-tests:
 
 1. validate the auth commands on Telegram Test DC with a generated test number;
-2. add full SRP password proof generation before treating 2FA accounts as
-   usable;
+2. add full SRP password proof generation from the parsed `account.Password`
+   parameters before treating 2FA accounts as usable;
 3. validate `users.getUsers(inputUserSelf)` after sign-in;
 4. parse dialogs into selectable peers and message-history text rows;
 5. validate saved-session commands on AmigaOS3, MorphOS and AROS;
