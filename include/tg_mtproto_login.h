@@ -6,6 +6,7 @@
 #ifndef TG_MTPROTO_LOGIN_H
 #define TG_MTPROTO_LOGIN_H
 
+#include "tg_mtproto_crypto.h"
 #include "tg_mtproto_tl.h"
 
 #define TG_MTPROTO_PASSWORD_BYTES_MAX 256U
@@ -145,6 +146,28 @@ tg_mtproto_tl_status tg_mtproto_build_auth_sign_up(
     const char *phone_code_hash,
     const char *first_name,
     const char *last_name);
+
+tg_mtproto_tl_status tg_mtproto_build_input_check_password_empty(
+    tg_mtproto_tl_writer *writer);
+
+tg_mtproto_tl_status tg_mtproto_build_input_check_password_srp(
+    tg_mtproto_tl_writer *writer,
+    unsigned long srp_id_hi,
+    unsigned long srp_id_lo,
+    const unsigned char *a,
+    unsigned long a_length,
+    const unsigned char m1[TG_MTPROTO_SHA256_LENGTH]);
+
+tg_mtproto_tl_status tg_mtproto_build_auth_check_password_empty(
+    tg_mtproto_tl_writer *writer);
+
+tg_mtproto_tl_status tg_mtproto_build_auth_check_password_srp(
+    tg_mtproto_tl_writer *writer,
+    unsigned long srp_id_hi,
+    unsigned long srp_id_lo,
+    const unsigned char *a,
+    unsigned long a_length,
+    const unsigned char m1[TG_MTPROTO_SHA256_LENGTH]);
 
 tg_mtproto_tl_status tg_mtproto_build_help_get_config(
     tg_mtproto_tl_writer *writer);

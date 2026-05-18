@@ -14,8 +14,11 @@
 #define TG_AUTH_SEND_CODE_CONSTRUCTOR 0xa677244fUL
 #define TG_AUTH_SIGN_IN_CONSTRUCTOR 0x8d52a951UL
 #define TG_AUTH_SIGN_UP_CONSTRUCTOR 0xaac7b717UL
+#define TG_AUTH_CHECK_PASSWORD_CONSTRUCTOR 0xd18b4d16UL
 #define TG_HELP_GET_CONFIG_CONSTRUCTOR 0xc4f9186bUL
 #define TG_ACCOUNT_GET_PASSWORD_CONSTRUCTOR 0x548a30f5UL
+#define TG_INPUT_CHECK_PASSWORD_EMPTY_CONSTRUCTOR 0x9880f658UL
+#define TG_INPUT_CHECK_PASSWORD_SRP_CONSTRUCTOR 0xd27ff082UL
 #define TG_USERS_GET_USERS_CONSTRUCTOR 0x0d91a548UL
 #define TG_INPUT_USER_SELF_CONSTRUCTOR 0xf7c1b13fUL
 #define TG_MESSAGES_GET_DIALOGS_CONSTRUCTOR 0xa0f4cb4fUL
@@ -402,6 +405,79 @@ tg_mtproto_tl_status tg_mtproto_build_auth_sign_up(
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_write_string(writer, last_name);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_input_check_password_empty(
+    tg_mtproto_tl_writer *writer)
+{
+    return tg_mtproto_tl_write_u32(
+        writer, TG_INPUT_CHECK_PASSWORD_EMPTY_CONSTRUCTOR);
+}
+
+tg_mtproto_tl_status tg_mtproto_build_input_check_password_srp(
+    tg_mtproto_tl_writer *writer,
+    unsigned long srp_id_hi,
+    unsigned long srp_id_lo,
+    const unsigned char *a,
+    unsigned long a_length,
+    const unsigned char m1[TG_MTPROTO_SHA256_LENGTH])
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || a == 0 || m1 == 0 || a_length == 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_INPUT_CHECK_PASSWORD_SRP_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, srp_id_hi, srp_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_bytes(writer, a, a_length);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_bytes(writer, m1,
+                                           TG_MTPROTO_SHA256_LENGTH);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_auth_check_password_empty(
+    tg_mtproto_tl_writer *writer)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_AUTH_CHECK_PASSWORD_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_build_input_check_password_empty(writer);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_auth_check_password_srp(
+    tg_mtproto_tl_writer *writer,
+    unsigned long srp_id_hi,
+    unsigned long srp_id_lo,
+    const unsigned char *a,
+    unsigned long a_length,
+    const unsigned char m1[TG_MTPROTO_SHA256_LENGTH])
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_AUTH_CHECK_PASSWORD_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_build_input_check_password_srp(
+            writer, srp_id_hi, srp_id_lo, a, a_length, m1);
     }
     return status;
 }
@@ -1050,10 +1126,12 @@ int tg_mtproto_login_self_test(void)
     static const unsigned char srp_salt2[] = { 0x21U, 0x22U, 0x23U };
     static const unsigned char srp_p[] = { 0x31U, 0x32U, 0x33U, 0x34U };
     static const unsigned char srp_b[] = { 0x41U, 0x42U, 0x43U };
+    static const unsigned char srp_a[] = { 0x51U, 0x52U, 0x53U, 0x54U };
     unsigned char query[128];
     unsigned char initialized[192];
     unsigned char wrapped[160];
     unsigned char rpc[64];
+    unsigned char m1[TG_MTPROTO_SHA256_LENGTH];
     char error_text[32];
     long error_code;
     tg_mtproto_bad_msg_notification bad_msg;
@@ -1200,6 +1278,37 @@ int tg_mtproto_login_self_test(void)
         query[2] != 0xc7U || query[3] != 0xaaU ||
         query[4] != 0x01U || query[5] != 0x00U ||
         query[6] != 0x00U || query[7] != 0x00U) {
+        return 2;
+    }
+
+    memset(m1, 0x61, sizeof(m1));
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_auth_check_password_empty(&writer) !=
+            TG_MTPROTO_TL_OK ||
+        writer.length != 8UL ||
+        query[0] != 0x16U || query[1] != 0x4dU ||
+        query[2] != 0x8bU || query[3] != 0xd1U ||
+        query[4] != 0x58U || query[5] != 0xf6U ||
+        query[6] != 0x80U || query[7] != 0x98U) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_auth_check_password_srp(
+            &writer, 0x01020304UL, 0x05060708UL, srp_a, sizeof(srp_a),
+            m1) != TG_MTPROTO_TL_OK ||
+        writer.length != 60UL ||
+        query[0] != 0x16U || query[1] != 0x4dU ||
+        query[2] != 0x8bU || query[3] != 0xd1U ||
+        query[4] != 0x82U || query[5] != 0xf0U ||
+        query[6] != 0x7fU || query[7] != 0xd2U ||
+        query[8] != 0x08U || query[9] != 0x07U ||
+        query[10] != 0x06U || query[11] != 0x05U ||
+        query[12] != 0x04U || query[13] != 0x03U ||
+        query[14] != 0x02U || query[15] != 0x01U ||
+        query[16] != sizeof(srp_a) ||
+        memcmp(query + 17U, srp_a, sizeof(srp_a)) != 0 ||
+        query[24] != TG_MTPROTO_SHA256_LENGTH ||
+        memcmp(query + 25U, m1, sizeof(m1)) != 0) {
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
