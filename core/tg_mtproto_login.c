@@ -13,6 +13,7 @@
 #define TG_CODE_SETTINGS_CONSTRUCTOR 0xad253d78UL
 #define TG_AUTH_SEND_CODE_CONSTRUCTOR 0xa677244fUL
 #define TG_AUTH_SIGN_IN_CONSTRUCTOR 0x8d52a951UL
+#define TG_AUTH_SIGN_UP_CONSTRUCTOR 0xaac7b717UL
 #define TG_HELP_GET_CONFIG_CONSTRUCTOR 0xc4f9186bUL
 #define TG_ACCOUNT_GET_PASSWORD_CONSTRUCTOR 0x548a30f5UL
 #define TG_USERS_GET_USERS_CONSTRUCTOR 0x0d91a548UL
@@ -286,6 +287,39 @@ tg_mtproto_tl_status tg_mtproto_build_auth_sign_in(
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_write_string(writer, phone_code);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_auth_sign_up(
+    tg_mtproto_tl_writer *writer,
+    const char *phone_number,
+    const char *phone_code_hash,
+    const char *first_name,
+    const char *last_name)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || phone_number == 0 || phone_code_hash == 0 ||
+        first_name == 0 || last_name == 0 || phone_number[0] == '\0' ||
+        phone_code_hash[0] == '\0' || first_name[0] == '\0') {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer, TG_AUTH_SIGN_UP_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, phone_number);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, phone_code_hash);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, first_name);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, last_name);
     }
     return status;
 }
@@ -773,6 +807,16 @@ int tg_mtproto_login_self_test(void)
         query[2] != 0x91U || query[3] != 0x0dU ||
         query[12] != 0x3fU || query[13] != 0xb1U ||
         query[14] != 0xc1U || query[15] != 0xf7U) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_auth_sign_up(&writer, "+1234567890", "hash",
+                                      "Amiga", "") != TG_MTPROTO_TL_OK ||
+        writer.length != 40UL ||
+        query[0] != 0x17U || query[1] != 0xb7U ||
+        query[2] != 0xc7U || query[3] != 0xaaU ||
+        query[4] != 0x01U || query[5] != 0x00U ||
+        query[6] != 0x00U || query[7] != 0x00U) {
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));

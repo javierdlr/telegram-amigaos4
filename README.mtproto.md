@@ -41,10 +41,13 @@ Implemented and covered by offline self-tests:
 - curated auth-key file save/load helpers that refuse to save when secure RNG
   is unavailable;
 - `initConnection`, `invokeWithLayer`, `auth.sendCode`, `auth.signIn`,
+  `auth.signUp`,
   `rpc_result`, `rpc_error`, `bad_msg_notification` and `bad_server_salt`
   serialization/parsing scaffolding;
 - explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
   the Bot API client path;
+- explicit `auth.signUp` command for validated test numbers that return
+  signup-required;
 - saved-session `help.getConfig`, `account.getPassword` and
   `users.getUsers(inputUserSelf)` probes;
 - best-effort `msgs_ack` for encrypted RPC responses and containers;
@@ -105,6 +108,7 @@ User-auth commands are explicit and intended for supervised testing only:
 ```text
 telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> <auth-file> <code-hash-file>
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
+telegram-test --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <first-name> <last-name> <dc-id>
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
@@ -123,6 +127,9 @@ pending. `account.getPassword` is present only to confirm whether SRP metadata
 is available; it does not compute or submit the password proof yet. After a
 successful login, `users.getUsers(inputUserSelf)` prints a minimal current-user
 summary without storing a peer database.
+
+For account-login development without a real phone number, use Telegram Test DC
+numbers and the procedure in [docs/MTPROTO_TEST_DC.md](docs/MTPROTO_TEST_DC.md).
 
 The auth file contains a plaintext MTProto auth key. Keep it local, use only
 disposable test accounts at this stage, and delete it with
@@ -159,6 +166,7 @@ The next development loop should add:
 - <https://core.telegram.org/mtproto/service_messages>
 - <https://core.telegram.org/method/auth.sendCode>
 - <https://core.telegram.org/method/auth.signIn>
+- <https://core.telegram.org/method/auth.signUp>
 - <https://core.telegram.org/method/help.getConfig>
 - <https://core.telegram.org/method/account.getPassword>
 - <https://core.telegram.org/method/users.getUsers>

@@ -40,10 +40,13 @@ Current MTProto code is offline by default:
 - curated auth-key file save/load helpers that refuse to save when secure RNG
   is unavailable;
 - `initConnection`, `invokeWithLayer`, `auth.sendCode`, `auth.signIn`,
+  `auth.signUp`,
   `rpc_result`, `rpc_error`, `bad_msg_notification` and `bad_server_salt`
   serialization/parsing scaffolding;
 - explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
   the Bot API path;
+- explicit `auth.signUp` command for validated test numbers that return
+  signup-required;
 - saved-session `help.getConfig`, `account.getPassword` and
   `users.getUsers(inputUserSelf)` probes;
 - best-effort `msgs_ack` for encrypted RPC responses and containers;
@@ -64,6 +67,7 @@ The optional user-auth commands are:
 ```text
 telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> <auth-file> <code-hash-file>
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
+telegram-test --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <first-name> <last-name> <dc-id>
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
@@ -74,7 +78,9 @@ telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 successful Telegram response, and only when secure random bytes are available.
 `auth.signIn` reuses that file plus the saved `phone_code_hash` and the
 human-entered code. `SESSION_PASSWORD_NEEDED` is reported as unsupported until
-SRP password login is implemented.
+SRP password login is implemented. `auth.signUp` is available for Test DC
+numbers that have a validated code hash but do not yet have a user record.
+See [MTPROTO_TEST_DC.md](MTPROTO_TEST_DC.md) for the real Test DC command flow.
 
 After sign-in, `help.getConfig` is the first saved-session read-only probe.
 `users.getUsers(inputUserSelf)` prints a minimal current-user summary and
@@ -136,6 +142,7 @@ The bootstrap follows the official Telegram MTProto documentation:
 - <https://core.telegram.org/mtproto/security_guidelines>
 - <https://core.telegram.org/method/auth.sendCode>
 - <https://core.telegram.org/method/auth.signIn>
+- <https://core.telegram.org/method/auth.signUp>
 - <https://core.telegram.org/method/help.getConfig>
 - <https://core.telegram.org/method/account.getPassword>
 - <https://core.telegram.org/method/users.getUsers>
@@ -156,8 +163,7 @@ Important constraints for this codebase:
 
 Next MTProto work should stay behind explicit self-tests:
 
-1. validate the auth commands with a disposable Telegram API id/hash and a test
-   phone number;
+1. validate the auth commands on Telegram Test DC with a generated test number;
 2. add full SRP password proof generation before treating 2FA accounts as
    usable;
 3. validate `users.getUsers(inputUserSelf)` after sign-in;

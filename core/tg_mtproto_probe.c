@@ -1325,11 +1325,137 @@ int tg_mtproto_auth_sign_in(const char *host,
     }
     if (result.result_constructor ==
             0x44747e9aUL) {
-        fprintf(stream, "%s: signup-required-not-supported\n", label);
+        fprintf(stream, "%s: signup-required; run --mtproto-auth-sign-up\n",
+                label);
         return 2;
     }
 
     fprintf(stream, "%s: signed in\n", label);
+    fprintf(stream, "%s: auth state updated\n", label);
+    return 0;
+}
+
+int tg_mtproto_auth_sign_up(const char *host,
+                            const char *port,
+                            const char *api_id_text,
+                            const char *auth_file,
+                            const char *phone_number,
+                            const char *code_hash_file,
+                            const char *first_name,
+                            const char *last_name,
+                            const char *dc_id_text,
+                            FILE *stream)
+{
+    unsigned char query[512];
+    unsigned char initialized_query[640];
+    unsigned char wrapped_query[760];
+    char code_hash[160];
+    unsigned long code_hash_length;
+    unsigned long api_id;
+    unsigned long query_length;
+    tg_file_status file_status;
+    tg_mtproto_auth_context context;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_session_status session_status;
+    tg_mtproto_tl_writer writer;
+    long dc_id;
+    static const char label[] = "mtproto auth.signUp";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 || phone_number == 0 || code_hash_file == 0 ||
+        first_name == 0 || last_name == 0 ||
+        tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0 ||
+        tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
+        if (stream != 0) {
+            fputs("mtproto auth.signUp: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+
+    file_status = tg_file_read_text(code_hash_file, code_hash,
+                                    sizeof(code_hash), &code_hash_length);
+    if (file_status != TG_FILE_OK) {
+        fprintf(stream, "%s: code-hash-load-failed (%s)\n", label,
+                tg_file_status_name(file_status));
+        return 2;
+    }
+    tg_mtproto_trim_line(code_hash);
+    if (code_hash[0] == '\0') {
+        fprintf(stream, "%s: code-hash-empty\n", label);
+        return 2;
+    }
+
+    if (tg_mtproto_load_auth_context(host, port, auth_file, &context, stream,
+                                     label) != 0) {
+        return 2;
+    }
+    context.session.dc_id = (unsigned long)dc_id;
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_auth_sign_up(&writer, phone_number, code_hash,
+                                      first_name, last_name) !=
+        TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    query_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, initialized_query,
+                              sizeof(initialized_query));
+    if (tg_mtproto_build_init_connection(&writer, api_id, "Amiga",
+                                         "portable", "0.1", "en", query,
+                                         query_length) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: init-connection-build-failed\n", label);
+        return 2;
+    }
+    query_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, wrapped_query, sizeof(wrapped_query));
+    if (tg_mtproto_build_invoke_with_layer(&writer, 214UL, initialized_query,
+                                           query_length) !=
+        TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_auth_context(&context);
+        fprintf(stream, "%s: invoke-layer-build-failed\n", label);
+        return 2;
+    }
+
+    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
+                                        &result, stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
+    tg_mtproto_close_auth_context(&context);
+
+    session_status = tg_mtproto_session_save_authorization(
+        auth_file, &context.session, context.auth_key, 1);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (!tg_mtproto_is_auth_authorization_constructor(
+            result.result_constructor)) {
+        fprintf(stream, "%s: unexpected-result 0x%08lx\n", label,
+                result.result_constructor);
+        return 2;
+    }
+    if (result.result_constructor == 0x44747e9aUL) {
+        fprintf(stream, "%s: signup-still-required\n", label);
+        return 2;
+    }
+
+    fprintf(stream, "%s: signed up\n", label);
     fprintf(stream, "%s: auth state updated\n", label);
     return 0;
 }

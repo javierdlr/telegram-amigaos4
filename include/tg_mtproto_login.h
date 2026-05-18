@@ -91,6 +91,13 @@ tg_mtproto_tl_status tg_mtproto_build_auth_sign_in(
     const char *phone_code_hash,
     const char *phone_code);
 
+tg_mtproto_tl_status tg_mtproto_build_auth_sign_up(
+    tg_mtproto_tl_writer *writer,
+    const char *phone_number,
+    const char *phone_code_hash,
+    const char *first_name,
+    const char *last_name);
+
 tg_mtproto_tl_status tg_mtproto_build_help_get_config(
     tg_mtproto_tl_writer *writer);
 

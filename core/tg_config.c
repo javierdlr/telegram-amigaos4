@@ -37,6 +37,8 @@ void tg_config_init(tg_config *config)
     config->mtproto_auth_file = 0;
     config->mtproto_auth_code_hash_file = 0;
     config->mtproto_auth_code = 0;
+    config->mtproto_auth_first_name = 0;
+    config->mtproto_auth_last_name = 0;
     config->json_test_input = 0;
     config->json_test_field = 0;
     config->telegram_json_test_input = 0;
@@ -147,6 +149,7 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_req_dh_probe = 0;
     config->run_mtproto_auth_send_code = 0;
     config->run_mtproto_auth_sign_in = 0;
+    config->run_mtproto_auth_sign_up = 0;
     config->run_mtproto_auth_get_config = 0;
     config->run_mtproto_auth_get_password = 0;
     config->run_mtproto_auth_get_self = 0;
@@ -339,6 +342,21 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_code = argv[i + 7];
             config->mtproto_auth_dc_id = argv[i + 8];
             i += 8;
+        } else if (strcmp(argv[i], "--mtproto-auth-sign-up") == 0) {
+            if (i + 9 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_sign_up = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_id = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_phone = argv[i + 5];
+            config->mtproto_auth_code_hash_file = argv[i + 6];
+            config->mtproto_auth_first_name = argv[i + 7];
+            config->mtproto_auth_last_name = argv[i + 8];
+            config->mtproto_auth_dc_id = argv[i + 9];
+            i += 9;
         } else if (strcmp(argv[i], "--mtproto-auth-get-config") == 0) {
             if (i + 5 >= argc) {
                 return 1;
@@ -813,6 +831,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Build auth key, send auth.sendCode and save login state\n");
     fprintf(stream, "      --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>\n");
     fprintf(stream, "                         Complete auth.signIn using saved login state\n");
+    fprintf(stream, "      --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <first-name> <last-name> <dc-id>\n");
+    fprintf(stream, "                         Register a validated test phone after signup-required\n");
     fprintf(stream, "      --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Call help.getConfig with saved MTProto auth state\n");
     fprintf(stream, "      --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>\n");
