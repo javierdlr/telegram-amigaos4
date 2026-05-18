@@ -121,6 +121,11 @@ rsync -a --exclude .git --exclude build \
     TARGET=build/os4-cross-amissl/telegram-test'
 ```
 
+If the Docker compiler exits with an internal compiler error at `-O2`, rerun
+the same build with `CFLAGS="-Wall -Wextra -O0 -Iinclude"`. This is a
+toolchain stability fallback; use it to keep validation moving when the crash is
+inside `cc1` and not tied to a project diagnostic.
+
 The resulting binary is an ELF PowerPC AmigaOS 4.x executable. The Docker-built
 AmiSSL binary has passed these QEMU AmigaOS 4.x checks:
 

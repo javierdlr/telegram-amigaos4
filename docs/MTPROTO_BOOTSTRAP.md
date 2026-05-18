@@ -93,6 +93,25 @@ For Telegram Test DC endpoints, pass either the raw `10000 + dc` value or the
 `test:<dc>` shorthand, for example `test:2`.
 See [MTPROTO_TEST_DC.md](MTPROTO_TEST_DC.md) for the real Test DC command flow.
 
+Minimal real-account validation sequence:
+
+```text
+telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> telegram-auth.bin phone-code-hash.txt
+telegram-test --mtproto-auth-sign-in <host> <port> <api-id> telegram-auth.bin <phone> phone-code-hash.txt <code> <dc-id>
+```
+
+If sign-in reports `two-factor-password-required`, create
+`telegram-password.txt` locally with only the 2FA password and then run:
+
+```text
+telegram-test --mtproto-auth-check-password <host> <port> <api-id> telegram-auth.bin <dc-id> telegram-password.txt
+telegram-test --mtproto-auth-get-self <host> <port> <api-id> telegram-auth.bin <dc-id>
+```
+
+`telegram-auth*.bin`, `phone-code-hash*.txt`, `telegram-password.txt`,
+`*.auth`, `*.session` and `*.password.txt` are ignored by Git. Keep them local;
+do not paste their contents or terminal screenshots that reveal them.
+
 After sign-in, `help.getConfig` is the first saved-session read-only probe.
 `users.getUsers(inputUserSelf)` prints a minimal current-user summary and
 confirms that the saved session represents a user identity. `account.getPassword`

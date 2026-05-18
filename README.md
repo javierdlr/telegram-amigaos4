@@ -367,6 +367,9 @@ rsync -a --exclude .git --exclude build \
     TARGET=build/os4-cross-amissl/telegram-test'
 ```
 
+If the OS4 Docker compiler hits an internal compiler error at `-O2`, rerun with
+`CFLAGS="-Wall -Wextra -O0 -Iinclude"` as the validation fallback.
+
 The Docker-built AmiSSL binary has passed the saved-chat state, console, client
 and TLS-status self-tests on the QEMU AmigaOS 4.x target.
 

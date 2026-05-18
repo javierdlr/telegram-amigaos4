@@ -1103,6 +1103,52 @@ static void tg_mtproto_secure_zero(void *data, unsigned long length)
     }
 }
 
+static int tg_mtproto_load_password_file(const char *path,
+                                         char *password,
+                                         unsigned long password_size,
+                                         unsigned long *password_length,
+                                         FILE *stream,
+                                         const char *label)
+{
+    tg_file_status file_status;
+
+    if (password_length != 0) {
+        *password_length = 0UL;
+    }
+    if (path == 0 || password == 0 || password_size == 0UL ||
+        password_length == 0) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: password-file-invalid\n", label);
+        }
+        return 2;
+    }
+    file_status = tg_file_read_text(path, password, password_size,
+                                    password_length);
+    if (file_status == TG_FILE_TOO_LARGE) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: password-file-too-large\n", label);
+        }
+        return 2;
+    }
+    if (file_status != TG_FILE_OK) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: password-file-load-failed (%s)\n", label,
+                    tg_file_status_name(file_status));
+        }
+        return 2;
+    }
+    tg_mtproto_trim_newline(password);
+    *password_length = (unsigned long)strlen(password);
+    if (*password_length == 0UL) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: password-file-empty\n", label);
+        }
+        tg_mtproto_secure_zero(password, password_size);
+        return 2;
+    }
+    return 0;
+}
+
 static int tg_mtproto_print_rpc_error(const char *label,
                                       const tg_mtproto_rpc_result *result,
                                       FILE *stream)
@@ -1124,6 +1170,12 @@ static int tg_mtproto_print_rpc_error(const char *label,
         fprintf(stream, "%s: two-factor-password-required\n", label);
     } else if (strcmp(error_message, "PASSWORD_HASH_INVALID") == 0) {
         fprintf(stream, "%s: password-invalid\n", label);
+    } else if (strcmp(error_message, "SRP_ID_INVALID") == 0) {
+        fprintf(stream, "%s: srp-id-invalid\n", label);
+    } else if (strcmp(error_message, "PASSWORD_MISSING") == 0) {
+        fprintf(stream, "%s: password-missing\n", label);
+    } else if (strcmp(error_message, "AUTH_KEY_UNREGISTERED") == 0) {
+        fprintf(stream, "%s: auth-key-unregistered\n", label);
     } else {
         fprintf(stream, "%s: rpc-error %ld %s\n", label, error_code,
                 error_message);
@@ -1788,7 +1840,6 @@ int tg_mtproto_auth_check_password(const char *host,
     char password_text[512];
     unsigned long password_length;
     unsigned long api_id;
-    tg_file_status file_status;
     tg_mtproto_auth_context context;
     tg_mtproto_password_summary password;
     tg_mtproto_rpc_result result;
@@ -1808,18 +1859,10 @@ int tg_mtproto_auth_check_password(const char *host,
         return 2;
     }
 
-    file_status = tg_file_read_text(password_file, password_text,
-                                    sizeof(password_text), &password_length);
-    if (file_status != TG_FILE_OK) {
-        fprintf(stream, "%s: password-file-load-failed (%s)\n", label,
-                tg_file_status_name(file_status));
-        return 2;
-    }
-    tg_mtproto_trim_newline(password_text);
-    password_length = (unsigned long)strlen(password_text);
-    if (password_length == 0UL) {
-        fprintf(stream, "%s: password-file-empty\n", label);
-        tg_mtproto_secure_zero(password_text, sizeof(password_text));
+    if (tg_mtproto_load_password_file(password_file, password_text,
+                                      sizeof(password_text),
+                                      &password_length, stream,
+                                      label) != 0) {
         return 2;
     }
 
@@ -2826,8 +2869,14 @@ int tg_mtproto_probe_self_test(void)
         0x79U, 0xf0U, 0xafU, 0xb5U, 0x02U, 0x52U, 0xe5U, 0xfcU,
         0x96U, 0x92U, 0x4bU, 0xfcU, 0xecU, 0xdaU, 0x4fU, 0x05U
     };
+    static const char password_path[] = "telegram-mtproto-password-self-test.tmp";
+    static const char missing_password_path[] =
+        "telegram-mtproto-password-missing-self-test.tmp";
+    static const char password_text[] = "secret\r\n";
     unsigned char payload[64];
     unsigned char packet[80];
+    char password[16];
+    unsigned long password_length;
     tg_mtproto_tl_writer writer;
 
     tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
@@ -2845,6 +2894,39 @@ int tg_mtproto_probe_self_test(void)
         memcmp(packet, expected, sizeof(expected)) != 0) {
         return 2;
     }
+
+    (void)remove(password_path);
+    (void)remove(missing_password_path);
+    if (tg_mtproto_load_password_file(missing_password_path, password,
+                                      sizeof(password), &password_length,
+                                      0, 0) == 0) {
+        return 2;
+    }
+    if (tg_file_write_text(password_path, "", 0UL) != TG_FILE_OK ||
+        tg_mtproto_load_password_file(password_path, password,
+                                      sizeof(password), &password_length,
+                                      0, 0) == 0) {
+        (void)remove(password_path);
+        return 2;
+    }
+    if (tg_file_write_text(password_path, password_text,
+                           (unsigned long)strlen(password_text)) !=
+            TG_FILE_OK ||
+        tg_mtproto_load_password_file(password_path, password,
+                                      sizeof(password), &password_length,
+                                      0, 0) != 0 ||
+        password_length != 6UL ||
+        strcmp(password, "secret") != 0) {
+        (void)remove(password_path);
+        return 2;
+    }
+    tg_mtproto_secure_zero(password, sizeof(password));
+    if (tg_mtproto_load_password_file(password_path, password, 4UL,
+                                      &password_length, 0, 0) == 0) {
+        (void)remove(password_path);
+        return 2;
+    }
+    (void)remove(password_path);
 
     return 0;
 }
