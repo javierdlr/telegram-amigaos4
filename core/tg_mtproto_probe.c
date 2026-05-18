@@ -492,6 +492,8 @@ static int tg_mtproto_send_encrypted_service(
     tg_mtproto_client_message_id((unsigned long)time(0), 20UL,
                                  &context->last_msg_id, &msg_id);
     context->last_msg_id = msg_id;
+    context->session.last_msg_id_hi = msg_id.hi;
+    context->session.last_msg_id_lo = msg_id.lo;
     tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
     if (tg_mtproto_write_encrypted_message(
             &writer, context->auth_key, context->session.server_salt_hi,
@@ -561,6 +563,7 @@ static int tg_mtproto_send_encrypted_query(
     unsigned long response_length;
     unsigned int attempt;
     unsigned int receive_attempt;
+    int retry_request;
     unsigned long response_constructor;
     unsigned long ack_hi[16];
     unsigned long ack_lo[16];
@@ -579,6 +582,7 @@ static int tg_mtproto_send_encrypted_query(
     }
 
     for (attempt = 0U; attempt < 2U; ++attempt) {
+        retry_request = 0;
         encrypted_padding_length = 12UL;
         while (((32UL + body_length + encrypted_padding_length) % 16UL) !=
                0UL) {
@@ -592,6 +596,8 @@ static int tg_mtproto_send_encrypted_query(
         tg_mtproto_client_message_id((unsigned long)time(0), 16UL,
                                      &context->last_msg_id, &request_msg_id);
         context->last_msg_id = request_msg_id;
+        context->session.last_msg_id_hi = request_msg_id.hi;
+        context->session.last_msg_id_lo = request_msg_id.lo;
 
         tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
         if (tg_mtproto_write_encrypted_message(
@@ -658,6 +664,18 @@ static int tg_mtproto_send_encrypted_query(
                         bad_msg.new_server_salt_hi;
                     context->session.server_salt_lo =
                         bad_msg.new_server_salt_lo;
+                    retry_request = 1;
+                    break;
+                }
+                if (bad_msg.error_code == 32UL) {
+                    context->session.seq_no += 2UL;
+                    retry_request = 1;
+                    break;
+                }
+                if (bad_msg.error_code == 33UL &&
+                    context->session.seq_no >= 2UL) {
+                    context->session.seq_no -= 2UL;
+                    retry_request = 1;
                     break;
                 }
                 fprintf(stream, "%s: bad-msg error-code %lu\n", label,
@@ -674,14 +692,14 @@ static int tg_mtproto_send_encrypted_query(
                 return 2;
             }
         }
-        if (bad_msg.has_new_server_salt && bad_msg.error_code == 48UL) {
+        if (retry_request) {
             continue;
         }
         fprintf(stream, "%s: rpc-response-not-received\n", label);
         return 2;
     }
 
-    fprintf(stream, "%s: bad-server-salt-retry-failed\n", label);
+    fprintf(stream, "%s: bad-msg-retry-failed\n", label);
     return 2;
 }
 
@@ -976,6 +994,8 @@ static int tg_mtproto_open_auth_context(const char *host,
                                      session_id);
     context->session.seq_no = 1UL;
     context->last_msg_id = third_msg_id;
+    context->session.last_msg_id_hi = third_msg_id.hi;
+    context->session.last_msg_id_lo = third_msg_id.lo;
     return 0;
 }
 
@@ -1006,8 +1026,12 @@ static int tg_mtproto_load_auth_context(const char *host,
         return 2;
     }
 
-    tg_mtproto_client_message_id((unsigned long)time(0), 4UL, 0,
-                                 &context->last_msg_id);
+    context->last_msg_id.hi = context->session.last_msg_id_hi;
+    context->last_msg_id.lo = context->session.last_msg_id_lo;
+    if (context->last_msg_id.hi == 0UL && context->last_msg_id.lo == 0UL) {
+        tg_mtproto_client_message_id((unsigned long)time(0), 4UL, 0,
+                                     &context->last_msg_id);
+    }
     error_buffer[0] = '\0';
     net_status = tg_net_connect(&context->connection, host, port, error_buffer,
                                 sizeof(error_buffer));

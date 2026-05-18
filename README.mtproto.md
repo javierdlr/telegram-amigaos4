@@ -139,6 +139,10 @@ summary without storing a peer database. `messages.getDialogs` and
 only. `messages.sendMessage(inputPeerSelf)` sends to Saved Messages and is the
 first cautious write probe.
 
+Saved authorization files include `seq_no` and the last client `msg_id`.
+Encrypted requests retry once after `bad_server_salt` and recoverable
+sequence-number `bad_msg_notification` responses.
+
 For account-login development without a real phone number, use Telegram Test DC
 numbers and the procedure in [docs/MTPROTO_TEST_DC.md](docs/MTPROTO_TEST_DC.md).
 

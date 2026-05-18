@@ -20,6 +20,8 @@ void tg_mtproto_session_init(tg_mtproto_session *session)
         session->server_salt_hi = 0;
         session->server_salt_lo = 0;
         session->seq_no = 1;
+        session->last_msg_id_hi = 0;
+        session->last_msg_id_lo = 0;
         memset(session->session_id, 0, sizeof(session->session_id));
     }
 }
@@ -142,12 +144,18 @@ tg_mtproto_session_status tg_mtproto_session_save(const char *path,
                       "auth_key_id_lo=%08lx\n"
                       "server_salt_hi=%08lx\n"
                       "server_salt_lo=%08lx\n"
+                      "seq_no=%lu\n"
+                      "last_msg_id_hi=%08lx\n"
+                      "last_msg_id_lo=%08lx\n"
                       "session_id=%s\n",
                       session->dc_id,
                       session->auth_key_id_hi & 0xffffffffUL,
                       session->auth_key_id_lo & 0xffffffffUL,
                       session->server_salt_hi & 0xffffffffUL,
                       session->server_salt_lo & 0xffffffffUL,
+                      session->seq_no,
+                      session->last_msg_id_hi & 0xffffffffUL,
+                      session->last_msg_id_lo & 0xffffffffUL,
                       sid);
     if (written <= 0 || written >= (int)sizeof(text)) {
         return TG_MTPROTO_SESSION_BUFFER_TOO_SMALL;
@@ -222,6 +230,20 @@ tg_mtproto_session_status tg_mtproto_session_load(const char *path,
     if (tg_mtproto_parse_hex32(value, &loaded.server_salt_lo) != 0) {
         return TG_MTPROTO_SESSION_PARSE_ERROR;
     }
+    value = tg_mtproto_line_value(text, "seq_no");
+    if (value != 0) {
+        loaded.seq_no = strtoul(value, 0, 10);
+    }
+    value = tg_mtproto_line_value(text, "last_msg_id_hi");
+    if (value != 0 &&
+        tg_mtproto_parse_hex32(value, &loaded.last_msg_id_hi) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+    value = tg_mtproto_line_value(text, "last_msg_id_lo");
+    if (value != 0 &&
+        tg_mtproto_parse_hex32(value, &loaded.last_msg_id_lo) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
     value = tg_mtproto_line_value(text, "session_id");
     if (tg_mtproto_parse_hex_bytes(value, loaded.session_id,
                                    sizeof(loaded.session_id)) != 0) {
@@ -260,6 +282,8 @@ tg_mtproto_session_status tg_mtproto_session_save_authorization(
                       "server_salt_hi=%08lx\n"
                       "server_salt_lo=%08lx\n"
                       "seq_no=%lu\n"
+                      "last_msg_id_hi=%08lx\n"
+                      "last_msg_id_lo=%08lx\n"
                       "session_id=%s\n"
                       "auth_key=%s\n",
                       session->dc_id,
@@ -268,6 +292,8 @@ tg_mtproto_session_status tg_mtproto_session_save_authorization(
                       session->server_salt_hi & 0xffffffffUL,
                       session->server_salt_lo & 0xffffffffUL,
                       session->seq_no,
+                      session->last_msg_id_hi & 0xffffffffUL,
+                      session->last_msg_id_lo & 0xffffffffUL,
                       sid,
                       key_hex);
     if (written <= 0 || written >= (int)sizeof(text)) {
@@ -328,6 +354,16 @@ tg_mtproto_session_status tg_mtproto_session_load_authorization(
     if (value != 0) {
         loaded.seq_no = strtoul(value, 0, 10);
     }
+    value = tg_mtproto_line_value(text, "last_msg_id_hi");
+    if (value != 0 &&
+        tg_mtproto_parse_hex32(value, &loaded.last_msg_id_hi) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
+    value = tg_mtproto_line_value(text, "last_msg_id_lo");
+    if (value != 0 &&
+        tg_mtproto_parse_hex32(value, &loaded.last_msg_id_lo) != 0) {
+        return TG_MTPROTO_SESSION_PARSE_ERROR;
+    }
     value = tg_mtproto_line_value(text, "session_id");
     if (tg_mtproto_parse_hex_bytes(value, loaded.session_id,
                                    sizeof(loaded.session_id)) != 0) {
@@ -383,6 +419,8 @@ int tg_mtproto_session_self_test(void)
     session.server_salt_hi = 0x99aabbccUL;
     session.server_salt_lo = 0xddeeff00UL;
     session.seq_no = 7UL;
+    session.last_msg_id_hi = 0x01020304UL;
+    session.last_msg_id_lo = 0x05060708UL;
     for (i = 0; i < 8; ++i) {
         session.session_id[i] = (unsigned char)(0xa0 + i);
     }
@@ -400,6 +438,9 @@ int tg_mtproto_session_self_test(void)
         loaded.auth_key_id_lo != session.auth_key_id_lo ||
         loaded.server_salt_hi != session.server_salt_hi ||
         loaded.server_salt_lo != session.server_salt_lo ||
+        loaded.seq_no != session.seq_no ||
+        loaded.last_msg_id_hi != session.last_msg_id_hi ||
+        loaded.last_msg_id_lo != session.last_msg_id_lo ||
         memcmp(loaded.session_id, session.session_id,
                sizeof(session.session_id)) != 0) {
         return 2;
@@ -446,6 +487,8 @@ int tg_mtproto_session_self_test(void)
         session.server_salt_hi != loaded.server_salt_hi ||
         session.server_salt_lo != loaded.server_salt_lo ||
         session.seq_no != loaded.seq_no ||
+        session.last_msg_id_hi != loaded.last_msg_id_hi ||
+        session.last_msg_id_lo != loaded.last_msg_id_lo ||
         memcmp(session.session_id, loaded.session_id,
                sizeof(session.session_id)) != 0 ||
         memcmp(loaded_key, auth_key, sizeof(auth_key)) != 0) {

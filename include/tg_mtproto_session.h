@@ -24,6 +24,8 @@ typedef struct tg_mtproto_session {
     unsigned long server_salt_hi;
     unsigned long server_salt_lo;
     unsigned long seq_no;
+    unsigned long last_msg_id_hi;
+    unsigned long last_msg_id_lo;
     unsigned char session_id[8];
 } tg_mtproto_session;
 

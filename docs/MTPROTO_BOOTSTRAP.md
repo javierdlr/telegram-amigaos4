@@ -100,6 +100,11 @@ Saved Messages. Encrypted RPC responses are acknowledged with best-effort
 `msgs_ack` messages before closing the connection. Use `auth.forget` to remove
 plaintext local auth-key test files.
 
+Saved authorization files persist `seq_no` and the last client `msg_id`, so
+short command-line probes can run back-to-back without reusing stale message
+state. The encrypted query helper retries once after `bad_server_salt` and after
+recoverable sequence-number `bad_msg_notification` errors.
+
 Run:
 
 ```text
