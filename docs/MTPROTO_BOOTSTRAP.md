@@ -85,6 +85,8 @@ successful Telegram response, and only when secure random bytes are available.
 human-entered code. `SESSION_PASSWORD_NEEDED` is reported as unsupported until
 SRP password login is implemented. `auth.signUp` is available for Test DC
 numbers that have a validated code hash but do not yet have a user record.
+For Telegram Test DC endpoints, pass either the raw `10000 + dc` value or the
+`test:<dc>` shorthand, for example `test:2`.
 See [MTPROTO_TEST_DC.md](MTPROTO_TEST_DC.md) for the real Test DC command flow.
 
 After sign-in, `help.getConfig` is the first saved-session read-only probe.

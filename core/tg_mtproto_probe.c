@@ -230,14 +230,28 @@ static int tg_mtproto_parse_dc_id(const char *text, long *dc_id)
 {
     char *endptr;
     long value;
+    const char *number_text;
+    int is_test_dc;
 
     if (text == 0 || text[0] == '\0' || dc_id == 0) {
         return 1;
     }
-    value = strtol(text, &endptr, 10);
-    if (endptr == text || *endptr != '\0' || value < -100000L ||
+    is_test_dc = 0;
+    number_text = text;
+    if (strncmp(text, "test:", 5U) == 0) {
+        is_test_dc = 1;
+        number_text = text + 5U;
+    }
+    value = strtol(number_text, &endptr, 10);
+    if (endptr == number_text || *endptr != '\0' || value < -100000L ||
         value > 100000L) {
         return 1;
+    }
+    if (is_test_dc) {
+        if (value < 1L || value > 9999L) {
+            return 1;
+        }
+        value += 10000L;
     }
     *dc_id = value;
     return 0;
@@ -882,7 +896,11 @@ static int tg_mtproto_open_auth_context(const char *host,
             params_ok.encrypted_answer, params_ok.encrypted_answer_length,
             new_nonce, nonce, res_pq.server_nonce, &inner) !=
             TG_MTPROTO_TL_OK) {
-        fprintf(stream, "%s: server-dh-parse-failed\n", label);
+        fprintf(stream,
+                "%s: server-dh-parse-failed response-bytes %lu first-word 0x%08lx constructor 0x%08lx\n",
+                label, response_length,
+                response_length >= 4UL ? tg_mtproto_read_u32_le(response) : 0UL,
+                constructor);
         tg_mtproto_close_auth_context(context);
         return 2;
     }
@@ -1263,6 +1281,16 @@ int tg_mtproto_auth_send_code(const char *host,
     }
 
     fprintf(stream, "%s: code sent\n", label);
+    fprintf(stream, "%s: code type 0x%08lx, hash length %lu\n",
+            label, sent_code.type_constructor,
+            (unsigned long)strlen(sent_code.phone_code_hash));
+    if (sent_code.has_type_length) {
+        fprintf(stream, "%s: code length %lu\n", label,
+                sent_code.type_length);
+    }
+    if (sent_code.has_timeout) {
+        fprintf(stream, "%s: timeout %lu\n", label, sent_code.timeout);
+    }
     fprintf(stream, "%s: auth state saved\n", label);
     fprintf(stream, "%s: phone_code_hash saved\n", label);
     return 0;
@@ -2034,6 +2062,7 @@ int tg_mtproto_req_pq_probe(const char *host, const char *port, FILE *stream)
     unsigned long constructor;
     unsigned long p;
     unsigned long q;
+    unsigned int i;
     tg_mtproto_message_id msg_id;
     tg_mtproto_res_pq res_pq;
     tg_mtproto_tl_writer writer;
@@ -2112,10 +2141,9 @@ int tg_mtproto_req_pq_probe(const char *host, const char *port, FILE *stream)
     fprintf(stream,
             "mtproto req_pq probe: pq-bytes %lu, fingerprints %u\n",
             res_pq.pq_length, res_pq.fingerprint_count);
-    if (res_pq.fingerprint_count > 0U) {
-        fprintf(stream,
-                "mtproto req_pq probe: first-fingerprint 0x%08lx%08lx\n",
-                res_pq.fingerprints[0].hi, res_pq.fingerprints[0].lo);
+    for (i = 0U; i < res_pq.fingerprint_count; ++i) {
+        fprintf(stream, "mtproto req_pq probe: fingerprint[%u] 0x%08lx%08lx\n",
+                i, res_pq.fingerprints[i].hi, res_pq.fingerprints[i].lo);
     }
     if (tg_mtproto_pq_factor(res_pq.pq, res_pq.pq_length, &p, &q) != 0) {
         fputs("mtproto req_pq probe: pq-factor-failed\n", stream);

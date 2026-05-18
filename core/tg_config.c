@@ -888,6 +888,7 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Send a text message to Saved Messages\n");
     fprintf(stream, "      --mtproto-auth-forget <auth-file> [code-hash-file]\n");
     fprintf(stream, "                         Delete local MTProto auth test files\n");
+    fprintf(stream, "                         Test DC ids may be passed as 10000+dc or test:<dc>\n");
     fprintf(stream, "      --telegram-tls-status\n");
     fprintf(stream, "                         Print current TLS security status\n");
     fprintf(stream, "      --json-test <json> <field>\n");

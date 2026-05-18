@@ -92,7 +92,9 @@ static tg_mtproto_tl_status tg_skip_string(tg_mtproto_tl_reader *reader)
 
 static tg_mtproto_tl_status tg_skip_auth_sent_code_type(
     tg_mtproto_tl_reader *reader,
-    unsigned long *type_constructor)
+    unsigned long *type_constructor,
+    unsigned long *type_length,
+    int *has_type_length)
 {
     unsigned long constructor;
     unsigned long flags;
@@ -105,12 +107,27 @@ static tg_mtproto_tl_status tg_skip_auth_sent_code_type(
     if (type_constructor != 0) {
         *type_constructor = constructor;
     }
+    if (type_length != 0) {
+        *type_length = 0UL;
+    }
+    if (has_type_length != 0) {
+        *has_type_length = 0;
+    }
 
     switch (constructor) {
     case 0x3dbb5986UL: /* auth.sentCodeTypeApp */
     case 0xc000bba2UL: /* auth.sentCodeTypeSms */
     case 0x5353e5a7UL: /* auth.sentCodeTypeCall */
-        return tg_mtproto_tl_read_u32(reader, &flags);
+        status = tg_mtproto_tl_read_u32(reader, &flags);
+        if (status == TG_MTPROTO_TL_OK) {
+            if (type_length != 0) {
+                *type_length = flags;
+            }
+            if (has_type_length != 0) {
+                *has_type_length = 1;
+            }
+        }
+        return status;
     case 0xab03c6d9UL: /* auth.sentCodeTypeFlashCall */
         return tg_skip_string(reader);
     case 0x82006484UL: /* auth.sentCodeTypeMissedCall */
@@ -118,6 +135,14 @@ static tg_mtproto_tl_status tg_skip_auth_sent_code_type(
         status = tg_skip_string(reader);
         if (status == TG_MTPROTO_TL_OK) {
             status = tg_mtproto_tl_read_u32(reader, &flags);
+        }
+        if (status == TG_MTPROTO_TL_OK) {
+            if (type_length != 0) {
+                *type_length = flags;
+            }
+            if (has_type_length != 0) {
+                *has_type_length = 1;
+            }
         }
         return status;
     case 0xf450f59bUL: /* auth.sentCodeTypeEmailCode */
@@ -127,6 +152,14 @@ static tg_mtproto_tl_status tg_skip_auth_sent_code_type(
         }
         if (status == TG_MTPROTO_TL_OK) {
             status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        if (status == TG_MTPROTO_TL_OK) {
+            if (type_length != 0) {
+                *type_length = constructor;
+            }
+            if (has_type_length != 0) {
+                *has_type_length = 1;
+            }
         }
         if (status == TG_MTPROTO_TL_OK && (flags & 8UL) != 0UL) {
             status = tg_mtproto_tl_read_u32(reader, &constructor);
@@ -159,6 +192,14 @@ static tg_mtproto_tl_status tg_skip_auth_sent_code_type(
         }
         if (status == TG_MTPROTO_TL_OK) {
             status = tg_mtproto_tl_read_u32(reader, &constructor);
+        }
+        if (status == TG_MTPROTO_TL_OK) {
+            if (type_length != 0) {
+                *type_length = constructor;
+            }
+            if (has_type_length != 0) {
+                *has_type_length = 1;
+            }
         }
         return status;
     case 0xa416ac81UL: /* auth.sentCodeTypeSmsWord */
@@ -625,7 +666,9 @@ tg_mtproto_tl_status tg_mtproto_parse_auth_sent_code(
 
     status = tg_mtproto_tl_read_u32(&reader, &flags);
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_skip_auth_sent_code_type(&reader, &out->type_constructor);
+        status = tg_skip_auth_sent_code_type(&reader, &out->type_constructor,
+                                             &out->type_length,
+                                             &out->has_type_length);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_read_string_copy(&reader, out->phone_code_hash,
@@ -1048,6 +1091,8 @@ int tg_mtproto_login_self_test(void)
                                         writer.length, &sent_code) !=
             TG_MTPROTO_TL_OK ||
         sent_code.type_constructor != 0x3dbb5986UL ||
+        sent_code.type_length != 5UL ||
+        !sent_code.has_type_length ||
         strcmp(sent_code.phone_code_hash, "hash") != 0) {
         return 2;
     }

@@ -126,6 +126,9 @@ after Telegram accepts the request. Saving is refused when the platform backend
 cannot provide secure random bytes. `auth.signIn` loads those files and sends
 the human-entered code.
 
+For Telegram Test DC endpoints, pass either `10000 + dc` as the `<dc-id>` or use
+the `test:<dc>` shorthand, for example `test:2`.
+
 These commands do not implement SRP password login yet. If Telegram returns
 `SESSION_PASSWORD_NEEDED`, the account requires 2FA support that is still
 pending. `account.getPassword` is present only to confirm whether SRP metadata

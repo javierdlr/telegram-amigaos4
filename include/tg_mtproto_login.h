@@ -30,8 +30,10 @@ typedef struct tg_mtproto_bad_msg_notification {
 typedef struct tg_mtproto_sent_code {
     unsigned long constructor;
     unsigned long type_constructor;
+    unsigned long type_length;
     unsigned long timeout;
     int has_timeout;
+    int has_type_length;
     char phone_code_hash[128];
 } tg_mtproto_sent_code;
 
