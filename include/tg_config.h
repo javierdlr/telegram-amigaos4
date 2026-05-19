@@ -40,6 +40,7 @@ typedef struct tg_config {
     const char *mtproto_auth_dc_id;
     const char *mtproto_auth_api_id;
     const char *mtproto_auth_api_hash;
+    const char *mtproto_auth_api_file;
     const char *mtproto_auth_phone;
     const char *mtproto_auth_file;
     const char *mtproto_auth_code_hash_file;
@@ -158,11 +159,14 @@ typedef struct tg_config {
     int run_mtproto_req_pq_probe;
     int run_mtproto_req_dh_probe;
     int run_mtproto_auth_send_code;
+    int run_mtproto_auth_send_code_file;
     int run_mtproto_auth_sign_in;
     int run_mtproto_auth_sign_up;
     int run_mtproto_auth_get_config;
     int run_mtproto_auth_get_password;
     int run_mtproto_auth_check_password;
+    int run_mtproto_auth_status;
+    int run_mtproto_auth_status_file;
     int run_mtproto_auth_get_self;
     int run_mtproto_auth_get_dialogs;
     int run_mtproto_auth_get_history_self;

@@ -1149,6 +1149,201 @@ static int tg_mtproto_load_password_file(const char *path,
     return 0;
 }
 
+static void tg_mtproto_copy_trimmed_field(const char *source,
+                                          unsigned long source_length,
+                                          char *out,
+                                          unsigned long out_size)
+{
+    unsigned long start;
+    unsigned long end;
+    unsigned long length;
+
+    if (out == 0 || out_size == 0UL) {
+        return;
+    }
+    out[0] = '\0';
+    if (source == 0) {
+        return;
+    }
+    start = 0UL;
+    while (start < source_length &&
+           (source[start] == ' ' || source[start] == '\t')) {
+        ++start;
+    }
+    end = source_length;
+    while (end > start &&
+           (source[end - 1UL] == ' ' || source[end - 1UL] == '\t' ||
+            source[end - 1UL] == '\r' || source[end - 1UL] == '\n')) {
+        --end;
+    }
+    length = end - start;
+    if (length >= out_size) {
+        length = out_size - 1UL;
+    }
+    if (length > 0UL) {
+        memcpy(out, source + start, (size_t)length);
+    }
+    out[length] = '\0';
+}
+
+static int tg_mtproto_load_api_credentials(const char *path,
+                                           char *api_id,
+                                           unsigned long api_id_size,
+                                           char *api_hash,
+                                           unsigned long api_hash_size,
+                                           FILE *stream,
+                                           const char *label)
+{
+    char text[256];
+    unsigned long text_length;
+    unsigned long offset;
+    unsigned long line_start;
+    unsigned int field;
+    tg_file_status file_status;
+
+    if (api_id != 0 && api_id_size > 0UL) {
+        api_id[0] = '\0';
+    }
+    if (api_hash != 0 && api_hash_size > 0UL) {
+        api_hash[0] = '\0';
+    }
+    if (path == 0 || api_id == 0 || api_hash == 0 ||
+        api_id_size == 0UL || api_hash_size == 0UL) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: api-file-invalid\n", label);
+        }
+        return 2;
+    }
+
+    file_status = tg_file_read_text(path, text, sizeof(text), &text_length);
+    if (file_status == TG_FILE_TOO_LARGE) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: api-file-too-large\n", label);
+        }
+        return 2;
+    }
+    if (file_status != TG_FILE_OK) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: api-file-load-failed (%s)\n", label,
+                    tg_file_status_name(file_status));
+        }
+        return 2;
+    }
+
+    field = 0U;
+    offset = 0UL;
+    while (offset <= text_length && field < 2U) {
+        line_start = offset;
+        while (offset < text_length && text[offset] != '\n' &&
+               text[offset] != '\r') {
+            ++offset;
+        }
+        if (offset > line_start) {
+            if (field == 0U) {
+                tg_mtproto_copy_trimmed_field(text + line_start,
+                                              offset - line_start,
+                                              api_id, api_id_size);
+                if (api_id[0] != '\0') {
+                    ++field;
+                }
+            } else {
+                tg_mtproto_copy_trimmed_field(text + line_start,
+                                              offset - line_start,
+                                              api_hash, api_hash_size);
+                if (api_hash[0] != '\0') {
+                    ++field;
+                }
+            }
+        }
+        while (offset < text_length &&
+               (text[offset] == '\n' || text[offset] == '\r')) {
+            ++offset;
+        }
+        if (offset == text_length) {
+            break;
+        }
+    }
+    tg_mtproto_secure_zero(text, sizeof(text));
+    if (api_id[0] == '\0' || api_hash[0] == '\0') {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: api-file-incomplete\n", label);
+        }
+        tg_mtproto_secure_zero(api_hash, api_hash_size);
+        return 2;
+    }
+    return 0;
+}
+
+static int tg_mtproto_load_api_id_file(const char *path,
+                                       char *api_id,
+                                       unsigned long api_id_size,
+                                       FILE *stream,
+                                       const char *label)
+{
+    char text[256];
+    unsigned long text_length;
+    unsigned long offset;
+    unsigned long line_start;
+    tg_file_status file_status;
+
+    if (api_id != 0 && api_id_size > 0UL) {
+        api_id[0] = '\0';
+    }
+    if (path == 0 || api_id == 0 || api_id_size == 0UL) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: api-file-invalid\n", label);
+        }
+        return 2;
+    }
+
+    file_status = tg_file_read_text(path, text, sizeof(text), &text_length);
+    if (file_status == TG_FILE_TOO_LARGE) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: api-file-too-large\n", label);
+        }
+        return 2;
+    }
+    if (file_status != TG_FILE_OK) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: api-file-load-failed (%s)\n", label,
+                    tg_file_status_name(file_status));
+        }
+        return 2;
+    }
+
+    offset = 0UL;
+    while (offset <= text_length) {
+        line_start = offset;
+        while (offset < text_length && text[offset] != '\n' &&
+               text[offset] != '\r') {
+            ++offset;
+        }
+        if (offset > line_start) {
+            tg_mtproto_copy_trimmed_field(text + line_start,
+                                          offset - line_start,
+                                          api_id, api_id_size);
+            if (api_id[0] != '\0') {
+                break;
+            }
+        }
+        while (offset < text_length &&
+               (text[offset] == '\n' || text[offset] == '\r')) {
+            ++offset;
+        }
+        if (offset == text_length) {
+            break;
+        }
+    }
+    tg_mtproto_secure_zero(text, sizeof(text));
+    if (api_id[0] == '\0') {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: api-file-incomplete\n", label);
+        }
+        return 2;
+    }
+    return 0;
+}
+
 static int tg_mtproto_print_rpc_error(const char *label,
                                       const tg_mtproto_rpc_result *result,
                                       FILE *stream)
@@ -1400,6 +1595,32 @@ int tg_mtproto_auth_send_code(const char *host,
     fprintf(stream, "%s: auth state saved\n", label);
     fprintf(stream, "%s: phone_code_hash saved\n", label);
     return 0;
+}
+
+int tg_mtproto_auth_send_code_file(const char *host,
+                                   const char *port,
+                                   const char *dc_id_text,
+                                   const char *api_file,
+                                   const char *phone_number,
+                                   const char *auth_file,
+                                   const char *code_hash_file,
+                                   FILE *stream)
+{
+    char api_id[32];
+    char api_hash[96];
+    int rc;
+    static const char label[] = "mtproto auth.sendCode";
+
+    if (tg_mtproto_load_api_credentials(api_file, api_id, sizeof(api_id),
+                                        api_hash, sizeof(api_hash),
+                                        stream, label) != 0) {
+        return 2;
+    }
+    rc = tg_mtproto_auth_send_code(host, port, dc_id_text, api_id, api_hash,
+                                   phone_number, auth_file, code_hash_file,
+                                   stream);
+    tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
+    return rc;
 }
 
 int tg_mtproto_auth_sign_in(const char *host,
@@ -2005,6 +2226,82 @@ int tg_mtproto_auth_check_password(const char *host,
     fprintf(stream, "%s: signed in\n", label);
     fprintf(stream, "%s: auth state updated\n", label);
     return 0;
+}
+
+int tg_mtproto_auth_status(const char *host,
+                           const char *port,
+                           const char *api_id_text,
+                           const char *auth_file,
+                           const char *dc_id_text,
+                           FILE *stream)
+{
+    unsigned char query[64];
+    unsigned long query_length;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_user_summary user;
+    static const char label[] = "mtproto auth.status";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 || dc_id_text == 0) {
+        if (stream != 0) {
+            fputs("mtproto auth.status: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_users_get_self(&writer) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    query_length = writer.length;
+    if (tg_mtproto_send_saved_query(host, port, api_id_text, auth_file,
+                                    dc_id_text, query, query_length,
+                                    &result, stream, label) != 0) {
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+        return 2;
+    }
+    if (tg_mtproto_parse_user_vector_first(result.result_constructor,
+                                           result.result_body,
+                                           result.result_body_length,
+                                           &user) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: session-state-unknown constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: session valid\n", label);
+    fprintf(stream, "%s: auth state updated\n", label);
+    return 0;
+}
+
+int tg_mtproto_auth_status_file(const char *host,
+                                const char *port,
+                                const char *api_file,
+                                const char *auth_file,
+                                const char *dc_id_text,
+                                FILE *stream)
+{
+    char api_id[32];
+    int rc;
+    static const char label[] = "mtproto auth.status";
+
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0) {
+        return 2;
+    }
+    rc = tg_mtproto_auth_status(host, port, api_id, auth_file, dc_id_text,
+                                stream);
+    return rc;
 }
 
 int tg_mtproto_auth_get_self(const char *host,
@@ -2873,8 +3170,14 @@ int tg_mtproto_probe_self_test(void)
     static const char missing_password_path[] =
         "telegram-mtproto-password-missing-self-test.tmp";
     static const char password_text[] = "secret\r\n";
+    static const char api_path[] = "telegram-mtproto-api-self-test.tmp";
+    static const char missing_api_path[] =
+        "telegram-mtproto-api-missing-self-test.tmp";
+    static const char api_text[] = "\n 12345 \r\n abcdef0123456789 \n";
     unsigned char payload[64];
     unsigned char packet[80];
+    char api_id[32];
+    char api_hash[96];
     char password[16];
     unsigned long password_length;
     tg_mtproto_tl_writer writer;
@@ -2927,6 +3230,39 @@ int tg_mtproto_probe_self_test(void)
         return 2;
     }
     (void)remove(password_path);
+
+    (void)remove(api_path);
+    (void)remove(missing_api_path);
+    if (tg_mtproto_load_api_credentials(missing_api_path, api_id,
+                                        sizeof(api_id), api_hash,
+                                        sizeof(api_hash), 0, 0) == 0) {
+        return 2;
+    }
+    if (tg_file_write_text(api_path, "12345\n", 6UL) != TG_FILE_OK ||
+        tg_mtproto_load_api_credentials(api_path, api_id, sizeof(api_id),
+                                        api_hash, sizeof(api_hash),
+                                        0, 0) == 0) {
+        (void)remove(api_path);
+        return 2;
+    }
+    if (tg_file_write_text(api_path, api_text,
+                           (unsigned long)strlen(api_text)) != TG_FILE_OK ||
+        tg_mtproto_load_api_credentials(api_path, api_id, sizeof(api_id),
+                                        api_hash, sizeof(api_hash),
+                                        0, 0) != 0 ||
+        strcmp(api_id, "12345") != 0 ||
+        strcmp(api_hash, "abcdef0123456789") != 0) {
+        (void)remove(api_path);
+        return 2;
+    }
+    if (tg_mtproto_load_api_id_file(api_path, api_id, sizeof(api_id),
+                                    0, 0) != 0 ||
+        strcmp(api_id, "12345") != 0) {
+        (void)remove(api_path);
+        return 2;
+    }
+    tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
+    (void)remove(api_path);
 
     return 0;
 }

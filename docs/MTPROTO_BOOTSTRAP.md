@@ -68,11 +68,14 @@ The optional user-auth commands are:
 
 ```text
 telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> <auth-file> <code-hash-file>
+telegram-test --mtproto-auth-send-code-file <host> <port> <dc-id> <api-file> <phone> <auth-file> <code-hash-file>
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
 telegram-test --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <first-name> <last-name> <dc-id>
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>
+telegram-test --mtproto-auth-status <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-status-file <host> <port> <api-file> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-dialogs <host> <port> <api-id> <auth-file> <dc-id> <limit>
 telegram-test --mtproto-auth-get-history-self <host> <port> <api-id> <auth-file> <dc-id> <limit>
@@ -93,10 +96,28 @@ For Telegram Test DC endpoints, pass either the raw `10000 + dc` value or the
 `test:<dc>` shorthand, for example `test:2`.
 See [MTPROTO_TEST_DC.md](MTPROTO_TEST_DC.md) for the real Test DC command flow.
 
+To avoid putting `api_hash` in shell history or screenshots, create a local
+ignored `telegram-api.txt` file with exactly two non-empty lines:
+
+```text
+<api_id>
+<api_hash>
+```
+
+Use `--mtproto-auth-send-code-file` for the first login step. Later status
+checks can use `--mtproto-auth-status-file`, which reads only the `api_id` from
+that same file and does not print account details.
+
+The same status check is wrapped by:
+
+```text
+scripts/mtproto-login-status.sh <host> <port> telegram-api.txt telegram-auth.bin <dc-id> [program]
+```
+
 Minimal real-account validation sequence:
 
 ```text
-telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> telegram-auth.bin phone-code-hash.txt
+telegram-test --mtproto-auth-send-code-file <host> <port> <dc-id> telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> telegram-auth.bin <phone> phone-code-hash.txt <code> <dc-id>
 ```
 
@@ -105,12 +126,13 @@ If sign-in reports `two-factor-password-required`, create
 
 ```text
 telegram-test --mtproto-auth-check-password <host> <port> <api-id> telegram-auth.bin <dc-id> telegram-password.txt
-telegram-test --mtproto-auth-get-self <host> <port> <api-id> telegram-auth.bin <dc-id>
+telegram-test --mtproto-auth-status-file <host> <port> telegram-api.txt telegram-auth.bin <dc-id>
 ```
 
-`telegram-auth*.bin`, `phone-code-hash*.txt`, `telegram-password.txt`,
-`*.auth`, `*.session` and `*.password.txt` are ignored by Git. Keep them local;
-do not paste their contents or terminal screenshots that reveal them.
+`telegram-api.txt`, `telegram-auth*.bin`, `phone-code-hash*.txt`,
+`telegram-password.txt`, `*.api`, `*.auth`, `*.session` and `*.password.txt`
+are ignored by Git. Keep them local; do not paste their contents or terminal
+screenshots that reveal them.
 
 After sign-in, `help.getConfig` is the first saved-session read-only probe.
 `users.getUsers(inputUserSelf)` prints a minimal current-user summary and
@@ -118,7 +140,9 @@ confirms that the saved session represents a user identity. `account.getPassword
 parses the current SRP KDF constructor, salt lengths, `g`, prime length, SRP
 `B` length and `srp_id`. `auth.checkPassword` fetches those SRP parameters,
 derives the SRP proof in memory, sends `auth.checkPassword`, and saves the
-updated auth state on success. `messages.getDialogs` and
+updated auth state on success. `auth.status` probes the saved session with
+`users.getUsers(inputUserSelf)` but prints only session status, not user
+identity details. `messages.getDialogs` and
 `messages.getHistory(inputPeerSelf)` print constructor/count summaries, while
 `messages.sendMessage(inputPeerSelf)` sends a cautious first write probe to
 Saved Messages. Encrypted RPC responses are acknowledged with best-effort

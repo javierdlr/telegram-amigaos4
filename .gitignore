@@ -6,9 +6,12 @@ build/*
 
 telegram-token.txt
 telegram-password.txt
+telegram-api.txt
+mtproto-api.txt
 telegram-auth*.bin
 telegram-session*.bin
 phone-code-hash*.txt
+*.api
 *.token
 *.token.txt
 *.password.txt
