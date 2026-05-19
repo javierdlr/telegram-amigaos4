@@ -36,6 +36,7 @@ cp "$ROOT_DIR/docs/MTPROTO_QUICK_TEST.md" "$DEST_DIR/MTPROTO_QUICK_TEST.md"
 cp "$ROOT_DIR/docs/MTPROTO_REAL_LOGIN.md" "$DEST_DIR/MTPROTO_REAL_LOGIN.md"
 mkdir -p "$DEST_DIR/scripts"
 cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
+cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
 cp "$ROOT_DIR/scripts/RunMorphOSPreflight" "$DEST_DIR/RunMorphOSPreflight"
 cp "$ROOT_DIR/scripts/RunMorphOSGetMe" "$DEST_DIR/RunMorphOSGetMe"
 cp "$ROOT_DIR/scripts/RunMorphOSHumanChat" "$DEST_DIR/RunMorphOSHumanChat"
@@ -122,7 +123,8 @@ OpenSSL builds can request certificate validation with:
 
 Quick user instructions are in USER_RUNBOOK.md. Full platform notes are in
 README.md. The common checklist is in HOW_TO_TEST.md. TLS validation details
-are in TLS_CERTIFICATES.md.
+are in TLS_CERTIFICATES.md. MTProto user-login notes are in
+MTPROTO_QUICK_TEST.md and MTPROTO_REAL_LOGIN.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then

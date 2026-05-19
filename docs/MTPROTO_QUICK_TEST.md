@@ -49,10 +49,22 @@ Send code:
 scripts/mtproto-send-code.sh $HOST $PORT $DC_ID telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
 ```
 
+On Amiga shells, use:
+
+```text
+Execute RunMTProtoSendCode <phone>
+```
+
 Complete sign-in:
 
 ```text
 scripts/mtproto-sign-in.sh $HOST $PORT telegram-api.txt telegram-auth.bin <phone> phone-code-hash.txt <code> $DC_ID
+```
+
+On Amiga shells, use:
+
+```text
+Execute RunMTProtoSignIn <phone> <code>
 ```
 
 If Telegram requires 2FA, put only the password in `telegram-password.txt` and
@@ -62,12 +74,24 @@ run:
 scripts/mtproto-check-password.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-password.txt
 ```
 
+On Amiga shells, use:
+
+```text
+Execute RunMTProtoCheckPassword
+```
+
 ## Smoke
 
 After sign-in:
 
 ```text
 scripts/mtproto-login-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
+```
+
+On Amiga shells, use:
+
+```text
+Execute RunMTProtoLoginSmoke
 ```
 
 Expected high-level result:

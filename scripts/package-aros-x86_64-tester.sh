@@ -52,6 +52,7 @@ cp "$ROOT_DIR/docs/MTPROTO_QUICK_TEST.md" "$DEST_DIR/MTPROTO_QUICK_TEST.md"
 cp "$ROOT_DIR/docs/MTPROTO_REAL_LOGIN.md" "$DEST_DIR/MTPROTO_REAL_LOGIN.md"
 mkdir -p "$DEST_DIR/scripts"
 cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
+cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AROS x86_64 offline pre-alpha tester
@@ -97,7 +98,8 @@ Hosted AROS x86_64 runtime notes:
   - Do not rely on interactive console mode through this SSH path yet.
 
 Full notes are in README.md. The common checklist is in HOW_TO_TEST.md.
-TLS validation details are in TLS_CERTIFICATES.md.
+TLS validation details are in TLS_CERTIFICATES.md. MTProto user-login notes
+are in MTPROTO_QUICK_TEST.md and MTPROTO_REAL_LOGIN.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then

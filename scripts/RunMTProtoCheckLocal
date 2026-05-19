@@ -1,0 +1,47 @@
+; Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+; SPDX-License-Identifier: MIT
+;
+; Validate local MTProto files without printing secrets.
+;
+;   Execute RunMTProtoCheckLocal
+;   Execute RunMTProtoCheckLocal telegram-api.txt telegram-auth.bin telegram-password.txt phone-code-hash.txt telegram-test
+
+.KEY API,AUTH,PASSWORD,CODEHASH,PROGRAM
+.BRA {
+.KET }
+
+Echo "Telegram Amiga MTProto local file check"
+FailAt 21
+Stack 65536
+
+IF "{API}" EQ ""
+    SET APIFILE "telegram-api.txt"
+ELSE
+    SET APIFILE "{API}"
+ENDIF
+
+IF "{AUTH}" EQ ""
+    SET AUTHFILE "telegram-auth.bin"
+ELSE
+    SET AUTHFILE "{AUTH}"
+ENDIF
+
+IF "{PASSWORD}" EQ ""
+    SET PASSFILE ""
+ELSE
+    SET PASSFILE "{PASSWORD}"
+ENDIF
+
+IF "{CODEHASH}" EQ ""
+    SET HASHFILE ""
+ELSE
+    SET HASHFILE "{CODEHASH}"
+ENDIF
+
+IF "{PROGRAM}" EQ ""
+    Protect telegram-test +e
+    telegram-test --mtproto-auth-check-local-files "$APIFILE" "$AUTHFILE" "$PASSFILE" "$HASHFILE"
+ELSE
+    Protect {PROGRAM} +e
+    {PROGRAM} --mtproto-auth-check-local-files "$APIFILE" "$AUTHFILE" "$PASSFILE" "$HASHFILE"
+ENDIF

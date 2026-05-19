@@ -48,6 +48,7 @@ cp "$ROOT_DIR/docs/MTPROTO_QUICK_TEST.md" "$DEST_DIR/MTPROTO_QUICK_TEST.md"
 cp "$ROOT_DIR/docs/MTPROTO_REAL_LOGIN.md" "$DEST_DIR/MTPROTO_REAL_LOGIN.md"
 mkdir -p "$DEST_DIR/scripts"
 cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
+cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
 cp "$ROOT_DIR/scripts/RunAmigaOS3Preflight" "$DEST_DIR/RunAmigaOS3Preflight"
 cp "$ROOT_DIR/scripts/RunAmigaOS3GetMe" "$DEST_DIR/RunAmigaOS3GetMe"
 cp "$ROOT_DIR/scripts/RunAmigaOS3HumanChat" "$DEST_DIR/RunAmigaOS3HumanChat"
@@ -158,7 +159,8 @@ recently updated chat.
 
 Quick user instructions are in USER_RUNBOOK.md. Full platform notes are in
 README.md. The common checklist is in HOW_TO_TEST.md. TLS validation details
-are in TLS_CERTIFICATES.md.
+are in TLS_CERTIFICATES.md. MTProto user-login notes are in
+MTPROTO_QUICK_TEST.md and MTPROTO_REAL_LOGIN.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then

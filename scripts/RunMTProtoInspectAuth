@@ -1,0 +1,29 @@
+; Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+; SPDX-License-Identifier: MIT
+;
+; Inspect saved MTProto auth state without printing auth key material.
+;
+;   Execute RunMTProtoInspectAuth
+;   Execute RunMTProtoInspectAuth telegram-auth.bin telegram-test
+
+.KEY AUTH,PROGRAM
+.BRA {
+.KET }
+
+Echo "Telegram Amiga MTProto auth inspect"
+FailAt 21
+Stack 65536
+
+IF "{AUTH}" EQ ""
+    SET AUTHFILE "telegram-auth.bin"
+ELSE
+    SET AUTHFILE "{AUTH}"
+ENDIF
+
+IF "{PROGRAM}" EQ ""
+    Protect telegram-test +e
+    telegram-test --mtproto-auth-inspect "$AUTHFILE"
+ELSE
+    Protect {PROGRAM} +e
+    {PROGRAM} --mtproto-auth-inspect "$AUTHFILE"
+ENDIF
