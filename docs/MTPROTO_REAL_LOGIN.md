@@ -88,6 +88,9 @@ Validate without printing account identity:
 
 ```text
 telegram-test --mtproto-auth-status-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
+telegram-test --mtproto-auth-get-config-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
+telegram-test --mtproto-auth-get-dialogs-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
+telegram-test --mtproto-auth-get-history-self-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 ```
 
 Wrapper equivalents:
@@ -97,7 +100,15 @@ scripts/mtproto-send-code.sh $HOST $PORT $DC_ID telegram-api.txt <phone> telegra
 scripts/mtproto-sign-in.sh $HOST $PORT <api_id> telegram-auth.bin <phone> phone-code-hash.txt <code> $DC_ID
 scripts/mtproto-check-password.sh $HOST $PORT <api_id> telegram-auth.bin $DC_ID telegram-password.txt
 scripts/mtproto-login-status.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
+scripts/mtproto-get-config.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
+scripts/mtproto-get-dialogs.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
+scripts/mtproto-get-history-self.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
+scripts/mtproto-readonly-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 ```
+
+The read-only smoke wrapper runs status, config, dialog summary and Saved
+Messages history summary. It is the preferred first validation after sign-in
+because it does not print contact names, usernames or message text.
 
 ## Cleanup
 

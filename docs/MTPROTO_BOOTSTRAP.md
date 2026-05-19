@@ -72,6 +72,7 @@ telegram-test --mtproto-auth-send-code-file <host> <port> <dc-id> <api-file> <ph
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
 telegram-test --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <first-name> <last-name> <dc-id>
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-get-config-file <host> <port> <api-file> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>
 telegram-test --mtproto-auth-status <host> <port> <api-id> <auth-file> <dc-id>
@@ -80,7 +81,9 @@ telegram-test --mtproto-auth-inspect <auth-file>
 telegram-test --mtproto-auth-check-local-files <api-file> <auth-file> [password-file] [code-hash-file]
 telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-dialogs <host> <port> <api-id> <auth-file> <dc-id> <limit>
+telegram-test --mtproto-auth-get-dialogs-file <host> <port> <api-file> <auth-file> <dc-id> <limit>
 telegram-test --mtproto-auth-get-history-self <host> <port> <api-id> <auth-file> <dc-id> <limit>
+telegram-test --mtproto-auth-get-history-self-file <host> <port> <api-file> <auth-file> <dc-id> <limit>
 telegram-test --mtproto-auth-send-self <host> <port> <api-id> <auth-file> <dc-id> <text>
 telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 ```

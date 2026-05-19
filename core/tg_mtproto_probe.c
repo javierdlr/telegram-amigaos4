@@ -2016,6 +2016,26 @@ int tg_mtproto_auth_get_config(const char *host,
     return 0;
 }
 
+int tg_mtproto_auth_get_config_file(const char *host,
+                                    const char *port,
+                                    const char *api_file,
+                                    const char *auth_file,
+                                    const char *dc_id_text,
+                                    FILE *stream)
+{
+    char api_id[32];
+    int rc;
+    static const char label[] = "mtproto help.getConfig";
+
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0) {
+        return 2;
+    }
+    rc = tg_mtproto_auth_get_config(host, port, api_id, auth_file,
+                                    dc_id_text, stream);
+    return rc;
+}
+
 int tg_mtproto_auth_get_password(const char *host,
                                  const char *port,
                                  const char *api_id_text,
@@ -2657,6 +2677,27 @@ int tg_mtproto_auth_get_dialogs(const char *host,
     return 0;
 }
 
+int tg_mtproto_auth_get_dialogs_file(const char *host,
+                                     const char *port,
+                                     const char *api_file,
+                                     const char *auth_file,
+                                     const char *dc_id_text,
+                                     const char *limit_text,
+                                     FILE *stream)
+{
+    char api_id[32];
+    int rc;
+    static const char label[] = "mtproto messages.getDialogs";
+
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0) {
+        return 2;
+    }
+    rc = tg_mtproto_auth_get_dialogs(host, port, api_id, auth_file,
+                                     dc_id_text, limit_text, stream);
+    return rc;
+}
+
 int tg_mtproto_auth_get_history_self(const char *host,
                                      const char *port,
                                      const char *api_id_text,
@@ -2719,6 +2760,27 @@ int tg_mtproto_auth_get_history_self(const char *host,
         fprintf(stream, "%s: count %lu\n", label, messages.count);
     }
     return 0;
+}
+
+int tg_mtproto_auth_get_history_self_file(const char *host,
+                                          const char *port,
+                                          const char *api_file,
+                                          const char *auth_file,
+                                          const char *dc_id_text,
+                                          const char *limit_text,
+                                          FILE *stream)
+{
+    char api_id[32];
+    int rc;
+    static const char label[] = "mtproto messages.getHistory(self)";
+
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0) {
+        return 2;
+    }
+    rc = tg_mtproto_auth_get_history_self(host, port, api_id, auth_file,
+                                          dc_id_text, limit_text, stream);
+    return rc;
 }
 
 int tg_mtproto_auth_send_self(const char *host,

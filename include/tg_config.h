@@ -163,6 +163,7 @@ typedef struct tg_config {
     int run_mtproto_auth_sign_in;
     int run_mtproto_auth_sign_up;
     int run_mtproto_auth_get_config;
+    int run_mtproto_auth_get_config_file;
     int run_mtproto_auth_get_password;
     int run_mtproto_auth_check_password;
     int run_mtproto_auth_status;
@@ -171,7 +172,9 @@ typedef struct tg_config {
     int run_mtproto_auth_check_local_files;
     int run_mtproto_auth_get_self;
     int run_mtproto_auth_get_dialogs;
+    int run_mtproto_auth_get_dialogs_file;
     int run_mtproto_auth_get_history_self;
+    int run_mtproto_auth_get_history_self_file;
     int run_mtproto_auth_send_self;
     int run_mtproto_auth_forget;
     int run_telegram_tls_status;

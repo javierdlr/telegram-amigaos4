@@ -156,6 +156,7 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_sign_in = 0;
     config->run_mtproto_auth_sign_up = 0;
     config->run_mtproto_auth_get_config = 0;
+    config->run_mtproto_auth_get_config_file = 0;
     config->run_mtproto_auth_get_password = 0;
     config->run_mtproto_auth_check_password = 0;
     config->run_mtproto_auth_status = 0;
@@ -164,7 +165,9 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_check_local_files = 0;
     config->run_mtproto_auth_get_self = 0;
     config->run_mtproto_auth_get_dialogs = 0;
+    config->run_mtproto_auth_get_dialogs_file = 0;
     config->run_mtproto_auth_get_history_self = 0;
+    config->run_mtproto_auth_get_history_self_file = 0;
     config->run_mtproto_auth_send_self = 0;
     config->run_mtproto_auth_forget = 0;
     config->run_telegram_tls_status = 0;
@@ -394,6 +397,17 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_file = argv[i + 4];
             config->mtproto_auth_dc_id = argv[i + 5];
             i += 5;
+        } else if (strcmp(argv[i], "--mtproto-auth-get-config-file") == 0) {
+            if (i + 5 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_get_config_file = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_file = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            i += 5;
         } else if (strcmp(argv[i], "--mtproto-auth-get-password") == 0) {
             if (i + 5 >= argc) {
                 return 1;
@@ -485,6 +499,18 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_dc_id = argv[i + 5];
             config->mtproto_auth_limit = argv[i + 6];
             i += 6;
+        } else if (strcmp(argv[i], "--mtproto-auth-get-dialogs-file") == 0) {
+            if (i + 6 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_get_dialogs_file = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_file = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            config->mtproto_auth_limit = argv[i + 6];
+            i += 6;
         } else if (strcmp(argv[i], "--mtproto-auth-get-history-self") == 0) {
             if (i + 6 >= argc) {
                 return 1;
@@ -493,6 +519,18 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_host = argv[i + 1];
             config->mtproto_auth_port = argv[i + 2];
             config->mtproto_auth_api_id = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            config->mtproto_auth_limit = argv[i + 6];
+            i += 6;
+        } else if (strcmp(argv[i], "--mtproto-auth-get-history-self-file") == 0) {
+            if (i + 6 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_get_history_self_file = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_file = argv[i + 3];
             config->mtproto_auth_file = argv[i + 4];
             config->mtproto_auth_dc_id = argv[i + 5];
             config->mtproto_auth_limit = argv[i + 6];
@@ -956,6 +994,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Register a validated test phone after signup-required\n");
     fprintf(stream, "      --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Call help.getConfig with saved MTProto auth state\n");
+    fprintf(stream, "      --mtproto-auth-get-config-file <host> <port> <api-file> <auth-file> <dc-id>\n");
+    fprintf(stream, "                         Call help.getConfig using local api file\n");
     fprintf(stream, "      --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Probe account.getPassword SRP metadata\n");
     fprintf(stream, "      --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>\n");
@@ -972,8 +1012,12 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Call users.getUsers(inputUserSelf) with saved auth state\n");
     fprintf(stream, "      --mtproto-auth-get-dialogs <host> <port> <api-id> <auth-file> <dc-id> <limit>\n");
     fprintf(stream, "                         Call messages.getDialogs with saved auth state\n");
+    fprintf(stream, "      --mtproto-auth-get-dialogs-file <host> <port> <api-file> <auth-file> <dc-id> <limit>\n");
+    fprintf(stream, "                         Call messages.getDialogs using local api file\n");
     fprintf(stream, "      --mtproto-auth-get-history-self <host> <port> <api-id> <auth-file> <dc-id> <limit>\n");
     fprintf(stream, "                         Call messages.getHistory for inputPeerSelf\n");
+    fprintf(stream, "      --mtproto-auth-get-history-self-file <host> <port> <api-file> <auth-file> <dc-id> <limit>\n");
+    fprintf(stream, "                         Call messages.getHistory(inputPeerSelf) using local api file\n");
     fprintf(stream, "      --mtproto-auth-send-self <host> <port> <api-id> <auth-file> <dc-id> <text>\n");
     fprintf(stream, "                         Send a text message to Saved Messages\n");
     fprintf(stream, "      --mtproto-auth-forget <auth-file> [code-hash-file]\n");

@@ -3728,6 +3728,15 @@ int tg_app_run(int argc, char **argv)
                                           stdout);
     }
 
+    if (config.run_mtproto_auth_get_config_file) {
+        return tg_mtproto_auth_get_config_file(config.mtproto_auth_host,
+                                               config.mtproto_auth_port,
+                                               config.mtproto_auth_api_file,
+                                               config.mtproto_auth_file,
+                                               config.mtproto_auth_dc_id,
+                                               stdout);
+    }
+
     if (config.run_mtproto_auth_get_password) {
         return tg_mtproto_auth_get_password(config.mtproto_auth_host,
                                             config.mtproto_auth_port,
@@ -3797,6 +3806,16 @@ int tg_app_run(int argc, char **argv)
                                            stdout);
     }
 
+    if (config.run_mtproto_auth_get_dialogs_file) {
+        return tg_mtproto_auth_get_dialogs_file(config.mtproto_auth_host,
+                                                config.mtproto_auth_port,
+                                                config.mtproto_auth_api_file,
+                                                config.mtproto_auth_file,
+                                                config.mtproto_auth_dc_id,
+                                                config.mtproto_auth_limit,
+                                                stdout);
+    }
+
     if (config.run_mtproto_auth_get_history_self) {
         return tg_mtproto_auth_get_history_self(config.mtproto_auth_host,
                                                 config.mtproto_auth_port,
@@ -3805,6 +3824,17 @@ int tg_app_run(int argc, char **argv)
                                                 config.mtproto_auth_dc_id,
                                                 config.mtproto_auth_limit,
                                                 stdout);
+    }
+
+    if (config.run_mtproto_auth_get_history_self_file) {
+        return tg_mtproto_auth_get_history_self_file(
+            config.mtproto_auth_host,
+            config.mtproto_auth_port,
+            config.mtproto_auth_api_file,
+            config.mtproto_auth_file,
+            config.mtproto_auth_dc_id,
+            config.mtproto_auth_limit,
+            stdout);
     }
 
     if (config.run_mtproto_auth_send_self) {
