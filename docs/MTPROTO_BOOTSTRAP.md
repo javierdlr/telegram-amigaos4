@@ -70,11 +70,14 @@ The optional user-auth commands are:
 telegram-test --mtproto-auth-send-code <host> <port> <dc-id> <api-id> <api-hash> <phone> <auth-file> <code-hash-file>
 telegram-test --mtproto-auth-send-code-file <host> <port> <dc-id> <api-file> <phone> <auth-file> <code-hash-file>
 telegram-test --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>
+telegram-test --mtproto-auth-sign-in-file <host> <port> <api-file> <auth-file> <phone> <code-hash-file> <code> <dc-id>
 telegram-test --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <first-name> <last-name> <dc-id>
 telegram-test --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-config-file <host> <port> <api-file> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>
+telegram-test --mtproto-auth-get-password-file <host> <port> <api-file> <auth-file> <dc-id>
 telegram-test --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>
+telegram-test --mtproto-auth-check-password-file <host> <port> <api-file> <auth-file> <dc-id> <password-file>
 telegram-test --mtproto-auth-status <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-status-file <host> <port> <api-file> <auth-file> <dc-id>
 telegram-test --mtproto-auth-inspect <auth-file>
@@ -121,19 +124,21 @@ scripts/mtproto-login-status.sh <host> <port> telegram-api.txt telegram-auth.bin
 
 For the complete real-account runbook, use
 [MTPROTO_REAL_LOGIN.md](MTPROTO_REAL_LOGIN.md).
+For the terse operator checklist, use
+[MTPROTO_QUICK_TEST.md](MTPROTO_QUICK_TEST.md).
 
 Minimal real-account validation sequence:
 
 ```text
 telegram-test --mtproto-auth-send-code-file <host> <port> <dc-id> telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
-telegram-test --mtproto-auth-sign-in <host> <port> <api-id> telegram-auth.bin <phone> phone-code-hash.txt <code> <dc-id>
+telegram-test --mtproto-auth-sign-in-file <host> <port> telegram-api.txt telegram-auth.bin <phone> phone-code-hash.txt <code> <dc-id>
 ```
 
 If sign-in reports `two-factor-password-required`, create
 `telegram-password.txt` locally with only the 2FA password and then run:
 
 ```text
-telegram-test --mtproto-auth-check-password <host> <port> <api-id> telegram-auth.bin <dc-id> telegram-password.txt
+telegram-test --mtproto-auth-check-password-file <host> <port> telegram-api.txt telegram-auth.bin <dc-id> telegram-password.txt
 telegram-test --mtproto-auth-status-file <host> <port> telegram-api.txt telegram-auth.bin <dc-id>
 ```
 

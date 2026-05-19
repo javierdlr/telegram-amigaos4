@@ -48,6 +48,10 @@ cp "$TARGET" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AROS_X86_64_TESTER.md" "$DEST_DIR/README.md"
 cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
 cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
+cp "$ROOT_DIR/docs/MTPROTO_QUICK_TEST.md" "$DEST_DIR/MTPROTO_QUICK_TEST.md"
+cp "$ROOT_DIR/docs/MTPROTO_REAL_LOGIN.md" "$DEST_DIR/MTPROTO_REAL_LOGIN.md"
+mkdir -p "$DEST_DIR/scripts"
+cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AROS x86_64 offline pre-alpha tester

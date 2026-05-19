@@ -1811,6 +1811,30 @@ int tg_mtproto_auth_sign_in(const char *host,
     return 0;
 }
 
+int tg_mtproto_auth_sign_in_file(const char *host,
+                                 const char *port,
+                                 const char *api_file,
+                                 const char *auth_file,
+                                 const char *phone_number,
+                                 const char *code_hash_file,
+                                 const char *phone_code,
+                                 const char *dc_id_text,
+                                 FILE *stream)
+{
+    char api_id[32];
+    int rc;
+    static const char label[] = "mtproto auth.signIn";
+
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0) {
+        return 2;
+    }
+    rc = tg_mtproto_auth_sign_in(host, port, api_id, auth_file, phone_number,
+                                 code_hash_file, phone_code, dc_id_text,
+                                 stream);
+    return rc;
+}
+
 int tg_mtproto_auth_sign_up(const char *host,
                             const char *port,
                             const char *api_id_text,
@@ -2130,6 +2154,26 @@ int tg_mtproto_auth_get_password(const char *host,
     return 0;
 }
 
+int tg_mtproto_auth_get_password_file(const char *host,
+                                      const char *port,
+                                      const char *api_file,
+                                      const char *auth_file,
+                                      const char *dc_id_text,
+                                      FILE *stream)
+{
+    char api_id[32];
+    int rc;
+    static const char label[] = "mtproto account.getPassword";
+
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0) {
+        return 2;
+    }
+    rc = tg_mtproto_auth_get_password(host, port, api_id, auth_file,
+                                      dc_id_text, stream);
+    return rc;
+}
+
 int tg_mtproto_auth_check_password(const char *host,
                                    const char *port,
                                    const char *api_id_text,
@@ -2309,6 +2353,27 @@ int tg_mtproto_auth_check_password(const char *host,
     fprintf(stream, "%s: signed in\n", label);
     fprintf(stream, "%s: auth state updated\n", label);
     return 0;
+}
+
+int tg_mtproto_auth_check_password_file(const char *host,
+                                        const char *port,
+                                        const char *api_file,
+                                        const char *auth_file,
+                                        const char *dc_id_text,
+                                        const char *password_file,
+                                        FILE *stream)
+{
+    char api_id[32];
+    int rc;
+    static const char label[] = "mtproto auth.checkPassword";
+
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0) {
+        return 2;
+    }
+    rc = tg_mtproto_auth_check_password(host, port, api_id, auth_file,
+                                        dc_id_text, password_file, stream);
+    return rc;
 }
 
 int tg_mtproto_auth_status(const char *host,

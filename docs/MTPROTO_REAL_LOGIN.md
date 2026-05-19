@@ -74,14 +74,14 @@ telegram-test --mtproto-auth-send-code-file $HOST $PORT $DC_ID telegram-api.txt 
 Complete login with the code received from Telegram:
 
 ```text
-telegram-test --mtproto-auth-sign-in $HOST $PORT <api_id> telegram-auth.bin <phone> phone-code-hash.txt <code> $DC_ID
+telegram-test --mtproto-auth-sign-in-file $HOST $PORT telegram-api.txt telegram-auth.bin <phone> phone-code-hash.txt <code> $DC_ID
 ```
 
 If Telegram reports that 2FA is required, put only the account password in
 `telegram-password.txt`, then run:
 
 ```text
-telegram-test --mtproto-auth-check-password $HOST $PORT <api_id> telegram-auth.bin $DC_ID telegram-password.txt
+telegram-test --mtproto-auth-check-password-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-password.txt
 ```
 
 Validate without printing account identity:
@@ -97,18 +97,22 @@ Wrapper equivalents:
 
 ```text
 scripts/mtproto-send-code.sh $HOST $PORT $DC_ID telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
-scripts/mtproto-sign-in.sh $HOST $PORT <api_id> telegram-auth.bin <phone> phone-code-hash.txt <code> $DC_ID
-scripts/mtproto-check-password.sh $HOST $PORT <api_id> telegram-auth.bin $DC_ID telegram-password.txt
+scripts/mtproto-sign-in.sh $HOST $PORT telegram-api.txt telegram-auth.bin <phone> phone-code-hash.txt <code> $DC_ID
+scripts/mtproto-get-password.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
+scripts/mtproto-check-password.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-password.txt
 scripts/mtproto-login-status.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 scripts/mtproto-get-config.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 scripts/mtproto-get-dialogs.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-get-history-self.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-readonly-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
+scripts/mtproto-login-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
 ```
 
 The read-only smoke wrapper runs status, config, dialog summary and Saved
 Messages history summary. It is the preferred first validation after sign-in
 because it does not print contact names, usernames or message text.
+The login smoke wrapper first validates local files and inspects the saved auth
+state, then runs the same read-only sequence.
 
 ## Cleanup
 

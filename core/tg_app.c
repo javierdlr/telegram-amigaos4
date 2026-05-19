@@ -3706,6 +3706,18 @@ int tg_app_run(int argc, char **argv)
                                        stdout);
     }
 
+    if (config.run_mtproto_auth_sign_in_file) {
+        return tg_mtproto_auth_sign_in_file(config.mtproto_auth_host,
+                                            config.mtproto_auth_port,
+                                            config.mtproto_auth_api_file,
+                                            config.mtproto_auth_file,
+                                            config.mtproto_auth_phone,
+                                            config.mtproto_auth_code_hash_file,
+                                            config.mtproto_auth_code,
+                                            config.mtproto_auth_dc_id,
+                                            stdout);
+    }
+
     if (config.run_mtproto_auth_sign_up) {
         return tg_mtproto_auth_sign_up(config.mtproto_auth_host,
                                        config.mtproto_auth_port,
@@ -3746,6 +3758,15 @@ int tg_app_run(int argc, char **argv)
                                             stdout);
     }
 
+    if (config.run_mtproto_auth_get_password_file) {
+        return tg_mtproto_auth_get_password_file(config.mtproto_auth_host,
+                                                 config.mtproto_auth_port,
+                                                 config.mtproto_auth_api_file,
+                                                 config.mtproto_auth_file,
+                                                 config.mtproto_auth_dc_id,
+                                                 stdout);
+    }
+
     if (config.run_mtproto_auth_check_password) {
         return tg_mtproto_auth_check_password(config.mtproto_auth_host,
                                               config.mtproto_auth_port,
@@ -3754,6 +3775,17 @@ int tg_app_run(int argc, char **argv)
                                               config.mtproto_auth_dc_id,
                                               config.mtproto_auth_password_file,
                                               stdout);
+    }
+
+    if (config.run_mtproto_auth_check_password_file) {
+        return tg_mtproto_auth_check_password_file(
+            config.mtproto_auth_host,
+            config.mtproto_auth_port,
+            config.mtproto_auth_api_file,
+            config.mtproto_auth_file,
+            config.mtproto_auth_dc_id,
+            config.mtproto_auth_password_file,
+            stdout);
     }
 
     if (config.run_mtproto_auth_status) {

@@ -154,11 +154,14 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_send_code = 0;
     config->run_mtproto_auth_send_code_file = 0;
     config->run_mtproto_auth_sign_in = 0;
+    config->run_mtproto_auth_sign_in_file = 0;
     config->run_mtproto_auth_sign_up = 0;
     config->run_mtproto_auth_get_config = 0;
     config->run_mtproto_auth_get_config_file = 0;
     config->run_mtproto_auth_get_password = 0;
+    config->run_mtproto_auth_get_password_file = 0;
     config->run_mtproto_auth_check_password = 0;
+    config->run_mtproto_auth_check_password_file = 0;
     config->run_mtproto_auth_status = 0;
     config->run_mtproto_auth_status_file = 0;
     config->run_mtproto_auth_inspect = 0;
@@ -371,6 +374,20 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_code = argv[i + 7];
             config->mtproto_auth_dc_id = argv[i + 8];
             i += 8;
+        } else if (strcmp(argv[i], "--mtproto-auth-sign-in-file") == 0) {
+            if (i + 8 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_sign_in_file = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_file = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_phone = argv[i + 5];
+            config->mtproto_auth_code_hash_file = argv[i + 6];
+            config->mtproto_auth_code = argv[i + 7];
+            config->mtproto_auth_dc_id = argv[i + 8];
+            i += 8;
         } else if (strcmp(argv[i], "--mtproto-auth-sign-up") == 0) {
             if (i + 9 >= argc) {
                 return 1;
@@ -419,6 +436,17 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_file = argv[i + 4];
             config->mtproto_auth_dc_id = argv[i + 5];
             i += 5;
+        } else if (strcmp(argv[i], "--mtproto-auth-get-password-file") == 0) {
+            if (i + 5 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_get_password_file = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_file = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            i += 5;
         } else if (strcmp(argv[i], "--mtproto-auth-check-password") == 0) {
             if (i + 6 >= argc) {
                 return 1;
@@ -427,6 +455,18 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_host = argv[i + 1];
             config->mtproto_auth_port = argv[i + 2];
             config->mtproto_auth_api_id = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            config->mtproto_auth_password_file = argv[i + 6];
+            i += 6;
+        } else if (strcmp(argv[i], "--mtproto-auth-check-password-file") == 0) {
+            if (i + 6 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_check_password_file = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_file = argv[i + 3];
             config->mtproto_auth_file = argv[i + 4];
             config->mtproto_auth_dc_id = argv[i + 5];
             config->mtproto_auth_password_file = argv[i + 6];
@@ -990,6 +1030,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Send auth.sendCode with api_id/api_hash loaded from file\n");
     fprintf(stream, "      --mtproto-auth-sign-in <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <code> <dc-id>\n");
     fprintf(stream, "                         Complete auth.signIn using saved login state\n");
+    fprintf(stream, "      --mtproto-auth-sign-in-file <host> <port> <api-file> <auth-file> <phone> <code-hash-file> <code> <dc-id>\n");
+    fprintf(stream, "                         Complete auth.signIn using local api file\n");
     fprintf(stream, "      --mtproto-auth-sign-up <host> <port> <api-id> <auth-file> <phone> <code-hash-file> <first-name> <last-name> <dc-id>\n");
     fprintf(stream, "                         Register a validated test phone after signup-required\n");
     fprintf(stream, "      --mtproto-auth-get-config <host> <port> <api-id> <auth-file> <dc-id>\n");
@@ -998,8 +1040,12 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Call help.getConfig using local api file\n");
     fprintf(stream, "      --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Probe account.getPassword SRP metadata\n");
+    fprintf(stream, "      --mtproto-auth-get-password-file <host> <port> <api-file> <auth-file> <dc-id>\n");
+    fprintf(stream, "                         Probe account.getPassword using local api file\n");
     fprintf(stream, "      --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>\n");
     fprintf(stream, "                         Complete SRP 2FA login using a local password file\n");
+    fprintf(stream, "      --mtproto-auth-check-password-file <host> <port> <api-file> <auth-file> <dc-id> <password-file>\n");
+    fprintf(stream, "                         Complete SRP 2FA login using local api and password files\n");
     fprintf(stream, "      --mtproto-auth-status <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Check saved MTProto auth state without printing user data\n");
     fprintf(stream, "      --mtproto-auth-status-file <host> <port> <api-file> <auth-file> <dc-id>\n");
