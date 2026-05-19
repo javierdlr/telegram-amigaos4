@@ -86,6 +86,12 @@ int tg_mtproto_auth_status_file(const char *host,
                                 const char *auth_file,
                                 const char *dc_id_text,
                                 FILE *stream);
+int tg_mtproto_auth_inspect(const char *auth_file, FILE *stream);
+int tg_mtproto_auth_check_local_files(const char *api_file,
+                                      const char *auth_file,
+                                      const char *password_file,
+                                      const char *code_hash_file,
+                                      FILE *stream);
 int tg_mtproto_auth_get_self(const char *host,
                              const char *port,
                              const char *api_id_text,

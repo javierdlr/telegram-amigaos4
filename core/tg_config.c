@@ -160,6 +160,8 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_check_password = 0;
     config->run_mtproto_auth_status = 0;
     config->run_mtproto_auth_status_file = 0;
+    config->run_mtproto_auth_inspect = 0;
+    config->run_mtproto_auth_check_local_files = 0;
     config->run_mtproto_auth_get_self = 0;
     config->run_mtproto_auth_get_dialogs = 0;
     config->run_mtproto_auth_get_history_self = 0;
@@ -437,6 +439,29 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_file = argv[i + 4];
             config->mtproto_auth_dc_id = argv[i + 5];
             i += 5;
+        } else if (strcmp(argv[i], "--mtproto-auth-inspect") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_inspect = 1;
+            config->mtproto_auth_file = argv[i + 1];
+            i += 1;
+        } else if (strcmp(argv[i], "--mtproto-auth-check-local-files") == 0) {
+            if (i + 2 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_check_local_files = 1;
+            config->mtproto_auth_api_file = argv[i + 1];
+            config->mtproto_auth_file = argv[i + 2];
+            i += 2;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->mtproto_auth_password_file = argv[i + 1];
+                ++i;
+            }
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->mtproto_auth_code_hash_file = argv[i + 1];
+                ++i;
+            }
         } else if (strcmp(argv[i], "--mtproto-auth-get-self") == 0) {
             if (i + 5 >= argc) {
                 return 1;
@@ -939,6 +964,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Check saved MTProto auth state without printing user data\n");
     fprintf(stream, "      --mtproto-auth-status-file <host> <port> <api-file> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Check saved MTProto auth state using local api file\n");
+    fprintf(stream, "      --mtproto-auth-inspect <auth-file>\n");
+    fprintf(stream, "                         Inspect a local MTProto auth file without printing secrets\n");
+    fprintf(stream, "      --mtproto-auth-check-local-files <api-file> <auth-file> [password-file] [code-hash-file]\n");
+    fprintf(stream, "                         Validate local MTProto login files before a real test\n");
     fprintf(stream, "      --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Call users.getUsers(inputUserSelf) with saved auth state\n");
     fprintf(stream, "      --mtproto-auth-get-dialogs <host> <port> <api-id> <auth-file> <dc-id> <limit>\n");

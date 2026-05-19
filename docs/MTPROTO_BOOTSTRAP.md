@@ -76,6 +76,8 @@ telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc
 telegram-test --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>
 telegram-test --mtproto-auth-status <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-status-file <host> <port> <api-file> <auth-file> <dc-id>
+telegram-test --mtproto-auth-inspect <auth-file>
+telegram-test --mtproto-auth-check-local-files <api-file> <auth-file> [password-file] [code-hash-file]
 telegram-test --mtproto-auth-get-self <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-get-dialogs <host> <port> <api-id> <auth-file> <dc-id> <limit>
 telegram-test --mtproto-auth-get-history-self <host> <port> <api-id> <auth-file> <dc-id> <limit>
@@ -114,6 +116,9 @@ The same status check is wrapped by:
 scripts/mtproto-login-status.sh <host> <port> telegram-api.txt telegram-auth.bin <dc-id> [program]
 ```
 
+For the complete real-account runbook, use
+[MTPROTO_REAL_LOGIN.md](MTPROTO_REAL_LOGIN.md).
+
 Minimal real-account validation sequence:
 
 ```text
@@ -142,7 +147,8 @@ parses the current SRP KDF constructor, salt lengths, `g`, prime length, SRP
 derives the SRP proof in memory, sends `auth.checkPassword`, and saves the
 updated auth state on success. `auth.status` probes the saved session with
 `users.getUsers(inputUserSelf)` but prints only session status, not user
-identity details. `messages.getDialogs` and
+identity details. `auth.inspect` and `auth.check-local-files` are offline
+preflight tools for saved auth state and local secret files. `messages.getDialogs` and
 `messages.getHistory(inputPeerSelf)` print constructor/count summaries, while
 `messages.sendMessage(inputPeerSelf)` sends a cautious first write probe to
 Saved Messages. Encrypted RPC responses are acknowledged with best-effort

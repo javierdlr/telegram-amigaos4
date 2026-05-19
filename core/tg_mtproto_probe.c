@@ -5,6 +5,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #include "tg_mtproto_auth.h"
@@ -1344,6 +1345,68 @@ static int tg_mtproto_load_api_id_file(const char *path,
     return 0;
 }
 
+static int tg_mtproto_check_secret_file_permissions(const char *label,
+                                                    const char *path,
+                                                    FILE *stream)
+{
+#if defined(S_IRWXG) && defined(S_IRWXO)
+    struct stat status;
+
+    if (label == 0 || path == 0 || path[0] == '\0' || stream == 0) {
+        return 0;
+    }
+    if (stat(path, &status) != 0) {
+        return 0;
+    }
+    if ((status.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
+        fprintf(stream,
+                "mtproto local-files: warning %s permissions are broad\n",
+                label);
+        return 1;
+    }
+#else
+    (void)label;
+    (void)path;
+    (void)stream;
+#endif
+    return 0;
+}
+
+static int tg_mtproto_check_code_hash_file(const char *path,
+                                           FILE *stream,
+                                           const char *label)
+{
+    char text[256];
+    unsigned long text_length;
+    tg_file_status file_status;
+
+    if (path == 0 || path[0] == '\0') {
+        return 0;
+    }
+    file_status = tg_file_read_text(path, text, sizeof(text), &text_length);
+    if (file_status == TG_FILE_TOO_LARGE) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: code-hash-file-too-large\n", label);
+        }
+        return 2;
+    }
+    if (file_status != TG_FILE_OK) {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: code-hash-file-load-failed (%s)\n", label,
+                    tg_file_status_name(file_status));
+        }
+        return 2;
+    }
+    tg_mtproto_trim_newline(text);
+    if (text[0] == '\0') {
+        if (stream != 0 && label != 0) {
+            fprintf(stream, "%s: code-hash-file-empty\n", label);
+        }
+        return 2;
+    }
+    return 0;
+}
+
 static int tg_mtproto_print_rpc_error(const char *label,
                                       const tg_mtproto_rpc_result *result,
                                       FILE *stream)
@@ -2302,6 +2365,140 @@ int tg_mtproto_auth_status_file(const char *host,
     rc = tg_mtproto_auth_status(host, port, api_id, auth_file, dc_id_text,
                                 stream);
     return rc;
+}
+
+int tg_mtproto_auth_inspect(const char *auth_file, FILE *stream)
+{
+    tg_mtproto_session session;
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    unsigned long auth_key_id_hi;
+    unsigned long auth_key_id_lo;
+    tg_mtproto_session_status status;
+    static const char label[] = "mtproto auth.inspect";
+
+    if (stream == 0 || auth_file == 0 || auth_file[0] == '\0') {
+        if (stream != 0) {
+            fprintf(stream, "%s: invalid-arguments\n", label);
+        }
+        return 2;
+    }
+
+    status = tg_mtproto_session_load_authorization(auth_file, &session,
+                                                   auth_key);
+    if (status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file-invalid (%s)\n", label,
+                tg_mtproto_session_status_name(status));
+        return 2;
+    }
+
+    tg_mtproto_auth_key_id(auth_key, &auth_key_id_hi, &auth_key_id_lo);
+    tg_mtproto_secure_zero(auth_key, sizeof(auth_key));
+
+    fprintf(stream, "%s: file valid\n", label);
+    fprintf(stream, "%s: dc_id=%lu\n", label, session.dc_id);
+    fprintf(stream, "%s: auth_key=present\n", label);
+    if (auth_key_id_hi == session.auth_key_id_hi &&
+        auth_key_id_lo == session.auth_key_id_lo) {
+        fprintf(stream, "%s: auth_key_id=matches\n", label);
+    } else {
+        fprintf(stream, "%s: auth_key_id=mismatch\n", label);
+        return 2;
+    }
+    fprintf(stream, "%s: server_salt=present\n", label);
+    fprintf(stream, "%s: session_id=present\n", label);
+    fprintf(stream, "%s: seq_no=%lu\n", label, session.seq_no);
+    if (session.last_msg_id_hi != 0UL || session.last_msg_id_lo != 0UL) {
+        fprintf(stream, "%s: last_msg_id=present\n", label);
+    } else {
+        fprintf(stream, "%s: last_msg_id=none\n", label);
+    }
+    return 0;
+}
+
+int tg_mtproto_auth_check_local_files(const char *api_file,
+                                      const char *auth_file,
+                                      const char *password_file,
+                                      const char *code_hash_file,
+                                      FILE *stream)
+{
+    char api_id[32];
+    char api_hash[96];
+    char password[256];
+    unsigned long password_length;
+    tg_mtproto_session session;
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    tg_mtproto_session_status session_status;
+    int ok;
+    static const char label[] = "mtproto local-files";
+
+    if (stream == 0 || api_file == 0 || auth_file == 0) {
+        if (stream != 0) {
+            fprintf(stream, "%s: invalid-arguments\n", label);
+        }
+        return 2;
+    }
+
+    ok = 1;
+    tg_mtproto_check_secret_file_permissions("api-file", api_file, stream);
+    if (tg_mtproto_load_api_credentials(api_file, api_id, sizeof(api_id),
+                                        api_hash, sizeof(api_hash),
+                                        0, 0) != 0) {
+        fprintf(stream, "%s: api-file invalid\n", label);
+        ok = 0;
+    } else {
+        fprintf(stream, "%s: api-file ok\n", label);
+    }
+    tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
+
+    tg_mtproto_check_secret_file_permissions("auth-file", auth_file, stream);
+    session_status = tg_mtproto_session_load_authorization(auth_file, &session,
+                                                           auth_key);
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        fprintf(stream, "%s: auth-file invalid (%s)\n", label,
+                tg_mtproto_session_status_name(session_status));
+        ok = 0;
+    } else {
+        fprintf(stream, "%s: auth-file ok\n", label);
+        fprintf(stream, "%s: auth-file dc_id=%lu\n", label, session.dc_id);
+    }
+    tg_mtproto_secure_zero(auth_key, sizeof(auth_key));
+
+    if (password_file != 0 && password_file[0] != '\0') {
+        tg_mtproto_check_secret_file_permissions("password-file",
+                                                 password_file, stream);
+        if (tg_mtproto_load_password_file(password_file, password,
+                                          sizeof(password),
+                                          &password_length, 0, 0) != 0) {
+            fprintf(stream, "%s: password-file invalid\n", label);
+            ok = 0;
+        } else {
+            fprintf(stream, "%s: password-file ok\n", label);
+        }
+        tg_mtproto_secure_zero(password, sizeof(password));
+    } else {
+        fprintf(stream, "%s: password-file skipped\n", label);
+    }
+
+    if (code_hash_file != 0 && code_hash_file[0] != '\0') {
+        tg_mtproto_check_secret_file_permissions("code-hash-file",
+                                                 code_hash_file, stream);
+        if (tg_mtproto_check_code_hash_file(code_hash_file, stream,
+                                            label) != 0) {
+            fprintf(stream, "%s: code-hash-file invalid\n", label);
+            ok = 0;
+        } else {
+            fprintf(stream, "%s: code-hash-file ok\n", label);
+        }
+    } else {
+        fprintf(stream, "%s: code-hash-file skipped\n", label);
+    }
+
+    if (!ok) {
+        fprintf(stream, "%s: failed\n", label);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    return 0;
 }
 
 int tg_mtproto_auth_get_self(const char *host,
