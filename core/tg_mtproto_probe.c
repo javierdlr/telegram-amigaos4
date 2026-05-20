@@ -54,6 +54,7 @@ typedef struct tg_mtproto_auth_context {
     tg_mtproto_session session;
     tg_mtproto_message_id last_msg_id;
     unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    long server_time_delta_seconds;
     int connection_open;
 } tg_mtproto_auth_context;
 
@@ -100,6 +101,74 @@ static void tg_mtproto_probe_random(unsigned char *bytes, unsigned long length)
 static int tg_mtproto_secure_random(unsigned char *bytes, unsigned long length)
 {
     return tg_platform_random_bytes(bytes, length);
+}
+
+static void tg_mtproto_saved_session_random(unsigned char *bytes,
+                                            unsigned long length)
+{
+    if (!tg_platform_random_bytes(bytes, length)) {
+        tg_mtproto_probe_random(bytes, length);
+    }
+}
+
+static unsigned long tg_mtproto_context_time(
+    const tg_mtproto_auth_context *context)
+{
+    unsigned long now;
+    unsigned long delta;
+
+    now = (unsigned long)time(0);
+    if (context == 0 || context->server_time_delta_seconds == 0L) {
+        return now;
+    }
+    if (context->server_time_delta_seconds < 0L) {
+        delta = (unsigned long)(0L - context->server_time_delta_seconds);
+        return now > delta ? now - delta : 0UL;
+    }
+    return now + (unsigned long)context->server_time_delta_seconds;
+}
+
+static void tg_mtproto_sync_time_from_server(
+    tg_mtproto_auth_context *context,
+    const tg_mtproto_encrypted_message *message)
+{
+    unsigned long now;
+    unsigned long server_time;
+    unsigned long delta;
+
+    if (context == 0 || message == 0 || message->message_id_hi == 0UL) {
+        return;
+    }
+
+    now = (unsigned long)time(0);
+    server_time = message->message_id_hi;
+    if (server_time >= now) {
+        delta = server_time - now;
+        context->server_time_delta_seconds = (long)delta;
+    } else {
+        delta = now - server_time;
+        context->server_time_delta_seconds = -((long)delta);
+    }
+
+    context->last_msg_id.hi = message->message_id_hi;
+    context->last_msg_id.lo = message->message_id_lo;
+    context->session.last_msg_id_hi = context->last_msg_id.hi;
+    context->session.last_msg_id_lo = context->last_msg_id.lo;
+}
+
+static void tg_mtproto_refresh_saved_session(
+    tg_mtproto_auth_context *context)
+{
+    if (context == 0) {
+        return;
+    }
+    tg_mtproto_saved_session_random(context->session.session_id,
+                                    sizeof(context->session.session_id));
+    context->session.seq_no = 1UL;
+    tg_mtproto_client_message_id(tg_mtproto_context_time(context), 4UL, 0,
+                                 &context->last_msg_id);
+    context->session.last_msg_id_hi = context->last_msg_id.hi;
+    context->session.last_msg_id_lo = context->last_msg_id.lo;
 }
 
 static void tg_mtproto_probe_nonce(unsigned char nonce[16])
@@ -526,12 +595,9 @@ static int tg_mtproto_send_encrypted_service(
     while (((32UL + body_length + encrypted_padding_length) % 16UL) != 0UL) {
         ++encrypted_padding_length;
     }
-    if (!tg_mtproto_secure_random(encrypted_padding,
-                                  encrypted_padding_length)) {
-        fprintf(stream, "%s: service-secure-rng-unavailable\n", label);
-        return 2;
-    }
-    tg_mtproto_client_message_id((unsigned long)time(0), 20UL,
+    tg_mtproto_saved_session_random(encrypted_padding,
+                                    encrypted_padding_length);
+    tg_mtproto_client_message_id(tg_mtproto_context_time(context), 20UL,
                                  &context->last_msg_id, &msg_id);
     context->last_msg_id = msg_id;
     context->session.last_msg_id_hi = msg_id.hi;
@@ -630,12 +696,9 @@ static int tg_mtproto_send_encrypted_query(
                0UL) {
             ++encrypted_padding_length;
         }
-        if (!tg_mtproto_secure_random(encrypted_padding,
-                                      encrypted_padding_length)) {
-            fprintf(stream, "%s: secure-rng-unavailable\n", label);
-            return 2;
-        }
-        tg_mtproto_client_message_id((unsigned long)time(0), 16UL,
+        tg_mtproto_saved_session_random(encrypted_padding,
+                                        encrypted_padding_length);
+        tg_mtproto_client_message_id(tg_mtproto_context_time(context), 16UL,
                                      &context->last_msg_id, &request_msg_id);
         context->last_msg_id = request_msg_id;
         context->session.last_msg_id_hi = request_msg_id.hi;
@@ -717,6 +780,12 @@ static int tg_mtproto_send_encrypted_query(
                 if (bad_msg.error_code == 33UL &&
                     context->session.seq_no >= 2UL) {
                     context->session.seq_no -= 2UL;
+                    retry_request = 1;
+                    break;
+                }
+                if (bad_msg.error_code == 16UL ||
+                    bad_msg.error_code == 17UL) {
+                    tg_mtproto_sync_time_from_server(context, &decrypted);
                     retry_request = 1;
                     break;
                 }
@@ -1074,12 +1143,7 @@ static int tg_mtproto_load_auth_context(const char *host,
         return 2;
     }
 
-    context->last_msg_id.hi = context->session.last_msg_id_hi;
-    context->last_msg_id.lo = context->session.last_msg_id_lo;
-    if (context->last_msg_id.hi == 0UL && context->last_msg_id.lo == 0UL) {
-        tg_mtproto_client_message_id((unsigned long)time(0), 4UL, 0,
-                                     &context->last_msg_id);
-    }
+    tg_mtproto_refresh_saved_session(context);
     error_buffer[0] = '\0';
     net_status = tg_net_connect(&context->connection, host, port, error_buffer,
                                 sizeof(error_buffer));
@@ -3261,6 +3325,13 @@ static int tg_mtproto_load_peer_cache_file(const char *path,
     return cache->count > 0UL ? 0 : 2;
 }
 
+static int tg_mtproto_peer_cache_available(const char *path)
+{
+    tg_mtproto_peer_cache cache;
+
+    return tg_mtproto_load_peer_cache_file(path, &cache) == 0;
+}
+
 static void tg_mtproto_merge_peer_cache(tg_mtproto_peer_cache *dest,
                                         const tg_mtproto_peer_cache *fresh)
 {
@@ -3811,10 +3882,7 @@ int tg_mtproto_auth_send_self(const char *host,
         }
         return 2;
     }
-    if (!tg_mtproto_secure_random(random_id, sizeof(random_id))) {
-        fprintf(stream, "%s: secure-rng-unavailable\n", label);
-        return 2;
-    }
+    tg_mtproto_saved_session_random(random_id, sizeof(random_id));
     random_id_lo = tg_mtproto_read_u32_le(random_id);
     random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
 
@@ -3896,10 +3964,7 @@ int tg_mtproto_auth_send_peer_file(const char *host,
                                         stream, label) != 0) {
         return 2;
     }
-    if (!tg_mtproto_secure_random(random_id, sizeof(random_id))) {
-        fprintf(stream, "%s: secure-rng-unavailable\n", label);
-        return 2;
-    }
+    tg_mtproto_saved_session_random(random_id, sizeof(random_id));
     random_id_lo = tg_mtproto_read_u32_le(random_id);
     random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
 
@@ -4111,9 +4176,12 @@ int tg_mtproto_auth_chat_file(const char *host,
                                          dc_id_text, "100", peer_cache_file,
                                          quiet);
     tg_mtproto_close_quiet_stream(quiet, stream);
-    if (rc != 0) {
+    if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
         fprintf(stream, "%s: list-peers-failed\n", label);
         return 2;
+    }
+    if (rc != 0) {
+        fprintf(stream, "%s: using cached peers\n", label);
     }
     fprintf(stream, "\nPeers:\n");
     tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
@@ -4134,7 +4202,6 @@ int tg_mtproto_auth_chat_file(const char *host,
         peer_label);
     if (rc != 0) {
         fprintf(stream, "%s: read-failed\n", label);
-        return 2;
     }
     fprintf(stream,
             "\nType text to send. Commands: /read /watch /peer /peers /quit\n");
@@ -4149,7 +4216,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 &last_seen_message_id, 1, 0, 0, peer_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
-                return 2;
+                watch_seconds = 0UL;
+                fprintf(stream, "%s: auto-read disabled\n", label);
             }
             continue;
         }
@@ -4165,7 +4233,6 @@ int tg_mtproto_auth_chat_file(const char *host,
                 &last_seen_message_id, 1, 0, 0, peer_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
-                return 2;
             }
             continue;
         }
@@ -4179,9 +4246,12 @@ int tg_mtproto_auth_chat_file(const char *host,
                                                  auth_file, dc_id_text, "100",
                                                  peer_cache_file, quiet);
             tg_mtproto_close_quiet_stream(quiet, stream);
-            if (rc != 0) {
+            if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
                 fprintf(stream, "%s: list-peers-failed\n", label);
                 return 2;
+            }
+            if (rc != 0) {
+                fprintf(stream, "%s: using cached peers\n", label);
             }
             fprintf(stream, "\nPeers:\n");
             tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
@@ -4207,7 +4277,6 @@ int tg_mtproto_auth_chat_file(const char *host,
                 &last_seen_message_id, 0, 1, 1, peer_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
-                return 2;
             }
             continue;
         }
@@ -4218,7 +4287,6 @@ int tg_mtproto_auth_chat_file(const char *host,
                 &last_seen_message_id, 0, 1, 1, peer_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
-                return 2;
             }
             continue;
         }
