@@ -102,6 +102,7 @@ Minimum offline test:
   telegram-test --telegram-client-state-self-test
   telegram-test --telegram-client-self-test
   telegram-test --telegram-text-client-self-test
+  telegram-test --mtproto-self-test-fast
   telegram-test --telegram-tls-status
 
 If built with TLS enabled, use only disposable test bot tokens until HTTPS has

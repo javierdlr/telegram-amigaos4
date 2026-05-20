@@ -149,6 +149,8 @@ void tg_config_init(tg_config *config)
     config->run_http_post_self_test = 0;
     config->run_https_test = 0;
     config->run_mtproto_self_test = 0;
+    config->run_mtproto_self_test_fast = 0;
+    config->run_mtproto_self_test_heavy = 0;
     config->run_mtproto_req_pq_probe = 0;
     config->run_mtproto_req_dh_probe = 0;
     config->run_mtproto_auth_send_code = 0;
@@ -316,6 +318,10 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             i += 3;
         } else if (strcmp(argv[i], "--mtproto-self-test") == 0) {
             config->run_mtproto_self_test = 1;
+        } else if (strcmp(argv[i], "--mtproto-self-test-fast") == 0) {
+            config->run_mtproto_self_test_fast = 1;
+        } else if (strcmp(argv[i], "--mtproto-self-test-heavy") == 0) {
+            config->run_mtproto_self_test_heavy = 1;
         } else if (strcmp(argv[i], "--mtproto-req-pq-probe") == 0) {
             if (i + 2 >= argc) {
                 return 1;
@@ -1020,6 +1026,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Test TLS send and receive with HTTP/1.0\n");
     fprintf(stream, "      --mtproto-self-test\n");
     fprintf(stream, "                         Run offline MTProto bootstrap samples\n");
+    fprintf(stream, "      --mtproto-self-test-fast\n");
+    fprintf(stream, "                         Run offline MTProto samples excluding slow RSA/SRP checks\n");
+    fprintf(stream, "      --mtproto-self-test-heavy\n");
+    fprintf(stream, "                         Run slow offline MTProto RSA, bigint and SRP samples\n");
     fprintf(stream, "      --mtproto-req-pq-probe <host> <port>\n");
     fprintf(stream, "                         Send supervised MTProto req_pq_multi TCP probe\n");
     fprintf(stream, "      --mtproto-req-dh-probe <host> <port> <dc-id>\n");

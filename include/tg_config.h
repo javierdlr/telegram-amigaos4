@@ -156,6 +156,8 @@ typedef struct tg_config {
     int run_http_post_self_test;
     int run_https_test;
     int run_mtproto_self_test;
+    int run_mtproto_self_test_fast;
+    int run_mtproto_self_test_heavy;
     int run_mtproto_req_pq_probe;
     int run_mtproto_req_dh_probe;
     int run_mtproto_auth_send_code;

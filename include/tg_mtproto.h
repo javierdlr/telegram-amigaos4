@@ -7,5 +7,7 @@
 #define TG_MTPROTO_H
 
 int tg_mtproto_self_test(void);
+int tg_mtproto_self_test_fast(void);
+int tg_mtproto_self_test_heavy(void);
 
 #endif

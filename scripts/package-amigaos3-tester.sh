@@ -103,6 +103,7 @@ Useful commands:
   telegram-test --telegram-client-state-self-test
   telegram-test --telegram-client-self-test
   telegram-test --telegram-text-client-self-test
+  telegram-test --mtproto-self-test-fast
   telegram-test --telegram-tls-status
   telegram-test --telegram-getme-default
   telegram-test --telegram-get-updates-default

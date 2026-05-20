@@ -188,6 +188,19 @@ Run:
 telegram-test --mtproto-self-test
 ```
 
+On slow targets such as 68k AmigaOS, run the non-heavy subset first:
+
+```text
+telegram-test --mtproto-self-test-fast
+```
+
+Then run the slow RSA/bigint/SRP checks separately when the machine can be left
+busy long enough:
+
+```text
+telegram-test --mtproto-self-test-heavy
+```
+
 Expected output:
 
 ```text
@@ -195,6 +208,7 @@ mtproto dc self-test: ok
 mtproto message-id self-test: ok
 mtproto auth self-test: ok
 mtproto rsa self-test: ok
+mtproto bigint self-test: ok
 mtproto tl self-test: ok
 mtproto envelope self-test: ok
 mtproto encrypted self-test: ok
@@ -202,6 +216,7 @@ mtproto transport self-test: ok
 mtproto login self-test: ok
 mtproto probe self-test: ok
 mtproto crypto self-test: ok
+mtproto srp self-test: ok
 mtproto session self-test: ok
 mtproto self-test: ok
 ```

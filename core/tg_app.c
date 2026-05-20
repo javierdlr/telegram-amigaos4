@@ -3660,6 +3660,14 @@ int tg_app_run(int argc, char **argv)
         return tg_mtproto_self_test();
     }
 
+    if (config.run_mtproto_self_test_fast) {
+        return tg_mtproto_self_test_fast();
+    }
+
+    if (config.run_mtproto_self_test_heavy) {
+        return tg_mtproto_self_test_heavy();
+    }
+
     if (config.run_mtproto_req_pq_probe) {
         return tg_mtproto_req_pq_probe(config.mtproto_probe_host,
                                        config.mtproto_probe_port, stdout);

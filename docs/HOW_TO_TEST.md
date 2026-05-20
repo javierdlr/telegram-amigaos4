@@ -27,11 +27,16 @@ telegram-test --telegram-send-message-self-test
 telegram-test --telegram-client-state-self-test
 telegram-test --telegram-client-self-test
 telegram-test --telegram-text-client-self-test
+telegram-test --mtproto-self-test-fast
 telegram-test --telegram-tls-status
 ```
 
 Expected result: every self-test prints `ok`. `--telegram-tls-status` should
 show whether TLS certificate validation was requested.
+
+`--mtproto-self-test-fast` skips the slow RSA/bigint/SRP samples. Use
+`--mtproto-self-test` for the complete MTProto suite, or
+`--mtproto-self-test-heavy` to run only the slow MTProto crypto math checks.
 
 ## 2. Network And HTTPS Tests
 

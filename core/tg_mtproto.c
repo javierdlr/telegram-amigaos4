@@ -21,92 +21,138 @@
 #include "tg_mtproto_tl.h"
 #include "tg_mtproto_transport.h"
 
+typedef int (*tg_mtproto_self_test_fn)(void);
+
+static int tg_mtproto_run_self_test_step(const char *name,
+                                         tg_mtproto_self_test_fn fn)
+{
+    if (fn() != 0) {
+        printf("mtproto %s self-test: failed\n", name);
+        return 2;
+    }
+    printf("mtproto %s self-test: ok\n", name);
+    return 0;
+}
+
 int tg_mtproto_self_test(void)
 {
-    if (tg_mtproto_dc_self_test() != 0) {
-        puts("mtproto dc self-test: failed");
+    if (tg_mtproto_run_self_test_step("dc", tg_mtproto_dc_self_test) != 0) {
         return 2;
     }
-    puts("mtproto dc self-test: ok");
-
-    if (tg_mtproto_message_id_self_test() != 0) {
-        puts("mtproto message-id self-test: failed");
+    if (tg_mtproto_run_self_test_step("message-id",
+                                      tg_mtproto_message_id_self_test) != 0) {
         return 2;
     }
-    puts("mtproto message-id self-test: ok");
-
-    if (tg_mtproto_auth_self_test() != 0) {
-        puts("mtproto auth self-test: failed");
+    if (tg_mtproto_run_self_test_step("auth", tg_mtproto_auth_self_test) != 0) {
         return 2;
     }
-    puts("mtproto auth self-test: ok");
-
-    if (tg_mtproto_rsa_self_test() != 0) {
-        puts("mtproto rsa self-test: failed");
+    if (tg_mtproto_run_self_test_step("rsa", tg_mtproto_rsa_self_test) != 0) {
         return 2;
     }
-    puts("mtproto rsa self-test: ok");
-
-    if (tg_mtproto_bigint_self_test() != 0) {
-        puts("mtproto bigint self-test: failed");
+    if (tg_mtproto_run_self_test_step("bigint",
+                                      tg_mtproto_bigint_self_test) != 0) {
         return 2;
     }
-    puts("mtproto bigint self-test: ok");
-
-    if (tg_mtproto_tl_self_test() != 0) {
-        puts("mtproto tl self-test: failed");
+    if (tg_mtproto_run_self_test_step("tl", tg_mtproto_tl_self_test) != 0) {
         return 2;
     }
-    puts("mtproto tl self-test: ok");
-
-    if (tg_mtproto_envelope_self_test() != 0) {
-        puts("mtproto envelope self-test: failed");
+    if (tg_mtproto_run_self_test_step("envelope",
+                                      tg_mtproto_envelope_self_test) != 0) {
         return 2;
     }
-    puts("mtproto envelope self-test: ok");
-
-    if (tg_mtproto_encrypted_self_test() != 0) {
-        puts("mtproto encrypted self-test: failed");
+    if (tg_mtproto_run_self_test_step("encrypted",
+                                      tg_mtproto_encrypted_self_test) != 0) {
         return 2;
     }
-    puts("mtproto encrypted self-test: ok");
-
-    if (tg_mtproto_transport_self_test() != 0) {
-        puts("mtproto transport self-test: failed");
+    if (tg_mtproto_run_self_test_step("transport",
+                                      tg_mtproto_transport_self_test) != 0) {
         return 2;
     }
-    puts("mtproto transport self-test: ok");
-
-    if (tg_mtproto_login_self_test() != 0) {
-        puts("mtproto login self-test: failed");
+    if (tg_mtproto_run_self_test_step("login",
+                                      tg_mtproto_login_self_test) != 0) {
         return 2;
     }
-    puts("mtproto login self-test: ok");
-
-    if (tg_mtproto_probe_self_test() != 0) {
-        puts("mtproto probe self-test: failed");
+    if (tg_mtproto_run_self_test_step("probe",
+                                      tg_mtproto_probe_self_test) != 0) {
         return 2;
     }
-    puts("mtproto probe self-test: ok");
-
-    if (tg_mtproto_crypto_self_test() != 0) {
-        puts("mtproto crypto self-test: failed");
+    if (tg_mtproto_run_self_test_step("crypto",
+                                      tg_mtproto_crypto_self_test) != 0) {
         return 2;
     }
-    puts("mtproto crypto self-test: ok");
-
-    if (tg_mtproto_srp_self_test() != 0) {
-        puts("mtproto srp self-test: failed");
+    if (tg_mtproto_run_self_test_step("srp", tg_mtproto_srp_self_test) != 0) {
         return 2;
     }
-    puts("mtproto srp self-test: ok");
-
-    if (tg_mtproto_session_self_test() != 0) {
-        puts("mtproto session self-test: failed");
+    if (tg_mtproto_run_self_test_step("session",
+                                      tg_mtproto_session_self_test) != 0) {
         return 2;
     }
-    puts("mtproto session self-test: ok");
 
     puts("mtproto self-test: ok");
+    return 0;
+}
+
+int tg_mtproto_self_test_fast(void)
+{
+    if (tg_mtproto_run_self_test_step("dc", tg_mtproto_dc_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("message-id",
+                                      tg_mtproto_message_id_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("auth", tg_mtproto_auth_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("tl", tg_mtproto_tl_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("envelope",
+                                      tg_mtproto_envelope_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("encrypted",
+                                      tg_mtproto_encrypted_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("transport",
+                                      tg_mtproto_transport_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("login",
+                                      tg_mtproto_login_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("probe",
+                                      tg_mtproto_probe_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("crypto",
+                                      tg_mtproto_crypto_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("session",
+                                      tg_mtproto_session_self_test) != 0) {
+        return 2;
+    }
+
+    puts("mtproto fast self-test: ok");
+    return 0;
+}
+
+int tg_mtproto_self_test_heavy(void)
+{
+    if (tg_mtproto_run_self_test_step("rsa", tg_mtproto_rsa_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("bigint",
+                                      tg_mtproto_bigint_self_test) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_run_self_test_step("srp", tg_mtproto_srp_self_test) != 0) {
+        return 2;
+    }
+
+    puts("mtproto heavy self-test: ok");
     return 0;
 }
