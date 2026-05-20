@@ -470,6 +470,8 @@ Current options:
                       Read history summary for a cached user peer
     --mtproto-auth-send-peer-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file> <peer-index> <text>
                       Send text to a cached user peer
+    --mtproto-chat-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file>
+                      Interactive cached-user MTProto text chat
     --telegram-tls-status
                       Print current TLS security status
     --json-test <json> <field>

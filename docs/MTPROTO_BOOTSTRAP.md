@@ -94,6 +94,7 @@ telegram-test --mtproto-auth-get-history-self-file <host> <port> <api-file> <aut
 telegram-test --mtproto-auth-get-history-peer-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file> <peer-index> <limit>
 telegram-test --mtproto-auth-send-self <host> <port> <api-id> <auth-file> <dc-id> <text>
 telegram-test --mtproto-auth-send-peer-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file> <peer-index> <text>
+telegram-test --mtproto-chat-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file>
 telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 ```
 
@@ -118,6 +119,10 @@ message text.
 `auth.get-history-peer-file` uses that cache to read a history summary for a
 cached user peer. `auth.send-peer-file` sends a real text message to a cached
 user peer; use it only after confirming the peer index.
+`mtproto-chat-file` is the first interactive user-peer chat mode. It refreshes
+the peer cache, asks for a peer index, reads a history summary, then accepts
+plain text to send. In this mode command diagnostics are hidden from the chat
+transcript; `/read`, `/peer`, `/peers` and `/quit` are the available controls.
 Some Telegram responses are `gzip_packed`. Builds can enable unpacking with
 `TG_ENABLE_GZIP=1` when zlib is available; otherwise these responses remain
 explicitly unsupported instead of being silently misparsed.

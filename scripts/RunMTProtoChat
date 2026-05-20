@@ -1,0 +1,54 @@
+; Interactive cached-user MTProto text chat for Amiga shells.
+; This can send real Telegram messages after a peer is selected.
+
+.KEY HOST,PORT,DC,API,AUTH,PEERS,PROGRAM
+.BRA {
+.KET }
+
+Echo "Telegram Amiga MTProto chat"
+FailAt 21
+Stack 65536
+
+IF "{HOST}" EQ ""
+    SET TGHOST "149.154.167.91"
+ELSE
+    SET TGHOST "{HOST}"
+ENDIF
+
+IF "{PORT}" EQ ""
+    SET TGPORT "443"
+ELSE
+    SET TGPORT "{PORT}"
+ENDIF
+
+IF "{DC}" EQ ""
+    SET TGDC "4"
+ELSE
+    SET TGDC "{DC}"
+ENDIF
+
+IF "{API}" EQ ""
+    SET APIFILE "telegram-api.txt"
+ELSE
+    SET APIFILE "{API}"
+ENDIF
+
+IF "{AUTH}" EQ ""
+    SET AUTHFILE "telegram-auth.bin"
+ELSE
+    SET AUTHFILE "{AUTH}"
+ENDIF
+
+IF "{PEERS}" EQ ""
+    SET PEERSFILE "telegram-peers.txt"
+ELSE
+    SET PEERSFILE "{PEERS}"
+ENDIF
+
+IF "{PROGRAM}" EQ ""
+    Protect telegram-test +e
+    telegram-test --mtproto-chat-file "$TGHOST" "$TGPORT" "$APIFILE" "$AUTHFILE" "$TGDC" "$PEERSFILE"
+ELSE
+    Protect {PROGRAM} +e
+    {PROGRAM} --mtproto-chat-file "$TGHOST" "$TGPORT" "$APIFILE" "$AUTHFILE" "$TGDC" "$PEERSFILE"
+ENDIF

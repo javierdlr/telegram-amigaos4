@@ -3360,6 +3360,60 @@ static int tg_mtproto_load_peer_cache_user(const char *path,
     return 2;
 }
 
+static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream)
+{
+    FILE *file;
+    char line[512];
+    unsigned long index;
+    char type[24];
+    char id_hi[9];
+    char id_lo[9];
+    char access_hi[9];
+    char access_lo[9];
+    char *title;
+    char *username;
+
+    file = fopen(path, "r");
+    if (file == 0) {
+        fprintf(stream, "mtproto chat: peer-cache-open-failed\n");
+        return;
+    }
+    while (fgets(line, sizeof(line), file) != 0) {
+        index = 0UL;
+        type[0] = '\0';
+        id_hi[0] = id_lo[0] = access_hi[0] = access_lo[0] = '\0';
+        if (sscanf(line,
+                   "peer %lu type %23s id 0x%8s%8s access_hash 0x%8s%8s",
+                   &index, type, id_hi, id_lo, access_hi, access_lo) < 6) {
+            continue;
+        }
+        fprintf(stream, "%lu. %s", index, type);
+        title = strstr(line, " title ");
+        username = strstr(line, " username ");
+        if (title != 0) {
+            title += 7;
+            tg_mtproto_trim_line(title);
+            if (title[0] != '-' || title[1] != '\0') {
+                fprintf(stream, " ");
+                tg_mtproto_print_cache_text(stream, title);
+            }
+        } else if (username != 0) {
+            username += 10;
+            title = strstr(username, " title ");
+            if (title != 0) {
+                *title = '\0';
+            }
+            tg_mtproto_trim_line(username);
+            if (username[0] != '-' || username[1] != '\0') {
+                fprintf(stream, " @");
+                tg_mtproto_print_cache_text(stream, username);
+            }
+        }
+        fprintf(stream, "\n");
+    }
+    fclose(file);
+}
+
 int tg_mtproto_auth_get_history_peer_file(const char *host,
                                           const char *port,
                                           const char *api_file,
@@ -3592,6 +3646,136 @@ int tg_mtproto_auth_send_peer_file(const char *host,
                 updates.date);
     }
     return 0;
+}
+
+static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
+{
+    FILE *quiet;
+
+    quiet = tmpfile();
+    if (quiet == 0) {
+        return fallback;
+    }
+    return quiet;
+}
+
+static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback)
+{
+    if (quiet != 0 && quiet != fallback) {
+        fclose(quiet);
+    }
+}
+
+int tg_mtproto_auth_chat_file(const char *host,
+                              const char *port,
+                              const char *api_file,
+                              const char *auth_file,
+                              const char *dc_id_text,
+                              const char *peer_cache_file,
+                              FILE *stream)
+{
+    char peer_index[32];
+    char line[512];
+    FILE *quiet;
+    int rc;
+    static const char label[] = "mtproto chat";
+
+    if (stream == 0 || host == 0 || port == 0 || api_file == 0 ||
+        auth_file == 0 || dc_id_text == 0 || peer_cache_file == 0) {
+        if (stream != 0) {
+            fputs("mtproto chat: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_auth_list_peers_file(host, port, api_file, auth_file,
+                                         dc_id_text, "20", peer_cache_file,
+                                         quiet);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    if (rc != 0) {
+        fprintf(stream, "%s: list-peers-failed\n", label);
+        return 2;
+    }
+    fprintf(stream, "\nPeers:\n");
+    tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+    if (tg_mtproto_prompt_line("\nPeer index: ", peer_index,
+                               sizeof(peer_index), 1, stream, label) != 0) {
+        return 2;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_auth_get_history_peer_file(host, port, api_file, auth_file,
+                                               dc_id_text, peer_cache_file,
+                                               peer_index, "5", quiet);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    if (rc != 0) {
+        fprintf(stream, "%s: read-failed\n", label);
+        return 2;
+    }
+    fprintf(stream, "history refreshed\n");
+    fprintf(stream, "\nType text to send. Commands: /read /peer /peers /quit\n");
+    for (;;) {
+        fputs("> ", stream);
+        fflush(stream);
+        if (fgets(line, sizeof(line), stdin) == 0) {
+            fprintf(stream, "%s: input-closed\n", label);
+            return 0;
+        }
+        tg_mtproto_trim_line(line);
+        if (line[0] == '\0') {
+            continue;
+        }
+        if (strcmp(line, "/quit") == 0 || strcmp(line, "quit") == 0) {
+            fprintf(stream, "%s: bye\n", label);
+            return 0;
+        }
+        if (strcmp(line, "/peers") == 0) {
+            quiet = tg_mtproto_open_quiet_stream(stream);
+            rc = tg_mtproto_auth_list_peers_file(host, port, api_file,
+                                                 auth_file, dc_id_text, "20",
+                                                 peer_cache_file, quiet);
+            tg_mtproto_close_quiet_stream(quiet, stream);
+            if (rc != 0) {
+                fprintf(stream, "%s: list-peers-failed\n", label);
+                return 2;
+            }
+            fprintf(stream, "\nPeers:\n");
+            tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+            continue;
+        }
+        if (strcmp(line, "/peer") == 0) {
+            fprintf(stream, "\nPeers:\n");
+            tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+            if (tg_mtproto_prompt_line("Peer index: ", peer_index,
+                                       sizeof(peer_index), 1, stream,
+                                       label) != 0) {
+                return 2;
+            }
+            continue;
+        }
+        if (strcmp(line, "/read") == 0) {
+            quiet = tg_mtproto_open_quiet_stream(stream);
+            rc = tg_mtproto_auth_get_history_peer_file(
+                host, port, api_file, auth_file, dc_id_text,
+                peer_cache_file, peer_index, "5", quiet);
+            tg_mtproto_close_quiet_stream(quiet, stream);
+            if (rc != 0) {
+                fprintf(stream, "%s: read-failed\n", label);
+                return 2;
+            }
+            fprintf(stream, "history refreshed\n");
+            continue;
+        }
+        quiet = tg_mtproto_open_quiet_stream(stream);
+        rc = tg_mtproto_auth_send_peer_file(host, port, api_file, auth_file,
+                                            dc_id_text, peer_cache_file,
+                                            peer_index, line, quiet);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        if (rc != 0) {
+            fprintf(stream, "%s: send-failed\n", label);
+            return 2;
+        }
+        fprintf(stream, "me: %s\n", line);
+    }
 }
 
 int tg_mtproto_auth_forget(const char *auth_file,

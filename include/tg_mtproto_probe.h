@@ -194,6 +194,13 @@ int tg_mtproto_auth_send_peer_file(const char *host,
                                    const char *peer_index_text,
                                    const char *message,
                                    FILE *stream);
+int tg_mtproto_auth_chat_file(const char *host,
+                              const char *port,
+                              const char *api_file,
+                              const char *auth_file,
+                              const char *dc_id_text,
+                              const char *peer_cache_file,
+                              FILE *stream);
 int tg_mtproto_auth_forget(const char *auth_file,
                            const char *code_hash_file,
                            FILE *stream);

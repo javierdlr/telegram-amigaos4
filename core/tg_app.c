@@ -3620,7 +3620,7 @@ int tg_app_run(int argc, char **argv)
                                       config.tls_ca_file,
                                       config.tls_ca_path);
 
-    if (!config.run_telegram_human_chat) {
+    if (!config.run_telegram_human_chat && !config.run_mtproto_chat_file) {
         puts("telegram-amiga bootstrap");
         printf("platform: %s\n", tg_platform_name());
         tg_log(TG_LOG_INFO, "core initialized");
@@ -3932,6 +3932,16 @@ int tg_app_run(int argc, char **argv)
                                               config.mtproto_auth_peer_index,
                                               config.mtproto_auth_message,
                                               stdout);
+    }
+
+    if (config.run_mtproto_chat_file) {
+        return tg_mtproto_auth_chat_file(config.mtproto_auth_host,
+                                         config.mtproto_auth_port,
+                                         config.mtproto_auth_api_file,
+                                         config.mtproto_auth_file,
+                                         config.mtproto_auth_dc_id,
+                                         config.mtproto_chat_peer_cache_file,
+                                         stdout);
     }
 
     if (config.run_mtproto_auth_forget) {

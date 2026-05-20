@@ -109,6 +109,7 @@ telegram-test --mtproto-auth-get-config-file $HOST $PORT telegram-api.txt telegr
 telegram-test --mtproto-auth-get-dialogs-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 telegram-test --mtproto-auth-list-peers-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 20 telegram-peers.txt
 telegram-test --mtproto-auth-get-history-peer-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt 1 1
+telegram-test --mtproto-chat-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt
 telegram-test --mtproto-auth-get-history-self-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 ```
 
@@ -125,6 +126,7 @@ scripts/mtproto-get-config.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC
 scripts/mtproto-get-dialogs.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-list-peers.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 20 telegram-peers.txt
 scripts/mtproto-get-history-peer.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt 1 1
+scripts/mtproto-chat.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt
 scripts/mtproto-get-history-self.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-readonly-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-login-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
@@ -142,6 +144,9 @@ cache as local private state.
 Use `mtproto-get-history-peer` as the first cached-peer validation because it is
 read-only and prints only counts. `mtproto-send-peer` sends a real message to
 the selected peer index.
+Use `mtproto-chat` for the first manual botta-risposta mode. It hides protocol
+diagnostics from the chat transcript and sends only when a normal text line is
+entered.
 The login smoke wrapper first validates local files and inspects the saved auth
 state, then runs the same read-only sequence.
 The safe smoke wrapper performs local-file checks, inspects the auth file, and

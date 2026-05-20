@@ -145,6 +145,15 @@ To send to a cached user peer, first verify the peer index in
 telegram-test --mtproto-auth-send-peer-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt 1 "Hello from Amiga"
 ```
 
+For the first interactive user-peer chat mode:
+
+```text
+telegram-test --mtproto-chat-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt
+```
+
+Choose a peer index, type text to send, use `/read` to refresh, `/peer` to pick
+another peer, `/peers` to reload the list and `/quit` to exit.
+
 ## Cleanup
 
 ```text
