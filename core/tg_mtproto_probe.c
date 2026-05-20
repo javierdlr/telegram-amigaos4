@@ -8,9 +8,16 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#if TG_ENABLE_GZIP
+#if TG_ENABLE_GZIP || TG_ENABLE_GZIP_PUFF
 #include <limits.h>
+#endif
+
+#if TG_ENABLE_GZIP
 #include <zlib.h>
+#endif
+
+#if TG_ENABLE_GZIP_PUFF
+#include "puff.h"
 #endif
 
 #include "tg_mtproto_auth.h"
@@ -58,7 +65,7 @@ typedef struct tg_mtproto_auth_context {
     int connection_open;
 } tg_mtproto_auth_context;
 
-#if TG_ENABLE_GZIP
+#if TG_ENABLE_GZIP || TG_ENABLE_GZIP_PUFF
 static unsigned char tg_mtproto_gzip_unpacked[TG_MTPROTO_GZIP_UNPACKED_MAX];
 #endif
 
@@ -1598,6 +1605,94 @@ static int tg_mtproto_print_rpc_error(const char *label,
     return 1;
 }
 
+#if TG_ENABLE_GZIP_PUFF
+static int tg_mtproto_gzip_skip_zero_string(const unsigned char *data,
+                                            unsigned long length,
+                                            unsigned long *offset)
+{
+    if (data == 0 || offset == 0 || *offset >= length) {
+        return 2;
+    }
+    while (*offset < length && data[*offset] != 0U) {
+        ++(*offset);
+    }
+    if (*offset >= length) {
+        return 2;
+    }
+    ++(*offset);
+    return 0;
+}
+
+static int tg_mtproto_gzip_unpack_puff(const unsigned char *packed_data,
+                                       unsigned long packed_length,
+                                       unsigned long *unpacked_length)
+{
+    unsigned long offset;
+    unsigned long extra_length;
+    unsigned long source_length;
+    unsigned long dest_length;
+    unsigned int flags;
+    int rc;
+
+    if (unpacked_length != 0) {
+        *unpacked_length = 0UL;
+    }
+    if (packed_data == 0 || unpacked_length == 0 || packed_length < 18UL ||
+        packed_data[0] != 0x1fU || packed_data[1] != 0x8bU ||
+        packed_data[2] != 8U) {
+        return 2;
+    }
+
+    flags = (unsigned int)packed_data[3];
+    if ((flags & 0xe0U) != 0U) {
+        return 2;
+    }
+    offset = 10UL;
+
+    if ((flags & 4U) != 0U) {
+        if (packed_length - offset < 2UL) {
+            return 2;
+        }
+        extra_length = ((unsigned long)packed_data[offset]) |
+                       (((unsigned long)packed_data[offset + 1U]) << 8);
+        offset += 2UL;
+        if (extra_length > packed_length - offset) {
+            return 2;
+        }
+        offset += extra_length;
+    }
+    if ((flags & 8U) != 0U &&
+        tg_mtproto_gzip_skip_zero_string(packed_data, packed_length,
+                                         &offset) != 0) {
+        return 2;
+    }
+    if ((flags & 16U) != 0U &&
+        tg_mtproto_gzip_skip_zero_string(packed_data, packed_length,
+                                         &offset) != 0) {
+        return 2;
+    }
+    if ((flags & 2U) != 0U) {
+        if (packed_length - offset < 2UL) {
+            return 2;
+        }
+        offset += 2UL;
+    }
+    if (packed_length - offset < 8UL) {
+        return 2;
+    }
+
+    source_length = packed_length - offset - 8UL;
+    dest_length = TG_MTPROTO_GZIP_UNPACKED_MAX;
+    rc = puff(tg_mtproto_gzip_unpacked, &dest_length,
+              packed_data + offset, &source_length);
+    if (rc != 0 || dest_length < 4UL) {
+        return 2;
+    }
+    *unpacked_length = dest_length;
+    return 0;
+}
+#endif
+
 static int tg_mtproto_unpack_gzip_result(tg_mtproto_rpc_result *result,
                                          FILE *stream,
                                          const char *label)
@@ -1650,6 +1745,22 @@ static int tg_mtproto_unpack_gzip_result(tg_mtproto_rpc_result *result,
             tg_mtproto_read_u32_le(tg_mtproto_gzip_unpacked);
         result->result_body = tg_mtproto_gzip_unpacked + 4;
         result->result_body_length = (unsigned long)zs.total_out - 4UL;
+        return 0;
+    }
+#elif TG_ENABLE_GZIP_PUFF
+    {
+        unsigned long unpacked_length;
+
+        if (tg_mtproto_gzip_unpack_puff(packed_data, packed_length,
+                                        &unpacked_length) != 0) {
+            fprintf(stream, "%s: gzip-unpack-failed\n", label);
+            return 2;
+        }
+
+        result->result_constructor =
+            tg_mtproto_read_u32_le(tg_mtproto_gzip_unpacked);
+        result->result_body = tg_mtproto_gzip_unpacked + 4;
+        result->result_body_length = unpacked_length - 4UL;
         return 0;
     }
 #else
@@ -4246,15 +4357,15 @@ int tg_mtproto_auth_chat_file(const char *host,
     for (;;) {
         if (watch_seconds > 0UL &&
             !tg_platform_stdin_readable(watch_seconds)) {
+            quiet = tg_mtproto_open_quiet_stream(stream);
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
-                peer_cache_file, peer_index, "5", stream,
+                peer_cache_file, peer_index, "5", quiet,
                 &last_seen_message_id, 1, 0, 0, peer_label);
-            if (rc != 0) {
-                fprintf(stream, "%s: read-failed\n", label);
-                watch_seconds = 0UL;
-                fprintf(stream, "%s: auto-read disabled\n", label);
+            if (rc == 0) {
+                tg_mtproto_replay_quiet_stream(quiet, stream);
             }
+            tg_mtproto_close_quiet_stream(quiet, stream);
             continue;
         }
         if (fgets(line, sizeof(line), stdin) == 0) {
