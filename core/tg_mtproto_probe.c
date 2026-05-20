@@ -392,6 +392,25 @@ static void tg_mtproto_close_auth_context(tg_mtproto_auth_context *context)
     }
 }
 
+static int tg_mtproto_validate_saved_auth_dc(
+    const tg_mtproto_auth_context *context,
+    unsigned long requested_dc,
+    FILE *stream,
+    const char *label)
+{
+    if (context == 0 || stream == 0 || label == 0 || requested_dc == 0UL) {
+        return 2;
+    }
+    if (context->session.dc_id != 0UL &&
+        context->session.dc_id != requested_dc) {
+        fprintf(stream,
+                "%s: auth-dc-mismatch auth-file-dc %lu requested-dc %lu\n",
+                label, context->session.dc_id, requested_dc);
+        return 2;
+    }
+    return 0;
+}
+
 static int tg_mtproto_find_rpc_result_direct(
     const unsigned char *body,
     unsigned long body_length,
@@ -1699,7 +1718,11 @@ static int tg_mtproto_send_saved_query(const char *host,
                                      label) != 0) {
         return 2;
     }
-    context.session.dc_id = (unsigned long)dc_id;
+    if (tg_mtproto_validate_saved_auth_dc(&context, (unsigned long)dc_id,
+                                          stream, label) != 0) {
+        tg_mtproto_close_auth_context(&context);
+        return 2;
+    }
 
     if (tg_mtproto_build_initialized_query(&writer, wrapped_query,
                                            sizeof(wrapped_query), api_id,
