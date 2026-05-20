@@ -98,6 +98,10 @@ The tester package also includes AmigaDOS helper scripts:
 Execute RunAmigaOS3Preflight
 Execute RunAmigaOS3GetMe
 Execute RunAmigaOS3HumanChat
+Execute RunMTProtoLoginWizard
+Execute RunMTProtoLoginSmoke
+Execute RunMTProtoListPeers
+Execute RunMTProtoChat
 ```
 
 Use `Execute`; the helpers set stack and restore the executable bit on
@@ -109,6 +113,8 @@ to run them directly, set them manually:
 Protect RunAmigaOS3Preflight +se
 Protect RunAmigaOS3GetMe +se
 Protect RunAmigaOS3HumanChat +se
+Protect RunMTProtoLoginWizard +se
+Protect RunMTProtoChat +se
 ```
 
 By default it auto-detects only `SYS:AmiSSL` and otherwise uses the existing
@@ -350,6 +356,67 @@ telegram-test --telegram-echo-loop-default telegram-offset.txt 5 10
 ```
 
 This polls every five seconds for at most ten iterations.
+
+## MTProto Account Login And User Chat
+
+The package also contains a pre-alpha MTProto account login path. This is
+separate from the Bot API tester and can send real Telegram messages to normal
+users selected from the account's dialog list.
+
+Create `telegram-api.txt` in the package drawer:
+
+```text
+<api_id>
+<api_hash>
+```
+
+Keep these MTProto files private and out of screenshots, archives and forum
+posts:
+
+```text
+telegram-api.txt
+telegram-auth.bin
+phone-code-hash.txt
+telegram-password.txt
+telegram-peers.txt
+```
+
+Run the interactive login:
+
+```text
+Execute RunMTProtoLoginWizard
+```
+
+The wizard asks for phone number, Telegram login code and optional 2FA
+password. Some Amiga console setups can echo password input, so avoid running
+that step during public screen-sharing.
+
+After login, validate the local files and saved session:
+
+```text
+Execute RunMTProtoCheckLocal
+Execute RunMTProtoInspectAuth
+Execute RunMTProtoLoginSmoke
+Execute RunMTProtoListPeers
+```
+
+Start chat mode:
+
+```text
+Execute RunMTProtoChat
+```
+
+Pick a peer index and type normal text to send. Incoming peer messages are
+auto-read every 5 seconds while waiting for input. `/read` polls immediately,
+`/watch <seconds>` changes the interval, `/watch off` disables auto-read,
+`/peer` changes peer, `/peers` refreshes the peer cache and `/quit` exits.
+
+If you see `auth-dc-mismatch`, inspect the saved auth file and use the matching
+DC endpoint explicitly. The latest live AmigaOS 3.x validation used:
+
+```text
+Execute RunMTProtoChat 149.154.167.91 443 4 telegram-api.txt telegram-auth.bin telegram-peers.txt telegram-test
+```
 
 ## Common Failures
 

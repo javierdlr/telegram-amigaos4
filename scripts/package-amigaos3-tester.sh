@@ -137,6 +137,47 @@ the Bot API chat id once. This mode does not redraw a prompt, waits silently
 when there are no updates, keeps log lines out of the chat transcript, and
 still appends telegram-inbox.log.
 
+MTProto account login and user chat are also included. This path logs in with a
+normal Telegram account and can send real messages to selected peers. It is
+pre-alpha; use a test account when possible.
+
+Create telegram-api.txt next to telegram-test:
+
+  <api_id>
+  <api_hash>
+
+Keep telegram-api.txt, telegram-auth.bin, phone-code-hash.txt,
+telegram-password.txt and telegram-peers.txt private. Do not publish screenshots
+or logs showing phone numbers, login codes, 2FA passwords, contact names or
+message text.
+
+Interactive MTProto login:
+
+  Execute RunMTProtoLoginWizard
+
+Then validate and list peers:
+
+  Execute RunMTProtoCheckLocal
+  Execute RunMTProtoInspectAuth
+  Execute RunMTProtoLoginSmoke
+  Execute RunMTProtoListPeers
+
+Start user-peer chat:
+
+  Execute RunMTProtoChat
+
+Pick a peer index and type normal text to send. Incoming peer messages are
+auto-read every 5 seconds while waiting for input. Use /read to poll
+immediately, /watch <seconds> to change the interval, /watch off to disable
+auto-read, /peer to choose another peer, /peers to refresh the peer cache and
+/quit to exit.
+
+If a command reports auth-dc-mismatch, run Execute RunMTProtoInspectAuth and
+use the saved dc_id with the matching Telegram endpoint. The latest live
+AmigaOS 3.x validation used:
+
+  Execute RunMTProtoChat 149.154.167.91 443 4 telegram-api.txt telegram-auth.bin telegram-peers.txt telegram-test
+
   telegram-test --telegram-chats telegram-chats.txt
   telegram-test --telegram-chats-default
   telegram-test --telegram-send-chat-default telegram-chats.txt 1 "Hello from AmigaOS 3.x"
