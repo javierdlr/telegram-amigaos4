@@ -113,6 +113,10 @@ scripts/mtproto-safe-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC
 The read-only smoke wrapper runs status, config, dialog summary and Saved
 Messages history summary. It is the preferred first validation after sign-in
 because it does not print contact names, usernames or message text.
+The dialog step may print peer type, peer id, top message id and unread count.
+Those peer rows are read-only handles for later client work; they are not enough
+for sending to people, groups or channels until the matching users/chats
+`access_hash` values are parsed and cached locally.
 The login smoke wrapper first validates local files and inspects the saved auth
 state, then runs the same read-only sequence.
 The safe smoke wrapper performs local-file checks, inspects the auth file, and

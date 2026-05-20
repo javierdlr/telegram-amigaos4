@@ -92,6 +92,23 @@ typedef struct tg_mtproto_dialogs_summary {
     int is_not_modified;
 } tg_mtproto_dialogs_summary;
 
+#define TG_MTPROTO_DIALOG_PEER_MAX 32U
+
+typedef struct tg_mtproto_dialog_peer {
+    unsigned long peer_constructor;
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long top_message;
+    unsigned long unread_count;
+} tg_mtproto_dialog_peer;
+
+typedef struct tg_mtproto_dialog_peer_list {
+    unsigned long count;
+    unsigned long total_dialog_count;
+    int truncated;
+    tg_mtproto_dialog_peer peers[TG_MTPROTO_DIALOG_PEER_MAX];
+} tg_mtproto_dialog_peer_list;
+
 typedef struct tg_mtproto_messages_summary {
     unsigned long constructor;
     unsigned long flags;
@@ -244,6 +261,14 @@ tg_mtproto_tl_status tg_mtproto_parse_dialogs_summary(
     const unsigned char *body,
     unsigned long body_length,
     tg_mtproto_dialogs_summary *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_list(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_dialog_peer_list *out);
+
+const char *tg_mtproto_peer_constructor_name(unsigned long constructor);
 
 tg_mtproto_tl_status tg_mtproto_parse_messages_summary(
     unsigned long constructor,

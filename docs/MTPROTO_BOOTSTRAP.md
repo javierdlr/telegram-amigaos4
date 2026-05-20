@@ -51,6 +51,8 @@ Current MTProto code is offline by default:
   `users.getUsers(inputUserSelf)` probes;
 - first saved-session `messages.getDialogs`, `messages.getHistory` on
   `inputPeerSelf`, and `messages.sendMessage` to Saved Messages probes;
+- read-only dialog peer extraction from `messages.getDialogs` for user, chat
+  and channel peer ids, without printing message text or contact names;
 - best-effort `msgs_ack` for encrypted RPC responses and containers;
 - local session-forget command for plaintext auth test files;
 - portable SHA-1 and SHA-256 primitives with known-answer tests;
@@ -124,6 +126,13 @@ The same status check is wrapped by:
 ```text
 scripts/mtproto-login-status.sh <host> <port> telegram-api.txt telegram-auth.bin <dc-id> [program]
 ```
+
+`messages.getDialogs` currently extracts peer type, peer id, top message id and
+unread count from the dialog vector. This is enough to prove that the saved
+session can see selectable conversations, but it is not yet enough to send to a
+person, group or channel. Sending outside Saved Messages still needs the
+matching `access_hash` and display metadata from the returned users/chats
+vectors, stored in a local peer cache.
 
 For a serial non-destructive smoke that also checks local files first:
 
@@ -279,7 +288,10 @@ Next MTProto work should stay behind explicit self-tests:
    `account.Password` parameters, then wire it into the existing
    `auth.checkPassword` builder;
 3. validate `users.getUsers(inputUserSelf)` after sign-in;
-4. parse dialogs into selectable peers and message-history text rows;
-5. validate saved-session commands on AmigaOS3, MorphOS and AROS;
-6. keep Bot API and MTProto user login commands separate until login,
+4. parse users/chats vectors from `messages.getDialogs` into a local peer cache
+   with access hashes and stable display labels;
+5. add explicit get-history/send-message commands for cached user, group and
+   channel peers;
+6. validate saved-session commands on AmigaOS3, MorphOS and AROS;
+7. keep Bot API and MTProto user login commands separate until login,
    encrypted RPC parsing and session persistence are covered by tests.

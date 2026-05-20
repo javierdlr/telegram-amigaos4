@@ -108,6 +108,12 @@ mtproto messages.getHistory(self): ok
 The smoke test is read-only and does not print message text, contact names or
 usernames.
 
+`messages.getDialogs` may also print `peer` lines with peer type, id, top
+message id and unread count. These are non-message-content handles for the next
+client step: selecting a person, group or channel. They are not sufficient for
+sending yet; the client still needs to persist the matching access hashes from
+the users/chats vectors.
+
 ## Cleanup
 
 ```text

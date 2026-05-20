@@ -31,6 +31,13 @@
 #define TG_MTPROTO_RPC_ERROR_CONSTRUCTOR 0x2144ca19UL
 #define TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR 0x73f1f8dcUL
 #define TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR 0x3072cfa1UL
+#define TG_MTPROTO_UPDATES_CONSTRUCTOR 0x74ae4240UL
+#define TG_MTPROTO_UPDATES_COMBINED_CONSTRUCTOR 0x725b04c3UL
+#define TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR 0x78d4dec1UL
+#define TG_MTPROTO_UPDATE_SHORT_MESSAGE_CONSTRUCTOR 0x914fbf11UL
+#define TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_CONSTRUCTOR 0x16812688UL
+#define TG_MTPROTO_UPDATE_SHORT_SENT_MESSAGE_CONSTRUCTOR 0x9015e101UL
+#define TG_MTPROTO_UPDATES_TOO_LONG_CONSTRUCTOR 0xe317af7eUL
 #define TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR 0x5e002502UL
 #define TG_MTPROTO_AUTH_SENT_CODE_SUCCESS_CONSTRUCTOR 0x2390fe44UL
 #define TG_MTPROTO_AUTH_SENT_CODE_PAYMENT_REQUIRED_CONSTRUCTOR 0xd7a2fcf9UL
@@ -49,6 +56,17 @@ typedef struct tg_mtproto_auth_context {
 #if TG_ENABLE_GZIP
 static unsigned char tg_mtproto_gzip_unpacked[TG_MTPROTO_GZIP_UNPACKED_MAX];
 #endif
+
+static int tg_mtproto_is_async_update_constructor(unsigned long constructor)
+{
+    return constructor == TG_MTPROTO_UPDATES_CONSTRUCTOR ||
+           constructor == TG_MTPROTO_UPDATES_COMBINED_CONSTRUCTOR ||
+           constructor == TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR ||
+           constructor == TG_MTPROTO_UPDATE_SHORT_MESSAGE_CONSTRUCTOR ||
+           constructor == TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_CONSTRUCTOR ||
+           constructor == TG_MTPROTO_UPDATE_SHORT_SENT_MESSAGE_CONSTRUCTOR ||
+           constructor == TG_MTPROTO_UPDATES_TOO_LONG_CONSTRUCTOR;
+}
 
 static void tg_mtproto_probe_random(unsigned char *bytes, unsigned long length)
 {
@@ -593,7 +611,7 @@ static int tg_mtproto_send_encrypted_query(
         return 2;
     }
 
-    for (attempt = 0U; attempt < 2U; ++attempt) {
+    for (attempt = 0U; attempt < 6U; ++attempt) {
         retry_request = 0;
         encrypted_padding_length = 12UL;
         while (((32UL + body_length + encrypted_padding_length) % 16UL) !=
@@ -636,7 +654,7 @@ static int tg_mtproto_send_encrypted_query(
                                          writer.length, error_buffer,
                                          sizeof(error_buffer));
         memset(&bad_msg, 0, sizeof(bad_msg));
-        for (receive_attempt = 0U; receive_attempt < 8U; ++receive_attempt) {
+        for (receive_attempt = 0U; receive_attempt < 32U; ++receive_attempt) {
             if (net_status == TG_NET_OK) {
                 net_status = tg_mtproto_recv_abridged_packet(
                     &context->connection, response, sizeof(response),
@@ -697,6 +715,9 @@ static int tg_mtproto_send_encrypted_query(
             response_constructor = decrypted.body_length >= 4UL ?
                 tg_mtproto_read_u32_le(decrypted.body) : 0UL;
             if (response_constructor == TG_MTPROTO_RPC_RESULT_CONSTRUCTOR) {
+                continue;
+            }
+            if (tg_mtproto_is_async_update_constructor(response_constructor)) {
                 continue;
             }
             if (response_constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR &&
@@ -2755,7 +2776,9 @@ int tg_mtproto_auth_get_dialogs(const char *host,
 {
     unsigned char query[64];
     unsigned long limit;
+    unsigned long i;
     tg_mtproto_dialogs_summary dialogs;
+    tg_mtproto_dialog_peer_list peer_list;
     tg_mtproto_rpc_result result;
     tg_mtproto_tl_writer writer;
     static const char label[] = "mtproto messages.getDialogs";
@@ -2803,6 +2826,28 @@ int tg_mtproto_auth_get_dialogs(const char *host,
             dialogs.chat_count, dialogs.user_count);
     if (dialogs.is_slice || dialogs.is_not_modified) {
         fprintf(stream, "%s: count %lu\n", label, dialogs.count);
+    }
+    if (tg_mtproto_parse_dialog_peer_list(result.result_constructor,
+                                          result.result_body,
+                                          result.result_body_length,
+                                          &peer_list) == TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: peer_count %lu\n", label, peer_list.count);
+        for (i = 0UL; i < peer_list.count; ++i) {
+            fprintf(stream,
+                    "%s: peer %lu type %s id 0x%08lx%08lx top %lu unread %lu\n",
+                    label, i + 1UL,
+                    tg_mtproto_peer_constructor_name(
+                        peer_list.peers[i].peer_constructor),
+                    peer_list.peers[i].id_hi,
+                    peer_list.peers[i].id_lo,
+                    peer_list.peers[i].top_message,
+                    peer_list.peers[i].unread_count);
+        }
+        if (peer_list.truncated) {
+            fprintf(stream, "%s: peer_list_truncated\n", label);
+        }
+    } else if (dialogs.dialog_count != 0UL) {
+        fprintf(stream, "%s: peer_list_parse_skipped\n", label);
     }
     return 0;
 }
