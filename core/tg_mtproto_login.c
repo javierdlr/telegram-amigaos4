@@ -50,6 +50,14 @@
 #define TG_MESSAGES_MESSAGES_NOT_MODIFIED_CONSTRUCTOR 0x74535f21UL
 #define TG_UPDATE_SHORT_SENT_MESSAGE_CONSTRUCTOR 0x9015e101UL
 
+static unsigned long tg_read_u32_le(const unsigned char *p)
+{
+    return ((unsigned long)p[0]) |
+           (((unsigned long)p[1]) << 8) |
+           (((unsigned long)p[2]) << 16) |
+           (((unsigned long)p[3]) << 24);
+}
+
 static tg_mtproto_tl_status tg_write_string(tg_mtproto_tl_writer *writer,
                                             const char *text)
 {
@@ -988,12 +996,19 @@ tg_mtproto_tl_status tg_mtproto_parse_dialogs_summary(
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if (tg_read_vector_count(&reader, &out->dialog_count) !=
-            TG_MTPROTO_TL_OK ||
-        tg_read_vector_count(&reader, &out->message_count) !=
+        TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (out->dialog_count != 0UL &&
+        (reader.length - reader.offset < 4UL ||
+         tg_read_u32_le(reader.buffer + reader.offset) != TG_VECTOR_CONSTRUCTOR)) {
+        return TG_MTPROTO_TL_OK;
+    }
+    if (tg_read_vector_count(&reader, &out->message_count) !=
             TG_MTPROTO_TL_OK ||
         tg_read_vector_count(&reader, &out->chat_count) != TG_MTPROTO_TL_OK ||
         tg_read_vector_count(&reader, &out->user_count) != TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_INVALID_DATA;
+        return TG_MTPROTO_TL_OK;
     }
     return TG_MTPROTO_TL_OK;
 }

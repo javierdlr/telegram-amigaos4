@@ -8,6 +8,11 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#if TG_ENABLE_GZIP
+#include <limits.h>
+#include <zlib.h>
+#endif
+
 #include "tg_mtproto_auth.h"
 #include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_envelope.h"
@@ -31,6 +36,7 @@
 #define TG_MTPROTO_AUTH_SENT_CODE_PAYMENT_REQUIRED_CONSTRUCTOR 0xd7a2fcf9UL
 #define TG_MTPROTO_CONFIG_CONSTRUCTOR 0xcc1a241eUL
 #define TG_MTPROTO_ACCOUNT_PASSWORD_CONSTRUCTOR 0x957b50fbUL
+#define TG_MTPROTO_GZIP_UNPACKED_MAX 65536UL
 
 typedef struct tg_mtproto_auth_context {
     tg_net_connection connection;
@@ -39,6 +45,10 @@ typedef struct tg_mtproto_auth_context {
     unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
     int connection_open;
 } tg_mtproto_auth_context;
+
+#if TG_ENABLE_GZIP
+static unsigned char tg_mtproto_gzip_unpacked[TG_MTPROTO_GZIP_UNPACKED_MAX];
+#endif
 
 static void tg_mtproto_probe_random(unsigned char *bytes, unsigned long length)
 {
@@ -626,7 +636,7 @@ static int tg_mtproto_send_encrypted_query(
                                          writer.length, error_buffer,
                                          sizeof(error_buffer));
         memset(&bad_msg, 0, sizeof(bad_msg));
-        for (receive_attempt = 0U; receive_attempt < 3U; ++receive_attempt) {
+        for (receive_attempt = 0U; receive_attempt < 8U; ++receive_attempt) {
             if (net_status == TG_NET_OK) {
                 net_status = tg_mtproto_recv_abridged_packet(
                     &context->connection, response, sizeof(response),
@@ -686,6 +696,9 @@ static int tg_mtproto_send_encrypted_query(
             }
             response_constructor = decrypted.body_length >= 4UL ?
                 tg_mtproto_read_u32_le(decrypted.body) : 0UL;
+            if (response_constructor == TG_MTPROTO_RPC_RESULT_CONSTRUCTOR) {
+                continue;
+            }
             if (response_constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR &&
                 response_constructor != 0x9ec20908UL) {
                 fprintf(stream,
@@ -1441,6 +1454,68 @@ static int tg_mtproto_print_rpc_error(const char *label,
     return 1;
 }
 
+static int tg_mtproto_unpack_gzip_result(tg_mtproto_rpc_result *result,
+                                         FILE *stream,
+                                         const char *label)
+{
+    const unsigned char *packed_data;
+    unsigned long packed_length;
+    tg_mtproto_tl_reader reader;
+
+    if (result == 0 || stream == 0 || label == 0 ||
+        result->result_constructor != TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        return 0;
+    }
+
+    tg_mtproto_tl_reader_init(&reader, result->result_body,
+                              result->result_body_length);
+    if (tg_mtproto_tl_read_bytes(&reader, &packed_data, &packed_length) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: gzip-packed-parse-failed\n", label);
+        return 2;
+    }
+
+#if TG_ENABLE_GZIP
+    {
+        int zrc;
+        z_stream zs;
+
+        if (packed_length > (unsigned long)UINT_MAX ||
+            TG_MTPROTO_GZIP_UNPACKED_MAX > (unsigned long)UINT_MAX) {
+            fprintf(stream, "%s: gzip-packed-too-large\n", label);
+            return 2;
+        }
+
+        memset(&zs, 0, sizeof(zs));
+        zs.next_in = (Bytef *)packed_data;
+        zs.avail_in = (uInt)packed_length;
+        zs.next_out = (Bytef *)tg_mtproto_gzip_unpacked;
+        zs.avail_out = (uInt)TG_MTPROTO_GZIP_UNPACKED_MAX;
+
+        zrc = inflateInit2(&zs, 16 + MAX_WBITS);
+        if (zrc == Z_OK) {
+            zrc = inflate(&zs, Z_FINISH);
+            (void)inflateEnd(&zs);
+        }
+        if (zrc != Z_STREAM_END || zs.total_out < 4UL) {
+            fprintf(stream, "%s: gzip-unpack-failed\n", label);
+            return 2;
+        }
+
+        result->result_constructor =
+            tg_mtproto_read_u32_le(tg_mtproto_gzip_unpacked);
+        result->result_body = tg_mtproto_gzip_unpacked + 4;
+        result->result_body_length = (unsigned long)zs.total_out - 4UL;
+        return 0;
+    }
+#else
+    (void)packed_data;
+    (void)packed_length;
+    fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    return 2;
+#endif
+}
+
 static int tg_mtproto_build_initialized_query(tg_mtproto_tl_writer *writer,
                                               unsigned char *wrapped_query,
                                               unsigned long wrapped_capacity,
@@ -1603,8 +1678,7 @@ int tg_mtproto_auth_send_code(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (result.result_constructor != TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR &&
@@ -1789,8 +1863,7 @@ int tg_mtproto_auth_sign_in(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (!tg_mtproto_is_auth_authorization_constructor(
@@ -1940,8 +2013,7 @@ int tg_mtproto_auth_sign_up(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (!tg_mtproto_is_auth_authorization_constructor(
@@ -2021,8 +2093,7 @@ int tg_mtproto_auth_get_config(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (tg_mtproto_parse_config_summary(result.result_constructor,
@@ -2122,8 +2193,7 @@ int tg_mtproto_auth_get_password(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (tg_mtproto_parse_account_password_summary(result.result_constructor,
@@ -2251,10 +2321,9 @@ int tg_mtproto_auth_check_password(const char *host,
         tg_mtproto_secure_zero(password_text, sizeof(password_text));
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         tg_mtproto_close_auth_context(&context);
         tg_mtproto_secure_zero(password_text, sizeof(password_text));
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
         return 2;
     }
     if (tg_mtproto_parse_account_password_summary(result.result_constructor,
@@ -2335,8 +2404,7 @@ int tg_mtproto_auth_check_password(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (!tg_mtproto_is_auth_authorization_constructor(
@@ -2415,8 +2483,7 @@ int tg_mtproto_auth_status(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (tg_mtproto_parse_user_vector_first(result.result_constructor,
@@ -2653,8 +2720,7 @@ int tg_mtproto_auth_get_self(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (tg_mtproto_parse_user_vector_first(result.result_constructor,
@@ -2718,8 +2784,7 @@ int tg_mtproto_auth_get_dialogs(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (tg_mtproto_parse_dialogs_summary(result.result_constructor,
@@ -2803,8 +2868,7 @@ int tg_mtproto_auth_get_history_self(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (tg_mtproto_parse_messages_summary(result.result_constructor,
@@ -2897,8 +2961,7 @@ int tg_mtproto_auth_send_self(const char *host,
         }
         return 2;
     }
-    if (result.result_constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
-        fprintf(stream, "%s: gzip-packed-response-unsupported\n", label);
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
         return 2;
     }
     if (tg_mtproto_parse_updates_summary(result.result_constructor,

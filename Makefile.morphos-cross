@@ -6,6 +6,7 @@
 
 CC = ppc-morphos-gcc
 ENABLE_TLS ?= 0
+ENABLE_GZIP ?= 0
 TARGET ?= build/morphos-cross/telegram-test
 OPENSSL_CFLAGS ?=
 OPENSSL_LDFLAGS ?=
@@ -16,6 +17,11 @@ SRC := src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_console.c
 ifeq ($(ENABLE_TLS),1)
 CFLAGS += $(OPENSSL_CFLAGS)
 LDLIBS += $(OPENSSL_LDFLAGS) -lssl -lcrypto
+endif
+
+ifeq ($(ENABLE_GZIP),1)
+CFLAGS += -DTG_ENABLE_GZIP=1
+LDLIBS += -lz
 endif
 
 .PHONY: all clean

@@ -7,6 +7,9 @@ build/*
 telegram-token.txt
 telegram-password.txt
 telegram-api.txt
+telegram-phone.txt
+telegram-code.txt
+telegram-login-code.txt
 mtproto-api.txt
 telegram-auth*.bin
 telegram-session*.bin
@@ -27,3 +30,4 @@ telegram-*-self-test.tmp
 *.exe
 
 .DS_Store
+telegram-text.txt

@@ -100,6 +100,9 @@ password in a local ignored file such as `telegram-password.txt` and run
 the command prints only status lines.
 `auth.signUp` is available for Test DC numbers that have a validated code hash
 but do not yet have a user record.
+Some Telegram responses are `gzip_packed`. Builds can enable unpacking with
+`TG_ENABLE_GZIP=1` when zlib is available; otherwise these responses remain
+explicitly unsupported instead of being silently misparsed.
 For Telegram Test DC endpoints, pass either the raw `10000 + dc` value or the
 `test:<dc>` shorthand, for example `test:2`.
 See [MTPROTO_TEST_DC.md](MTPROTO_TEST_DC.md) for the real Test DC command flow.
@@ -121,6 +124,16 @@ The same status check is wrapped by:
 ```text
 scripts/mtproto-login-status.sh <host> <port> telegram-api.txt telegram-auth.bin <dc-id> [program]
 ```
+
+For a serial non-destructive smoke that also checks local files first:
+
+```text
+scripts/mtproto-safe-smoke.sh <host> <port> telegram-api.txt telegram-auth.bin <dc-id> [limit] [password-file|-] [program]
+```
+
+With no 2FA password file, the optional program path can be passed directly as
+the seventh argument; `-` can also be used as an explicit empty password-file
+placeholder.
 
 For the complete real-account runbook, use
 [MTPROTO_REAL_LOGIN.md](MTPROTO_REAL_LOGIN.md).
@@ -164,7 +177,8 @@ Saved Messages. Encrypted RPC responses are acknowledged with best-effort
 plaintext local auth-key test files.
 
 Saved authorization files persist `seq_no` and the last client `msg_id`, so
-short command-line probes can run back-to-back without reusing stale message
+saved-session commands that share one auth file must be run serially. Short
+command-line probes can then run back-to-back without reusing stale message
 state. The encrypted query helper retries once after `bad_server_salt` and after
 recoverable sequence-number `bad_msg_notification` errors.
 

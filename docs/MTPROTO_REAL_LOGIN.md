@@ -106,6 +106,8 @@ scripts/mtproto-get-dialogs.sh $HOST $PORT telegram-api.txt telegram-auth.bin $D
 scripts/mtproto-get-history-self.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-readonly-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-login-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
+scripts/mtproto-safe-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
+scripts/mtproto-safe-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 ./telegram-test
 ```
 
 The read-only smoke wrapper runs status, config, dialog summary and Saved
@@ -113,6 +115,15 @@ Messages history summary. It is the preferred first validation after sign-in
 because it does not print contact names, usernames or message text.
 The login smoke wrapper first validates local files and inspects the saved auth
 state, then runs the same read-only sequence.
+The safe smoke wrapper performs local-file checks, inspects the auth file, and
+then runs the read-only sequence serially. When no 2FA password file is needed,
+the last argument can be the program path directly; use `-` as the password-file
+placeholder if both a custom program path and an omitted password file must be
+made explicit.
+
+Run saved-session commands serially when they share the same `telegram-auth.bin`.
+The auth file persists `seq_no` and the last message id after each request;
+parallel commands can race and temporarily confuse response matching.
 
 ## Cleanup
 
