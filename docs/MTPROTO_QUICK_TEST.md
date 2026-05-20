@@ -120,9 +120,17 @@ usernames.
 
 `messages.getDialogs` may also print `peer` lines with peer type, id, top
 message id and unread count. These are non-message-content handles for the next
-client step: selecting a person, group or channel. They are not sufficient for
-sending yet; the client still needs to persist the matching access hashes from
-the users/chats vectors.
+client step: selecting a person, group or channel.
+
+To save those handles locally:
+
+```text
+telegram-test --mtproto-auth-list-peers-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 20 telegram-peers.txt
+```
+
+`telegram-peers.txt` is ignored by Git. The command is read-only; it may save
+only id/top/unread fields until the current TL skipper can cross every
+top-message object returned by the account.
 
 ## Cleanup
 

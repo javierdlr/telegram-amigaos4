@@ -107,6 +107,7 @@ Validate without printing account identity:
 telegram-test --mtproto-auth-status-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 telegram-test --mtproto-auth-get-config-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 telegram-test --mtproto-auth-get-dialogs-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
+telegram-test --mtproto-auth-list-peers-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 20 telegram-peers.txt
 telegram-test --mtproto-auth-get-history-self-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 ```
 
@@ -121,6 +122,7 @@ scripts/mtproto-check-password.sh $HOST $PORT telegram-api.txt telegram-auth.bin
 scripts/mtproto-login-status.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 scripts/mtproto-get-config.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 scripts/mtproto-get-dialogs.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
+scripts/mtproto-list-peers.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 20 telegram-peers.txt
 scripts/mtproto-get-history-self.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-readonly-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-login-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
@@ -132,9 +134,9 @@ The read-only smoke wrapper runs status, config, dialog summary and Saved
 Messages history summary. It is the preferred first validation after sign-in
 because it does not print contact names, usernames or message text.
 The dialog step may print peer type, peer id, top message id and unread count.
-Those peer rows are read-only handles for later client work; they are not enough
-for sending to people, groups or channels until the matching users/chats
-`access_hash` values are parsed and cached locally.
+`mtproto-list-peers` saves those handles in ignored `telegram-peers.txt`; it may
+also include labels and access hashes when the current TL skipper can cross the
+top-message objects returned by Telegram.
 The login smoke wrapper first validates local files and inspects the saved auth
 state, then runs the same read-only sequence.
 The safe smoke wrapper performs local-file checks, inspects the auth file, and

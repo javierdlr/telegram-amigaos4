@@ -73,6 +73,9 @@ typedef struct tg_mtproto_user_summary {
     unsigned long flags2;
     unsigned long id_hi;
     unsigned long id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    int has_access_hash;
     int is_self;
     int is_bot;
     char first_name[96];
@@ -108,6 +111,33 @@ typedef struct tg_mtproto_dialog_peer_list {
     int truncated;
     tg_mtproto_dialog_peer peers[TG_MTPROTO_DIALOG_PEER_MAX];
 } tg_mtproto_dialog_peer_list;
+
+#define TG_MTPROTO_PEER_CACHE_MAX 64U
+
+typedef struct tg_mtproto_peer_cache_entry {
+    unsigned long peer_constructor;
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    unsigned long top_message;
+    unsigned long unread_count;
+    int has_access_hash;
+    int is_self;
+    int is_bot;
+    int from_dialog;
+    char title[128];
+    char username[96];
+} tg_mtproto_peer_cache_entry;
+
+typedef struct tg_mtproto_peer_cache {
+    unsigned long count;
+    unsigned long total_dialog_count;
+    unsigned long user_count;
+    unsigned long chat_count;
+    int truncated;
+    tg_mtproto_peer_cache_entry entries[TG_MTPROTO_PEER_CACHE_MAX];
+} tg_mtproto_peer_cache;
 
 typedef struct tg_mtproto_messages_summary {
     unsigned long constructor;
@@ -267,6 +297,12 @@ tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_list(
     const unsigned char *body,
     unsigned long body_length,
     tg_mtproto_dialog_peer_list *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_cache(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_peer_cache *out);
 
 const char *tg_mtproto_peer_constructor_name(unsigned long constructor);
 

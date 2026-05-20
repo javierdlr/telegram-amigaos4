@@ -3867,6 +3867,17 @@ int tg_app_run(int argc, char **argv)
                                                 stdout);
     }
 
+    if (config.run_mtproto_auth_list_peers_file) {
+        return tg_mtproto_auth_list_peers_file(config.mtproto_auth_host,
+                                               config.mtproto_auth_port,
+                                               config.mtproto_auth_api_file,
+                                               config.mtproto_auth_file,
+                                               config.mtproto_auth_dc_id,
+                                               config.mtproto_auth_limit,
+                                               config.mtproto_auth_peer_cache_file,
+                                               stdout);
+    }
+
     if (config.run_mtproto_auth_get_history_self) {
         return tg_mtproto_auth_get_history_self(config.mtproto_auth_host,
                                                 config.mtproto_auth_port,

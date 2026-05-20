@@ -464,6 +464,8 @@ Current options:
                       Send req_pq_multi then req_DH_params probe
     --mtproto-auth-login-wizard-file <host> <port> <dc-id> <api-file> <auth-file> <code-hash-file>
                       Interactive MTProto phone/code/2FA login wizard
+    --mtproto-auth-list-peers-file <host> <port> <api-file> <auth-file> <dc-id> <limit> <peer-cache-file>
+                      Save read-only dialog peer handles to a local cache
     --telegram-tls-status
                       Print current TLS security status
     --json-test <json> <field>

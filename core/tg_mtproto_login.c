@@ -51,6 +51,12 @@
 #define TG_ACCOUNT_PASSWORD_CONSTRUCTOR 0x957b50fbUL
 #define TG_PASSWORD_KDF_ALGO_SRP_CONSTRUCTOR 0x3a912d4aUL
 #define TG_USER_CONSTRUCTOR 0x020b1422UL
+#define TG_CHAT_EMPTY_CONSTRUCTOR 0x29562865UL
+#define TG_CHAT_FORBIDDEN_CONSTRUCTOR 0x6592a1a7UL
+#define TG_CHANNEL_FORBIDDEN_CONSTRUCTOR 0x17d493d5UL
+#define TG_MESSAGE_EMPTY_CONSTRUCTOR 0x90a6ca84UL
+#define TG_MESSAGE_CONSTRUCTOR 0x9815cec8UL
+#define TG_MESSAGE_SERVICE_CONSTRUCTOR 0x7a800e0aUL
 #define TG_MESSAGES_DIALOGS_CONSTRUCTOR 0x15ba6c40UL
 #define TG_MESSAGES_DIALOGS_SLICE_CONSTRUCTOR 0x71e094f3UL
 #define TG_MESSAGES_DIALOGS_NOT_MODIFIED_CONSTRUCTOR 0xf0e3e596UL
@@ -907,9 +913,6 @@ tg_mtproto_tl_status tg_mtproto_parse_user_vector_first(
 {
     tg_mtproto_tl_reader reader;
     unsigned long count;
-    unsigned long access_hash_hi;
-    unsigned long access_hash_lo;
-
     if (body == 0 || out == 0) {
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
     }
@@ -936,9 +939,12 @@ tg_mtproto_tl_status tg_mtproto_parse_user_vector_first(
     out->is_self = (out->flags & (1UL << 10)) != 0UL;
     out->is_bot = (out->flags & (1UL << 14)) != 0UL;
     if ((out->flags & 1UL) != 0UL &&
-        tg_mtproto_tl_read_u64(&reader, &access_hash_hi, &access_hash_lo) !=
-            TG_MTPROTO_TL_OK) {
+        tg_mtproto_tl_read_u64(&reader, &out->access_hash_hi,
+                               &out->access_hash_lo) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 1UL) != 0UL) {
+        out->has_access_hash = 1;
     }
     if ((out->flags & 2UL) != 0UL &&
         tg_read_string_copy(&reader, out->first_name,
@@ -1254,6 +1260,557 @@ tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_list(
     return TG_MTPROTO_TL_OK;
 }
 
+static tg_mtproto_peer_cache_entry *tg_peer_cache_find(
+    tg_mtproto_peer_cache *cache,
+    unsigned long peer_constructor,
+    unsigned long id_hi,
+    unsigned long id_lo)
+{
+    unsigned long i;
+
+    for (i = 0UL; i < cache->count; ++i) {
+        if (cache->entries[i].peer_constructor == peer_constructor &&
+            cache->entries[i].id_hi == id_hi &&
+            cache->entries[i].id_lo == id_lo) {
+            return &cache->entries[i];
+        }
+    }
+    return 0;
+}
+
+static tg_mtproto_peer_cache_entry *tg_peer_cache_add(
+    tg_mtproto_peer_cache *cache,
+    unsigned long peer_constructor,
+    unsigned long id_hi,
+    unsigned long id_lo)
+{
+    tg_mtproto_peer_cache_entry *entry;
+
+    entry = tg_peer_cache_find(cache, peer_constructor, id_hi, id_lo);
+    if (entry != 0) {
+        return entry;
+    }
+    if (cache->count >= TG_MTPROTO_PEER_CACHE_MAX) {
+        cache->truncated = 1;
+        return 0;
+    }
+    entry = &cache->entries[cache->count++];
+    memset(entry, 0, sizeof(*entry));
+    entry->peer_constructor = peer_constructor;
+    entry->id_hi = id_hi;
+    entry->id_lo = id_lo;
+    return entry;
+}
+
+static void tg_peer_cache_copy_text(char *dst,
+                                    unsigned long dst_size,
+                                    const char *src)
+{
+    unsigned long i;
+
+    if (dst == 0 || dst_size == 0UL) {
+        return;
+    }
+    dst[0] = '\0';
+    if (src == 0) {
+        return;
+    }
+    for (i = 0UL; i + 1UL < dst_size && src[i] != '\0'; ++i) {
+        if (src[i] == '\r' || src[i] == '\n' || src[i] == '\t') {
+            dst[i] = ' ';
+        } else {
+            dst[i] = src[i];
+        }
+    }
+    dst[i] = '\0';
+}
+
+static void tg_peer_cache_copy_user_title(tg_mtproto_peer_cache_entry *entry,
+                                          const tg_mtproto_user_summary *user)
+{
+    unsigned long pos;
+    unsigned long i;
+
+    if (entry == 0 || user == 0) {
+        return;
+    }
+    entry->title[0] = '\0';
+    pos = 0UL;
+    for (i = 0UL; user->first_name[i] != '\0' &&
+         pos + 1UL < sizeof(entry->title); ++i) {
+        entry->title[pos++] = user->first_name[i];
+    }
+    if (pos > 0UL && user->last_name[0] != '\0' &&
+        pos + 1UL < sizeof(entry->title)) {
+        entry->title[pos++] = ' ';
+    }
+    for (i = 0UL; user->last_name[i] != '\0' &&
+         pos + 1UL < sizeof(entry->title); ++i) {
+        entry->title[pos++] = user->last_name[i];
+    }
+    entry->title[pos] = '\0';
+    if (entry->title[0] == '\0') {
+        tg_peer_cache_copy_text(entry->title, sizeof(entry->title),
+                                user->username);
+    }
+}
+
+static tg_mtproto_tl_status tg_skip_user_profile_photo(
+    tg_mtproto_tl_reader *reader)
+{
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long scratch_hi;
+    unsigned long scratch_lo;
+
+    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (constructor == 0x4f11bae1UL) {
+        return TG_MTPROTO_TL_OK;
+    }
+    if (constructor != 0x82d1f706UL) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &scratch_hi, &scratch_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & 2UL) != 0UL && tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return tg_mtproto_tl_read_u32(reader, &scratch_lo);
+}
+
+static tg_mtproto_tl_status tg_skip_user_status(tg_mtproto_tl_reader *reader)
+{
+    unsigned long constructor;
+    unsigned long scratch;
+
+    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    switch (constructor) {
+    case 0x09d05049UL:
+    case 0xe26f42f1UL:
+    case 0x07bf09fcUL:
+    case 0x77ebc742UL:
+        return TG_MTPROTO_TL_OK;
+    case 0xedb93949UL:
+    case 0x008c703fUL:
+        return tg_mtproto_tl_read_u32(reader, &scratch);
+    default:
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+}
+
+static tg_mtproto_tl_status tg_skip_restriction_reason_vector(
+    tg_mtproto_tl_reader *reader)
+{
+    unsigned long count;
+    unsigned long i;
+    unsigned long constructor;
+
+    if (tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    for (i = 0UL; i < count; ++i) {
+        if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK ||
+            constructor != 0xd072acb4UL ||
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK ||
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK ||
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
+static tg_mtproto_tl_status tg_read_user_summary_from_reader(
+    tg_mtproto_tl_reader *reader,
+    tg_mtproto_user_summary *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (tg_mtproto_tl_read_u32(reader, &out->constructor) !=
+            TG_MTPROTO_TL_OK ||
+        out->constructor != TG_USER_CONSTRUCTOR ||
+        tg_mtproto_tl_read_u32(reader, &out->flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(reader, &out->flags2) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &out->id_hi, &out->id_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    out->is_self = (out->flags & (1UL << 10)) != 0UL;
+    out->is_bot = (out->flags & (1UL << 14)) != 0UL;
+    if ((out->flags & 1UL) != 0UL) {
+        if (tg_mtproto_tl_read_u64(reader, &out->access_hash_hi,
+                                   &out->access_hash_lo) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        out->has_access_hash = 1;
+    }
+    if ((out->flags & 2UL) != 0UL &&
+        tg_read_string_copy(reader, out->first_name,
+                            sizeof(out->first_name)) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 4UL) != 0UL &&
+        tg_read_string_copy(reader, out->last_name,
+                            sizeof(out->last_name)) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 8UL) != 0UL &&
+        tg_read_string_copy(reader, out->username,
+                            sizeof(out->username)) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 16UL) != 0UL &&
+        tg_read_string_copy(reader, out->phone,
+                            sizeof(out->phone)) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 32UL) != 0UL &&
+        tg_skip_user_profile_photo(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & 64UL) != 0UL &&
+        tg_skip_user_status(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & (1UL << 18)) != 0UL &&
+        tg_skip_restriction_reason_vector(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & (1UL << 19)) != 0UL &&
+        tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((out->flags & (1UL << 22)) != 0UL &&
+        tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
+static tg_mtproto_tl_status tg_read_peer_cache_chat(
+    tg_mtproto_tl_reader *reader,
+    tg_mtproto_peer_cache *cache)
+{
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    tg_mtproto_peer_cache_entry *entry;
+
+    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    switch (constructor) {
+    case TG_CHAT_EMPTY_CONSTRUCTOR:
+        if (tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        (void)tg_peer_cache_add(cache, TG_PEER_CHAT_CONSTRUCTOR, id_hi, id_lo);
+        return TG_MTPROTO_TL_OK;
+    case TG_CHAT_FORBIDDEN_CONSTRUCTOR:
+        if (tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        entry = tg_peer_cache_add(cache, TG_PEER_CHAT_CONSTRUCTOR, id_hi,
+                                  id_lo);
+        if (entry == 0) {
+            return tg_skip_string(reader);
+        }
+        return tg_read_string_copy(reader, entry->title,
+                                   sizeof(entry->title));
+    case TG_CHANNEL_FORBIDDEN_CONSTRUCTOR:
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) !=
+                TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u64(reader, &access_hash_hi,
+                                   &access_hash_lo) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        entry = tg_peer_cache_add(cache, TG_PEER_CHANNEL_CONSTRUCTOR, id_hi,
+                                  id_lo);
+        if (entry == 0) {
+            return tg_skip_string(reader);
+        }
+        entry->has_access_hash = 1;
+        entry->access_hash_hi = access_hash_hi;
+        entry->access_hash_lo = access_hash_lo;
+        if (tg_read_string_copy(reader, entry->title, sizeof(entry->title)) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & (1UL << 16)) != 0UL &&
+            tg_mtproto_tl_read_u32(reader, &id_lo) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return TG_MTPROTO_TL_OK;
+    default:
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+}
+
+static tg_mtproto_tl_status tg_skip_message_entity_vector(
+    tg_mtproto_tl_reader *reader)
+{
+    unsigned long count;
+
+    if (tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (count != 0UL) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
+static tg_mtproto_tl_status tg_skip_common_message(
+    tg_mtproto_tl_reader *reader)
+{
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long flags2;
+    unsigned long scratch_hi;
+    unsigned long scratch_lo;
+    tg_mtproto_dialog_peer peer;
+
+    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (constructor == TG_MESSAGE_EMPTY_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &scratch_lo) !=
+                TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 1UL) != 0UL &&
+            tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return TG_MTPROTO_TL_OK;
+    }
+    if (constructor == TG_MESSAGE_SERVICE_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &scratch_lo) !=
+                TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & (1UL << 8)) != 0UL &&
+            tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if (tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & (1UL << 28)) != 0UL &&
+            tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 8UL) != 0UL) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if (tg_mtproto_tl_read_u32(reader, &scratch_lo) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (constructor != TG_MESSAGE_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(reader, &flags2) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(reader, &scratch_lo) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 8)) != 0UL &&
+        tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 29)) != 0UL &&
+        tg_mtproto_tl_read_u32(reader, &scratch_lo) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 28)) != 0UL &&
+        tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & 4UL) != 0UL || (flags & 8UL) != 0UL ||
+        (flags & 64UL) != 0UL || (flags & 512UL) != 0UL ||
+        (flags & (1UL << 20)) != 0UL ||
+        (flags & (1UL << 23)) != 0UL ||
+        (flags2 & 8UL) != 0UL || (flags2 & 128UL) != 0UL) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 11)) != 0UL &&
+        tg_mtproto_tl_read_u64(reader, &scratch_hi, &scratch_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags2 & 1UL) != 0UL &&
+        tg_mtproto_tl_read_u64(reader, &scratch_hi, &scratch_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_mtproto_tl_read_u32(reader, &scratch_lo) != TG_MTPROTO_TL_OK ||
+        tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & 128UL) != 0UL &&
+        tg_skip_message_entity_vector(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 10)) != 0UL) {
+        if (tg_mtproto_tl_read_u32(reader, &scratch_lo) !=
+                TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &scratch_lo) !=
+                TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+    }
+    if ((flags & (1UL << 15)) != 0UL &&
+        tg_mtproto_tl_read_u32(reader, &scratch_lo) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 16)) != 0UL &&
+        tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 17)) != 0UL &&
+        tg_mtproto_tl_read_u64(reader, &scratch_hi, &scratch_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 22)) != 0UL &&
+        tg_skip_restriction_reason_vector(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 25)) != 0UL &&
+        tg_mtproto_tl_read_u32(reader, &scratch_lo) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & (1UL << 30)) != 0UL &&
+        tg_mtproto_tl_read_u32(reader, &scratch_lo) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags2 & 4UL) != 0UL &&
+        tg_mtproto_tl_read_u64(reader, &scratch_hi, &scratch_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags2 & 32UL) != 0UL &&
+        tg_mtproto_tl_read_u32(reader, &scratch_lo) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags2 & 64UL) != 0UL &&
+        tg_mtproto_tl_read_u64(reader, &scratch_hi, &scratch_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
+tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_cache(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_peer_cache *out)
+{
+    tg_mtproto_tl_reader reader;
+    tg_mtproto_dialog_peer peer;
+    tg_mtproto_user_summary user;
+    tg_mtproto_peer_cache_entry *entry;
+    unsigned long count;
+    unsigned long i;
+
+    if (body == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    memset(out, 0, sizeof(*out));
+    if (constructor == TG_MESSAGES_DIALOGS_NOT_MODIFIED_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_OK;
+    }
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (constructor == TG_MESSAGES_DIALOGS_SLICE_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u32(&reader, &out->total_dialog_count) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+    } else if (constructor != TG_MESSAGES_DIALOGS_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_read_vector_count(&reader, &count) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (constructor == TG_MESSAGES_DIALOGS_CONSTRUCTOR) {
+        out->total_dialog_count = count;
+    }
+    for (i = 0UL; i < count; ++i) {
+        memset(&peer, 0, sizeof(peer));
+        if (tg_read_dialog_peer(&reader, &peer) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        entry = tg_peer_cache_add(out, peer.peer_constructor, peer.id_hi,
+                                  peer.id_lo);
+        if (entry != 0) {
+            entry->top_message = peer.top_message;
+            entry->unread_count = peer.unread_count;
+            entry->from_dialog = 1;
+        }
+    }
+    if (tg_read_vector_count(&reader, &count) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_OK;
+    }
+    for (i = 0UL; i < count; ++i) {
+        if (tg_skip_common_message(&reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_OK;
+        }
+    }
+    if (tg_read_vector_count(&reader, &count) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_OK;
+    }
+    out->chat_count = count;
+    for (i = 0UL; i < count; ++i) {
+        if (tg_read_peer_cache_chat(&reader, out) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_OK;
+        }
+    }
+    if (tg_read_vector_count(&reader, &count) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_OK;
+    }
+    out->user_count = count;
+    for (i = 0UL; i < count; ++i) {
+        if (tg_read_user_summary_from_reader(&reader, &user) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_OK;
+        }
+        entry = tg_peer_cache_add(out, TG_PEER_USER_CONSTRUCTOR, user.id_hi,
+                                  user.id_lo);
+        if (entry != 0) {
+            entry->has_access_hash = user.has_access_hash;
+            entry->access_hash_hi = user.access_hash_hi;
+            entry->access_hash_lo = user.access_hash_lo;
+            entry->is_self = user.is_self;
+            entry->is_bot = user.is_bot;
+            tg_peer_cache_copy_user_title(entry, &user);
+            tg_peer_cache_copy_text(entry->username, sizeof(entry->username),
+                                    user.username);
+        }
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
 tg_mtproto_tl_status tg_mtproto_parse_messages_summary(
     unsigned long constructor,
     const unsigned char *body,
@@ -1387,7 +1944,7 @@ int tg_mtproto_login_self_test(void)
     unsigned char initialized[192];
     unsigned char wrapped[160];
     unsigned char rpc[64];
-    unsigned char peer_rpc[256];
+    unsigned char peer_rpc[512];
     unsigned char m1[TG_MTPROTO_SHA256_LENGTH];
     char error_text[32];
     long error_code;
@@ -1395,6 +1952,7 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_config_summary config;
     tg_mtproto_dialog_peer_list peer_list;
     tg_mtproto_dialogs_summary dialogs;
+    tg_mtproto_peer_cache peer_cache;
     tg_mtproto_messages_summary messages;
     tg_mtproto_password_summary password;
     tg_mtproto_rpc_result result;
@@ -1745,6 +2303,67 @@ int tg_mtproto_login_self_test(void)
         peer_list.peers[1].id_lo != 0x87654321UL ||
         peer_list.peers[1].top_message != 21UL ||
         peer_list.peers[1].unread_count != 4UL) {
+        return 2;
+    }
+
+    tg_mtproto_tl_writer_init(&writer, peer_rpc, sizeof(peer_rpc));
+    if (tg_mtproto_tl_write_u32(&writer, TG_VECTOR_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 1UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_DIALOG_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_PEER_USER_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0UL, 0x12345678UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 11UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 9UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 10UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 3UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_PEER_NOTIFY_SETTINGS_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_VECTOR_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_VECTOR_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 1UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_CHAT_FORBIDDEN_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0UL, 0x87654321UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "Test Group") != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_VECTOR_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 1UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_USER_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 1UL | 2UL | 4UL | 8UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0UL) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0UL, 0x12345678UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0x01020304UL, 0x05060708UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "Ada") != TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "Lovelace") != TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "ada") != TG_MTPROTO_TL_OK ||
+        tg_mtproto_parse_dialog_peer_cache(TG_MESSAGES_DIALOGS_CONSTRUCTOR,
+                                           peer_rpc, writer.length,
+                                           &peer_cache) != TG_MTPROTO_TL_OK ||
+        peer_cache.count != 2UL || peer_cache.total_dialog_count != 1UL ||
+        peer_cache.user_count != 1UL || peer_cache.chat_count != 1UL ||
+        !peer_cache.entries[0].has_access_hash ||
+        peer_cache.entries[0].access_hash_hi != 0x01020304UL ||
+        peer_cache.entries[0].access_hash_lo != 0x05060708UL ||
+        strcmp(peer_cache.entries[0].title, "Ada Lovelace") != 0 ||
+        strcmp(peer_cache.entries[0].username, "ada") != 0 ||
+        peer_cache.entries[1].peer_constructor != TG_PEER_CHAT_CONSTRUCTOR ||
+        strcmp(peer_cache.entries[1].title, "Test Group") != 0) {
         return 2;
     }
 
