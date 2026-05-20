@@ -89,13 +89,18 @@ With BebboSSHd AROS commit `eae8a99` or newer, the hosted i386 runtime has
 passed the full offline self-test list below over short non-interactive SSH
 commands.
 
-For initial AROS x86_64 experiments, use:
+For AROS x86_64, build by CPU/ABI, not by hosted/native mode. Hosted AROS is a
+useful extra validation environment, but it is not a separate public package
+target. Use a real x86_64 AROS toolchain and SDK:
 
 ```text
-make -f Makefile.aros-x86_64 all ENABLE_TLS=1
+make -f Makefile.aros-x86_64 all ENABLE_TLS=0 \
+  AROS_TOOLCHAIN=/path/to/aros-x86_64-toolchain \
+  AROS_SDK_ROOT=/path/to/AROS/Development
 ```
 
-That target is not validated yet. See `docs/AROS_X86_64_TESTER.md`.
+The resulting file must be an AROS x86_64 ELF, not a host executable. See
+`docs/AROS_X86_64_TESTER.md`.
 
 If `make` reports `Clock skew detected`, check the AROS system date/time or
 refresh the source timestamps after unpacking the archive.

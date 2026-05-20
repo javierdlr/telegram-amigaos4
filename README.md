@@ -222,15 +222,16 @@ details.
 Experimental AROS x86_64 builds can start from:
 
 ```text
-make -f Makefile.aros-x86_64 all ENABLE_TLS=1
+make -f Makefile.aros-x86_64 all ENABLE_TLS=0 \
+  AROS_TOOLCHAIN=/path/to/aros-x86_64-toolchain \
+  AROS_SDK_ROOT=/path/to/AROS/Development
 ```
 
 The offline cross-build path is available when `AROS_SDK_ROOT` and
-`AROS_TOOLCHAIN` point at a matching AROS x86_64 SDK/toolchain. Runtime
-validation uses a hosted AROS TAP endpoint that is available only while the
-runtime is running on the Linux server; it is not a permanent public service.
-TLS is still pending because OpenSSL headers/libraries must be present in the
-x86_64 SDK before `ENABLE_TLS=1` can work. See
+`AROS_TOOLCHAIN` point at a matching AROS x86_64 SDK/toolchain. AROS packages
+are split by CPU/ABI, not by hosted/native mode; hosted AROS is only an extra
+validation environment. TLS requires matching OpenSSL headers and runtime
+libraries before `ENABLE_TLS=1` can be treated as usable. See
 `docs/AROS_X86_64_TESTER.md`.
 
 Recommended AROS offline smoke test:
@@ -325,7 +326,8 @@ scripts/package-aros-x86_64-tester.sh
 ```
 
 This requires a validated AROS x86_64 build environment or an existing binary
-passed with `TARGET=...`; it is not a public tested target yet.
+passed with `TARGET=...`. The helper refuses host binaries and expects an AROS
+x86_64 ELF executable.
 
 Build or package AmigaOS 4.x:
 

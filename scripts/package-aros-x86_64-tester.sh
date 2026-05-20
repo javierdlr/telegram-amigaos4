@@ -21,12 +21,26 @@ DEST_DIR="$PACKAGE_ROOT/$DRAWER_NAME"
 if [ "${BUILD:-1}" = "1" ]; then
     if [ -z "${AROS_TOOLCHAIN:-}" ] || [ -z "${AROS_SDK_ROOT:-}" ]; then
         echo "AROS x86_64 packaging needs a real AROS x86_64 SDK/toolchain." >&2
-        echo "Set AROS_TOOLCHAIN and AROS_SDK_ROOT, or pass BUILD=0 TARGET=/path/to/an existing AROS binary." >&2
+        echo "Set AROS_TOOLCHAIN and AROS_SDK_ROOT, or pass BUILD=0 TARGET=/path/to/an existing AROS x86_64 binary." >&2
+        exit 1
+    fi
+    if [ ! -x "$AROS_TOOLCHAIN/x86_64-aros-gcc" ]; then
+        echo "x86_64-aros-gcc not found or not executable under AROS_TOOLCHAIN: $AROS_TOOLCHAIN" >&2
+        exit 1
+    fi
+    if [ ! -f "$AROS_SDK_ROOT/lib/startup.o" ]; then
+        echo "AROS x86_64 SDK startup object not found: $AROS_SDK_ROOT/lib/startup.o" >&2
+        exit 1
+    fi
+    if [ ! -d "$AROS_SDK_ROOT/include" ]; then
+        echo "AROS x86_64 SDK include directory not found: $AROS_SDK_ROOT/include" >&2
         exit 1
     fi
     make -C "$ROOT_DIR" -f Makefile.aros-x86_64 \
         clean all \
         ENABLE_TLS="$ENABLE_TLS" \
+        AROS_TOOLCHAIN="$AROS_TOOLCHAIN" \
+        AROS_SDK_ROOT="$AROS_SDK_ROOT" \
         TARGET="$TARGET"
 fi
 
@@ -36,9 +50,17 @@ if [ ! -f "$TARGET" ]; then
     exit 1
 fi
 
-if command -v file >/dev/null 2>&1 && file "$TARGET" | grep -qi 'Mach-O'; then
-    echo "Refusing to package host Mach-O binary as AROS x86_64: $TARGET" >&2
-    exit 1
+if command -v file >/dev/null 2>&1; then
+    FILE_DESC=$(file "$TARGET")
+    case "$FILE_DESC" in
+        *"ELF 64-bit"*"x86-64"*"AROS Research Operating System"*)
+            ;;
+        *)
+            echo "Refusing to package non-AROS-x86_64 binary: $TARGET" >&2
+            echo "$FILE_DESC" >&2
+            exit 1
+            ;;
+    esac
 fi
 
 rm -rf "$DEST_DIR"
@@ -59,10 +81,12 @@ Telegram Amiga - AROS x86_64 offline pre-alpha tester
 Build: $COMMIT_ID
 TLS enabled: $ENABLE_TLS
 
-This target has been validated for offline self-tests on hosted AROS x86_64
-through short non-interactive BebboSSHd commands. It is not a live Telegram
-build yet because the current AROS x86_64 SDK used for this package does not
-include OpenSSL headers or libraries.
+This package is for AROS x86_64 systems. "Hosted" AROS is only a validation
+environment; release packages are split by CPU/ABI, not by hosted/native mode.
+
+This is an experimental runtime-validation package. It is not a live Telegram
+build yet unless the offline smoke tests below, TLS and HTTPS have been
+validated on the target with matching OpenSSL headers and libraries.
 
 Minimum offline test:
 
@@ -92,6 +116,9 @@ Hosted AROS x86_64 runtime notes:
   - 10.255.222.2:2222 is a TAP-internal endpoint on the Linux build server.
   - It works only while hosted AROS is running, and normally only from that
     server unless an SSH tunnel is used.
+  - A binary that matches the AROS x86_64 CPU/ABI should be treated as the same
+    release artifact for hosted and VM/native AROS; hosted is an extra test
+    lane, not a separate public package target.
   - Use BebboSSHd x64 v0.3.1 or newer. Older x64 builds used too small a
     command stack for heavier telegram-test self-tests.
   - Use short non-interactive commands. Do not use shell redirection or pipes.
