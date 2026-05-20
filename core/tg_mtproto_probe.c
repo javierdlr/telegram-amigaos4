@@ -4025,6 +4025,19 @@ static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback)
     }
 }
 
+static void tg_mtproto_replay_quiet_stream(FILE *quiet, FILE *fallback)
+{
+    char line[256];
+
+    if (quiet == 0 || fallback == 0 || quiet == fallback) {
+        return;
+    }
+    rewind(quiet);
+    while (fgets(line, sizeof(line), quiet) != 0) {
+        fputs(line, fallback);
+    }
+}
+
 static int tg_mtproto_auth_print_history_text_peer_file(
     const char *host,
     const char *port,
@@ -4314,11 +4327,13 @@ int tg_mtproto_auth_chat_file(const char *host,
         rc = tg_mtproto_auth_send_peer_file(host, port, api_file, auth_file,
                                             dc_id_text, peer_cache_file,
                                             peer_index, line, quiet);
-        tg_mtproto_close_quiet_stream(quiet, stream);
         if (rc != 0) {
+            tg_mtproto_replay_quiet_stream(quiet, stream);
+            tg_mtproto_close_quiet_stream(quiet, stream);
             fprintf(stream, "%s: send-failed\n", label);
-            return 2;
+            continue;
         }
+        tg_mtproto_close_quiet_stream(quiet, stream);
         fprintf(stream, "me: %s\n", line);
     }
 }
