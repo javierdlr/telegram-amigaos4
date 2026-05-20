@@ -3666,6 +3666,91 @@ static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback)
     }
 }
 
+static int tg_mtproto_auth_print_history_text_peer_file(
+    const char *host,
+    const char *port,
+    const char *api_file,
+    const char *auth_file,
+    const char *dc_id_text,
+    const char *peer_cache_file,
+    const char *peer_index_text,
+    const char *limit_text,
+    FILE *stream)
+{
+    unsigned char query[64];
+    unsigned long limit;
+    unsigned long user_id_hi;
+    unsigned long user_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    unsigned long i;
+    char api_id[32];
+    FILE *quiet;
+    tg_mtproto_message_text_list texts;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    static const char label[] = "mtproto messages.getHistory(peer)";
+
+    if (stream == 0 || tg_mtproto_parse_ulong_arg(limit_text, &limit) != 0 ||
+        limit == 0UL || limit > 100UL) {
+        return 2;
+    }
+
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    quiet, label) != 0 ||
+        tg_mtproto_load_peer_cache_user(peer_cache_file, peer_index_text,
+                                        &user_id_hi, &user_id_lo,
+                                        &access_hash_hi, &access_hash_lo,
+                                        quiet, label) != 0) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_history_user(
+            &writer, user_id_hi, user_id_lo, access_hash_hi, access_hash_lo,
+            limit) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
+    if (tg_mtproto_send_saved_query(host, port, api_id, auth_file, dc_id_text,
+                                    query, writer.length, &result, quiet,
+                                    label) != 0) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        (void)tg_mtproto_print_rpc_error(label, &result, quiet);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, quiet, label) != 0) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
+    if (tg_mtproto_parse_message_text_list(result.result_constructor,
+                                           result.result_body,
+                                           result.result_body_length,
+                                           &texts) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+
+    if (texts.count == 0UL) {
+        fprintf(stream, "history refreshed\n");
+        return 0;
+    }
+    i = texts.count;
+    while (i > 0UL) {
+        --i;
+        fprintf(stream, "%s: ", texts.messages[i].is_out ? "me" : "them");
+        tg_mtproto_print_cache_text(stream, texts.messages[i].text);
+        fprintf(stream, "\n");
+    }
+    return 0;
+}
+
 int tg_mtproto_auth_chat_file(const char *host,
                               const char *port,
                               const char *api_file,
@@ -3702,20 +3787,15 @@ int tg_mtproto_auth_chat_file(const char *host,
                                sizeof(peer_index), 1, stream, label) != 0) {
         return 2;
     }
-    quiet = tg_mtproto_open_quiet_stream(stream);
-    rc = tg_mtproto_auth_get_history_peer_file(host, port, api_file, auth_file,
-                                               dc_id_text, peer_cache_file,
-                                               peer_index, "5", quiet);
-    tg_mtproto_close_quiet_stream(quiet, stream);
+    rc = tg_mtproto_auth_print_history_text_peer_file(
+        host, port, api_file, auth_file, dc_id_text, peer_cache_file,
+        peer_index, "5", stream);
     if (rc != 0) {
         fprintf(stream, "%s: read-failed\n", label);
         return 2;
     }
-    fprintf(stream, "history refreshed\n");
     fprintf(stream, "\nType text to send. Commands: /read /peer /peers /quit\n");
     for (;;) {
-        fputs("> ", stream);
-        fflush(stream);
         if (fgets(line, sizeof(line), stdin) == 0) {
             fprintf(stream, "%s: input-closed\n", label);
             return 0;
@@ -3753,16 +3833,13 @@ int tg_mtproto_auth_chat_file(const char *host,
             continue;
         }
         if (strcmp(line, "/read") == 0) {
-            quiet = tg_mtproto_open_quiet_stream(stream);
-            rc = tg_mtproto_auth_get_history_peer_file(
+            rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
-                peer_cache_file, peer_index, "5", quiet);
-            tg_mtproto_close_quiet_stream(quiet, stream);
+                peer_cache_file, peer_index, "5", stream);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
                 return 2;
             }
-            fprintf(stream, "history refreshed\n");
             continue;
         }
         quiet = tg_mtproto_open_quiet_stream(stream);

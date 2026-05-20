@@ -151,6 +151,25 @@ typedef struct tg_mtproto_messages_summary {
     int is_channel_messages;
 } tg_mtproto_messages_summary;
 
+#define TG_MTPROTO_MESSAGE_TEXT_MAX 256U
+#define TG_MTPROTO_MESSAGE_TEXT_LIST_MAX 8U
+
+typedef struct tg_mtproto_message_text {
+    unsigned long id;
+    unsigned long date;
+    unsigned long flags;
+    int is_out;
+    int has_text;
+    char text[TG_MTPROTO_MESSAGE_TEXT_MAX];
+} tg_mtproto_message_text;
+
+typedef struct tg_mtproto_message_text_list {
+    unsigned long count;
+    unsigned long total_message_count;
+    int truncated;
+    tg_mtproto_message_text messages[TG_MTPROTO_MESSAGE_TEXT_LIST_MAX];
+} tg_mtproto_message_text_list;
+
 typedef struct tg_mtproto_updates_summary {
     unsigned long constructor;
     unsigned long flags;
@@ -329,6 +348,12 @@ tg_mtproto_tl_status tg_mtproto_parse_messages_summary(
     const unsigned char *body,
     unsigned long body_length,
     tg_mtproto_messages_summary *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_message_text_list *out);
 
 tg_mtproto_tl_status tg_mtproto_parse_updates_summary(
     unsigned long constructor,
