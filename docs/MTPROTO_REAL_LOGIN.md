@@ -145,10 +145,10 @@ Use `mtproto-get-history-peer` as the first cached-peer validation because it is
 read-only and prints only counts. `mtproto-send-peer` sends a real message to
 the selected peer index.
 Use `mtproto-chat` for the first manual botta-risposta mode. It hides protocol
-diagnostics from the chat transcript, prints recent peer text as `me:` or
-`them:`, auto-reads new incoming text every 5 seconds while waiting for input,
-and sends only when a normal text line is entered. Use `/watch <seconds>` or
-`/watch off` to tune that receive loop.
+diagnostics from the chat transcript, prints recent peer text as `me:` or the
+selected peer label, auto-reads new incoming text every 5 seconds while waiting
+for input, and sends only when a normal text line is entered. Use `/watch <seconds>`
+or `/watch off` to tune that receive loop.
 The login smoke wrapper first validates local files and inspects the saved auth
 state, then runs the same read-only sequence.
 The safe smoke wrapper performs local-file checks, inspects the auth file, and

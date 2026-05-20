@@ -156,7 +156,8 @@ peer text every 5 seconds while waiting for keyboard input; use `/watch <seconds
 to change the interval or `/watch off` to disable it. Use `/read` to
 print recent cached-user message text, `/peer` to pick another peer, `/peers`
 to reload the list and `/quit` to exit. Chat mode hides MTProto diagnostics
-during normal operation and prints chat lines as `me:` or `them:`.
+during normal operation and prints chat lines as `me:` or the selected peer
+label.
 
 ## Cleanup
 

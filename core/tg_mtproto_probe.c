@@ -3415,6 +3415,91 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream)
     fclose(file);
 }
 
+static void tg_mtproto_copy_cache_field(char *dest,
+                                        unsigned long dest_size,
+                                        const char *begin,
+                                        const char *end)
+{
+    unsigned long length;
+
+    if (dest == 0 || dest_size == 0UL) {
+        return;
+    }
+    dest[0] = '\0';
+    if (begin == 0) {
+        return;
+    }
+    while (*begin == ' ' || *begin == '\t') {
+        ++begin;
+    }
+    if (end == 0) {
+        end = begin + strlen(begin);
+    }
+    while (end > begin && (end[-1] == ' ' || end[-1] == '\t' ||
+                           end[-1] == '\r' || end[-1] == '\n')) {
+        --end;
+    }
+    if (end <= begin || (begin[0] == '-' && begin + 1 == end)) {
+        return;
+    }
+    length = (unsigned long)(end - begin);
+    if (length >= dest_size) {
+        length = dest_size - 1UL;
+    }
+    memcpy(dest, begin, (size_t)length);
+    dest[length] = '\0';
+}
+
+static int tg_mtproto_load_peer_cache_label(const char *path,
+                                            const char *peer_index_text,
+                                            char *label_buffer,
+                                            unsigned long label_buffer_size)
+{
+    FILE *file;
+    char line[512];
+    char type[24];
+    unsigned long wanted_index;
+    unsigned long index;
+    char *title;
+    char *username;
+
+    if (label_buffer == 0 || label_buffer_size == 0UL) {
+        return 2;
+    }
+    label_buffer[0] = '\0';
+    if (path == 0 || peer_index_text == 0 ||
+        tg_mtproto_parse_ulong_arg(peer_index_text, &wanted_index) != 0 ||
+        wanted_index == 0UL) {
+        return 2;
+    }
+    file = fopen(path, "r");
+    if (file == 0) {
+        return 2;
+    }
+    while (fgets(line, sizeof(line), file) != 0) {
+        index = 0UL;
+        type[0] = '\0';
+        if (sscanf(line, "peer %lu type %23s", &index, type) < 2 ||
+            index != wanted_index) {
+            continue;
+        }
+        title = strstr(line, " title ");
+        username = strstr(line, " username ");
+        if (title != 0) {
+            tg_mtproto_copy_cache_field(label_buffer, label_buffer_size,
+                                        title + 7, 0);
+        }
+        if (label_buffer[0] == '\0' && username != 0) {
+            tg_mtproto_copy_cache_field(label_buffer, label_buffer_size,
+                                        username + 10, title);
+        }
+        fclose(file);
+        return label_buffer[0] != '\0' ? 0 : 2;
+    }
+    fclose(file);
+    return 2;
+}
+
 int tg_mtproto_auth_get_history_peer_file(const char *host,
                                           const char *port,
                                           const char *api_file,
@@ -3680,7 +3765,8 @@ static int tg_mtproto_auth_print_history_text_peer_file(
     unsigned long *last_seen_message_id,
     int only_new,
     int include_outgoing,
-    int print_empty_status)
+    int print_empty_status,
+    const char *peer_label)
 {
     unsigned char query[64];
     unsigned long limit;
@@ -3766,7 +3852,14 @@ static int tg_mtproto_auth_print_history_text_peer_file(
         if (!include_outgoing && texts.messages[i].is_out) {
             continue;
         }
-        fprintf(stream, "%s: ", texts.messages[i].is_out ? "me" : "them");
+        if (texts.messages[i].is_out) {
+            fprintf(stream, "me: ");
+        } else if (peer_label != 0 && peer_label[0] != '\0') {
+            tg_mtproto_print_cache_text(stream, peer_label);
+            fprintf(stream, ": ");
+        } else {
+            fprintf(stream, "them: ");
+        }
         tg_mtproto_print_cache_text(stream, texts.messages[i].text);
         fprintf(stream, "\n");
         ++printed;
@@ -3789,6 +3882,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                               FILE *stream)
 {
     char peer_index[32];
+    char peer_label[128];
     char line[512];
     unsigned long last_seen_message_id;
     unsigned long watch_seconds;
@@ -3819,11 +3913,17 @@ int tg_mtproto_auth_chat_file(const char *host,
                                sizeof(peer_index), 1, stream, label) != 0) {
         return 2;
     }
+    if (tg_mtproto_load_peer_cache_label(peer_cache_file, peer_index,
+                                         peer_label,
+                                         sizeof(peer_label)) != 0) {
+        peer_label[0] = '\0';
+    }
     last_seen_message_id = 0UL;
     watch_seconds = 5UL;
     rc = tg_mtproto_auth_print_history_text_peer_file(
         host, port, api_file, auth_file, dc_id_text, peer_cache_file,
-        peer_index, "5", stream, &last_seen_message_id, 0, 1, 1);
+        peer_index, "5", stream, &last_seen_message_id, 0, 1, 1,
+        peer_label);
     if (rc != 0) {
         fprintf(stream, "%s: read-failed\n", label);
         return 2;
@@ -3838,7 +3938,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
                 peer_cache_file, peer_index, "5", stream,
-                &last_seen_message_id, 1, 0, 0);
+                &last_seen_message_id, 1, 0, 0, peer_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
                 return 2;
@@ -3854,7 +3954,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
                 peer_cache_file, peer_index, "5", stream,
-                &last_seen_message_id, 1, 0, 0);
+                &last_seen_message_id, 1, 0, 0, peer_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
                 return 2;
@@ -3887,11 +3987,16 @@ int tg_mtproto_auth_chat_file(const char *host,
                                        label) != 0) {
                 return 2;
             }
+            if (tg_mtproto_load_peer_cache_label(peer_cache_file, peer_index,
+                                                 peer_label,
+                                                 sizeof(peer_label)) != 0) {
+                peer_label[0] = '\0';
+            }
             last_seen_message_id = 0UL;
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
                 peer_cache_file, peer_index, "5", stream,
-                &last_seen_message_id, 0, 1, 1);
+                &last_seen_message_id, 0, 1, 1, peer_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
                 return 2;
@@ -3902,7 +4007,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
                 peer_cache_file, peer_index, "5", stream,
-                &last_seen_message_id, 0, 1, 1);
+                &last_seen_message_id, 0, 1, 1, peer_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
                 return 2;
