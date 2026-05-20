@@ -68,6 +68,23 @@ DC_ID=2
 Start login:
 
 ```text
+telegram-test --mtproto-auth-login-wizard-file $HOST $PORT $DC_ID telegram-api.txt telegram-auth.bin phone-code-hash.txt
+```
+
+The wizard asks for the phone number and then for the Telegram login code. If
+Telegram requires 2FA, it asks for the password and uses it only in memory. On
+some retro consoles the password input is visible; do not run it while sharing
+the screen.
+
+AmigaDOS package wrapper:
+
+```text
+Execute RunMTProtoLoginWizard
+```
+
+For debugging, the same flow can still be run step by step. Start login:
+
+```text
 telegram-test --mtproto-auth-send-code-file $HOST $PORT $DC_ID telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
 ```
 
@@ -98,6 +115,7 @@ Wrapper equivalents:
 ```text
 scripts/mtproto-send-code.sh $HOST $PORT $DC_ID telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
 scripts/mtproto-sign-in.sh $HOST $PORT telegram-api.txt telegram-auth.bin <phone> phone-code-hash.txt <code> $DC_ID
+scripts/mtproto-login-wizard.sh $HOST $PORT $DC_ID telegram-api.txt telegram-auth.bin phone-code-hash.txt
 scripts/mtproto-get-password.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 scripts/mtproto-check-password.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-password.txt
 scripts/mtproto-login-status.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID

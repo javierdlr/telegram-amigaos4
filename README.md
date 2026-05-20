@@ -100,7 +100,8 @@ Initial core modules:
 - `tg_mtproto`: experimental offline MTProto bootstrap modules for TL
   serialization, plain-message envelope/framing, DC bootstrap, message IDs,
   `resPQ` parsing/factorization, RSA_PAD, SHA-1/SHA-256 test vectors and
-  local session-state skeleton
+  local session-state skeleton; supervised user-login probes include an
+  interactive phone/code/2FA wizard
 - `tg_http`: minimal HTTP/1.0 GET/POST over `tg_net`, plus response parsing
 - `tg_json`: minimal top-level JSON field lookup plus JSON string escape decoding
 - `tg_net`: portable TCP API with MorphOS, AmigaOS 3.x, AmigaOS 4.x and AROS
@@ -455,10 +456,14 @@ Current options:
                       Test TLS connect/send/recv with HTTP/1.0
     --mtproto-self-test
                       Run offline MTProto bootstrap samples
+    --mtproto-self-test-fast
+                      Run offline MTProto samples excluding slow RSA/SRP checks
     --mtproto-req-pq-probe <host> <port>
                       Send supervised MTProto req_pq_multi TCP probe
     --mtproto-req-dh-probe <host> <port> <dc-id>
                       Send req_pq_multi then req_DH_params probe
+    --mtproto-auth-login-wizard-file <host> <port> <dc-id> <api-file> <auth-file> <code-hash-file>
+                      Interactive MTProto phone/code/2FA login wizard
     --telegram-tls-status
                       Print current TLS security status
     --json-test <json> <field>

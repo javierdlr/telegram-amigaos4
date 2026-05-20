@@ -43,16 +43,25 @@ those literal values.
 
 ## Login
 
-Send code:
+Preferred interactive login:
 
 ```text
-scripts/mtproto-send-code.sh $HOST $PORT $DC_ID telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
+scripts/mtproto-login-wizard.sh $HOST $PORT $DC_ID telegram-api.txt telegram-auth.bin phone-code-hash.txt
 ```
 
 On Amiga shells, use:
 
 ```text
-Execute RunMTProtoSendCode <phone>
+Execute RunMTProtoLoginWizard
+```
+
+The wizard prompts for the phone number, Telegram login code and optional 2FA
+password. The login code and password are not passed as command-line arguments.
+
+For debugging, the older split flow is still available. Send code:
+
+```text
+scripts/mtproto-send-code.sh $HOST $PORT $DC_ID telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
 ```
 
 Complete sign-in:
@@ -64,6 +73,7 @@ scripts/mtproto-sign-in.sh $HOST $PORT telegram-api.txt telegram-auth.bin <phone
 On Amiga shells, use:
 
 ```text
+Execute RunMTProtoSendCode <phone>
 Execute RunMTProtoSignIn <phone> <code>
 ```
 

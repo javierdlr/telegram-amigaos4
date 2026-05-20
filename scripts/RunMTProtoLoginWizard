@@ -1,0 +1,59 @@
+; Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+; SPDX-License-Identifier: MIT
+;
+; Interactive MTProto login. Prompts for phone, Telegram code and optional 2FA.
+;
+;   Execute RunMTProtoLoginWizard
+;   Execute RunMTProtoLoginWizard 149.154.167.50 443 2 telegram-api.txt telegram-auth.bin phone-code-hash.txt telegram-test
+
+.KEY HOST,PORT,DC,API,AUTH,CODEHASH,PROGRAM
+.BRA {
+.KET }
+
+Echo "Telegram Amiga MTProto login wizard"
+FailAt 21
+Stack 65536
+
+IF "{HOST}" EQ ""
+    SET TGHOST "149.154.167.50"
+ELSE
+    SET TGHOST "{HOST}"
+ENDIF
+
+IF "{PORT}" EQ ""
+    SET TGPORT "443"
+ELSE
+    SET TGPORT "{PORT}"
+ENDIF
+
+IF "{DC}" EQ ""
+    SET TGDC "2"
+ELSE
+    SET TGDC "{DC}"
+ENDIF
+
+IF "{API}" EQ ""
+    SET APIFILE "telegram-api.txt"
+ELSE
+    SET APIFILE "{API}"
+ENDIF
+
+IF "{AUTH}" EQ ""
+    SET AUTHFILE "telegram-auth.bin"
+ELSE
+    SET AUTHFILE "{AUTH}"
+ENDIF
+
+IF "{CODEHASH}" EQ ""
+    SET HASHFILE "phone-code-hash.txt"
+ELSE
+    SET HASHFILE "{CODEHASH}"
+ENDIF
+
+IF "{PROGRAM}" EQ ""
+    Protect telegram-test +e
+    telegram-test --mtproto-auth-login-wizard-file "$TGHOST" "$TGPORT" "$TGDC" "$APIFILE" "$AUTHFILE" "$HASHFILE"
+ELSE
+    Protect {PROGRAM} +e
+    {PROGRAM} --mtproto-auth-login-wizard-file "$TGHOST" "$TGPORT" "$TGDC" "$APIFILE" "$AUTHFILE" "$HASHFILE"
+ENDIF

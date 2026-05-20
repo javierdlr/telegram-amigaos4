@@ -80,6 +80,7 @@ telegram-test --mtproto-auth-get-password <host> <port> <api-id> <auth-file> <dc
 telegram-test --mtproto-auth-get-password-file <host> <port> <api-file> <auth-file> <dc-id>
 telegram-test --mtproto-auth-check-password <host> <port> <api-id> <auth-file> <dc-id> <password-file>
 telegram-test --mtproto-auth-check-password-file <host> <port> <api-file> <auth-file> <dc-id> <password-file>
+telegram-test --mtproto-auth-login-wizard-file <host> <port> <dc-id> <api-file> <auth-file> <code-hash-file>
 telegram-test --mtproto-auth-status <host> <port> <api-id> <auth-file> <dc-id>
 telegram-test --mtproto-auth-status-file <host> <port> <api-file> <auth-file> <dc-id>
 telegram-test --mtproto-auth-inspect <auth-file>
@@ -102,6 +103,10 @@ password in a local ignored file such as `telegram-password.txt` and run
 the command prints only status lines.
 `auth.signUp` is available for Test DC numbers that have a validated code hash
 but do not yet have a user record.
+`auth.login-wizard-file` is the interactive production path: it reads the phone
+number, Telegram login code and optional 2FA password from stdin. The login code
+and password are not passed through argv; the 2FA password is used in memory and
+not written to `telegram-password.txt`.
 Some Telegram responses are `gzip_packed`. Builds can enable unpacking with
 `TG_ENABLE_GZIP=1` when zlib is available; otherwise these responses remain
 explicitly unsupported instead of being silently misparsed.
@@ -150,6 +155,18 @@ For the terse operator checklist, use
 [MTPROTO_QUICK_TEST.md](MTPROTO_QUICK_TEST.md).
 
 Minimal real-account validation sequence:
+
+```text
+telegram-test --mtproto-auth-login-wizard-file <host> <port> <dc-id> telegram-api.txt telegram-auth.bin phone-code-hash.txt
+```
+
+On Amiga-style targets, the packaged wrapper is:
+
+```text
+Execute RunMTProtoLoginWizard
+```
+
+The older step-by-step sequence remains useful for debugging:
 
 ```text
 telegram-test --mtproto-auth-send-code-file <host> <port> <dc-id> telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt

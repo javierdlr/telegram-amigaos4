@@ -171,6 +171,7 @@ typedef struct tg_config {
     int run_mtproto_auth_get_password_file;
     int run_mtproto_auth_check_password;
     int run_mtproto_auth_check_password_file;
+    int run_mtproto_auth_login_wizard_file;
     int run_mtproto_auth_status;
     int run_mtproto_auth_status_file;
     int run_mtproto_auth_inspect;

@@ -164,6 +164,7 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_get_password_file = 0;
     config->run_mtproto_auth_check_password = 0;
     config->run_mtproto_auth_check_password_file = 0;
+    config->run_mtproto_auth_login_wizard_file = 0;
     config->run_mtproto_auth_status = 0;
     config->run_mtproto_auth_status_file = 0;
     config->run_mtproto_auth_inspect = 0;
@@ -476,6 +477,18 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_file = argv[i + 4];
             config->mtproto_auth_dc_id = argv[i + 5];
             config->mtproto_auth_password_file = argv[i + 6];
+            i += 6;
+        } else if (strcmp(argv[i], "--mtproto-auth-login-wizard-file") == 0) {
+            if (i + 6 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_login_wizard_file = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_dc_id = argv[i + 3];
+            config->mtproto_auth_api_file = argv[i + 4];
+            config->mtproto_auth_file = argv[i + 5];
+            config->mtproto_auth_code_hash_file = argv[i + 6];
             i += 6;
         } else if (strcmp(argv[i], "--mtproto-auth-status") == 0) {
             if (i + 5 >= argc) {
@@ -1056,6 +1069,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Complete SRP 2FA login using a local password file\n");
     fprintf(stream, "      --mtproto-auth-check-password-file <host> <port> <api-file> <auth-file> <dc-id> <password-file>\n");
     fprintf(stream, "                         Complete SRP 2FA login using local api and password files\n");
+    fprintf(stream, "      --mtproto-auth-login-wizard-file <host> <port> <dc-id> <api-file> <auth-file> <code-hash-file>\n");
+    fprintf(stream, "                         Interactive MTProto phone/code/2FA login wizard\n");
     fprintf(stream, "      --mtproto-auth-status <host> <port> <api-id> <auth-file> <dc-id>\n");
     fprintf(stream, "                         Check saved MTProto auth state without printing user data\n");
     fprintf(stream, "      --mtproto-auth-status-file <host> <port> <api-file> <auth-file> <dc-id>\n");

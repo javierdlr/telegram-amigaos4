@@ -102,6 +102,13 @@ int tg_mtproto_auth_check_password_file(const char *host,
                                         const char *dc_id_text,
                                         const char *password_file,
                                         FILE *stream);
+int tg_mtproto_auth_login_wizard_file(const char *host,
+                                      const char *port,
+                                      const char *dc_id_text,
+                                      const char *api_file,
+                                      const char *auth_file,
+                                      const char *code_hash_file,
+                                      FILE *stream);
 int tg_mtproto_auth_status(const char *host,
                            const char *port,
                            const char *api_id_text,

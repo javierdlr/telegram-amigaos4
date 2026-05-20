@@ -3796,6 +3796,17 @@ int tg_app_run(int argc, char **argv)
             stdout);
     }
 
+    if (config.run_mtproto_auth_login_wizard_file) {
+        return tg_mtproto_auth_login_wizard_file(
+            config.mtproto_auth_host,
+            config.mtproto_auth_port,
+            config.mtproto_auth_dc_id,
+            config.mtproto_auth_api_file,
+            config.mtproto_auth_file,
+            config.mtproto_auth_code_hash_file,
+            stdout);
+    }
+
     if (config.run_mtproto_auth_status) {
         return tg_mtproto_auth_status(config.mtproto_auth_host,
                                       config.mtproto_auth_port,

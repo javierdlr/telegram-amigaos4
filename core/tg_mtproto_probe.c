@@ -57,6 +57,14 @@ typedef struct tg_mtproto_auth_context {
 static unsigned char tg_mtproto_gzip_unpacked[TG_MTPROTO_GZIP_UNPACKED_MAX];
 #endif
 
+static int tg_mtproto_auth_check_password_text(const char *host,
+                                               const char *port,
+                                               const char *api_id_text,
+                                               const char *auth_file,
+                                               const char *dc_id_text,
+                                               const char *password_input,
+                                               FILE *stream);
+
 static int tg_mtproto_is_async_update_constructor(unsigned long constructor)
 {
     return constructor == TG_MTPROTO_UPDATES_CONSTRUCTOR ||
@@ -1184,6 +1192,34 @@ static int tg_mtproto_load_password_file(const char *path,
     return 0;
 }
 
+static int tg_mtproto_prompt_line(const char *prompt,
+                                  char *out,
+                                  unsigned long out_size,
+                                  int required,
+                                  FILE *stream,
+                                  const char *label)
+{
+    if (out != 0 && out_size > 0UL) {
+        out[0] = '\0';
+    }
+    if (prompt == 0 || out == 0 || out_size == 0UL || stream == 0 ||
+        label == 0) {
+        return 2;
+    }
+    fputs(prompt, stream);
+    fflush(stream);
+    if (fgets(out, (int)out_size, stdin) == 0) {
+        fprintf(stream, "%s: input-closed\n", label);
+        return 2;
+    }
+    tg_mtproto_trim_line(out);
+    if (required && out[0] == '\0') {
+        fprintf(stream, "%s: input-empty\n", label);
+        return 2;
+    }
+    return 0;
+}
+
 static void tg_mtproto_copy_trimmed_field(const char *source,
                                           unsigned long source_length,
                                           char *out,
@@ -2265,13 +2301,13 @@ int tg_mtproto_auth_get_password_file(const char *host,
     return rc;
 }
 
-int tg_mtproto_auth_check_password(const char *host,
-                                   const char *port,
-                                   const char *api_id_text,
-                                   const char *auth_file,
-                                   const char *dc_id_text,
-                                   const char *password_file,
-                                   FILE *stream)
+static int tg_mtproto_auth_check_password_text(const char *host,
+                                               const char *port,
+                                               const char *api_id_text,
+                                               const char *auth_file,
+                                               const char *dc_id_text,
+                                               const char *password_input,
+                                               FILE *stream)
 {
     unsigned char query[512];
     unsigned char wrapped_query[760];
@@ -2289,7 +2325,7 @@ int tg_mtproto_auth_check_password(const char *host,
     static const char label[] = "mtproto auth.checkPassword";
 
     if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
-        auth_file == 0 || password_file == 0 ||
+        auth_file == 0 || password_input == 0 ||
         tg_mtproto_parse_dc_id(dc_id_text, &dc_id) != 0 ||
         tg_mtproto_parse_ulong_arg(api_id_text, &api_id) != 0) {
         if (stream != 0) {
@@ -2298,12 +2334,12 @@ int tg_mtproto_auth_check_password(const char *host,
         return 2;
     }
 
-    if (tg_mtproto_load_password_file(password_file, password_text,
-                                      sizeof(password_text),
-                                      &password_length, stream,
-                                      label) != 0) {
+    password_length = (unsigned long)strlen(password_input);
+    if (password_length == 0UL || password_length >= sizeof(password_text)) {
+        fprintf(stream, "%s: password-invalid\n", label);
         return 2;
     }
+    memcpy(password_text, password_input, password_length + 1UL);
 
     if (tg_mtproto_load_auth_context(host, port, auth_file, &context, stream,
                                      label) != 0) {
@@ -2444,6 +2480,41 @@ int tg_mtproto_auth_check_password(const char *host,
     return 0;
 }
 
+int tg_mtproto_auth_check_password(const char *host,
+                                   const char *port,
+                                   const char *api_id_text,
+                                   const char *auth_file,
+                                   const char *dc_id_text,
+                                   const char *password_file,
+                                   FILE *stream)
+{
+    char password_text[512];
+    unsigned long password_length;
+    int rc;
+    static const char label[] = "mtproto auth.checkPassword";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
+        auth_file == 0 || password_file == 0) {
+        if (stream != 0) {
+            fputs("mtproto auth.checkPassword: invalid-arguments\n", stream);
+        }
+        return 2;
+    }
+
+    if (tg_mtproto_load_password_file(password_file, password_text,
+                                      sizeof(password_text),
+                                      &password_length, stream,
+                                      label) != 0) {
+        return 2;
+    }
+    (void)password_length;
+    rc = tg_mtproto_auth_check_password_text(host, port, api_id_text,
+                                             auth_file, dc_id_text,
+                                             password_text, stream);
+    tg_mtproto_secure_zero(password_text, sizeof(password_text));
+    return rc;
+}
+
 int tg_mtproto_auth_check_password_file(const char *host,
                                         const char *port,
                                         const char *api_file,
@@ -2463,6 +2534,100 @@ int tg_mtproto_auth_check_password_file(const char *host,
     rc = tg_mtproto_auth_check_password(host, port, api_id, auth_file,
                                         dc_id_text, password_file, stream);
     return rc;
+}
+
+int tg_mtproto_auth_login_wizard_file(const char *host,
+                                      const char *port,
+                                      const char *dc_id_text,
+                                      const char *api_file,
+                                      const char *auth_file,
+                                      const char *code_hash_file,
+                                      FILE *stream)
+{
+    char api_id[32];
+    char phone[64];
+    char code[64];
+    char password[512];
+    int rc;
+    static const char label[] = "mtproto login wizard";
+
+    if (stream == 0 || host == 0 || port == 0 || dc_id_text == 0 ||
+        api_file == 0 || auth_file == 0 || code_hash_file == 0) {
+        if (stream != 0) {
+            fprintf(stream, "%s: invalid-arguments\n", label);
+        }
+        return 2;
+    }
+
+    fprintf(stream, "%s: interactive login\n", label);
+    fprintf(stream, "%s: secrets are read from local files/stdin\n", label);
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_prompt_line("Phone number: ", phone, sizeof(phone), 1,
+                               stream, label) != 0) {
+        return 2;
+    }
+
+    rc = tg_mtproto_auth_send_code_file(host, port, dc_id_text, api_file,
+                                        phone, auth_file, code_hash_file,
+                                        stream);
+    if (rc != 0) {
+        tg_mtproto_secure_zero(phone, sizeof(phone));
+        return rc;
+    }
+
+    fprintf(stream,
+            "%s: enter the code received in Telegram or by SMS\n",
+            label);
+    if (tg_mtproto_prompt_line("Login code: ", code, sizeof(code), 1,
+                               stream, label) != 0) {
+        tg_mtproto_secure_zero(phone, sizeof(phone));
+        return 2;
+    }
+
+    rc = tg_mtproto_auth_sign_in_file(host, port, api_file, auth_file, phone,
+                                      code_hash_file, code, dc_id_text,
+                                      stream);
+    tg_mtproto_secure_zero(code, sizeof(code));
+    if (rc != 0) {
+        fprintf(stream,
+                "%s: if Telegram requested 2FA, enter the password now\n",
+                label);
+        fprintf(stream,
+                "%s: password input may be visible on this platform\n",
+                label);
+        if (tg_mtproto_prompt_line("2FA password, empty to abort: ",
+                                   password, sizeof(password), 0, stream,
+                                   label) != 0) {
+            tg_mtproto_secure_zero(phone, sizeof(phone));
+            return 2;
+        }
+        if (password[0] == '\0') {
+            tg_mtproto_secure_zero(phone, sizeof(phone));
+            tg_mtproto_secure_zero(password, sizeof(password));
+            fprintf(stream, "%s: aborted\n", label);
+            return rc;
+        }
+        rc = tg_mtproto_auth_check_password_text(host, port, api_id,
+                                                 auth_file, dc_id_text,
+                                                 password, stream);
+        tg_mtproto_secure_zero(password, sizeof(password));
+        if (rc != 0) {
+            tg_mtproto_secure_zero(phone, sizeof(phone));
+            return rc;
+        }
+    }
+
+    tg_mtproto_secure_zero(phone, sizeof(phone));
+    rc = tg_mtproto_auth_status_file(host, port, api_file, auth_file,
+                                     dc_id_text, stream);
+    if (rc != 0) {
+        return rc;
+    }
+    fprintf(stream, "%s: login complete\n", label);
+    return 0;
 }
 
 int tg_mtproto_auth_status(const char *host,
