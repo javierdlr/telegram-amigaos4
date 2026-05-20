@@ -45,6 +45,9 @@
 #define TG_MTPROTO_CONFIG_CONSTRUCTOR 0xcc1a241eUL
 #define TG_MTPROTO_ACCOUNT_PASSWORD_CONSTRUCTOR 0x957b50fbUL
 #define TG_MTPROTO_GZIP_UNPACKED_MAX 65536UL
+#define TG_MTPROTO_PEER_USER_CONSTRUCTOR 0x59511722UL
+#define TG_MTPROTO_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
+#define TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
 
 typedef struct tg_mtproto_auth_context {
     tg_net_connection connection;
@@ -3055,6 +3058,241 @@ static void tg_mtproto_print_cache_text(FILE *stream, const char *text)
     }
 }
 
+static void tg_mtproto_copy_cache_field(char *dest,
+                                        unsigned long dest_size,
+                                        const char *begin,
+                                        const char *end)
+{
+    unsigned long length;
+
+    if (dest == 0 || dest_size == 0UL) {
+        return;
+    }
+    dest[0] = '\0';
+    if (begin == 0) {
+        return;
+    }
+    while (*begin == ' ' || *begin == '\t') {
+        ++begin;
+    }
+    if (end == 0) {
+        end = begin + strlen(begin);
+    }
+    while (end > begin && (end[-1] == ' ' || end[-1] == '\t' ||
+                           end[-1] == '\r' || end[-1] == '\n')) {
+        --end;
+    }
+    if (end <= begin || (begin[0] == '-' && begin + 1 == end)) {
+        return;
+    }
+    length = (unsigned long)(end - begin);
+    if (length >= dest_size) {
+        length = dest_size - 1UL;
+    }
+    memcpy(dest, begin, (size_t)length);
+    dest[length] = '\0';
+}
+
+static unsigned long tg_mtproto_peer_constructor_from_name(const char *name)
+{
+    if (name == 0) {
+        return 0UL;
+    }
+    if (strcmp(name, "user") == 0) {
+        return TG_MTPROTO_PEER_USER_CONSTRUCTOR;
+    }
+    if (strcmp(name, "chat") == 0) {
+        return TG_MTPROTO_PEER_CHAT_CONSTRUCTOR;
+    }
+    if (strcmp(name, "channel") == 0) {
+        return TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR;
+    }
+    return 0UL;
+}
+
+static tg_mtproto_peer_cache_entry *tg_mtproto_peer_cache_find_local(
+    tg_mtproto_peer_cache *cache,
+    unsigned long peer_constructor,
+    unsigned long id_hi,
+    unsigned long id_lo)
+{
+    unsigned long i;
+
+    if (cache == 0) {
+        return 0;
+    }
+    for (i = 0UL; i < cache->count; ++i) {
+        if (cache->entries[i].peer_constructor == peer_constructor &&
+            cache->entries[i].id_hi == id_hi &&
+            cache->entries[i].id_lo == id_lo) {
+            return &cache->entries[i];
+        }
+    }
+    return 0;
+}
+
+static void tg_mtproto_recount_peer_cache(tg_mtproto_peer_cache *cache)
+{
+    unsigned long i;
+
+    if (cache == 0) {
+        return;
+    }
+    cache->user_count = 0UL;
+    cache->chat_count = 0UL;
+    for (i = 0UL; i < cache->count; ++i) {
+        if (cache->entries[i].peer_constructor ==
+            TG_MTPROTO_PEER_USER_CONSTRUCTOR) {
+            ++cache->user_count;
+        } else if (cache->entries[i].peer_constructor ==
+                       TG_MTPROTO_PEER_CHAT_CONSTRUCTOR ||
+                   cache->entries[i].peer_constructor ==
+                       TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR) {
+            ++cache->chat_count;
+        }
+    }
+}
+
+static void tg_mtproto_merge_peer_cache_entry(
+    tg_mtproto_peer_cache_entry *dest,
+    const tg_mtproto_peer_cache_entry *src)
+{
+    char old_title[sizeof(dest->title)];
+    char old_username[sizeof(dest->username)];
+    unsigned long old_hash_hi;
+    unsigned long old_hash_lo;
+    int old_has_access_hash;
+
+    if (dest == 0 || src == 0) {
+        return;
+    }
+    strcpy(old_title, dest->title);
+    strcpy(old_username, dest->username);
+    old_hash_hi = dest->access_hash_hi;
+    old_hash_lo = dest->access_hash_lo;
+    old_has_access_hash = dest->has_access_hash;
+    *dest = *src;
+    if (!dest->has_access_hash && old_has_access_hash) {
+        dest->has_access_hash = 1;
+        dest->access_hash_hi = old_hash_hi;
+        dest->access_hash_lo = old_hash_lo;
+    }
+    if (dest->title[0] == '\0') {
+        strcpy(dest->title, old_title);
+    }
+    if (dest->username[0] == '\0') {
+        strcpy(dest->username, old_username);
+    }
+}
+
+static int tg_mtproto_load_peer_cache_file(const char *path,
+                                           tg_mtproto_peer_cache *cache)
+{
+    FILE *file;
+    char line[512];
+    char type[24];
+    char hash_text[32];
+    char self_text[8];
+    char bot_text[8];
+    char *title;
+    char *username;
+    tg_mtproto_peer_cache_entry *entry;
+    unsigned long peer_index;
+    unsigned long peer_constructor;
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long top_message;
+    unsigned long unread_count;
+
+    if (path == 0 || cache == 0) {
+        return 2;
+    }
+    memset(cache, 0, sizeof(*cache));
+    file = fopen(path, "r");
+    if (file == 0) {
+        return 2;
+    }
+    while (fgets(line, sizeof(line), file) != 0) {
+        peer_index = 0UL;
+        id_hi = id_lo = top_message = unread_count = 0UL;
+        type[0] = hash_text[0] = self_text[0] = bot_text[0] = '\0';
+        if (sscanf(line,
+                   "peer %lu type %23s id 0x%8lx%8lx access_hash %31s top %lu unread %lu self %7s bot %7s",
+                   &peer_index, type, &id_hi, &id_lo, hash_text,
+                   &top_message, &unread_count, self_text, bot_text) != 9) {
+            continue;
+        }
+        peer_constructor = tg_mtproto_peer_constructor_from_name(type);
+        if (peer_constructor == 0UL) {
+            continue;
+        }
+        if (cache->count >= TG_MTPROTO_PEER_CACHE_MAX) {
+            cache->truncated = 1;
+            continue;
+        }
+        entry = &cache->entries[cache->count++];
+        memset(entry, 0, sizeof(*entry));
+        entry->peer_constructor = peer_constructor;
+        entry->id_hi = id_hi;
+        entry->id_lo = id_lo;
+        entry->top_message = top_message;
+        entry->unread_count = unread_count;
+        entry->is_self = strcmp(self_text, "yes") == 0;
+        entry->is_bot = strcmp(bot_text, "yes") == 0;
+        if (hash_text[0] == '0' && hash_text[1] == 'x' &&
+            sscanf(hash_text, "0x%8lx%8lx", &entry->access_hash_hi,
+                   &entry->access_hash_lo) == 2) {
+            entry->has_access_hash = 1;
+        }
+        title = strstr(line, " title ");
+        username = strstr(line, " username ");
+        if (username != 0) {
+            tg_mtproto_copy_cache_field(entry->username,
+                                        sizeof(entry->username),
+                                        username + 10, title);
+        }
+        if (title != 0) {
+            tg_mtproto_copy_cache_field(entry->title, sizeof(entry->title),
+                                        title + 7, 0);
+        }
+    }
+    fclose(file);
+    tg_mtproto_recount_peer_cache(cache);
+    return cache->count > 0UL ? 0 : 2;
+}
+
+static void tg_mtproto_merge_peer_cache(tg_mtproto_peer_cache *dest,
+                                        const tg_mtproto_peer_cache *fresh)
+{
+    unsigned long i;
+    tg_mtproto_peer_cache_entry *entry;
+
+    if (dest == 0 || fresh == 0) {
+        return;
+    }
+    if (fresh->total_dialog_count > dest->total_dialog_count) {
+        dest->total_dialog_count = fresh->total_dialog_count;
+    }
+    for (i = 0UL; i < fresh->count; ++i) {
+        entry = tg_mtproto_peer_cache_find_local(
+            dest, fresh->entries[i].peer_constructor,
+            fresh->entries[i].id_hi, fresh->entries[i].id_lo);
+        if (entry != 0) {
+            tg_mtproto_merge_peer_cache_entry(entry, &fresh->entries[i]);
+            continue;
+        }
+        if (dest->count >= TG_MTPROTO_PEER_CACHE_MAX) {
+            dest->truncated = 1;
+            continue;
+        }
+        dest->entries[dest->count++] = fresh->entries[i];
+    }
+    if (fresh->truncated) {
+        dest->truncated = 1;
+    }
+    tg_mtproto_recount_peer_cache(dest);
+}
+
 static int tg_mtproto_save_peer_cache_file(
     const char *path,
     const tg_mtproto_peer_cache *cache,
@@ -3136,6 +3374,7 @@ int tg_mtproto_auth_list_peers_file(const char *host,
     char api_id[32];
     tg_mtproto_dialogs_summary dialogs;
     tg_mtproto_peer_cache cache;
+    tg_mtproto_peer_cache existing_cache;
     tg_mtproto_rpc_result result;
     tg_mtproto_tl_writer writer;
     static const char label[] = "mtproto list-peers";
@@ -3182,6 +3421,10 @@ int tg_mtproto_auth_list_peers_file(const char *host,
         fprintf(stream, "%s: dialogs-parse-failed constructor 0x%08lx\n",
                 label, result.result_constructor);
         return 2;
+    }
+    if (tg_mtproto_load_peer_cache_file(peer_cache_file, &existing_cache) == 0) {
+        tg_mtproto_merge_peer_cache(&existing_cache, &cache);
+        cache = existing_cache;
     }
     if (tg_mtproto_save_peer_cache_file(peer_cache_file, &cache, stream,
                                         label) != 0) {
@@ -3413,41 +3656,6 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream)
         fprintf(stream, "\n");
     }
     fclose(file);
-}
-
-static void tg_mtproto_copy_cache_field(char *dest,
-                                        unsigned long dest_size,
-                                        const char *begin,
-                                        const char *end)
-{
-    unsigned long length;
-
-    if (dest == 0 || dest_size == 0UL) {
-        return;
-    }
-    dest[0] = '\0';
-    if (begin == 0) {
-        return;
-    }
-    while (*begin == ' ' || *begin == '\t') {
-        ++begin;
-    }
-    if (end == 0) {
-        end = begin + strlen(begin);
-    }
-    while (end > begin && (end[-1] == ' ' || end[-1] == '\t' ||
-                           end[-1] == '\r' || end[-1] == '\n')) {
-        --end;
-    }
-    if (end <= begin || (begin[0] == '-' && begin + 1 == end)) {
-        return;
-    }
-    length = (unsigned long)(end - begin);
-    if (length >= dest_size) {
-        length = dest_size - 1UL;
-    }
-    memcpy(dest, begin, (size_t)length);
-    dest[length] = '\0';
 }
 
 static int tg_mtproto_load_peer_cache_label(const char *path,
@@ -3900,7 +4108,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
     rc = tg_mtproto_auth_list_peers_file(host, port, api_file, auth_file,
-                                         dc_id_text, "20", peer_cache_file,
+                                         dc_id_text, "100", peer_cache_file,
                                          quiet);
     tg_mtproto_close_quiet_stream(quiet, stream);
     if (rc != 0) {
@@ -3968,7 +4176,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (strcmp(line, "/peers") == 0) {
             quiet = tg_mtproto_open_quiet_stream(stream);
             rc = tg_mtproto_auth_list_peers_file(host, port, api_file,
-                                                 auth_file, dc_id_text, "20",
+                                                 auth_file, dc_id_text, "100",
                                                  peer_cache_file, quiet);
             tg_mtproto_close_quiet_stream(quiet, stream);
             if (rc != 0) {

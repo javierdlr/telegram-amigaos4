@@ -148,7 +148,9 @@ Use `mtproto-chat` for the first manual botta-risposta mode. It hides protocol
 diagnostics from the chat transcript, prints recent peer text as `me:` or the
 selected peer label, auto-reads new incoming text every 5 seconds while waiting
 for input, and sends only when a normal text line is entered. Use `/watch <seconds>`
-or `/watch off` to tune that receive loop.
+or `/watch off` to tune that receive loop. Peer refreshes merge with the
+existing local cache, so known peers should remain available even when Telegram
+returns a different dialog page.
 The login smoke wrapper first validates local files and inspects the saved auth
 state, then runs the same read-only sequence.
 The safe smoke wrapper performs local-file checks, inspects the auth file, and

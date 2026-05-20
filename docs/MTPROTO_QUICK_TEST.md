@@ -157,7 +157,9 @@ to change the interval or `/watch off` to disable it. Use `/read` to
 print recent cached-user message text, `/peer` to pick another peer, `/peers`
 to reload the list and `/quit` to exit. Chat mode hides MTProto diagnostics
 during normal operation and prints chat lines as `me:` or the selected peer
-label.
+label. Peer refreshes merge with the existing local cache so previously known
+peers are not dropped just because Telegram omits them from the latest dialog
+page.
 
 ## Cleanup
 
