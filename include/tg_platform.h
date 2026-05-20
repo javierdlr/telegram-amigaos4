@@ -48,6 +48,15 @@ void tg_platform_sleep_seconds(unsigned long seconds);
 int tg_platform_stdin_readable(unsigned long timeout_seconds);
 
 /**
+ * Reads one character from standard input after waiting up to timeout_seconds.
+ *
+ * Returns 1 when one character was read, 0 on timeout and -1 when input is
+ * closed or failed. Unlike tg_platform_stdin_readable()+fgets(), this lets
+ * interactive loops keep polling while the user has not completed a line yet.
+ */
+int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char);
+
+/**
  * Fills bytes with platform-provided random data.
  *
  * Returns non-zero on success. A zero return means the platform backend does

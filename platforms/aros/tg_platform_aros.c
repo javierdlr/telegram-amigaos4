@@ -81,6 +81,56 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
 #endif
 }
 
+int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
+{
+#if defined(__AROS__)
+    unsigned long long timeout_microseconds;
+    char ch;
+    LONG got;
+
+    if (out_char == 0) {
+        return -1;
+    }
+    timeout_microseconds = (unsigned long long)timeout_seconds * 1000000ULL;
+    if (timeout_microseconds > 2147000000ULL) {
+        timeout_microseconds = 2147000000ULL;
+    }
+    if (WaitForChar(Input(), (long)timeout_microseconds) == 0) {
+        return 0;
+    }
+    got = Read(Input(), &ch, 1);
+    if (got <= 0) {
+        return -1;
+    }
+    *out_char = ch;
+    return 1;
+#else
+    fd_set read_fds;
+    struct timeval timeout;
+    char ch;
+    int rc;
+    ssize_t got;
+
+    if (out_char == 0) {
+        return -1;
+    }
+    FD_ZERO(&read_fds);
+    FD_SET(0, &read_fds);
+    timeout.tv_sec = (long)timeout_seconds;
+    timeout.tv_usec = 0;
+    rc = select(1, &read_fds, 0, 0, &timeout);
+    if (rc <= 0 || !FD_ISSET(0, &read_fds)) {
+        return 0;
+    }
+    got = read(0, &ch, 1);
+    if (got <= 0) {
+        return -1;
+    }
+    *out_char = ch;
+    return 1;
+#endif
+}
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
     int fd;

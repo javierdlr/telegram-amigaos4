@@ -61,6 +61,30 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
     return WaitForChar(Input(), (long)timeout_microseconds) != 0;
 }
 
+int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
+{
+    unsigned long long timeout_microseconds;
+    char ch;
+    LONG got;
+
+    if (out_char == 0) {
+        return -1;
+    }
+    timeout_microseconds = (unsigned long long)timeout_seconds * 1000000ULL;
+    if (timeout_microseconds > 2147000000ULL) {
+        timeout_microseconds = 2147000000ULL;
+    }
+    if (WaitForChar(Input(), (long)timeout_microseconds) == 0) {
+        return 0;
+    }
+    got = Read(Input(), &ch, 1);
+    if (got <= 0) {
+        return -1;
+    }
+    *out_char = ch;
+    return 1;
+}
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
     int fd;
