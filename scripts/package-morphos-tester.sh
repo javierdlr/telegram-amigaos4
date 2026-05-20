@@ -3,15 +3,21 @@
 # Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
 # SPDX-License-Identifier: MIT
 #
-# Package a MorphOS pre-alpha tester binary that was built on MorphOS and
-# copied back to the Mac. The output is written under build/packages, which is
-# ignored by git.
+# Package a MorphOS pre-alpha tester binary. Prefer the local Docker cross-build
+# output when present, otherwise use a binary built on MorphOS and copied back
+# to the Mac. The output is written under build/packages, which is ignored by git.
 
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/packages"}
-BINARY=${BINARY:-"$ROOT_DIR/build/morphos/telegram-test"}
+if [ -z "${BINARY+x}" ]; then
+    if [ -f "$ROOT_DIR/build/morphos-cross/telegram-test" ]; then
+        BINARY="$ROOT_DIR/build/morphos-cross/telegram-test"
+    else
+        BINARY="$ROOT_DIR/build/morphos/telegram-test"
+    fi
+fi
 TLS_MODE=${TLS_MODE:-0}
 DATE_STAMP=$(date +%Y%m%d)
 COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
