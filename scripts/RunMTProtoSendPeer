@@ -1,0 +1,10 @@
+; MTProto cached-peer send helper for Amiga shells.
+; This sends a real Telegram message to the selected peer index.
+
+KEY TGHOST/A,TGPORT/A,TGDC/A,APIFILE/A,AUTHFILE/A,PEERSFILE/A,PEERINDEX/A,TEXT/A,TGPROGRAM/K
+
+IF "$TGPROGRAM" EQ ""
+    SET TGPROGRAM telegram-test
+ENDIF
+
+$TGPROGRAM --mtproto-auth-send-peer-file "$TGHOST" "$TGPORT" "$APIFILE" "$AUTHFILE" "$TGDC" "$PEERSFILE" "$PEERINDEX" "$TEXT"

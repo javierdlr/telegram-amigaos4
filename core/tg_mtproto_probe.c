@@ -3299,6 +3299,146 @@ int tg_mtproto_auth_get_history_self_file(const char *host,
     return rc;
 }
 
+static int tg_mtproto_load_peer_cache_user(const char *path,
+                                           const char *peer_index_text,
+                                           unsigned long *user_id_hi,
+                                           unsigned long *user_id_lo,
+                                           unsigned long *access_hash_hi,
+                                           unsigned long *access_hash_lo,
+                                           FILE *stream,
+                                           const char *label)
+{
+    FILE *file;
+    char line[512];
+    char type[24];
+    unsigned long wanted_index;
+    unsigned long index;
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long hash_hi;
+    unsigned long hash_lo;
+
+    if (path == 0 || user_id_hi == 0 || user_id_lo == 0 ||
+        access_hash_hi == 0 || access_hash_lo == 0 ||
+        tg_mtproto_parse_ulong_arg(peer_index_text, &wanted_index) != 0 ||
+        wanted_index == 0UL) {
+        fprintf(stream, "%s: invalid-peer-cache-arguments\n", label);
+        return 2;
+    }
+    file = fopen(path, "r");
+    if (file == 0) {
+        fprintf(stream, "%s: peer-cache-open-failed\n", label);
+        return 2;
+    }
+    while (fgets(line, sizeof(line), file) != 0) {
+        type[0] = '\0';
+        index = 0UL;
+        id_hi = id_lo = hash_hi = hash_lo = 0UL;
+        if (sscanf(line,
+                   "peer %lu type %23s id 0x%8lx%8lx access_hash 0x%8lx%8lx",
+                   &index, type, &id_hi, &id_lo, &hash_hi, &hash_lo) == 6 &&
+            index == wanted_index) {
+            fclose(file);
+            if (strcmp(type, "user") != 0) {
+                fprintf(stream, "%s: peer-cache-type-unsupported\n", label);
+                return 2;
+            }
+            *user_id_hi = id_hi;
+            *user_id_lo = id_lo;
+            *access_hash_hi = hash_hi;
+            *access_hash_lo = hash_lo;
+            return 0;
+        }
+        if (index == wanted_index) {
+            fclose(file);
+            fprintf(stream, "%s: peer-cache-access-hash-missing\n", label);
+            return 2;
+        }
+    }
+    fclose(file);
+    fprintf(stream, "%s: peer-cache-index-not-found\n", label);
+    return 2;
+}
+
+int tg_mtproto_auth_get_history_peer_file(const char *host,
+                                          const char *port,
+                                          const char *api_file,
+                                          const char *auth_file,
+                                          const char *dc_id_text,
+                                          const char *peer_cache_file,
+                                          const char *peer_index_text,
+                                          const char *limit_text,
+                                          FILE *stream)
+{
+    unsigned char query[64];
+    unsigned long limit;
+    unsigned long user_id_hi;
+    unsigned long user_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    char api_id[32];
+    tg_mtproto_messages_summary messages;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    static const char label[] = "mtproto messages.getHistory(peer)";
+
+    if (stream == 0 || tg_mtproto_parse_ulong_arg(limit_text, &limit) != 0 ||
+        limit == 0UL || limit > 100UL) {
+        if (stream != 0) {
+            fputs("mtproto messages.getHistory(peer): invalid-arguments\n",
+                  stream);
+        }
+        return 2;
+    }
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0 ||
+        tg_mtproto_load_peer_cache_user(peer_cache_file, peer_index_text,
+                                        &user_id_hi, &user_id_lo,
+                                        &access_hash_hi, &access_hash_lo,
+                                        stream, label) != 0) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_history_user(
+            &writer, user_id_hi, user_id_lo, access_hash_hi, access_hash_lo,
+            limit) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_saved_query(host, port, api_id, auth_file, dc_id_text,
+                                    query, writer.length, &result, stream,
+                                    label) != 0) {
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_parse_messages_summary(result.result_constructor,
+                                          result.result_body,
+                                          result.result_body_length,
+                                          &messages) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: messages-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    fprintf(stream, "%s: constructor 0x%08lx\n", label,
+            messages.constructor);
+    fprintf(stream, "%s: messages %lu chats %lu users %lu\n", label,
+            messages.message_count, messages.chat_count, messages.user_count);
+    if (messages.is_slice || messages.is_not_modified ||
+        messages.is_channel_messages) {
+        fprintf(stream, "%s: count %lu\n", label, messages.count);
+    }
+    return 0;
+}
+
 int tg_mtproto_auth_send_self(const char *host,
                               const char *port,
                               const char *api_id_text,
@@ -3340,6 +3480,91 @@ int tg_mtproto_auth_send_self(const char *host,
     if (tg_mtproto_send_saved_query(host, port, api_id_text, auth_file,
                                     dc_id_text, query, writer.length, &result,
                                     stream, label) != 0) {
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_parse_updates_summary(result.result_constructor,
+                                         result.result_body,
+                                         result.result_body_length,
+                                         &updates) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: updates-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    fprintf(stream, "%s: ok\n", label);
+    fprintf(stream, "%s: constructor 0x%08lx\n", label,
+            updates.constructor);
+    if (updates.has_sent_message) {
+        fprintf(stream, "%s: message_id %lu date %lu\n", label, updates.id,
+                updates.date);
+    }
+    return 0;
+}
+
+int tg_mtproto_auth_send_peer_file(const char *host,
+                                   const char *port,
+                                   const char *api_file,
+                                   const char *auth_file,
+                                   const char *dc_id_text,
+                                   const char *peer_cache_file,
+                                   const char *peer_index_text,
+                                   const char *message,
+                                   FILE *stream)
+{
+    unsigned char query[512];
+    unsigned char random_id[8];
+    unsigned long random_id_hi;
+    unsigned long random_id_lo;
+    unsigned long user_id_hi;
+    unsigned long user_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    char api_id[32];
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_updates_summary updates;
+    static const char label[] = "mtproto messages.sendMessage(peer)";
+
+    if (stream == 0 || message == 0 || message[0] == '\0') {
+        if (stream != 0) {
+            fputs("mtproto messages.sendMessage(peer): invalid-arguments\n",
+                  stream);
+        }
+        return 2;
+    }
+    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                    stream, label) != 0 ||
+        tg_mtproto_load_peer_cache_user(peer_cache_file, peer_index_text,
+                                        &user_id_hi, &user_id_lo,
+                                        &access_hash_hi, &access_hash_lo,
+                                        stream, label) != 0) {
+        return 2;
+    }
+    if (!tg_mtproto_secure_random(random_id, sizeof(random_id))) {
+        fprintf(stream, "%s: secure-rng-unavailable\n", label);
+        return 2;
+    }
+    random_id_lo = tg_mtproto_read_u32_le(random_id);
+    random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
+
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_send_user(
+            &writer, user_id_hi, user_id_lo, access_hash_hi, access_hash_lo,
+            message, random_id_hi, random_id_lo) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_saved_query(host, port, api_id, auth_file, dc_id_text,
+                                    query, writer.length, &result, stream,
+                                    label) != 0) {
         return 2;
     }
     if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {

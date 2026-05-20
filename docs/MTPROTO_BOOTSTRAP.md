@@ -91,7 +91,9 @@ telegram-test --mtproto-auth-get-dialogs-file <host> <port> <api-file> <auth-fil
 telegram-test --mtproto-auth-list-peers-file <host> <port> <api-file> <auth-file> <dc-id> <limit> <peer-cache-file>
 telegram-test --mtproto-auth-get-history-self <host> <port> <api-id> <auth-file> <dc-id> <limit>
 telegram-test --mtproto-auth-get-history-self-file <host> <port> <api-file> <auth-file> <dc-id> <limit>
+telegram-test --mtproto-auth-get-history-peer-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file> <peer-index> <limit>
 telegram-test --mtproto-auth-send-self <host> <port> <api-id> <auth-file> <dc-id> <text>
+telegram-test --mtproto-auth-send-peer-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file> <peer-index> <text>
 telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 ```
 
@@ -110,9 +112,12 @@ and password are not passed through argv; the 2FA password is used in memory and
 not written to `telegram-password.txt`.
 `auth.list-peers-file` calls `messages.getDialogs` and writes an ignored local
 peer cache, typically `telegram-peers.txt`. It always saves dialog peer ids,
-top-message ids and unread counts. When the returned top-message objects are
-simple enough for the current conservative TL skipper, it also records labels
-and access hashes from the users/chats vectors.
+top-message ids and unread counts. It also scans returned user constructors to
+attach user labels and access hashes to matching dialog peers without printing
+message text.
+`auth.get-history-peer-file` uses that cache to read a history summary for a
+cached user peer. `auth.send-peer-file` sends a real text message to a cached
+user peer; use it only after confirming the peer index.
 Some Telegram responses are `gzip_packed`. Builds can enable unpacking with
 `TG_ENABLE_GZIP=1` when zlib is available; otherwise these responses remain
 explicitly unsupported instead of being silently misparsed.
@@ -294,6 +299,7 @@ The bootstrap follows the official Telegram MTProto documentation:
 - <https://core.telegram.org/method/messages.getHistory>
 - <https://core.telegram.org/method/messages.sendMessage>
 - <https://core.telegram.org/type/InputPeer>
+- <https://core.telegram.org/constructor/inputPeerUser>
 - <https://core.telegram.org/api/srp>
 
 Important constraints for this codebase:
@@ -315,8 +321,8 @@ Next MTProto work should stay behind explicit self-tests:
    `account.Password` parameters, then wire it into the existing
    `auth.checkPassword` builder;
 3. validate `users.getUsers(inputUserSelf)` after sign-in;
-4. extend the dialog peer-cache TL skipper until live responses consistently
-   reach users/chats vectors with access hashes and stable display labels;
+4. extend the dialog peer-cache path to channels/groups, including channel
+   access hashes and stable display labels;
 5. add explicit get-history/send-message commands for cached user, group and
    channel peers;
 6. validate saved-session commands on AmigaOS3, MorphOS and AROS;

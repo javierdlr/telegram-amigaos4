@@ -129,8 +129,21 @@ telegram-test --mtproto-auth-list-peers-file $HOST $PORT telegram-api.txt telegr
 ```
 
 `telegram-peers.txt` is ignored by Git. The command is read-only; it may save
-only id/top/unread fields until the current TL skipper can cross every
-top-message object returned by the account.
+user labels and access hashes for matching dialog peers, but does not print or
+persist message text.
+
+To read a cached user peer summary without printing message text:
+
+```text
+telegram-test --mtproto-auth-get-history-peer-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt 1 1
+```
+
+To send to a cached user peer, first verify the peer index in
+`telegram-peers.txt`, then run:
+
+```text
+telegram-test --mtproto-auth-send-peer-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt 1 "Hello from Amiga"
+```
 
 ## Cleanup
 

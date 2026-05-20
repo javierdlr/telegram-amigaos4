@@ -466,6 +466,10 @@ Current options:
                       Interactive MTProto phone/code/2FA login wizard
     --mtproto-auth-list-peers-file <host> <port> <api-file> <auth-file> <dc-id> <limit> <peer-cache-file>
                       Save read-only dialog peer handles to a local cache
+    --mtproto-auth-get-history-peer-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file> <peer-index> <limit>
+                      Read history summary for a cached user peer
+    --mtproto-auth-send-peer-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file> <peer-index> <text>
+                      Send text to a cached user peer
     --telegram-tls-status
                       Print current TLS security status
     --json-test <json> <field>

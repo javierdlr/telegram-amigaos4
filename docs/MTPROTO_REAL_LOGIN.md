@@ -108,6 +108,7 @@ telegram-test --mtproto-auth-status-file $HOST $PORT telegram-api.txt telegram-a
 telegram-test --mtproto-auth-get-config-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 telegram-test --mtproto-auth-get-dialogs-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 telegram-test --mtproto-auth-list-peers-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 20 telegram-peers.txt
+telegram-test --mtproto-auth-get-history-peer-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt 1 1
 telegram-test --mtproto-auth-get-history-self-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 ```
 
@@ -123,6 +124,7 @@ scripts/mtproto-login-status.sh $HOST $PORT telegram-api.txt telegram-auth.bin $
 scripts/mtproto-get-config.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
 scripts/mtproto-get-dialogs.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-list-peers.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 20 telegram-peers.txt
+scripts/mtproto-get-history-peer.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt 1 1
 scripts/mtproto-get-history-self.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-readonly-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-login-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
@@ -135,8 +137,11 @@ Messages history summary. It is the preferred first validation after sign-in
 because it does not print contact names, usernames or message text.
 The dialog step may print peer type, peer id, top message id and unread count.
 `mtproto-list-peers` saves those handles in ignored `telegram-peers.txt`; it may
-also include labels and access hashes when the current TL skipper can cross the
-top-message objects returned by Telegram.
+also include user labels and access hashes for matching dialog peers. Treat that
+cache as local private state.
+Use `mtproto-get-history-peer` as the first cached-peer validation because it is
+read-only and prints only counts. `mtproto-send-peer` sends a real message to
+the selected peer index.
 The login smoke wrapper first validates local files and inspects the saved auth
 state, then runs the same read-only sequence.
 The safe smoke wrapper performs local-file checks, inspects the auth file, and
