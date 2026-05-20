@@ -151,10 +151,12 @@ For the first interactive user-peer chat mode:
 telegram-test --mtproto-chat-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt
 ```
 
-Choose a peer index, type text to send, use `/read` to print recent cached-user
-message text, `/peer` to pick another peer, `/peers` to reload the list and
-`/quit` to exit. Chat mode hides MTProto diagnostics during normal operation and
-prints chat lines as `me:` or `them:`.
+Choose a peer index and type text to send. Chat mode auto-reads new incoming
+peer text every 5 seconds while waiting for keyboard input; use `/watch <seconds>`
+to change the interval or `/watch off` to disable it. Use `/read` to
+print recent cached-user message text, `/peer` to pick another peer, `/peers`
+to reload the list and `/quit` to exit. Chat mode hides MTProto diagnostics
+during normal operation and prints chat lines as `me:` or `them:`.
 
 ## Cleanup
 

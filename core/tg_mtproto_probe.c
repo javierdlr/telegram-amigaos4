@@ -23,6 +23,7 @@
 #include "tg_mtproto_session.h"
 #include "tg_mtproto_srp.h"
 #include "tg_mtproto_transport.h"
+#include "tg_console.h"
 #include "tg_file.h"
 #include "tg_net.h"
 #include "tg_platform.h"
@@ -3675,7 +3676,11 @@ static int tg_mtproto_auth_print_history_text_peer_file(
     const char *peer_cache_file,
     const char *peer_index_text,
     const char *limit_text,
-    FILE *stream)
+    FILE *stream,
+    unsigned long *last_seen_message_id,
+    int only_new,
+    int include_outgoing,
+    int print_empty_status)
 {
     unsigned char query[64];
     unsigned long limit;
@@ -3684,6 +3689,8 @@ static int tg_mtproto_auth_print_history_text_peer_file(
     unsigned long access_hash_hi;
     unsigned long access_hash_lo;
     unsigned long i;
+    unsigned long max_seen_message_id;
+    unsigned long printed;
     char api_id[32];
     FILE *quiet;
     tg_mtproto_message_text_list texts;
@@ -3737,16 +3744,38 @@ static int tg_mtproto_auth_print_history_text_peer_file(
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
 
+    max_seen_message_id = last_seen_message_id != 0 ?
+        *last_seen_message_id : 0UL;
+    printed = 0UL;
     if (texts.count == 0UL) {
-        fprintf(stream, "history refreshed\n");
+        if (print_empty_status) {
+            fprintf(stream, "history refreshed\n");
+        }
         return 0;
     }
     i = texts.count;
     while (i > 0UL) {
         --i;
+        if (texts.messages[i].id > max_seen_message_id) {
+            max_seen_message_id = texts.messages[i].id;
+        }
+        if (last_seen_message_id != 0 && only_new &&
+            texts.messages[i].id <= *last_seen_message_id) {
+            continue;
+        }
+        if (!include_outgoing && texts.messages[i].is_out) {
+            continue;
+        }
         fprintf(stream, "%s: ", texts.messages[i].is_out ? "me" : "them");
         tg_mtproto_print_cache_text(stream, texts.messages[i].text);
         fprintf(stream, "\n");
+        ++printed;
+    }
+    if (last_seen_message_id != 0) {
+        *last_seen_message_id = max_seen_message_id;
+    }
+    if (printed == 0UL && print_empty_status) {
+        fprintf(stream, "history refreshed\n");
     }
     return 0;
 }
@@ -3761,6 +3790,9 @@ int tg_mtproto_auth_chat_file(const char *host,
 {
     char peer_index[32];
     char line[512];
+    unsigned long last_seen_message_id;
+    unsigned long watch_seconds;
+    unsigned long parsed_watch_seconds;
     FILE *quiet;
     int rc;
     static const char label[] = "mtproto chat";
@@ -3787,21 +3819,46 @@ int tg_mtproto_auth_chat_file(const char *host,
                                sizeof(peer_index), 1, stream, label) != 0) {
         return 2;
     }
+    last_seen_message_id = 0UL;
+    watch_seconds = 5UL;
     rc = tg_mtproto_auth_print_history_text_peer_file(
         host, port, api_file, auth_file, dc_id_text, peer_cache_file,
-        peer_index, "5", stream);
+        peer_index, "5", stream, &last_seen_message_id, 0, 1, 1);
     if (rc != 0) {
         fprintf(stream, "%s: read-failed\n", label);
         return 2;
     }
-    fprintf(stream, "\nType text to send. Commands: /read /peer /peers /quit\n");
+    fprintf(stream,
+            "\nType text to send. Commands: /read /watch /peer /peers /quit\n");
+    fprintf(stream, "%s: auto-read every %lu second(s)\n", label,
+            watch_seconds);
     for (;;) {
+        if (watch_seconds > 0UL &&
+            !tg_platform_stdin_readable(watch_seconds)) {
+            rc = tg_mtproto_auth_print_history_text_peer_file(
+                host, port, api_file, auth_file, dc_id_text,
+                peer_cache_file, peer_index, "5", stream,
+                &last_seen_message_id, 1, 0, 0);
+            if (rc != 0) {
+                fprintf(stream, "%s: read-failed\n", label);
+                return 2;
+            }
+            continue;
+        }
         if (fgets(line, sizeof(line), stdin) == 0) {
             fprintf(stream, "%s: input-closed\n", label);
             return 0;
         }
         tg_mtproto_trim_line(line);
         if (line[0] == '\0') {
+            rc = tg_mtproto_auth_print_history_text_peer_file(
+                host, port, api_file, auth_file, dc_id_text,
+                peer_cache_file, peer_index, "5", stream,
+                &last_seen_message_id, 1, 0, 0);
+            if (rc != 0) {
+                fprintf(stream, "%s: read-failed\n", label);
+                return 2;
+            }
             continue;
         }
         if (strcmp(line, "/quit") == 0 || strcmp(line, "quit") == 0) {
@@ -3830,15 +3887,45 @@ int tg_mtproto_auth_chat_file(const char *host,
                                        label) != 0) {
                 return 2;
             }
+            last_seen_message_id = 0UL;
+            rc = tg_mtproto_auth_print_history_text_peer_file(
+                host, port, api_file, auth_file, dc_id_text,
+                peer_cache_file, peer_index, "5", stream,
+                &last_seen_message_id, 0, 1, 1);
+            if (rc != 0) {
+                fprintf(stream, "%s: read-failed\n", label);
+                return 2;
+            }
             continue;
         }
         if (strcmp(line, "/read") == 0) {
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
-                peer_cache_file, peer_index, "5", stream);
+                peer_cache_file, peer_index, "5", stream,
+                &last_seen_message_id, 0, 1, 1);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
                 return 2;
+            }
+            continue;
+        }
+        if ((strncmp(line, "/watch", 6) == 0 &&
+             (line[6] == '\0' || line[6] == ' ' || line[6] == '\t')) ||
+            (strncmp(line, "watch", 5) == 0 &&
+             (line[5] == '\0' || line[5] == ' ' || line[5] == '\t'))) {
+            if (tg_console_parse_watch_command(line, &parsed_watch_seconds) !=
+                0) {
+                fprintf(stream,
+                        "%s: use /watch <seconds <= 3600> or /watch off\n",
+                        label);
+                continue;
+            }
+            watch_seconds = parsed_watch_seconds;
+            if (watch_seconds == 0UL) {
+                fprintf(stream, "%s: auto-read disabled\n", label);
+            } else {
+                fprintf(stream, "%s: auto-read every %lu second(s)\n", label,
+                        watch_seconds);
             }
             continue;
         }

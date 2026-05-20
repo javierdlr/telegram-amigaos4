@@ -471,7 +471,7 @@ Current options:
     --mtproto-auth-send-peer-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file> <peer-index> <text>
                       Send text to a cached user peer
     --mtproto-chat-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file>
-                      Interactive cached-user MTProto text chat with /read
+                      Interactive cached-user MTProto text chat with auto-read
     --telegram-tls-status
                       Print current TLS security status
     --json-test <json> <field>

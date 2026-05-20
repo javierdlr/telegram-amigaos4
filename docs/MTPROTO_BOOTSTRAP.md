@@ -123,7 +123,8 @@ user peer; use it only after confirming the peer index.
 the peer cache, asks for a peer index, prints recent text messages from that
 peer, then accepts plain text to send. In this mode command diagnostics are
 hidden from the chat transcript; `/read`, `/peer`, `/peers` and `/quit` are the
-available controls.
+main controls. While waiting for input it auto-reads new incoming text every 5
+seconds; `/watch <seconds>` changes the interval and `/watch off` disables it.
 Some Telegram responses are `gzip_packed`. Builds can enable unpacking with
 `TG_ENABLE_GZIP=1` when zlib is available; otherwise these responses remain
 explicitly unsupported instead of being silently misparsed.
