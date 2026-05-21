@@ -5,7 +5,100 @@
 
 #include <string.h>
 
+#if !defined(TG_AMIGAOS3_ENABLE_AMISSL)
+#define TG_AMIGAOS3_ENABLE_AMISSL 0
+#endif
+
+#if !defined(TG_AMIGAOS4_ENABLE_AMISSL)
+#define TG_AMIGAOS4_ENABLE_AMISSL 0
+#endif
+
+#if !defined(TG_ENABLE_TLS)
+#define TG_ENABLE_TLS 0
+#endif
+
+#if TG_AMIGAOS3_ENABLE_AMISSL || TG_AMIGAOS4_ENABLE_AMISSL || TG_ENABLE_TLS
+#define TG_MTPROTO_BIGINT_USE_OPENSSL 1
+#include <openssl/bn.h>
+#else
+#define TG_MTPROTO_BIGINT_USE_OPENSSL 0
+#endif
+
 #include "tg_mtproto_bigint.h"
+
+#if TG_MTPROTO_BIGINT_USE_OPENSSL
+static int tg_bigint_mod_exp_openssl(
+    const unsigned char base[TG_MTPROTO_BIGINT_SIZE],
+    const unsigned char *exponent,
+    unsigned long exponent_length,
+    const unsigned char modulus[TG_MTPROTO_BIGINT_SIZE],
+    unsigned char output[TG_MTPROTO_BIGINT_SIZE])
+{
+    BN_CTX *ctx;
+    BIGNUM *bn_base;
+    BIGNUM *bn_exponent;
+    BIGNUM *bn_modulus;
+    BIGNUM *bn_result;
+    int result;
+    int bytes;
+
+    if (base == 0 || exponent == 0 || modulus == 0 || output == 0) {
+        return 0;
+    }
+    if (exponent_length > TG_MTPROTO_BIGINT_EXP_MAX) {
+        exponent_length = TG_MTPROTO_BIGINT_EXP_MAX;
+    }
+
+    result = 0;
+    ctx = BN_CTX_new();
+    bn_base = 0;
+    bn_exponent = 0;
+    bn_modulus = 0;
+    bn_result = 0;
+    if (ctx == 0) {
+        return 0;
+    }
+
+    bn_base = BN_bin2bn(base, TG_MTPROTO_BIGINT_SIZE, 0);
+    bn_exponent = BN_bin2bn(exponent, (int)exponent_length, 0);
+    bn_modulus = BN_bin2bn(modulus, TG_MTPROTO_BIGINT_SIZE, 0);
+    bn_result = BN_new();
+    if (bn_base == 0 || bn_exponent == 0 || bn_modulus == 0 ||
+        bn_result == 0) {
+        goto done;
+    }
+    if (BN_mod_exp(bn_result, bn_base, bn_exponent, bn_modulus, ctx) != 1) {
+        goto done;
+    }
+
+    bytes = BN_num_bytes(bn_result);
+    if (bytes < 0 || bytes > (int)TG_MTPROTO_BIGINT_SIZE) {
+        goto done;
+    }
+    memset(output, 0, TG_MTPROTO_BIGINT_SIZE);
+    if (bytes > 0) {
+        BN_bn2bin(bn_result, output + TG_MTPROTO_BIGINT_SIZE -
+                  (unsigned long)bytes);
+    }
+    result = 1;
+
+done:
+    if (bn_result != 0) {
+        BN_clear_free(bn_result);
+    }
+    if (bn_modulus != 0) {
+        BN_clear_free(bn_modulus);
+    }
+    if (bn_exponent != 0) {
+        BN_clear_free(bn_exponent);
+    }
+    if (bn_base != 0) {
+        BN_clear_free(bn_base);
+    }
+    BN_CTX_free(ctx);
+    return result;
+}
+#endif
 
 static int tg_bigint_bit(const unsigned char *a,
                          unsigned long a_length,
@@ -170,6 +263,13 @@ void tg_mtproto_bigint_mod_exp(
     unsigned char result[TG_MTPROTO_BIGINT_SIZE];
     unsigned char power[TG_MTPROTO_BIGINT_SIZE];
     unsigned long bit;
+
+#if TG_MTPROTO_BIGINT_USE_OPENSSL
+    if (tg_bigint_mod_exp_openssl(base, exponent, exponent_length, modulus,
+                                  output)) {
+        return;
+    }
+#endif
 
     memset(result, 0, sizeof(result));
     result[TG_MTPROTO_BIGINT_SIZE - 1U] = 1U;
