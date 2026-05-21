@@ -68,6 +68,7 @@ mkdir -p "$DEST_DIR"
 
 cp "$TARGET" "$DEST_DIR/telegram-test"
 cp "$ROOT_DIR/docs/AROS_X86_64_TESTER.md" "$DEST_DIR/README.md"
+cp "$ROOT_DIR/docs/USER_RUNBOOK.md" "$DEST_DIR/USER_RUNBOOK.md"
 cp "$ROOT_DIR/docs/HOW_TO_TEST.md" "$DEST_DIR/HOW_TO_TEST.md"
 cp "$ROOT_DIR/docs/TLS_CERTIFICATES.md" "$DEST_DIR/TLS_CERTIFICATES.md"
 cp "$ROOT_DIR/docs/MTPROTO_QUICK_TEST.md" "$DEST_DIR/MTPROTO_QUICK_TEST.md"
@@ -112,6 +113,48 @@ For this package, TLS is expected to be disabled. Commands that need HTTPS or
 Telegram live API access are expected to report unsupported until the x86_64
 OpenSSL SDK path is available.
 
+MTProto account login and user chat use Telegram's MTProto TCP transport rather
+than the Bot API HTTPS path, but this target is still experimental. Prefer
+console/VNC for interactive chat; hosted AROS SSH is best kept to short smoke
+commands.
+
+Create telegram-api.txt next to telegram-test:
+
+  <api_id>
+  <api_hash>
+
+Keep telegram-api.txt, telegram-auth.bin, phone-code-hash.txt,
+telegram-password.txt and telegram-peers.txt private. Do not publish screenshots
+or logs showing phone numbers, login codes, 2FA passwords, contact names or
+message text.
+
+Interactive MTProto login:
+
+  Execute RunMTProtoLoginWizard
+
+Then validate and list peers:
+
+  Execute RunMTProtoCheckLocal
+  Execute RunMTProtoInspectAuth
+  Execute RunMTProtoLoginSmoke
+  Execute RunMTProtoListPeers
+
+Start user-peer chat:
+
+  Execute RunMTProtoChat
+
+Pick a peer index and type normal text to send. Incoming peer messages are
+auto-read every 5 seconds while waiting for input. Use /read to poll
+immediately, /watch <seconds> to change the interval, /watch off to disable
+auto-read, /peer to choose another peer, /peers to refresh the peer cache and
+/quit to exit.
+
+If a command reports auth-dc-mismatch, run Execute RunMTProtoInspectAuth and
+use the saved dc_id with the matching Telegram endpoint. The latest live
+AmigaOS 3.x validation used this explicit form after auth migrated to DC 4:
+
+  Execute RunMTProtoChat 149.154.167.91 443 4 telegram-api.txt telegram-auth.bin telegram-peers.txt telegram-test
+
 Hosted AROS x86_64 runtime notes:
 
   - 10.255.222.2:2222 is a TAP-internal endpoint on the Linux build server.
@@ -125,9 +168,10 @@ Hosted AROS x86_64 runtime notes:
   - Use short non-interactive commands. Do not use shell redirection or pipes.
   - Do not rely on interactive console mode through this SSH path yet.
 
-Full notes are in README.md. The common checklist is in HOW_TO_TEST.md.
-TLS validation details are in TLS_CERTIFICATES.md. MTProto user-login notes
-are in MTPROTO_QUICK_TEST.md and MTPROTO_REAL_LOGIN.md.
+Quick user instructions are in USER_RUNBOOK.md. Full notes are in README.md.
+The common checklist is in HOW_TO_TEST.md. TLS validation details are in
+TLS_CERTIFICATES.md. MTProto user-login notes are in MTPROTO_QUICK_TEST.md and
+MTPROTO_REAL_LOGIN.md.
 EOF
 
 if command -v zip >/dev/null 2>&1; then

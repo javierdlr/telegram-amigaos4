@@ -15,6 +15,8 @@ SRC := src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_console.c
 
 CFLAGS ?= -Wall -Wextra -O2
 ENABLE_TLS ?= 0
+ENABLE_GZIP ?= 0
+ENABLE_GZIP_PUFF ?= 1
 CPPFLAGS += -nostdinc \
 	-isystem "$(SDK_GCC_ROOT)/include" \
 	-isystem "$(SDK_GCC_ROOT)/include-fixed" \
@@ -35,11 +37,21 @@ CPPFLAGS += -DTG_ENABLE_TLS=1
 LDLIBS := -lssl -lcrypto $(LDLIBS)
 endif
 
+ifeq ($(ENABLE_GZIP),1)
+CPPFLAGS += -DTG_ENABLE_GZIP=1
+LDLIBS := -lz $(LDLIBS)
+endif
+
+ifeq ($(ENABLE_GZIP_PUFF),1)
+CPPFLAGS += -DTG_ENABLE_GZIP_PUFF=1 -Ithird_party/puff
+SRC += third_party/puff/puff.c
+endif
+
 .PHONY: all clean
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) include/tg_app.h include/tg_bot.h include/tg_config.h include/tg_console.h include/tg_client_state.h include/tg_offset_state.h include/tg_text_client.h include/tg_file.h include/tg_http.h include/tg_https.h include/tg_json.h include/tg_telegram.h include/tg_log.h include/tg_mtproto.h include/tg_mtproto_auth.h include/tg_mtproto_bigint.h include/tg_mtproto_dc.h include/tg_mtproto_envelope.h include/tg_mtproto_encrypted.h include/tg_mtproto_login.h include/tg_mtproto_message_id.h include/tg_mtproto_probe.h include/tg_mtproto_rsa.h include/tg_mtproto_crypto.h include/tg_mtproto_session.h include/tg_mtproto_srp.h include/tg_mtproto_tl.h include/tg_mtproto_transport.h include/tg_net.h include/tg_platform.h include/tg_tls.h
+$(TARGET): $(SRC) include/tg_app.h include/tg_bot.h include/tg_config.h include/tg_console.h include/tg_client_state.h include/tg_offset_state.h include/tg_text_client.h include/tg_file.h include/tg_http.h include/tg_https.h include/tg_json.h include/tg_telegram.h include/tg_log.h include/tg_mtproto.h include/tg_mtproto_auth.h include/tg_mtproto_bigint.h include/tg_mtproto_dc.h include/tg_mtproto_envelope.h include/tg_mtproto_encrypted.h include/tg_mtproto_login.h include/tg_mtproto_message_id.h include/tg_mtproto_probe.h include/tg_mtproto_rsa.h include/tg_mtproto_crypto.h include/tg_mtproto_session.h include/tg_mtproto_srp.h include/tg_mtproto_tl.h include/tg_mtproto_transport.h include/tg_net.h include/tg_platform.h include/tg_tls.h third_party/puff/puff.h
 	mkdir -p "$(BUILD_DIR)"
 	$(AROS_CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(LDSTART) $(SRC) $(LDLIBS) -o "$@"
 
