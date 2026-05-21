@@ -36,6 +36,7 @@
 #include <libraries/amissl.h>
 #include <libraries/amisslmaster.h>
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 #endif
 
@@ -52,6 +53,9 @@ struct AmiSSLMasterIFace *IAmiSSLMaster = 0;
 struct AmiSSLIFace *IAmiSSL = 0;
 
 static int tg_amigaos4_amissl_initialized = 0;
+
+static int tg_amigaos4_amissl_init(char *error_buffer,
+                                   unsigned long error_buffer_size);
 #endif
 
 const char *tg_platform_name(void)
@@ -131,8 +135,19 @@ int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
 #if defined(__amigaos4__)
-    (void)bytes;
-    (void)byte_count;
+    if (bytes == 0) {
+        return 0;
+    }
+    if (byte_count == 0) {
+        return 1;
+    }
+#if TG_AMIGAOS4_ENABLE_AMISSL
+    if (tg_amigaos4_amissl_init(0, 0) == 0 &&
+        RAND_bytes(bytes, (int)byte_count) == 1) {
+        return 1;
+    }
+#endif
+    memset(bytes, 0, byte_count);
     return 0;
 #else
     int fd;
@@ -146,6 +161,9 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
         return 1;
     }
     fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        fd = open("/dev/random", O_RDONLY);
+    }
     if (fd < 0) {
         return 0;
     }

@@ -151,6 +151,7 @@ void tg_config_init(tg_config *config)
     config->run_http_test = 0;
     config->run_http_post_self_test = 0;
     config->run_https_test = 0;
+    config->run_platform_rng_test = 0;
     config->run_mtproto_self_test = 0;
     config->run_mtproto_self_test_fast = 0;
     config->run_mtproto_self_test_heavy = 0;
@@ -324,6 +325,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->https_test_port = argv[i + 2];
             config->https_test_path = argv[i + 3];
             i += 3;
+        } else if (strcmp(argv[i], "--platform-rng-test") == 0) {
+            config->run_platform_rng_test = 1;
         } else if (strcmp(argv[i], "--mtproto-self-test") == 0) {
             config->run_mtproto_self_test = 1;
         } else if (strcmp(argv[i], "--mtproto-self-test-fast") == 0) {
@@ -1097,6 +1100,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run built-in HTTP POST request builder sample\n");
     fprintf(stream, "      --https-test <host> <port> <path>\n");
     fprintf(stream, "                         Test TLS send and receive with HTTP/1.0\n");
+    fprintf(stream, "      --platform-rng-test\n");
+    fprintf(stream, "                         Check whether secure platform RNG is available\n");
     fprintf(stream, "      --mtproto-self-test\n");
     fprintf(stream, "                         Run offline MTProto bootstrap samples\n");
     fprintf(stream, "      --mtproto-self-test-fast\n");

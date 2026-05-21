@@ -46,6 +46,34 @@ static const char tg_default_max_iterations_text[] = "10";
 static const char tg_console_poll_seconds_text[] = "0";
 static const char tg_console_max_iterations_text[] = "1";
 
+static int tg_run_platform_rng_test(void)
+{
+    unsigned char sample[32];
+    unsigned long i;
+    int all_zero;
+
+    if (!tg_platform_random_bytes(sample, sizeof(sample))) {
+        puts("secure rng: unavailable");
+        return 2;
+    }
+
+    all_zero = 1;
+    for (i = 0; i < sizeof(sample); ++i) {
+        if (sample[i] != 0U) {
+            all_zero = 0;
+            break;
+        }
+    }
+    memset(sample, 0, sizeof(sample));
+    if (all_zero) {
+        puts("secure rng: unavailable");
+        return 2;
+    }
+
+    puts("secure rng: available");
+    return 0;
+}
+
 static int tg_run_http_test(const tg_config *config)
 {
     tg_http_status http_status;
@@ -3654,6 +3682,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_https_test) {
         return tg_run_https_test(&config);
+    }
+
+    if (config.run_platform_rng_test) {
+        return tg_run_platform_rng_test();
     }
 
     if (config.run_mtproto_self_test) {

@@ -23,6 +23,7 @@
 
 #if TG_ENABLE_TLS
 #include <openssl/err.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 #endif
 
@@ -99,6 +100,14 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
     }
     fd = open("/dev/urandom", O_RDONLY);
     if (fd < 0) {
+        fd = open("/dev/random", O_RDONLY);
+    }
+    if (fd < 0) {
+#if TG_ENABLE_TLS
+        if (RAND_bytes(bytes, (int)byte_count) == 1) {
+            return 1;
+        }
+#endif
         return 0;
     }
     offset = 0;

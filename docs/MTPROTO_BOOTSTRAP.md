@@ -100,6 +100,9 @@ telegram-test --mtproto-auth-forget <auth-file> [code-hash-file]
 
 `auth.sendCode` creates and saves a plaintext local auth-key file only after a
 successful Telegram response, and only when secure random bytes are available.
+Use `--platform-rng-test` before first-login tests on retro targets. It prints
+only whether secure RNG is available and never prints random bytes. On
+Amiga-like systems this normally requires a TLS/AmiSSL/OpenSSL-enabled build.
 `auth.signIn` reuses that file plus the saved `phone_code_hash` and the
 human-entered code. If Telegram returns `SESSION_PASSWORD_NEEDED`, put the 2FA
 password in a local ignored file such as `telegram-password.txt` and run
@@ -177,6 +180,7 @@ For the terse operator checklist, use
 Minimal real-account validation sequence:
 
 ```text
+telegram-test --platform-rng-test
 telegram-test --mtproto-auth-login-wizard-file <host> <port> <dc-id> telegram-api.txt telegram-auth.bin phone-code-hash.txt
 ```
 

@@ -68,8 +68,13 @@ DC_ID=2
 Start login:
 
 ```text
+telegram-test --platform-rng-test
 telegram-test --mtproto-auth-login-wizard-file $HOST $PORT $DC_ID telegram-api.txt telegram-auth.bin phone-code-hash.txt
 ```
+
+`--platform-rng-test` must report `secure rng: available` before a real
+first-login attempt. If it reports unavailable, use a TLS/AmiSSL/OpenSSL-enabled
+build or fix the platform RNG backend before running `auth.sendCode`.
 
 The wizard asks for the phone number and then for the Telegram login code. If
 Telegram requires 2FA, it asks for the password and uses it only in memory. On
