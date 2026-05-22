@@ -30,11 +30,16 @@ The goal is a usable text-first Telegram client for:
 - AmigaOS 3.x
 - MorphOS
 - AmigaOS 4.x
-- AROS i386 and x86_64
+- AROS i386
 
 The Bot API support remains in the tree because it is useful for diagnostics,
 TLS/HTTP validation, simple bot-based chat tests and fallback experiments. It
 is no longer the main product direction.
+
+AROS x86_64 is frozen as a diagnostic/porting lane. The current x86_64
+standard-CRT build crashes before even `--help` on the AROS x86_64 VM. Main
+development continues on AROS i386 until the client is usable end to end; x86_64
+will be revisited later with a minimal-runtime approach.
 
 ## What Works Today
 
@@ -92,11 +97,11 @@ come later, only if the platform constraints make them realistic.
 
 Current cross-platform pre-alpha release set:
 
-- [AmigaOS 3.x pre-alpha tester 2c6d3c8](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-prealpha-20260521-2c6d3c8)
-- [MorphOS pre-alpha tester 2c6d3c8](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-prealpha-20260521-2c6d3c8)
-- [AmigaOS 4.x pre-alpha tester 2c6d3c8](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-prealpha-20260521-2c6d3c8)
-- [AROS i386 ABIv0 TLS pre-alpha tester 2c6d3c8](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-tls-prealpha-20260521-2c6d3c8)
-- [AROS x86_64 offline pre-alpha tester 2c6d3c8](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260521-2c6d3c8)
+- [AmigaOS 3.x pre-alpha tester 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-prealpha-20260522-22bbd57)
+- [MorphOS pre-alpha tester 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-prealpha-20260522-22bbd57)
+- [AmigaOS 4.x pre-alpha tester 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-prealpha-20260522-22bbd57)
+- [AROS i386 ABIv0 TLS pre-alpha tester 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-tls-prealpha-20260522-22bbd57)
+- [AROS x86_64 diagnostic artifact 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260522-22bbd57)
 
 Packages include platform README files, `USER_RUNBOOK.md`, MTProto login notes
 and helper scripts. They do not include local tokens, API credentials, auth
@@ -265,6 +270,10 @@ AROS_TOOLCHAIN=/path/to/aros-x86_64-toolchain \
 AROS_SDK_ROOT=/path/to/AROS/Development \
 scripts/package-aros-x86_64-tester.sh
 ```
+
+This x86_64 package path is frozen for diagnostics only. Do not treat it as a
+working user target until a minimal-runtime x86_64 port replaces the current
+standard-CRT runtime path.
 
 Offline smoke test on a local/native-style build:
 

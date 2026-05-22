@@ -12,7 +12,7 @@ other targets: offline parser/state tests, TCP/HTTP diagnostics, HTTPS,
 
 ## Current Status
 
-- AROS One 32-bit and 64-bit community builds have compiled the project.
+- AROS One 32-bit is the active AROS development target.
 - The AROS backend has an initial BSD-socket TCP implementation using
   `bsdsocket.library`.
 - AROS One i386 alt-abiv0 has been cross-built from macOS and smoke-tested in
@@ -23,8 +23,10 @@ other targets: offline parser/state tests, TCP/HTTP diagnostics, HTTPS,
   `--tls-verify`.
 - AROS One 32-bit has AmiSSL available according to community feedback.
 - AROS One 64-bit currently does not have AmiSSL available.
-- AROS x86_64 has an experimental `Makefile.aros-x86_64` and should follow the
-  OpenSSL path, but it has not been validated yet.
+- AROS x86_64 is frozen as a diagnostic/porting lane. The current
+  standard-CRT x86_64 binary crashes before `--help` on the AROS x86_64 VM.
+  Continue main client work on AROS i386; revisit x86_64 later through a
+  minimal-runtime port.
 - Live Telegram Bot API `getMe`, read-only polling and controlled
   `sendMessage` have passed on the TLS-enabled AROS One i386 alt-abiv0 build.
 - TLS certificate validation with an explicit CA bundle has passed against
@@ -89,9 +91,8 @@ With BebboSSHd AROS commit `eae8a99` or newer, the hosted i386 runtime has
 passed the full offline self-test list below over short non-interactive SSH
 commands.
 
-For AROS x86_64, build by CPU/ABI, not by hosted/native mode. Hosted AROS is a
-useful extra validation environment, but it is not a separate public package
-target. Use a real x86_64 AROS toolchain and SDK:
+The AROS x86_64 build path is currently diagnostic only. Use it only when
+working on the frozen x86_64 porting lane:
 
 ```text
 make -f Makefile.aros-x86_64 all ENABLE_TLS=0 \
@@ -99,7 +100,8 @@ make -f Makefile.aros-x86_64 all ENABLE_TLS=0 \
   AROS_SDK_ROOT=/path/to/AROS/Development
 ```
 
-The resulting file must be an AROS x86_64 ELF, not a host executable. See
+The resulting file must be an AROS x86_64 ELF, not a host executable, but the
+current standard-CRT output is not runtime-valid. See
 `docs/AROS_X86_64_TESTER.md`.
 
 If `make` reports `Clock skew detected`, check the AROS system date/time or

@@ -1,6 +1,9 @@
 # AROS x86_64 Tester Notes
 
-This target is an offline pre-alpha tester for AROS x86_64.
+This target is frozen as a diagnostic/porting lane for AROS x86_64.
+
+Main AROS development continues on AROS i386 until the shell client is usable
+end to end. AROS x86_64 will be revisited later with a minimal-runtime port.
 
 Release packages are split by CPU/ABI, not by hosted/native mode. A binary that
 matches the AROS x86_64 CPU/ABI should be the same release artifact for hosted,
@@ -18,32 +21,33 @@ development files and runtime libraries that match the SDK/runtime being tested.
 - TLS backend planned: OpenSSL
 - Offline cross-build status: the package helper can now produce a real AROS
   x86_64 ELF and refuses host binaries.
-- Runtime status: hosted AROS x86_64 SSH can be used for short non-interactive
-  commands while the hosted runtime is running on the Linux server.
-  `10.255.222.2:2222` is a TAP-internal endpoint, not a permanent public
-  service.
-- Offline target-side status: not yet passed for the current package. On the
-  local AROS x86_64 QEMU target, a standard-CRT `telegram-test --help` and a
-  minimal standard-CRT hello-world binary both hang before producing output.
+- Runtime status: frozen. The current standard-CRT `telegram-test` crashes
+  before `--help` on the AROS x86_64 VM with an illegal address access.
   This points at the standard startup/CRT path, not at Telegram or MTProto
-  logic. A future x86_64 runtime lane may need a minimal-runtime approach
-  similar to the BebboSSH x86_64 port.
+  logic.
+- Hosted AROS x86_64 SSH may still be useful for short system commands while
+  the hosted runtime is running on the Linux server. It is not a validation
+  oracle for this client binary.
 - Minimal-runtime diagnostic status: an external BebboSSH-style mincrt probe
   using direct `Write(Output(), ...)` starts on the same AROS x86_64 QEMU target
-  and prints output over SSH. This confirms that the next x86_64 work should
-  focus on a mincrt-compatible client lane instead of further standard-CRT
-  packaging tweaks.
+  and prints output. This confirms that the next x86_64 work should focus on a
+  mincrt-compatible client lane instead of further standard-CRT packaging
+  tweaks.
 - TLS build status: blocked for the validated hosted SDK/runtime pair. OpenSSL
   headers and libraries must come from the same SDK/runtime set being tested;
   a successful cross-link is not enough.
-- Live Telegram status: not validated
-- Public package status: published as an offline pre-alpha tester:
-  `https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260514-fadc278`
+- Live Telegram status: not validated and not planned until the frozen x86_64
+  runtime lane is replaced.
+- Public package status: diagnostic artifact only:
+  `https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260522-22bbd57`
 - `--connect-timeout` is accepted by the common CLI, but native AROS currently
   keeps the platform blocking connect path. Do not use unreachable-IP timeout
   tests as an AROS runtime health check yet.
 
-## Native Build Sketch
+## Frozen Build Sketch
+
+These commands are kept for future porting work only. Do not use this path as a
+release gate while x86_64 is frozen.
 
 On an AROS x86_64 system with GCC and OpenSSL development files:
 

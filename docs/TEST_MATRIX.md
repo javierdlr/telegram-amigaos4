@@ -129,9 +129,11 @@ AROS i386:
 
 AROS x86_64:
 
-- Use for Level 2 offline checks for now.
-- Treat TLS as blocked until OpenSSL headers and libraries match the validated
-  SDK/runtime pair and the resulting binary runs on target.
+- Frozen as a diagnostic/porting lane.
+- Do not require it for normal MTProto development, release qualification or
+  user-facing shell-client work.
+- The current standard-CRT binary crashes before `--help` on the AROS x86_64
+  VM. Resume this lane only when working on a minimal-runtime x86_64 port.
 
 ## Reporting
 

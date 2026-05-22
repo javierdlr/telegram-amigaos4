@@ -3,9 +3,9 @@
 # Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
 # SPDX-License-Identifier: MIT
 #
-# Package helper for the AROS x86_64 offline pre-alpha tester. TLS is not
+# Package helper for the frozen AROS x86_64 diagnostic artifact. TLS is not
 # available yet on this target because the validated SDK lacks OpenSSL headers
-# and libraries.
+# and libraries, and the standard-CRT runtime lane is not user-valid.
 
 set -eu
 
@@ -78,16 +78,20 @@ cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
 cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
 
 cat > "$DEST_DIR/README.txt" <<EOF
-Telegram Amiga - AROS x86_64 offline pre-alpha tester
+Telegram Amiga - AROS x86_64 diagnostic artifact
 Build: $COMMIT_ID
 TLS enabled: $ENABLE_TLS
 
-This package is for AROS x86_64 systems. "Hosted" AROS is only a validation
-environment; release packages are split by CPU/ABI, not by hosted/native mode.
+This package is frozen as a diagnostic/porting artifact. Main AROS development
+continues on AROS i386 until the shell client is usable end to end. AROS
+x86_64 will be revisited later with a minimal-runtime port.
 
-This is an experimental runtime-validation package. It is not a live Telegram
-build yet unless the offline smoke tests below, TLS and HTTPS have been
-validated on the target with matching OpenSSL headers and libraries.
+"Hosted" AROS is only a validation environment; release packages are split by
+CPU/ABI, not by hosted/native mode.
+
+The current standard-CRT x86_64 binary is not runtime-valid: the latest VM
+console test crashed before --help with an illegal address access. Do not
+present this package as a working user build.
 
 Minimum offline test:
 
@@ -114,9 +118,8 @@ Telegram live API access are expected to report unsupported until the x86_64
 OpenSSL SDK path is available.
 
 MTProto account login and user chat use Telegram's MTProto TCP transport rather
-than the Bot API HTTPS path, but this target is still experimental. Prefer
-console/VNC for interactive chat; hosted AROS SSH is best kept to short smoke
-commands.
+than the Bot API HTTPS path, but this target is frozen. Prefer AROS i386 for
+current AROS testing.
 
 Create telegram-api.txt next to telegram-test:
 
