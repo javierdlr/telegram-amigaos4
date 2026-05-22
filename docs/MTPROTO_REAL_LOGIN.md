@@ -84,6 +84,13 @@ the screen.
 AmigaDOS package wrapper:
 
 ```text
+Execute RunMTProtoStart
+```
+
+`RunMTProtoStart` logs in if needed, then uses the DC stored in
+`telegram-auth.bin` and starts chat. To run only the login wizard:
+
+```text
 Execute RunMTProtoLoginWizard
 ```
 

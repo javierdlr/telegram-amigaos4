@@ -20,6 +20,7 @@
 #include "tg_log.h"
 #include "tg_mtproto.h"
 #include "tg_mtproto_probe.h"
+#include "tg_mtproto_session.h"
 #include "tg_net.h"
 #include "tg_offset_state.h"
 #include "tg_platform.h"
@@ -45,6 +46,90 @@ static const char tg_default_poll_seconds_text[] = "5";
 static const char tg_default_max_iterations_text[] = "10";
 static const char tg_console_poll_seconds_text[] = "0";
 static const char tg_console_max_iterations_text[] = "1";
+
+static int tg_mtproto_production_endpoint_for_dc(unsigned long dc_id,
+                                                 const char **host,
+                                                 const char **dc_id_text)
+{
+    if (host == 0 || dc_id_text == 0) {
+        return 1;
+    }
+    switch (dc_id) {
+    case 1UL:
+        *host = "149.154.175.50";
+        *dc_id_text = "1";
+        return 0;
+    case 2UL:
+        *host = "149.154.167.50";
+        *dc_id_text = "2";
+        return 0;
+    case 3UL:
+        *host = "149.154.175.100";
+        *dc_id_text = "3";
+        return 0;
+    case 4UL:
+        *host = "149.154.167.91";
+        *dc_id_text = "4";
+        return 0;
+    case 5UL:
+        *host = "91.108.56.130";
+        *dc_id_text = "5";
+        return 0;
+    default:
+        return 1;
+    }
+}
+
+static int tg_run_mtproto_start_file(const char *api_file,
+                                     const char *auth_file,
+                                     const char *code_hash_file,
+                                     const char *peer_cache_file)
+{
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    tg_mtproto_session session;
+    tg_mtproto_session_status session_status;
+    const char *host;
+    const char *dc_id_text;
+    int rc;
+
+    if (api_file == 0 || auth_file == 0 || code_hash_file == 0 ||
+        peer_cache_file == 0) {
+        puts("mtproto start: invalid-arguments");
+        return 2;
+    }
+
+    session_status = tg_mtproto_session_load_authorization(auth_file,
+                                                           &session,
+                                                           auth_key);
+    memset(auth_key, 0, sizeof(auth_key));
+    if (session_status == TG_MTPROTO_SESSION_FILE_ERROR) {
+        puts("mtproto start: no saved login, starting login wizard");
+        rc = tg_mtproto_auth_login_wizard_file(
+            "149.154.167.50", "443", "2", api_file, auth_file,
+            code_hash_file, stdout);
+        if (rc != 0) {
+            return rc;
+        }
+        session_status = tg_mtproto_session_load_authorization(auth_file,
+                                                               &session,
+                                                               auth_key);
+        memset(auth_key, 0, sizeof(auth_key));
+    }
+    if (session_status != TG_MTPROTO_SESSION_OK) {
+        printf("mtproto start: auth-file-unusable %s\n",
+               tg_mtproto_session_status_name(session_status));
+        return 2;
+    }
+    if (tg_mtproto_production_endpoint_for_dc(session.dc_id, &host,
+                                             &dc_id_text) != 0) {
+        printf("mtproto start: unsupported-dc %lu\n", session.dc_id);
+        return 2;
+    }
+
+    printf("mtproto start: dc %s %s:443\n", dc_id_text, host);
+    return tg_mtproto_auth_chat_file(host, "443", api_file, auth_file,
+                                     dc_id_text, peer_cache_file, stdout);
+}
 
 static int tg_run_platform_rng_test(void)
 {
@@ -3648,7 +3733,8 @@ int tg_app_run(int argc, char **argv)
                                       config.tls_ca_file,
                                       config.tls_ca_path);
 
-    if (!config.run_telegram_human_chat && !config.run_mtproto_chat_file) {
+    if (!config.run_telegram_human_chat && !config.run_mtproto_chat_file &&
+        !config.run_mtproto_start_file) {
         puts("telegram-amiga bootstrap");
         printf("platform: %s\n", tg_platform_name());
         tg_log(TG_LOG_INFO, "core initialized");
@@ -3974,6 +4060,13 @@ int tg_app_run(int argc, char **argv)
                                          config.mtproto_auth_dc_id,
                                          config.mtproto_chat_peer_cache_file,
                                          stdout);
+    }
+
+    if (config.run_mtproto_start_file) {
+        return tg_run_mtproto_start_file(config.mtproto_auth_api_file,
+                                         config.mtproto_auth_file,
+                                         config.mtproto_auth_code_hash_file,
+                                         config.mtproto_chat_peer_cache_file);
     }
 
     if (config.run_mtproto_auth_forget) {

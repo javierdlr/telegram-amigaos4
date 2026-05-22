@@ -190,6 +190,7 @@ typedef struct tg_config {
     int run_mtproto_auth_send_self;
     int run_mtproto_auth_send_peer_file;
     int run_mtproto_chat_file;
+    int run_mtproto_start_file;
     int run_mtproto_auth_forget;
     int run_telegram_tls_status;
     int run_json_test;

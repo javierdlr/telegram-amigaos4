@@ -98,6 +98,7 @@ The tester package also includes AmigaDOS helper scripts:
 Execute RunAmigaOS3Preflight
 Execute RunAmigaOS3GetMe
 Execute RunAmigaOS3HumanChat
+Execute RunMTProtoStart
 Execute RunMTProtoLoginWizard
 Execute RunMTProtoLoginSmoke
 Execute RunMTProtoListPeers
@@ -381,7 +382,17 @@ telegram-password.txt
 telegram-peers.txt
 ```
 
-Run the interactive login:
+Start the MTProto client:
+
+```text
+Execute RunMTProtoStart
+```
+
+If no saved login exists, this starts the phone/code login wizard first. After
+login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
+and enters chat mode.
+
+Manual login is still available:
 
 ```text
 Execute RunMTProtoLoginWizard
@@ -391,7 +402,7 @@ The wizard asks for phone number, Telegram login code and optional 2FA
 password. Some Amiga console setups can echo password input, so avoid running
 that step during public screen-sharing.
 
-After login, validate the local files and saved session:
+Manual validation/debug commands:
 
 ```text
 Execute RunMTProtoCheckLocal
@@ -400,7 +411,7 @@ Execute RunMTProtoLoginSmoke
 Execute RunMTProtoListPeers
 ```
 
-Start chat mode:
+Manual chat entry:
 
 ```text
 Execute RunMTProtoChat

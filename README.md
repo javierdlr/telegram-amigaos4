@@ -116,7 +116,17 @@ Create `telegram-api.txt` next to `telegram-test`:
 
 Get those values from Telegram's API development page. Keep them private.
 
-Run the login wizard:
+Start the MTProto client:
+
+```text
+Execute RunMTProtoStart
+```
+
+If no saved login exists, this starts the phone/code login wizard first. After
+login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
+and enters chat mode.
+
+Manual login is still available:
 
 ```text
 Execute RunMTProtoLoginWizard
@@ -126,7 +136,7 @@ The wizard asks for phone number, Telegram login code and optional 2FA
 password. Some retro consoles may echo password input, so avoid doing this
 while screen-sharing.
 
-After login:
+Manual validation/debug commands:
 
 ```text
 Execute RunMTProtoCheckLocal

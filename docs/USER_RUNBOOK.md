@@ -121,7 +121,17 @@ not publish `telegram-api.txt`, `telegram-auth.bin`, `phone-code-hash.txt`,
 `telegram-password.txt`, `telegram-peers.txt`, screenshots showing phone
 numbers, login codes, contacts or message text.
 
-Start interactive login:
+Start the MTProto client:
+
+```text
+Execute RunMTProtoStart
+```
+
+If no saved login exists, this starts the phone/code login wizard first. After
+login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
+and enters chat mode.
+
+Manual login is still available:
 
 ```text
 Execute RunMTProtoLoginWizard
@@ -131,7 +141,7 @@ The wizard asks for phone number, Telegram login code and, if required, 2FA
 password. On some retro consoles the password can be visible while typed, so do
 not run this while screen-sharing.
 
-After login, run:
+Manual validation/debug commands:
 
 ```text
 Execute RunMTProtoCheckLocal
@@ -140,7 +150,7 @@ Execute RunMTProtoLoginSmoke
 Execute RunMTProtoListPeers
 ```
 
-Then start the interactive user-peer chat:
+Manual chat entry:
 
 ```text
 Execute RunMTProtoChat

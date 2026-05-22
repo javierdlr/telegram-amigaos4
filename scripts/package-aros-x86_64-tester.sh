@@ -128,18 +128,23 @@ telegram-password.txt and telegram-peers.txt private. Do not publish screenshots
 or logs showing phone numbers, login codes, 2FA passwords, contact names or
 message text.
 
-Interactive MTProto login:
+Start MTProto user chat:
+
+  Execute RunMTProtoStart
+
+If no saved login exists, this starts the phone/code login wizard first.
+After login it uses the DC stored in telegram-auth.bin and enters chat.
+
+Manual validation and debug commands:
 
   Execute RunMTProtoLoginWizard
-
-Then validate and list peers:
 
   Execute RunMTProtoCheckLocal
   Execute RunMTProtoInspectAuth
   Execute RunMTProtoLoginSmoke
   Execute RunMTProtoListPeers
 
-Start user-peer chat:
+Manual chat entry:
 
   Execute RunMTProtoChat
 

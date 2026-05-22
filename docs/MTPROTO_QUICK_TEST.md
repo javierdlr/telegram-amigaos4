@@ -43,6 +43,15 @@ those literal values.
 
 ## Login
 
+Easiest package flow on Amiga-style shells:
+
+```text
+Execute RunMTProtoStart
+```
+
+If no saved login exists, this runs the interactive login wizard first. After
+login it uses the saved auth DC and starts chat.
+
 Preferred interactive login:
 
 ```text

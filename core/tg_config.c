@@ -183,6 +183,7 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_send_self = 0;
     config->run_mtproto_auth_send_peer_file = 0;
     config->run_mtproto_chat_file = 0;
+    config->run_mtproto_start_file = 0;
     config->run_mtproto_auth_forget = 0;
     config->run_telegram_tls_status = 0;
     config->run_json_test = 0;
@@ -669,6 +670,22 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_dc_id = argv[i + 5];
             config->mtproto_chat_peer_cache_file = argv[i + 6];
             i += 6;
+        } else if (strcmp(argv[i], "--mtproto-start") == 0) {
+            config->run_mtproto_start_file = 1;
+            config->mtproto_auth_api_file = "telegram-api.txt";
+            config->mtproto_auth_file = "telegram-auth.bin";
+            config->mtproto_auth_code_hash_file = "phone-code-hash.txt";
+            config->mtproto_chat_peer_cache_file = "telegram-peers.txt";
+        } else if (strcmp(argv[i], "--mtproto-start-file") == 0) {
+            if (i + 4 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_start_file = 1;
+            config->mtproto_auth_api_file = argv[i + 1];
+            config->mtproto_auth_file = argv[i + 2];
+            config->mtproto_auth_code_hash_file = argv[i + 3];
+            config->mtproto_chat_peer_cache_file = argv[i + 4];
+            i += 4;
         } else if (strcmp(argv[i], "--mtproto-auth-forget") == 0) {
             if (i + 1 >= argc) {
                 return 1;
@@ -1164,6 +1181,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Send a text message to a cached user peer\n");
     fprintf(stream, "      --mtproto-chat-file <host> <port> <api-file> <auth-file> <dc-id> <peer-cache-file>\n");
     fprintf(stream, "                         Interactive cached-user MTProto text chat\n");
+    fprintf(stream, "      --mtproto-start\n");
+    fprintf(stream, "                         Login if needed, then start MTProto text chat using default local files\n");
+    fprintf(stream, "      --mtproto-start-file <api-file> <auth-file> <code-hash-file> <peer-cache-file>\n");
+    fprintf(stream, "                         Login if needed, then start MTProto text chat using explicit local files\n");
     fprintf(stream, "      --mtproto-auth-forget <auth-file> [code-hash-file]\n");
     fprintf(stream, "                         Delete local MTProto auth test files\n");
     fprintf(stream, "                         Test DC ids may be passed as 10000+dc or test:<dc>\n");

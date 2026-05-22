@@ -1,0 +1,44 @@
+; Start the user-account MTProto text client with local default files.
+;
+;   Execute RunMTProtoStart
+;   Execute RunMTProtoStart telegram-api.txt telegram-auth.bin phone-code-hash.txt telegram-peers.txt telegram-test
+
+.KEY API,AUTH,CODEHASH,PEERS,PROGRAM
+.BRA {
+.KET }
+
+Echo "Telegram Amiga MTProto"
+FailAt 21
+Stack 65536
+
+IF "{API}" EQ ""
+    SET APIFILE "telegram-api.txt"
+ELSE
+    SET APIFILE "{API}"
+ENDIF
+
+IF "{AUTH}" EQ ""
+    SET AUTHFILE "telegram-auth.bin"
+ELSE
+    SET AUTHFILE "{AUTH}"
+ENDIF
+
+IF "{CODEHASH}" EQ ""
+    SET HASHFILE "phone-code-hash.txt"
+ELSE
+    SET HASHFILE "{CODEHASH}"
+ENDIF
+
+IF "{PEERS}" EQ ""
+    SET PEERSFILE "telegram-peers.txt"
+ELSE
+    SET PEERSFILE "{PEERS}"
+ENDIF
+
+IF "{PROGRAM}" EQ ""
+    Protect telegram-test +e
+    telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE"
+ELSE
+    Protect {PROGRAM} +e
+    {PROGRAM} --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE"
+ENDIF
