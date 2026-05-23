@@ -52,9 +52,10 @@ MTProto account mode currently supports:
 - saved DC mismatch protection;
 - read-only login smoke tests;
 - dialog/peer listing into `telegram-peers.txt`;
-- cached user-peer selection;
-- reading peer history text;
-- sending text to a cached user peer;
+- cached conversation peer selection;
+- reading peer history text for users, basic groups and channels/supergroups;
+- sending text to cached users, basic groups and channels/supergroups when the
+  account has permission;
 - interactive chat mode with peer-name transcript lines;
 - auto-read while waiting for keyboard input;
 - `/read`, `/watch`, `/peer`, `/peers` and `/quit` chat commands;
@@ -83,7 +84,7 @@ Missing or incomplete areas include:
 
 - full update loop based on Telegram updates/differences;
 - robust account session management for long daily use;
-- groups/channels beyond early peer handling;
+- full group/channel management beyond basic text history and send;
 - message edits/deletes/reactions;
 - media download/upload;
 - contact management;
@@ -130,7 +131,9 @@ Execute RunMTProtoStart
 
 If no saved login exists, this starts the phone/code login wizard first. After
 login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
-and enters chat mode.
+and enters chat mode. The peer list can include users, basic groups and
+channels/supergroups; sending to channels depends on the Telegram permissions
+of the logged-in account.
 
 For a Workbench-style start, use an IconX script icon named
 `TelegramAmiga.info` next to `TelegramAmiga`. Double-clicking that icon starts

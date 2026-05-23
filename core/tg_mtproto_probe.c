@@ -3855,12 +3855,14 @@ int tg_mtproto_auth_get_history_self_file(const char *host,
     return rc;
 }
 
-static int tg_mtproto_load_peer_cache_user(const char *path,
+static int tg_mtproto_load_peer_cache_peer(const char *path,
                                            const char *peer_index_text,
-                                           unsigned long *user_id_hi,
-                                           unsigned long *user_id_lo,
+                                           unsigned long *peer_constructor,
+                                           unsigned long *peer_id_hi,
+                                           unsigned long *peer_id_lo,
                                            unsigned long *access_hash_hi,
                                            unsigned long *access_hash_lo,
+                                           int *has_access_hash,
                                            FILE *stream,
                                            const char *label)
 {
@@ -3873,9 +3875,12 @@ static int tg_mtproto_load_peer_cache_user(const char *path,
     unsigned long id_lo;
     unsigned long hash_hi;
     unsigned long hash_lo;
+    unsigned long constructor;
+    int matched;
 
-    if (path == 0 || user_id_hi == 0 || user_id_lo == 0 ||
-        access_hash_hi == 0 || access_hash_lo == 0 ||
+    if (path == 0 || peer_constructor == 0 || peer_id_hi == 0 ||
+        peer_id_lo == 0 || access_hash_hi == 0 || access_hash_lo == 0 ||
+        has_access_hash == 0 ||
         tg_mtproto_parse_ulong_arg(peer_index_text, &wanted_index) != 0 ||
         wanted_index == 0UL) {
         fprintf(stream, "%s: invalid-peer-cache-arguments\n", label);
@@ -3890,25 +3895,35 @@ static int tg_mtproto_load_peer_cache_user(const char *path,
         type[0] = '\0';
         index = 0UL;
         id_hi = id_lo = hash_hi = hash_lo = 0UL;
-        if (sscanf(line,
-                   "peer %lu type %23s id 0x%8lx%8lx access_hash 0x%8lx%8lx",
-                   &index, type, &id_hi, &id_lo, &hash_hi, &hash_lo) == 6 &&
-            index == wanted_index) {
+        matched = sscanf(line,
+                         "peer %lu type %23s id 0x%8lx%8lx access_hash 0x%8lx%8lx",
+                         &index, type, &id_hi, &id_lo, &hash_hi,
+                         &hash_lo);
+        if (index == wanted_index) {
             fclose(file);
-            if (strcmp(type, "user") != 0) {
+            if (matched < 4) {
+                fprintf(stream, "%s: peer-cache-parse-failed\n", label);
+                return 2;
+            }
+            constructor = tg_mtproto_peer_constructor_from_name(type);
+            if (constructor == 0UL) {
                 fprintf(stream, "%s: peer-cache-type-unsupported\n", label);
                 return 2;
             }
-            *user_id_hi = id_hi;
-            *user_id_lo = id_lo;
+            *peer_constructor = constructor;
+            *peer_id_hi = id_hi;
+            *peer_id_lo = id_lo;
             *access_hash_hi = hash_hi;
             *access_hash_lo = hash_lo;
+            *has_access_hash = matched == 6;
+            if ((constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR ||
+                 constructor == TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR) &&
+                !*has_access_hash) {
+                fprintf(stream, "%s: peer-cache-access-hash-missing\n",
+                        label);
+                return 2;
+            }
             return 0;
-        }
-        if (index == wanted_index) {
-            fclose(file);
-            fprintf(stream, "%s: peer-cache-access-hash-missing\n", label);
-            return 2;
         }
     }
     fclose(file);
@@ -4032,10 +4047,12 @@ int tg_mtproto_auth_get_history_peer_file(const char *host,
 {
     unsigned char query[64];
     unsigned long limit;
-    unsigned long user_id_hi;
-    unsigned long user_id_lo;
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
     unsigned long access_hash_hi;
     unsigned long access_hash_lo;
+    int has_access_hash;
     char api_id[32];
     tg_mtproto_messages_summary messages;
     tg_mtproto_rpc_result result;
@@ -4052,16 +4069,18 @@ int tg_mtproto_auth_get_history_peer_file(const char *host,
     }
     if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
                                     stream, label) != 0 ||
-        tg_mtproto_load_peer_cache_user(peer_cache_file, peer_index_text,
-                                        &user_id_hi, &user_id_lo,
-                                        &access_hash_hi, &access_hash_lo,
+        tg_mtproto_load_peer_cache_peer(peer_cache_file, peer_index_text,
+                                        &peer_constructor, &peer_id_hi,
+                                        &peer_id_lo, &access_hash_hi,
+                                        &access_hash_lo, &has_access_hash,
                                         stream, label) != 0) {
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if (tg_mtproto_build_messages_get_history_user(
-            &writer, user_id_hi, user_id_lo, access_hash_hi, access_hash_lo,
-            limit) != TG_MTPROTO_TL_OK) {
+    if (tg_mtproto_build_messages_get_history_peer(
+            &writer, peer_constructor, peer_id_hi, peer_id_lo,
+            access_hash_hi, access_hash_lo, has_access_hash, limit) !=
+        TG_MTPROTO_TL_OK) {
         fprintf(stream, "%s: query-build-failed\n", label);
         return 2;
     }
@@ -4180,10 +4199,12 @@ int tg_mtproto_auth_send_peer_file(const char *host,
     unsigned char random_id[8];
     unsigned long random_id_hi;
     unsigned long random_id_lo;
-    unsigned long user_id_hi;
-    unsigned long user_id_lo;
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
     unsigned long access_hash_hi;
     unsigned long access_hash_lo;
+    int has_access_hash;
     char api_id[32];
     tg_mtproto_rpc_result result;
     tg_mtproto_tl_writer writer;
@@ -4199,9 +4220,10 @@ int tg_mtproto_auth_send_peer_file(const char *host,
     }
     if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
                                     stream, label) != 0 ||
-        tg_mtproto_load_peer_cache_user(peer_cache_file, peer_index_text,
-                                        &user_id_hi, &user_id_lo,
-                                        &access_hash_hi, &access_hash_lo,
+        tg_mtproto_load_peer_cache_peer(peer_cache_file, peer_index_text,
+                                        &peer_constructor, &peer_id_hi,
+                                        &peer_id_lo, &access_hash_hi,
+                                        &access_hash_lo, &has_access_hash,
                                         stream, label) != 0) {
         return 2;
     }
@@ -4210,9 +4232,10 @@ int tg_mtproto_auth_send_peer_file(const char *host,
     random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
 
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if (tg_mtproto_build_messages_send_user(
-            &writer, user_id_hi, user_id_lo, access_hash_hi, access_hash_lo,
-            message, random_id_hi, random_id_lo) != TG_MTPROTO_TL_OK) {
+    if (tg_mtproto_build_messages_send_peer(
+            &writer, peer_constructor, peer_id_hi, peer_id_lo,
+            access_hash_hi, access_hash_lo, has_access_hash, message,
+            random_id_hi, random_id_lo) != TG_MTPROTO_TL_OK) {
         fprintf(stream, "%s: query-build-failed\n", label);
         return 2;
     }
@@ -4371,10 +4394,12 @@ static int tg_mtproto_auth_print_history_text_peer_file(
 {
     unsigned char query[64];
     unsigned long limit;
-    unsigned long user_id_hi;
-    unsigned long user_id_lo;
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
     unsigned long access_hash_hi;
     unsigned long access_hash_lo;
+    int has_access_hash;
     unsigned long i;
     unsigned long max_seen_message_id;
     unsigned long printed;
@@ -4393,17 +4418,19 @@ static int tg_mtproto_auth_print_history_text_peer_file(
     quiet = tg_mtproto_open_quiet_stream(stream);
     if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
                                     quiet, label) != 0 ||
-        tg_mtproto_load_peer_cache_user(peer_cache_file, peer_index_text,
-                                        &user_id_hi, &user_id_lo,
-                                        &access_hash_hi, &access_hash_lo,
+        tg_mtproto_load_peer_cache_peer(peer_cache_file, peer_index_text,
+                                        &peer_constructor, &peer_id_hi,
+                                        &peer_id_lo, &access_hash_hi,
+                                        &access_hash_lo, &has_access_hash,
                                         quiet, label) != 0) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if (tg_mtproto_build_messages_get_history_user(
-            &writer, user_id_hi, user_id_lo, access_hash_hi, access_hash_lo,
-            limit) != TG_MTPROTO_TL_OK) {
+    if (tg_mtproto_build_messages_get_history_peer(
+            &writer, peer_constructor, peer_id_hi, peer_id_lo,
+            access_hash_hi, access_hash_lo, has_access_hash, limit) !=
+        TG_MTPROTO_TL_OK) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
@@ -5243,12 +5270,26 @@ int tg_mtproto_probe_self_test(void)
     static const char missing_api_path[] =
         "telegram-mtproto-api-missing-self-test.tmp";
     static const char api_text[] = "\n 12345 \r\n abcdef0123456789 \n";
+    static const char peer_path[] = "telegram-mtproto-peer-self-test.tmp";
+    static const char peer_text[] =
+        "mtproto-peer-cache-v1\n"
+        "count 3 total_dialogs 3 users 1 chats 2\n"
+        "peer 1 type user id 0x0000000000000001 access_hash 0x0000000000000002 top 0 unread 0 self no bot no username ada title Ada\n"
+        "peer 2 type chat id 0x0000000000000003 access_hash - top 0 unread 0 self no bot no username - title Test Group\n"
+        "peer 3 type channel id 0x0000000000000004 access_hash 0x0000000000000005 top 0 unread 0 self no bot no username - title Test Channel\n";
     unsigned char payload[64];
     unsigned char packet[80];
     char api_id[32];
     char api_hash[96];
     char password[16];
     unsigned long password_length;
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    int has_access_hash;
+    FILE *quiet;
     tg_mtproto_tl_writer writer;
 
     tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
@@ -5332,6 +5373,43 @@ int tg_mtproto_probe_self_test(void)
     }
     tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
     (void)remove(api_path);
+
+    quiet = tmpfile();
+    if (quiet == 0) {
+        return 2;
+    }
+    (void)remove(peer_path);
+    if (tg_file_write_text(peer_path, peer_text,
+                           (unsigned long)strlen(peer_text)) != TG_FILE_OK) {
+        fclose(quiet);
+        return 2;
+    }
+    if (tg_mtproto_load_peer_cache_peer(peer_path, "2", &peer_constructor,
+                                        &peer_id_hi, &peer_id_lo,
+                                        &access_hash_hi, &access_hash_lo,
+                                        &has_access_hash, quiet,
+                                        "peer-cache-self-test") != 0 ||
+        peer_constructor != TG_MTPROTO_PEER_CHAT_CONSTRUCTOR ||
+        peer_id_hi != 0UL || peer_id_lo != 3UL || has_access_hash) {
+        fclose(quiet);
+        (void)remove(peer_path);
+        return 2;
+    }
+    if (tg_mtproto_load_peer_cache_peer(peer_path, "3", &peer_constructor,
+                                        &peer_id_hi, &peer_id_lo,
+                                        &access_hash_hi, &access_hash_lo,
+                                        &has_access_hash, quiet,
+                                        "peer-cache-self-test") != 0 ||
+        peer_constructor != TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR ||
+        peer_id_hi != 0UL || peer_id_lo != 4UL ||
+        access_hash_hi != 0UL || access_hash_lo != 5UL ||
+        !has_access_hash) {
+        fclose(quiet);
+        (void)remove(peer_path);
+        return 2;
+    }
+    fclose(quiet);
+    (void)remove(peer_path);
 
     return 0;
 }

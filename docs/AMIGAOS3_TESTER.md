@@ -423,7 +423,7 @@ Manual chat entry:
 Execute RunMTProtoChat
 ```
 
-Pick a peer index and type normal text to send. Incoming peer messages are
+Pick a peer index and type normal text to send. User peers, basic groups and channels/supergroups use the same text mode when cached peer data is available. Incoming peer messages are
 auto-read every 2 seconds while waiting for input. `/read` polls immediately,
 `/watch <seconds>` changes the interval, `/watch off` disables auto-read,
 `/peer` changes peer, `/peers` refreshes the peer cache and `/quit` exits.

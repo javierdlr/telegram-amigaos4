@@ -116,18 +116,20 @@ and password are not passed through argv; the 2FA password is used in memory and
 not written to `telegram-password.txt`.
 `auth.list-peers-file` calls `messages.getDialogs` and writes an ignored local
 peer cache, typically `telegram-peers.txt`. It always saves dialog peer ids,
-top-message ids and unread counts. It also scans returned user constructors to
-attach user labels and access hashes to matching dialog peers without printing
+top-message ids and unread counts. It also scans returned user/chat constructors
+to attach labels and access hashes to matching dialog peers without printing
 message text.
 `auth.get-history-peer-file` uses that cache to read a history summary for a
-cached user peer. `auth.send-peer-file` sends a real text message to a cached
-user peer; use it only after confirming the peer index.
-`mtproto-chat-file` is the first interactive user-peer chat mode. It refreshes
-the peer cache, asks for a peer index, prints recent text messages from that
-peer, then accepts plain text to send. In this mode command diagnostics are
-hidden from the chat transcript; `/read`, `/peer`, `/peers` and `/quit` are the
-main controls. While waiting for input it auto-reads new incoming text every 5
-seconds; incoming lines use the selected peer label. `/watch <seconds>` changes
+cached peer. `auth.send-peer-file` sends a real text message to a cached user,
+basic group or channel/supergroup peer; use it only after confirming the peer
+index and the account's Telegram permissions.
+`mtproto-chat-file` is the first interactive text chat mode for cached peers. It
+refreshes the peer cache, asks for a peer index, prints recent text messages
+from that peer, then accepts plain text to send. In this mode command
+diagnostics are hidden from the chat transcript; `/read`, `/peer`, `/peers` and
+`/quit` are the main controls. While waiting for input it auto-reads new
+incoming text every 2 seconds; incoming lines use the selected peer label.
+`/watch <seconds>` changes
 the interval and `/watch off` disables it. Peer refreshes merge with the
 existing local cache instead of replacing it destructively.
 Some Telegram responses are `gzip_packed`. Builds can enable unpacking with
@@ -156,11 +158,10 @@ scripts/mtproto-login-status.sh <host> <port> telegram-api.txt telegram-auth.bin
 ```
 
 `messages.getDialogs` currently extracts peer type, peer id, top message id and
-unread count from the dialog vector. This is enough to prove that the saved
-session can see selectable conversations, but it is not yet enough to send to a
-person, group or channel. Sending outside Saved Messages still needs the
-matching `access_hash` and display metadata from the returned users/chats
-vectors, stored in a local peer cache.
+unread count from the dialog vector. The peer cache stores matching display
+metadata and access hashes from returned users/chats vectors. User and
+channel/supergroup sends require an `access_hash`; basic group sends use the
+group id directly.
 
 For a serial non-destructive smoke that also checks local files first:
 
@@ -334,10 +335,9 @@ Next MTProto work should stay behind explicit self-tests:
    `account.Password` parameters, then wire it into the existing
    `auth.checkPassword` builder;
 3. validate `users.getUsers(inputUserSelf)` after sign-in;
-4. extend the dialog peer-cache path to channels/groups, including channel
-   access hashes and stable display labels;
-5. add explicit get-history/send-message commands for cached user, group and
-   channel peers;
+4. harden group/channel transcript rendering with sender labels from message
+   metadata, not only the selected peer label;
+5. add better peer filtering/searching for large account dialog lists;
 6. validate saved-session commands on AmigaOS3, MorphOS and AROS;
 7. keep Bot API and MTProto user login commands separate until login,
    encrypted RPC parsing and session persistence are covered by tests.

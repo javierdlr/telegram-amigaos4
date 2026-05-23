@@ -1,4 +1,4 @@
-; Interactive cached-user MTProto text chat for Amiga shells.
+; Interactive cached-peer MTProto text chat for Amiga shells.
 ; This can send real Telegram messages after a peer is selected.
 
 .KEY HOST,PORT,DC,API,AUTH,PEERS,PROGRAM

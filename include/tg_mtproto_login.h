@@ -260,6 +260,16 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_user(
     unsigned long access_hash_lo,
     unsigned long limit);
 
+tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long limit);
+
 tg_mtproto_tl_status tg_mtproto_build_messages_send_self(
     tg_mtproto_tl_writer *writer,
     const char *message,
@@ -272,6 +282,18 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_user(
     unsigned long user_id_lo,
     unsigned long access_hash_hi,
     unsigned long access_hash_lo,
+    const char *message,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo);
+
+tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
     const char *message,
     unsigned long random_id_hi,
     unsigned long random_id_lo);

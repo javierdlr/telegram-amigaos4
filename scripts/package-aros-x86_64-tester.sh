@@ -117,7 +117,7 @@ For this package, TLS is expected to be disabled. Commands that need HTTPS or
 Telegram live API access are expected to report unsupported until the x86_64
 OpenSSL SDK path is available.
 
-MTProto account login and user chat use Telegram's MTProto TCP transport rather
+MTProto account login and text chat use Telegram's MTProto TCP transport rather
 than the Bot API HTTPS path, but this target is frozen. Prefer AROS i386 for
 current AROS testing.
 
@@ -131,12 +131,12 @@ telegram-password.txt and telegram-peers.txt private. Do not publish screenshots
 or logs showing phone numbers, login codes, 2FA passwords, contact names or
 message text.
 
-Start MTProto user chat:
+Start MTProto account chat:
 
   Execute RunMTProtoStart
 
 If no saved login exists, this starts the phone/code login wizard first.
-After login it uses the DC stored in telegram-auth.bin and enters chat.
+After login it uses the DC stored in telegram-auth.bin and enters chat. The peer list can include users, basic groups and channels/supergroups; sending to channels depends on account permissions.
 
 Manual validation and debug commands:
 
@@ -151,7 +151,7 @@ Manual chat entry:
 
   Execute RunMTProtoChat
 
-Pick a peer index and type normal text to send. Incoming peer messages are
+Pick a peer index and type normal text to send. User peers, basic groups and channels/supergroups use the same text mode when cached peer data is available. Incoming peer messages are
 auto-read every 2 seconds while waiting for input. Use /read to poll
 immediately, /watch <seconds> to change the interval, /watch off to disable
 auto-read, /peer to choose another peer, /peers to refresh the peer cache and

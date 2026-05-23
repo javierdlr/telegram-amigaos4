@@ -103,7 +103,7 @@ telegram-selected-chat.txt
 Keep `telegram-token.txt` private. The other files are local runtime state and
 can be removed when you want a fresh test run.
 
-## 6. MTProto Account Login And User Chat
+## 6. MTProto Account Login And Text Chat
 
 The MTProto path logs in with a normal Telegram account instead of a bot. It is
 pre-alpha and should be tested with an account you are comfortable using for
@@ -130,7 +130,9 @@ Execute RunMTProtoStart
 
 If no saved login exists, this starts the phone/code login wizard first. After
 login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
-and enters chat mode.
+and enters chat mode. The peer list can include users, basic groups and
+channels/supergroups; sending to channels depends on the Telegram permissions
+of the logged-in account.
 
 For a Workbench-style launch, create or copy a project/script icon named
 `TelegramAmiga.info` next to `TelegramAmiga` and set its default tool to
@@ -163,8 +165,10 @@ Manual chat entry:
 Execute RunMTProtoChat
 ```
 
-Pick a peer index, type normal text to send, and type `/quit` to exit. Chat
-mode auto-reads incoming peer messages every 2 seconds while waiting for input.
+Pick a peer index, type normal text to send, and type `/quit` to exit. User
+peers, basic groups and channels/supergroups are handled through the same text
+mode when the peer cache contains the required access data. Chat mode auto-reads
+incoming peer messages every 2 seconds while waiting for input.
 Use `/read` to poll immediately, `/watch <seconds>` to change the interval,
 `/watch off` to disable auto-read, `/peer` to choose another peer and `/peers`
 to refresh the cached peer list.
