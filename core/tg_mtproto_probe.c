@@ -4807,8 +4807,9 @@ static void tg_mtproto_chat_print_help(FILE *stream)
     fprintf(stream, "  Enter         read new messages now\n");
     fprintf(stream, "  /read         read recent messages\n");
     fprintf(stream, "  /peer         choose another chat\n");
+    fprintf(stream, "  <number>      switch to chat number\n");
     fprintf(stream, "  /peer <n>     switch directly to chat number n\n");
-    fprintf(stream, "  /peers        refresh the chat list; then type a number\n");
+    fprintf(stream, "  /peers        refresh the chat list\n");
     fprintf(stream, "  /watch <sec>  set auto-read interval\n");
     fprintf(stream, "  /watch off    disable auto-read\n");
     fprintf(stream, "  /help         show this help\n");
@@ -4840,7 +4841,6 @@ int tg_mtproto_auth_chat_file(const char *host,
     int rc;
     int peer_command;
     int peer_history_ready;
-    int peer_select_pending;
     static const char label[] = "chat";
 
     if (stream == 0 || host == 0 || port == 0 || api_file == 0 ||
@@ -4888,7 +4888,6 @@ int tg_mtproto_auth_chat_file(const char *host,
         fprintf(stream, "%s: read-failed\n", label);
     }
     peer_history_ready = rc == 0 ? 1 : 0;
-    peer_select_pending = 0;
     line_length = 0UL;
     tg_mtproto_chat_print_help(stream);
     fprintf(stream, "%s: auto-read every %lu second(s)\n", label,
@@ -4985,14 +4984,12 @@ int tg_mtproto_auth_chat_file(const char *host,
             fprintf(stream, "\nChoose a chat:\n\n");
             tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
             fprintf(stream, "Type a number, or /peer <number>.\n");
-            peer_select_pending = 1;
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
         }
         peer_arg = 0;
         peer_command = tg_mtproto_chat_peer_command_arg(line, &peer_arg);
-        if (peer_command ||
-            (peer_select_pending && tg_mtproto_chat_is_number_line(line))) {
+        if (peer_command || tg_mtproto_chat_is_number_line(line)) {
             if (!peer_command) {
                 if (tg_mtproto_chat_copy_peer_index(
                         requested_peer_index,
@@ -5041,7 +5038,6 @@ int tg_mtproto_auth_chat_file(const char *host,
             strcpy(peer_label, requested_peer_label);
             last_seen_message_id = 0UL;
             peer_history_ready = 0;
-            peer_select_pending = 0;
             fprintf(stream, "Current chat: ");
             tg_mtproto_print_cache_text(stream, peer_label);
             fprintf(stream, "\n");
