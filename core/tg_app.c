@@ -86,8 +86,11 @@ static int tg_run_mtproto_start_file(const char *api_file,
                                      const char *peer_cache_file)
 {
     unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    char api_probe[128];
+    unsigned long api_probe_length;
     tg_mtproto_session session;
     tg_mtproto_session_status session_status;
+    tg_file_status api_status;
     const char *host;
     const char *dc_id_text;
     int rc;
@@ -98,12 +101,27 @@ static int tg_run_mtproto_start_file(const char *api_file,
         return 2;
     }
 
+    api_status = tg_file_read_text(api_file, api_probe, sizeof(api_probe),
+                                   &api_probe_length);
+    if (api_status != TG_FILE_OK) {
+        printf("Login setup required: cannot read %s (%s).\n", api_file,
+               tg_file_status_name(api_status));
+        puts("Create telegram-api.txt next to the program, or copy it to RAM:.");
+        puts("It must contain api_id on the first line and api_hash on the second line.");
+        return 2;
+    }
+
     session_status = tg_mtproto_session_load_authorization(auth_file,
                                                            &session,
                                                            auth_key);
     memset(auth_key, 0, sizeof(auth_key));
-    if (session_status == TG_MTPROTO_SESSION_FILE_ERROR) {
-        puts("Login required.");
+    if (session_status == TG_MTPROTO_SESSION_FILE_ERROR ||
+        session_status == TG_MTPROTO_SESSION_PARSE_ERROR) {
+        if (session_status == TG_MTPROTO_SESSION_FILE_ERROR) {
+            puts("No saved login found. Starting login wizard.");
+        } else {
+            puts("Saved login is not usable. Starting login wizard.");
+        }
         rc = tg_mtproto_auth_login_wizard_file(
             "149.154.167.50", "443", "2", api_file, auth_file,
             code_hash_file, stdout);
