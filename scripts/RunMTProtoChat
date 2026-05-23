@@ -5,7 +5,8 @@
 .BRA {
 .KET }
 
-Echo "Telegram Amiga MTProto chat"
+Echo "Telegram Amiga"
+Echo "Author: Michele Dipace <michele.dipace@kaffeine.net>"
 FailAt 21
 Stack 65536
 
