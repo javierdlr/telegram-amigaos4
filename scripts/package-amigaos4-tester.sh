@@ -36,6 +36,7 @@ cp "$ROOT_DIR/docs/MTPROTO_REAL_LOGIN.md" "$DEST_DIR/MTPROTO_REAL_LOGIN.md"
 mkdir -p "$DEST_DIR/scripts"
 cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
 cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
+cp "$ROOT_DIR/scripts/TelegramAmiga" "$DEST_DIR/TelegramAmiga"
 cp "$ROOT_DIR/scripts/BuildAmigaOS4Offline" "$DEST_DIR/BuildAmigaOS4Offline"
 cp "$ROOT_DIR/scripts/BuildAmigaOS4AmiSSL" "$DEST_DIR/BuildAmigaOS4AmiSSL"
 cp "$ROOT_DIR/scripts/RunAmigaOS4Preflight" "$DEST_DIR/RunAmigaOS4Preflight"
@@ -89,8 +90,7 @@ or a bare numeric index to enter a line-oriented chat, /send <text> to send
 to the selected chat, /send-id <chat-id> <text> to send directly when the chat
 list is empty, reply <index> <text> for an explicit indexed send and /quit to
 quit. The selected chat is persisted in telegram-selected-chat.txt.
-Inside chat mode, type normal text to send. Successful chat sends are quiet
-and print only me: <text>. Use /watch <seconds> in the top-level prompt or
+Inside chat mode, type normal text to send. Successful chat sends are quiet. Use /watch <seconds> in the top-level prompt or
 chat mode to auto-read while waiting, or /watch off to disable it.
 
 For the terse human chat mode, run Execute RunAmigaOS4HumanChat, or run
@@ -117,6 +117,7 @@ message text.
 
 Start MTProto user chat:
 
+  Execute TelegramAmiga
   Execute RunMTProtoStart
 
 If no saved login exists, this starts the phone/code login wizard first.
@@ -136,7 +137,7 @@ Manual chat entry:
   Execute RunMTProtoChat
 
 Pick a peer index and type normal text to send. Incoming peer messages are
-auto-read every 5 seconds while waiting for input. Use /read to poll
+auto-read every 2 seconds while waiting for input. Use /read to poll
 immediately, /watch <seconds> to change the interval, /watch off to disable
 auto-read, /peer to choose another peer, /peers to refresh the peer cache and
 /quit to exit.

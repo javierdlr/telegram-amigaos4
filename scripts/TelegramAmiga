@@ -1,0 +1,19 @@
+; User-facing MTProto launcher.
+;
+; Run from the package drawer:
+;   Execute TelegramAmiga
+;
+; Or attach an IconX project icon named TelegramAmiga.info and double-click it
+; from Workbench/Ambient/Wanderer.
+
+FailAt 21
+Stack 65536
+
+Execute RunMTProtoStart
+
+IF WARN
+    Echo ""
+    Echo "TelegramAmiga ended with an error. Read the message above."
+    Echo "This window will stay open for 120 seconds."
+    Wait 120
+ENDIF

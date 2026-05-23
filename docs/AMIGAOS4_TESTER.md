@@ -367,7 +367,7 @@ console. Use `/read` or `/refresh` to poll, `/chats` to list saved chats,
 `/open <index>` or a bare numeric index to enter a line-oriented chat,
 `/send <text>` to send to the selected chat and `/quit` to quit. The selected
 chat is persisted in `telegram-selected-chat.txt`. Inside chat mode, type
-normal text to send. It auto-reads every 5 seconds by default while waiting
+normal text to send. It auto-reads every 2 seconds by default while waiting
 for input; use `/watch <seconds>` to change the interval, `/watch off` to
 disable it, or `/read`, `/refresh`, `/chats`, `/last`, `/status`, `/back`
 and `/quit`. It does not send replies automatically.

@@ -17,8 +17,8 @@
 
 static const char tg_text_client_console_poll_seconds_text[] = "0";
 static const char tg_text_client_console_max_iterations_text[] = "1";
-static const char tg_text_client_human_poll_seconds_text[] = "5";
-static const unsigned long tg_text_client_chat_default_watch_seconds = 5UL;
+static const char tg_text_client_human_poll_seconds_text[] = "2";
+static const unsigned long tg_text_client_chat_default_watch_seconds = 2UL;
 
 static int tg_text_client_load_selected_chat(const char *path,
                                              char *index_text,
@@ -655,7 +655,6 @@ static int tg_text_client_handle_index_send(
     if (rc != 0) {
         return rc;
     }
-    printf("me: %s\n", reply_text);
     return 0;
 }
 
@@ -784,7 +783,6 @@ static int tg_text_client_chat_mode(const tg_text_client_config *client_config,
         if (rc != 0) {
             return rc;
         }
-        printf("me: %s\n", line);
         rc = tg_text_client_poll_once(client_config);
         if (rc != 0) {
             return rc;
@@ -1025,7 +1023,6 @@ int tg_text_client_run(const tg_text_client_config *client_config)
                                               sizeof(selected_chat_id)) != 0) {
                 return 2;
             }
-            printf("me: %s\n", send_id_text);
             continue;
         }
         if (strncmp(line, "/send", 5) == 0 &&
@@ -1045,7 +1042,6 @@ int tg_text_client_run(const tg_text_client_config *client_config)
             if (rc != 0) {
                 return rc;
             }
-            printf("me: %s\n", send_text);
             continue;
         }
         if (line[0] == 'r' &&
@@ -1182,7 +1178,6 @@ int tg_text_client_run_human(const tg_text_client_config *client_config)
         if (rc != 0) {
             return rc;
         }
-        printf("me: %s\n", line);
         rc = tg_text_client_poll_once(client_config);
         if (rc != 0) {
             return rc;

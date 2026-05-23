@@ -55,6 +55,7 @@
 #define TG_MTPROTO_PEER_USER_CONSTRUCTOR 0x59511722UL
 #define TG_MTPROTO_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
+#define TG_MTPROTO_PHONE_MIGRATE_RC_BASE 40
 
 typedef struct tg_mtproto_auth_context {
     tg_net_connection connection;
@@ -76,6 +77,67 @@ static int tg_mtproto_auth_check_password_text(const char *host,
                                                const char *dc_id_text,
                                                const char *password_input,
                                                FILE *stream);
+
+static int tg_mtproto_production_endpoint_for_dc(unsigned long dc_id,
+                                                 const char **host,
+                                                 const char **dc_id_text)
+{
+    if (host == 0 || dc_id_text == 0) {
+        return 1;
+    }
+    switch (dc_id) {
+    case 1UL:
+        *host = "149.154.175.50";
+        *dc_id_text = "1";
+        return 0;
+    case 2UL:
+        *host = "149.154.167.50";
+        *dc_id_text = "2";
+        return 0;
+    case 3UL:
+        *host = "149.154.175.100";
+        *dc_id_text = "3";
+        return 0;
+    case 4UL:
+        *host = "149.154.167.91";
+        *dc_id_text = "4";
+        return 0;
+    case 5UL:
+        *host = "91.108.56.130";
+        *dc_id_text = "5";
+        return 0;
+    default:
+        return 1;
+    }
+}
+
+static int tg_mtproto_parse_phone_migrate_dc(const char *message,
+                                             unsigned long *dc_id)
+{
+    unsigned long value;
+    const char *digits;
+
+    if (message == 0 || dc_id == 0) {
+        return 0;
+    }
+    if (strncmp(message, "PHONE_MIGRATE_", 14) != 0) {
+        return 0;
+    }
+    digits = message + 14;
+    if (*digits < '1' || *digits > '9') {
+        return 0;
+    }
+    value = 0UL;
+    while (*digits >= '0' && *digits <= '9') {
+        value = (value * 10UL) + (unsigned long)(*digits - '0');
+        ++digits;
+    }
+    if (*digits != '\0' || value == 0UL || value > 255UL) {
+        return 0;
+    }
+    *dc_id = value;
+    return 1;
+}
 
 static int tg_mtproto_is_async_update_constructor(unsigned long constructor)
 {
@@ -1605,6 +1667,26 @@ static int tg_mtproto_print_rpc_error(const char *label,
     return 1;
 }
 
+static int tg_mtproto_rpc_phone_migrate_dc(
+    const tg_mtproto_rpc_result *result,
+    unsigned long *dc_id)
+{
+    char error_message[128];
+    long error_code;
+
+    if (result == 0 || dc_id == 0 ||
+        result->result_constructor != TG_MTPROTO_RPC_ERROR_CONSTRUCTOR ||
+        tg_mtproto_parse_rpc_error(result->result_body - 4U,
+                                   result->result_body_length + 4U,
+                                   &error_code, error_message,
+                                   sizeof(error_message)) !=
+            TG_MTPROTO_TL_OK) {
+        return 0;
+    }
+    (void)error_code;
+    return tg_mtproto_parse_phone_migrate_dc(error_message, dc_id);
+}
+
 #if TG_ENABLE_GZIP_PUFF
 static int tg_mtproto_gzip_skip_zero_string(const unsigned char *data,
                                             unsigned long length,
@@ -1932,6 +2014,12 @@ int tg_mtproto_auth_send_code(const char *host,
     tg_mtproto_close_auth_context(&context);
 
     if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        unsigned long migrate_dc;
+        if (tg_mtproto_rpc_phone_migrate_dc(&result, &migrate_dc)) {
+            if (migrate_dc <= 215UL) {
+                return TG_MTPROTO_PHONE_MIGRATE_RC_BASE + (int)migrate_dc;
+            }
+        }
         if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
             fprintf(stream, "%s: rpc-error-parse-failed\n", label);
         }
@@ -1977,19 +2065,7 @@ int tg_mtproto_auth_send_code(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: code sent\n", label);
-    fprintf(stream, "%s: code type 0x%08lx, hash length %lu\n",
-            label, sent_code.type_constructor,
-            (unsigned long)strlen(sent_code.phone_code_hash));
-    if (sent_code.has_type_length) {
-        fprintf(stream, "%s: code length %lu\n", label,
-                sent_code.type_length);
-    }
-    if (sent_code.has_timeout) {
-        fprintf(stream, "%s: timeout %lu\n", label, sent_code.timeout);
-    }
-    fprintf(stream, "%s: auth state saved\n", label);
-    fprintf(stream, "%s: phone_code_hash saved\n", label);
+    fprintf(stream, "Login code sent.\n");
     return 0;
 }
 
@@ -2750,6 +2826,8 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
     char phone[64];
     char code[64];
     char password[512];
+    const char *current_host;
+    const char *current_dc_id_text;
     int rc;
     static const char label[] = "mtproto login wizard";
 
@@ -2761,8 +2839,6 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: interactive login\n", label);
-    fprintf(stream, "%s: secrets are read from local files/stdin\n", label);
     if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
                                     stream, label) != 0) {
         return 2;
@@ -2772,34 +2848,45 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
         return 2;
     }
 
-    rc = tg_mtproto_auth_send_code_file(host, port, dc_id_text, api_file,
-                                        phone, auth_file, code_hash_file,
-                                        stream);
+    current_host = host;
+    current_dc_id_text = dc_id_text;
+    rc = tg_mtproto_auth_send_code_file(current_host, port,
+                                        current_dc_id_text, api_file, phone,
+                                        auth_file, code_hash_file, stream);
+    if (rc > TG_MTPROTO_PHONE_MIGRATE_RC_BASE) {
+        unsigned long migrate_dc;
+        const char *migrate_host;
+        const char *migrate_dc_text;
+
+        migrate_dc = (unsigned long)(rc - TG_MTPROTO_PHONE_MIGRATE_RC_BASE);
+        if (tg_mtproto_production_endpoint_for_dc(migrate_dc, &migrate_host,
+                                                 &migrate_dc_text) == 0) {
+            fprintf(stream, "Using Telegram DC %s.\n", migrate_dc_text);
+            current_host = migrate_host;
+            current_dc_id_text = migrate_dc_text;
+            rc = tg_mtproto_auth_send_code_file(current_host, port,
+                                                current_dc_id_text, api_file,
+                                                phone, auth_file,
+                                                code_hash_file, stream);
+        }
+    }
     if (rc != 0) {
         tg_mtproto_secure_zero(phone, sizeof(phone));
         return rc;
     }
 
-    fprintf(stream,
-            "%s: enter the code received in Telegram or by SMS\n",
-            label);
-    if (tg_mtproto_prompt_line("Login code: ", code, sizeof(code), 1,
+    if (tg_mtproto_prompt_line("Code: ", code, sizeof(code), 1,
                                stream, label) != 0) {
         tg_mtproto_secure_zero(phone, sizeof(phone));
         return 2;
     }
 
-    rc = tg_mtproto_auth_sign_in_file(host, port, api_file, auth_file, phone,
-                                      code_hash_file, code, dc_id_text,
-                                      stream);
+    rc = tg_mtproto_auth_sign_in_file(current_host, port, api_file, auth_file,
+                                      phone, code_hash_file, code,
+                                      current_dc_id_text, stream);
     tg_mtproto_secure_zero(code, sizeof(code));
     if (rc != 0) {
-        fprintf(stream,
-                "%s: if Telegram requested 2FA, enter the password now\n",
-                label);
-        fprintf(stream,
-                "%s: password input may be visible on this platform\n",
-                label);
+        fprintf(stream, "2FA password required. Input may be visible.\n");
         if (tg_mtproto_prompt_line("2FA password, empty to abort: ",
                                    password, sizeof(password), 0, stream,
                                    label) != 0) {
@@ -2812,8 +2899,9 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
             fprintf(stream, "%s: aborted\n", label);
             return rc;
         }
-        rc = tg_mtproto_auth_check_password_text(host, port, api_id,
-                                                 auth_file, dc_id_text,
+        rc = tg_mtproto_auth_check_password_text(current_host, port, api_id,
+                                                 auth_file,
+                                                 current_dc_id_text,
                                                  password, stream);
         tg_mtproto_secure_zero(password, sizeof(password));
         if (rc != 0) {
@@ -2823,12 +2911,12 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
     }
 
     tg_mtproto_secure_zero(phone, sizeof(phone));
-    rc = tg_mtproto_auth_status_file(host, port, api_file, auth_file,
-                                     dc_id_text, stream);
+    rc = tg_mtproto_auth_status_file(current_host, port, api_file, auth_file,
+                                     current_dc_id_text, stream);
     if (rc != 0) {
         return rc;
     }
-    fprintf(stream, "%s: login complete\n", label);
+    fprintf(stream, "Login complete.\n");
     return 0;
 }
 
@@ -2882,8 +2970,7 @@ int tg_mtproto_auth_status(const char *host,
                 label, result.result_constructor);
         return 2;
     }
-    fprintf(stream, "%s: session valid\n", label);
-    fprintf(stream, "%s: auth state updated\n", label);
+    fprintf(stream, "%s: ok\n", label);
     return 0;
 }
 
@@ -3506,6 +3593,9 @@ static int tg_mtproto_save_peer_cache_file(
 {
     FILE *file;
     unsigned long i;
+    unsigned long public_index;
+    unsigned long public_count;
+    unsigned long public_user_count;
     const tg_mtproto_peer_cache_entry *entry;
 
     if (path == 0 || cache == 0) {
@@ -3518,17 +3608,34 @@ static int tg_mtproto_save_peer_cache_file(
         }
         return 2;
     }
-    fprintf(file, "mtproto-peer-cache-v1\n");
-    fprintf(file, "count %lu total_dialogs %lu users %lu chats %lu\n",
-            cache->count, cache->total_dialog_count, cache->user_count,
-            cache->chat_count);
+    public_count = 0UL;
+    public_user_count = 0UL;
     for (i = 0UL; i < cache->count; ++i) {
         entry = &cache->entries[i];
+        if (entry->is_self) {
+            continue;
+        }
+        ++public_count;
+        if (entry->peer_constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR) {
+            ++public_user_count;
+        }
+    }
+    fprintf(file, "mtproto-peer-cache-v1\n");
+    fprintf(file, "count %lu total_dialogs %lu users %lu chats %lu\n",
+            public_count, cache->total_dialog_count, public_user_count,
+            cache->chat_count);
+    public_index = 1UL;
+    for (i = 0UL; i < cache->count; ++i) {
+        entry = &cache->entries[i];
+        if (entry->is_self) {
+            continue;
+        }
         fprintf(file,
                 "peer %lu type %s id 0x%08lx%08lx access_hash ",
-                i + 1UL,
+                public_index,
                 tg_mtproto_peer_constructor_name(entry->peer_constructor),
                 entry->id_hi, entry->id_lo);
+        ++public_index;
         if (entry->has_access_hash) {
             fprintf(file, "0x%08lx%08lx", entry->access_hash_hi,
                     entry->access_hash_lo);
@@ -4418,7 +4525,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         peer_label[0] = '\0';
     }
     last_seen_message_id = 0UL;
-    watch_seconds = 5UL;
+    watch_seconds = 2UL;
     rc = tg_mtproto_auth_print_history_text_peer_file(
         host, port, api_file, auth_file, dc_id_text, peer_cache_file,
         peer_index, "5", stream, &last_seen_message_id, 0, 1, 1,
@@ -4554,7 +4661,6 @@ int tg_mtproto_auth_chat_file(const char *host,
             continue;
         }
         tg_mtproto_close_quiet_stream(quiet, stream);
-        fprintf(stream, "me: %s\n", line);
     }
 }
 

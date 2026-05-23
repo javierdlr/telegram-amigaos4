@@ -103,7 +103,7 @@ static int tg_run_mtproto_start_file(const char *api_file,
                                                            auth_key);
     memset(auth_key, 0, sizeof(auth_key));
     if (session_status == TG_MTPROTO_SESSION_FILE_ERROR) {
-        puts("mtproto start: no saved login, starting login wizard");
+        puts("Login required.");
         rc = tg_mtproto_auth_login_wizard_file(
             "149.154.167.50", "443", "2", api_file, auth_file,
             code_hash_file, stdout);
@@ -126,7 +126,7 @@ static int tg_run_mtproto_start_file(const char *api_file,
         return 2;
     }
 
-    printf("mtproto start: dc %s %s:443\n", dc_id_text, host);
+    puts("Opening chat.");
     return tg_mtproto_auth_chat_file(host, "443", api_file, auth_file,
                                      dc_id_text, peer_cache_file, stdout);
 }

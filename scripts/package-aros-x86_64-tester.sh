@@ -152,7 +152,7 @@ Manual chat entry:
   Execute RunMTProtoChat
 
 Pick a peer index and type normal text to send. Incoming peer messages are
-auto-read every 5 seconds while waiting for input. Use /read to poll
+auto-read every 2 seconds while waiting for input. Use /read to poll
 immediately, /watch <seconds> to change the interval, /watch off to disable
 auto-read, /peer to choose another peer, /peers to refresh the peer cache and
 /quit to exit.

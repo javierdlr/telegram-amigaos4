@@ -98,6 +98,7 @@ The tester package also includes AmigaDOS helper scripts:
 Execute RunAmigaOS3Preflight
 Execute RunAmigaOS3GetMe
 Execute RunAmigaOS3HumanChat
+Execute TelegramAmiga
 Execute RunMTProtoStart
 Execute RunMTProtoLoginWizard
 Execute RunMTProtoLoginSmoke
@@ -293,7 +294,7 @@ console. Use `/read` or `/refresh` to poll, `/chats` to list saved chats,
 `/open <index>` or a bare numeric index to enter a line-oriented chat,
 `/send <text>` to send to the selected chat and `/quit` to quit. The selected
 chat is persisted in `telegram-selected-chat.txt`. Inside chat mode, type
-normal text to send. It auto-reads every 5 seconds by default while waiting
+normal text to send. It auto-reads every 2 seconds by default while waiting
 for input; use `/watch <seconds>` to change the interval, `/watch off` to
 disable it, or `/read`, `/refresh`, `/chats`, `/last`, `/status`, `/back`
 and `/quit`. It does not send replies automatically.
@@ -385,12 +386,17 @@ telegram-peers.txt
 Start the MTProto client:
 
 ```text
+Execute TelegramAmiga
 Execute RunMTProtoStart
 ```
 
 If no saved login exists, this starts the phone/code login wizard first. After
 login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
 and enters chat mode.
+
+For Workbench launch, attach an IconX script icon named `TelegramAmiga.info`
+to `TelegramAmiga`. On many AmigaOS 3.x systems this can be made by copying a
+default script icon and setting the default tool to `C:IconX`.
 
 Manual login is still available:
 
@@ -418,7 +424,7 @@ Execute RunMTProtoChat
 ```
 
 Pick a peer index and type normal text to send. Incoming peer messages are
-auto-read every 5 seconds while waiting for input. `/read` polls immediately,
+auto-read every 2 seconds while waiting for input. `/read` polls immediately,
 `/watch <seconds>` changes the interval, `/watch off` disables auto-read,
 `/peer` changes peer, `/peers` refreshes the peer cache and `/quit` exits.
 

@@ -55,7 +55,7 @@ MTProto account mode currently supports:
 - cached user-peer selection;
 - reading peer history text;
 - sending text to a cached user peer;
-- interactive chat mode with `me:` and peer-name transcript lines;
+- interactive chat mode with peer-name transcript lines;
 - auto-read while waiting for keyboard input;
 - `/read`, `/watch`, `/peer`, `/peers` and `/quit` chat commands;
 - `gzip_packed` MTProto history responses without requiring zlib on targets
@@ -124,12 +124,18 @@ Get those values from Telegram's API development page. Keep them private.
 Start the MTProto client:
 
 ```text
+Execute TelegramAmiga
 Execute RunMTProtoStart
 ```
 
 If no saved login exists, this starts the phone/code login wizard first. After
 login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
 and enters chat mode.
+
+For a Workbench-style start, use an IconX script icon named
+`TelegramAmiga.info` next to `TelegramAmiga`. Double-clicking that icon starts
+the same flow; `Execute TelegramAmiga` is the portable fallback when icon or
+protection metadata is lost during unpacking.
 
 Manual login is still available:
 
@@ -155,7 +161,7 @@ Inside chat mode:
 
 ```text
 /read              poll immediately
-/watch 5           auto-read every 5 seconds
+/watch 2           auto-read every 2 seconds
 /watch off         disable auto-read
 /peer              choose another peer
 /peers             refresh the peer cache

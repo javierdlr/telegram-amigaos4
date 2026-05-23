@@ -124,12 +124,19 @@ numbers, login codes, contacts or message text.
 Start the MTProto client:
 
 ```text
+Execute TelegramAmiga
 Execute RunMTProtoStart
 ```
 
 If no saved login exists, this starts the phone/code login wizard first. After
 login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
 and enters chat mode.
+
+For a Workbench-style launch, create or copy a project/script icon named
+`TelegramAmiga.info` next to `TelegramAmiga` and set its default tool to
+`C:IconX`. Then double-click `TelegramAmiga`. Some ZIP extractors and hosted
+filesystems drop Amiga icon/protection metadata, so `Execute TelegramAmiga`
+remains the portable fallback.
 
 Manual login is still available:
 
@@ -157,7 +164,7 @@ Execute RunMTProtoChat
 ```
 
 Pick a peer index, type normal text to send, and type `/quit` to exit. Chat
-mode auto-reads incoming peer messages every 5 seconds while waiting for input.
+mode auto-reads incoming peer messages every 2 seconds while waiting for input.
 Use `/read` to poll immediately, `/watch <seconds>` to change the interval,
 `/watch off` to disable auto-read, `/peer` to choose another peer and `/peers`
 to refresh the cached peer list.
