@@ -135,10 +135,10 @@ and enters chat mode. The peer list can include users, basic groups and
 channels/supergroups; sending to channels depends on the Telegram permissions
 of the logged-in account.
 
-For a Workbench-style start, use an IconX script icon named
-`TelegramAmiga.info` next to `TelegramAmiga`. Double-clicking that icon starts
-the same flow; `Execute TelegramAmiga` is the portable fallback when icon or
-protection metadata is lost during unpacking.
+Release packages include an IconX project icon named `TelegramAmiga.info`
+next to `TelegramAmiga`. Double-clicking that icon starts the same flow;
+`Execute TelegramAmiga` is the portable fallback when icon or protection
+metadata is lost during unpacking.
 
 Manual login is still available:
 

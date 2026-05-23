@@ -394,9 +394,10 @@ If no saved login exists, this starts the phone/code login wizard first. After
 login it uses the DC stored in `telegram-auth.bin`, refreshes the peer cache
 and enters chat mode.
 
-For Workbench launch, attach an IconX script icon named `TelegramAmiga.info`
-to `TelegramAmiga`. On many AmigaOS 3.x systems this can be made by copying a
-default script icon and setting the default tool to `C:IconX`.
+Release packages include an IconX project icon named `TelegramAmiga.info`
+next to `TelegramAmiga`. Double-click `TelegramAmiga` from Workbench to start
+the same flow. If icon metadata is lost during unpacking, use
+`Execute TelegramAmiga` from Shell.
 
 Manual login is still available:
 

@@ -76,6 +76,8 @@ cp "$ROOT_DIR/docs/MTPROTO_REAL_LOGIN.md" "$DEST_DIR/MTPROTO_REAL_LOGIN.md"
 mkdir -p "$DEST_DIR/scripts"
 cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
 cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
+cp "$ROOT_DIR/scripts/TelegramAmiga" "$DEST_DIR/TelegramAmiga"
+cp "$ROOT_DIR/assets/TelegramAmiga.info" "$DEST_DIR/TelegramAmiga.info"
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AROS x86_64 diagnostic artifact

@@ -50,6 +50,7 @@ mkdir -p "$DEST_DIR/scripts"
 cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
 cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
 cp "$ROOT_DIR/scripts/TelegramAmiga" "$DEST_DIR/TelegramAmiga"
+cp "$ROOT_DIR/assets/TelegramAmiga.info" "$DEST_DIR/TelegramAmiga.info"
 cp "$ROOT_DIR/scripts/RunAmigaOS3Preflight" "$DEST_DIR/RunAmigaOS3Preflight"
 cp "$ROOT_DIR/scripts/RunAmigaOS3GetMe" "$DEST_DIR/RunAmigaOS3GetMe"
 cp "$ROOT_DIR/scripts/RunAmigaOS3HumanChat" "$DEST_DIR/RunAmigaOS3HumanChat"
@@ -152,6 +153,10 @@ or logs showing phone numbers, login codes, 2FA passwords, contact names or
 message text.
 
 Start MTProto account chat:
+
+  Double-click TelegramAmiga from Workbench, Ambient or Wanderer.
+
+Shell fallback:
 
   Execute TelegramAmiga
   Execute RunMTProtoStart

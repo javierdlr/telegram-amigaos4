@@ -4976,6 +4976,12 @@ int tg_mtproto_auth_chat_file(const char *host,
                 tg_mtproto_chat_print_input_prompt(stream, own_label);
                 continue;
             }
+            strcpy(peer_index, requested_peer_index);
+            strcpy(peer_label, requested_peer_label);
+            last_seen_message_id = 0UL;
+            fprintf(stream, "Selected: ");
+            tg_mtproto_print_cache_text(stream, peer_label);
+            fprintf(stream, "\n");
             requested_last_seen_message_id = 0UL;
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
@@ -4987,12 +4993,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                 tg_mtproto_chat_print_input_prompt(stream, own_label);
                 continue;
             }
-            strcpy(peer_index, requested_peer_index);
-            strcpy(peer_label, requested_peer_label);
             last_seen_message_id = requested_last_seen_message_id;
-            fprintf(stream, "Selected: ");
-            tg_mtproto_print_cache_text(stream, peer_label);
-            fprintf(stream, "\n");
             tg_mtproto_chat_print_input_prompt(stream, own_label);
             continue;
         }
