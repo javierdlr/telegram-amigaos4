@@ -29,26 +29,43 @@ ELSE
 ENDIF
 
 IF "{API}" EQ ""
-    SET APIFILE "telegram-api.txt"
+    IF EXISTS telegram-api.txt
+        SET APIFILE "telegram-api.txt"
+    ELSE
+        SET APIFILE "RAM:telegram-api.txt"
+    ENDIF
 ELSE
     SET APIFILE "{API}"
 ENDIF
 
 IF "{AUTH}" EQ ""
-    SET AUTHFILE "telegram-auth.bin"
+    IF EXISTS telegram-auth.bin
+        SET AUTHFILE "telegram-auth.bin"
+    ELSE
+        SET AUTHFILE "RAM:telegram-auth.bin"
+    ENDIF
 ELSE
     SET AUTHFILE "{AUTH}"
 ENDIF
 
 IF "{PEERS}" EQ ""
-    SET PEERSFILE "telegram-peers.txt"
+    IF EXISTS telegram-peers.txt
+        SET PEERSFILE "telegram-peers.txt"
+    ELSE
+        SET PEERSFILE "RAM:telegram-peers.txt"
+    ENDIF
 ELSE
     SET PEERSFILE "{PEERS}"
 ENDIF
 
 IF "{PROGRAM}" EQ ""
-    Protect telegram-test +e
-    telegram-test --mtproto-chat-file "$TGHOST" "$TGPORT" "$APIFILE" "$AUTHFILE" "$TGDC" "$PEERSFILE"
+    IF EXISTS telegram-test
+        Protect telegram-test +e
+        telegram-test --mtproto-chat-file "$TGHOST" "$TGPORT" "$APIFILE" "$AUTHFILE" "$TGDC" "$PEERSFILE"
+    ELSE
+        Protect RAM:telegram-test +e
+        RAM:telegram-test --mtproto-chat-file "$TGHOST" "$TGPORT" "$APIFILE" "$AUTHFILE" "$TGDC" "$PEERSFILE"
+    ENDIF
 ELSE
     Protect {PROGRAM} +e
     {PROGRAM} --mtproto-chat-file "$TGHOST" "$TGPORT" "$APIFILE" "$AUTHFILE" "$TGDC" "$PEERSFILE"
