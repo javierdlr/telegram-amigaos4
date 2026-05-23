@@ -3327,7 +3327,7 @@ int tg_mtproto_auth_get_dialogs_file(const char *host,
     return rc;
 }
 
-static void tg_mtproto_print_cache_text(FILE *stream, const char *text)
+static void tg_mtproto_write_cache_text(FILE *stream, const char *text)
 {
     unsigned long i;
 
@@ -3341,6 +3341,115 @@ static void tg_mtproto_print_cache_text(FILE *stream, const char *text)
             fputc((unsigned char)text[i], stream);
         }
     }
+}
+
+#if defined(__amigaos3__) || defined(__amigaos4__) || defined(__AROS__) || \
+    defined(__MORPHOS__) || defined(__MORPHOS)
+#define TG_MTPROTO_DISPLAY_LATIN1 1
+#else
+#define TG_MTPROTO_DISPLAY_LATIN1 0
+#endif
+
+#if TG_MTPROTO_DISPLAY_LATIN1
+static unsigned long tg_mtproto_utf8_read_codepoint(const char *text,
+                                                    unsigned long *index)
+{
+    const unsigned char *bytes;
+    unsigned long i;
+    unsigned long cp;
+
+    bytes = (const unsigned char *)text;
+    i = *index;
+    if (bytes[i] < 0x80U) {
+        *index = i + 1UL;
+        return bytes[i];
+    }
+    if ((bytes[i] & 0xe0U) == 0xc0U && bytes[i + 1UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x1fU) << 6) |
+             (unsigned long)(bytes[i + 1UL] & 0x3fU);
+        *index = i + 2UL;
+        return cp;
+    }
+    if ((bytes[i] & 0xf0U) == 0xe0U && bytes[i + 1UL] != '\0' &&
+        bytes[i + 2UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 2UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x0fU) << 12) |
+             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 6) |
+             (unsigned long)(bytes[i + 2UL] & 0x3fU);
+        *index = i + 3UL;
+        return cp;
+    }
+    if ((bytes[i] & 0xf8U) == 0xf0U && bytes[i + 1UL] != '\0' &&
+        bytes[i + 2UL] != '\0' && bytes[i + 3UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 2UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 3UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x07U) << 18) |
+             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 12) |
+             ((unsigned long)(bytes[i + 2UL] & 0x3fU) << 6) |
+             (unsigned long)(bytes[i + 3UL] & 0x3fU);
+        *index = i + 4UL;
+        return cp;
+    }
+    *index = i + 1UL;
+    return bytes[i];
+}
+
+static void tg_mtproto_print_display_codepoint(FILE *stream, unsigned long cp)
+{
+    if (cp == '\r' || cp == '\n' || cp == '\t') {
+        fputc(' ', stream);
+    } else if (cp < 0x100UL) {
+        fputc((unsigned char)cp, stream);
+    } else {
+        switch (cp) {
+        case 0x2018UL:
+        case 0x2019UL:
+        case 0x02bcUL:
+            fputc('\'', stream);
+            break;
+        case 0x201cUL:
+        case 0x201dUL:
+            fputc('"', stream);
+            break;
+        case 0x2013UL:
+        case 0x2014UL:
+        case 0x2212UL:
+            fputc('-', stream);
+            break;
+        case 0x2026UL:
+            fputs("...", stream);
+            break;
+        case 0x00a0UL:
+            fputc(' ', stream);
+            break;
+        default:
+            fputc('?', stream);
+            break;
+        }
+    }
+}
+#endif
+
+static void tg_mtproto_print_cache_text(FILE *stream, const char *text)
+{
+#if TG_MTPROTO_DISPLAY_LATIN1
+    unsigned long i;
+    unsigned long cp;
+
+    if (stream == 0 || text == 0) {
+        return;
+    }
+    i = 0UL;
+    while (text[i] != '\0') {
+        cp = tg_mtproto_utf8_read_codepoint(text, &i);
+        tg_mtproto_print_display_codepoint(stream, cp);
+    }
+#else
+    tg_mtproto_write_cache_text(stream, text);
+#endif
 }
 
 static void tg_mtproto_copy_cache_field(char *dest,
@@ -3630,13 +3739,13 @@ static int tg_mtproto_save_peer_cache_file(
     if (self_entry != 0) {
         fprintf(file, "self username ");
         if (self_entry->username[0] != '\0') {
-            tg_mtproto_print_cache_text(file, self_entry->username);
+            tg_mtproto_write_cache_text(file, self_entry->username);
         } else {
             fputc('-', file);
         }
         fprintf(file, " title ");
         if (self_entry->title[0] != '\0') {
-            tg_mtproto_print_cache_text(file, self_entry->title);
+            tg_mtproto_write_cache_text(file, self_entry->title);
         } else {
             fputc('-', file);
         }
@@ -3665,13 +3774,13 @@ static int tg_mtproto_save_peer_cache_file(
                 entry->is_self ? "yes" : "no",
                 entry->is_bot ? "yes" : "no");
         if (entry->username[0] != '\0') {
-            tg_mtproto_print_cache_text(file, entry->username);
+            tg_mtproto_write_cache_text(file, entry->username);
         } else {
             fputc('-', file);
         }
         fprintf(file, " title ");
         if (entry->title[0] != '\0') {
-            tg_mtproto_print_cache_text(file, entry->title);
+            tg_mtproto_write_cache_text(file, entry->title);
         } else {
             fputc('-', file);
         }
