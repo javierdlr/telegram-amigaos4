@@ -33,29 +33,10 @@ Stack 65536
 Echo "Telegram Amiga"
 Echo "Author: Michele Dipace <michele.dipace@kaffeine.net>"
 
-IF EXISTS telegram-api.txt
-    SET APIFILE "telegram-api.txt"
-ELSE
-    SET APIFILE "RAM:telegram-api.txt"
-ENDIF
-
-IF EXISTS telegram-auth.bin
-    SET AUTHFILE "telegram-auth.bin"
-ELSE
-    SET AUTHFILE "RAM:telegram-auth.bin"
-ENDIF
-
-IF EXISTS phone-code-hash.txt
-    SET HASHFILE "phone-code-hash.txt"
-ELSE
-    SET HASHFILE "RAM:phone-code-hash.txt"
-ENDIF
-
-IF EXISTS telegram-peers.txt
-    SET PEERSFILE "telegram-peers.txt"
-ELSE
-    SET PEERSFILE "RAM:telegram-peers.txt"
-ENDIF
+SET APIFILE "telegram-api.txt"
+SET AUTHFILE "telegram-auth.bin"
+SET HASHFILE "phone-code-hash.txt"
+SET PEERSFILE "telegram-peers.txt"
 
 IF EXISTS telegram-test
     Protect telegram-test +e
@@ -96,8 +77,8 @@ Included files
 - TelegramAmiga.info: Workbench/Ambient/Wanderer project icon
 - README.txt: this guide
 
-Private files you create locally
---------------------------------
+Private files created locally
+-----------------------------
 
 These files are NOT included and must never be published:
 
@@ -121,13 +102,13 @@ successful login.
 
 On first start:
 
-1. TelegramAmiga reads telegram-api.txt.
+1. If telegram-api.txt is missing, TelegramAmiga asks for api_id and api_hash
+   and writes telegram-api.txt in this drawer.
 2. It asks for your phone number.
 3. Telegram sends a login code to your Telegram account.
 4. You type that code into TelegramAmiga.
 5. If Telegram asks for 2FA, you type the password locally.
-6. TelegramAmiga writes telegram-auth.bin in the same drawer, or in RAM: when
-   the launcher is using RAM: fallback files.
+6. TelegramAmiga writes telegram-auth.bin in this drawer.
 
 After that, the same telegram-auth.bin is reused so the wizard does not ask for
 the phone/code every time.
@@ -135,13 +116,10 @@ the phone/code every time.
 First start
 -----------
 
-1. Create telegram-api.txt in the same drawer, or copy it to RAM:.
-   It must contain exactly:
+1. Double-click TelegramAmiga.
 
-   <api_id>
-   <api_hash>
-
-2. Double-click TelegramAmiga.
+2. If telegram-api.txt is missing, enter your api_id and api_hash when asked.
+   TelegramAmiga creates telegram-api.txt locally.
 
 3. If no saved login exists, the login wizard starts automatically.
    Enter the phone number, then the Telegram login code when requested.

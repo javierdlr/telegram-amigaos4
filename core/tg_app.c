@@ -80,17 +80,106 @@ static int tg_mtproto_production_endpoint_for_dc(unsigned long dc_id,
     }
 }
 
+static void tg_app_trim_line(char *line)
+{
+    unsigned long length;
+
+    if (line == 0) {
+        return;
+    }
+    length = (unsigned long)strlen(line);
+    while (length > 0UL &&
+           (line[length - 1UL] == '\n' || line[length - 1UL] == '\r')) {
+        line[length - 1UL] = '\0';
+        --length;
+    }
+}
+
+static int tg_app_prompt_required_line(const char *prompt,
+                                       char *line,
+                                       unsigned long line_size)
+{
+    if (prompt == 0 || line == 0 || line_size == 0UL) {
+        return 2;
+    }
+    fputs(prompt, stdout);
+    fflush(stdout);
+    if (fgets(line, (int)line_size, stdin) == 0) {
+        puts("mtproto setup: input-closed");
+        return 2;
+    }
+    tg_app_trim_line(line);
+    if (line[0] == '\0') {
+        puts("mtproto setup: input-empty");
+        return 2;
+    }
+    return 0;
+}
+
+static int tg_run_mtproto_ensure_api_file(const char *api_file)
+{
+    char api_probe[128];
+    char api_id[32];
+    char api_hash[96];
+    char api_text[160];
+    unsigned long api_probe_length;
+    unsigned long api_id_length;
+    unsigned long api_hash_length;
+    unsigned long api_text_length;
+    tg_file_status api_status;
+
+    api_status = tg_file_read_text(api_file, api_probe, sizeof(api_probe),
+                                   &api_probe_length);
+    if (api_status == TG_FILE_OK) {
+        return 0;
+    }
+    if (api_status != TG_FILE_OPEN_FAILED) {
+        printf("Login setup required: cannot read %s (%s).\n", api_file,
+               tg_file_status_name(api_status));
+        return 2;
+    }
+
+    printf("Login setup: %s was not found.\n", api_file);
+    puts("TelegramAmiga will create it now.");
+    puts("Enter the Telegram API credentials for this client.");
+    if (tg_app_prompt_required_line("api_id: ", api_id,
+                                    sizeof(api_id)) != 0 ||
+        tg_app_prompt_required_line("api_hash: ", api_hash,
+                                    sizeof(api_hash)) != 0) {
+        return 2;
+    }
+
+    api_id_length = (unsigned long)strlen(api_id);
+    api_hash_length = (unsigned long)strlen(api_hash);
+    api_text_length = api_id_length + 1UL + api_hash_length + 1UL;
+    if (api_text_length >= sizeof(api_text)) {
+        puts("mtproto setup: api credentials too long");
+        return 2;
+    }
+    strcpy(api_text, api_id);
+    api_text[api_id_length] = '\n';
+    strcpy(api_text + api_id_length + 1UL, api_hash);
+    api_text[api_text_length - 1UL] = '\n';
+    api_text[api_text_length] = '\0';
+
+    api_status = tg_file_write_text(api_file, api_text, api_text_length);
+    if (api_status != TG_FILE_OK) {
+        printf("mtproto setup: api-file-save-failed (%s)\n",
+               tg_file_status_name(api_status));
+        return 2;
+    }
+    printf("Saved %s.\n", api_file);
+    return 0;
+}
+
 static int tg_run_mtproto_start_file(const char *api_file,
                                      const char *auth_file,
                                      const char *code_hash_file,
                                      const char *peer_cache_file)
 {
     unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
-    char api_probe[128];
-    unsigned long api_probe_length;
     tg_mtproto_session session;
     tg_mtproto_session_status session_status;
-    tg_file_status api_status;
     const char *host;
     const char *dc_id_text;
     int rc;
@@ -101,13 +190,7 @@ static int tg_run_mtproto_start_file(const char *api_file,
         return 2;
     }
 
-    api_status = tg_file_read_text(api_file, api_probe, sizeof(api_probe),
-                                   &api_probe_length);
-    if (api_status != TG_FILE_OK) {
-        printf("Login setup required: cannot read %s (%s).\n", api_file,
-               tg_file_status_name(api_status));
-        puts("Create telegram-api.txt next to the program, or copy it to RAM:.");
-        puts("It must contain api_id on the first line and api_hash on the second line.");
+    if (tg_run_mtproto_ensure_api_file(api_file) != 0) {
         return 2;
     }
 
