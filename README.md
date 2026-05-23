@@ -104,23 +104,18 @@ Current cross-platform pre-alpha release set:
 - [AROS i386 ABIv0 TLS pre-alpha tester aac07e2](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-tls-prealpha-20260523-aac07e2)
 - [AROS x86_64 diagnostic artifact aac07e2](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260523-aac07e2)
 
-Packages include platform README files, `USER_RUNBOOK.md`, MTProto login notes
-and helper scripts. They do not include local tokens, API credentials, auth
-files, phone-code files, passwords or peer caches.
+Current human packages include a one-click launcher, icon, README and a
+bundled public `telegram-api.txt` for TelegramAmiga. They do not include local
+tokens, auth files, phone-code files, passwords or peer caches.
 
 ## Quick Start: MTProto Account Chat
 
 Use a test Telegram account when possible. This path sends real Telegram
 messages.
 
-Create `telegram-api.txt` next to `telegram-test`:
-
-```text
-<api_id>
-<api_hash>
-```
-
-Get those values from Telegram's API development page. Keep them private.
+Human release packages already include `telegram-api.txt` with the public app
+credentials for TelegramAmiga. Advanced testers may replace it with their own
+two-line Telegram API file if needed.
 
 Start the MTProto client:
 
@@ -190,7 +185,6 @@ Never publish these files or screenshots/logs that reveal their contents:
 
 ```text
 telegram-token.txt
-telegram-api.txt
 telegram-auth.bin
 phone-code-hash.txt
 telegram-password.txt

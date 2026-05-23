@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: MIT
 #
 # Build minimal human-facing packages. These artifacts intentionally contain
-# only the program, one Workbench/Ambient/Wanderer launcher, its icon and one
-# user README.
+# only the program, one Workbench/Ambient/Wanderer launcher, its icon, the
+# public Telegram API app credentials and one user README.
 
 set -eu
 
@@ -21,6 +21,8 @@ AROS_I386_BINARY=${AROS_I386_BINARY:-"$ROOT_DIR/build/aros-i386-abiv0/telegram-t
 AROS_X86_64_BINARY=${AROS_X86_64_BINARY:-"$ROOT_DIR/build/aros-x86_64/telegram-test"}
 
 mkdir -p "$PACKAGE_ROOT"
+rm -f "$PACKAGE_ROOT"/telegram-amiga-*-human-"$DATE_STAMP"-*.zip
+rm -rf "$PACKAGE_ROOT"/telegram-amiga-*-human-"$DATE_STAMP"-*
 
 write_launcher() {
     launcher_path=$1
@@ -75,6 +77,7 @@ Included files
 - telegram-test: the client binary
 - TelegramAmiga: the launcher used by the icon
 - TelegramAmiga.info: Workbench/Ambient/Wanderer project icon
+- telegram-api.txt: public Telegram API app id/hash for TelegramAmiga
 - README.txt: this guide
 
 Private files created locally
@@ -82,7 +85,6 @@ Private files created locally
 
 These files are NOT included and must never be published:
 
-- telegram-api.txt
 - telegram-auth.bin
 - phone-code-hash.txt
 - telegram-password.txt
@@ -102,8 +104,7 @@ successful login.
 
 On first start:
 
-1. If telegram-api.txt is missing, TelegramAmiga asks for api_id and api_hash
-   and writes telegram-api.txt in this drawer.
+1. TelegramAmiga uses the bundled telegram-api.txt.
 2. It asks for your phone number.
 3. Telegram sends a login code to your Telegram account.
 4. You type that code into TelegramAmiga.
@@ -118,14 +119,21 @@ First start
 
 1. Double-click TelegramAmiga.
 
-2. If telegram-api.txt is missing, enter your api_id and api_hash when asked.
-   TelegramAmiga creates telegram-api.txt locally.
-
-3. If no saved login exists, the login wizard starts automatically.
+2. If no saved login exists, the login wizard starts automatically.
    Enter the phone number, then the Telegram login code when requested.
    If Telegram asks for a 2FA password, enter it only on a private screen.
 
-4. After login, choose a chat number.
+3. After login, choose a chat number.
+
+Advanced API override
+---------------------
+
+The bundled telegram-api.txt is meant for normal users. Advanced testers may
+replace it with their own Telegram API id/hash file using the same two-line
+format:
+
+  <api_id>
+  <api_hash>
 
 Using chat
 ----------
@@ -151,7 +159,7 @@ restricted accounts. If that happens, stop retrying for a while. Group chats
 can still be used as the write test path.
 
 Keep screenshots clean: do not show phone numbers, login codes, passwords,
-tokens, telegram-api.txt, telegram-auth.bin, or private messages.
+tokens, telegram-auth.bin, or private messages.
 EOF
 }
 
@@ -212,6 +220,7 @@ package_one() {
     cp "$binary" "$dest/telegram-test"
     write_launcher "$dest/TelegramAmiga"
     cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
+    cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/telegram-api.txt"
     write_readme "$dest/README.txt" "$platform"
 
     if command -v zip >/dev/null 2>&1; then
