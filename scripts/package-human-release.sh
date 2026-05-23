@@ -112,6 +112,26 @@ telegram-auth.bin is especially sensitive. It contains the saved MTProto
 authorization for a Telegram account. Sharing it can give someone else access
 to that logged-in session.
 
+How telegram-auth.bin is created
+--------------------------------
+
+Do not download telegram-auth.bin from anyone and do not copy another user's
+file. TelegramAmiga creates it locally on your Amiga-like system after a
+successful login.
+
+On first start:
+
+1. TelegramAmiga reads telegram-api.txt.
+2. It asks for your phone number.
+3. Telegram sends a login code to your Telegram account.
+4. You type that code into TelegramAmiga.
+5. If Telegram asks for 2FA, you type the password locally.
+6. TelegramAmiga writes telegram-auth.bin in the same drawer, or in RAM: when
+   the launcher is using RAM: fallback files.
+
+After that, the same telegram-auth.bin is reused so the wizard does not ask for
+the phone/code every time.
+
 First start
 -----------
 
