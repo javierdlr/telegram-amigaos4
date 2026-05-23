@@ -4581,6 +4581,53 @@ static int tg_mtproto_chat_prompt_line(const char *prompt,
     }
 }
 
+static int tg_mtproto_chat_peer_command_arg(const char *line,
+                                            const char **arg)
+{
+    const char *p;
+
+    if (line == 0 || arg == 0) {
+        return 0;
+    }
+    if (strncmp(line, "/peer", 5) == 0 &&
+        (line[5] == '\0' || line[5] == ' ' || line[5] == '\t')) {
+        p = line + 5;
+    } else if (strncmp(line, "peer", 4) == 0 &&
+               (line[4] == '\0' || line[4] == ' ' || line[4] == '\t')) {
+        p = line + 4;
+    } else {
+        return 0;
+    }
+    while (*p == ' ' || *p == '\t') {
+        ++p;
+    }
+    *arg = p;
+    return 1;
+}
+
+static int tg_mtproto_chat_copy_peer_index(char *dest,
+                                           unsigned long dest_size,
+                                           const char *src)
+{
+    const char *peer_arg;
+    unsigned long length;
+
+    if (dest == 0 || dest_size == 0UL || src == 0 || src[0] == '\0') {
+        return 2;
+    }
+    if (tg_mtproto_chat_peer_command_arg(src, &peer_arg) &&
+        peer_arg[0] != '\0') {
+        src = peer_arg;
+    }
+    length = (unsigned long)strlen(src);
+    if (length >= dest_size) {
+        return 2;
+    }
+    strcpy(dest, src);
+    tg_mtproto_trim_line(dest);
+    return dest[0] != '\0' ? 0 : 2;
+}
+
 static int tg_mtproto_auth_print_history_text_peer_file(
     const char *host,
     const char *port,
@@ -4727,6 +4774,24 @@ static void tg_mtproto_chat_print_input_prompt(FILE *stream,
     fflush(stream);
 }
 
+static void tg_mtproto_chat_print_help(FILE *stream)
+{
+    if (stream == 0) {
+        return;
+    }
+    fprintf(stream, "\nCommands:\n");
+    fprintf(stream, "  <text>        send a message to the selected chat\n");
+    fprintf(stream, "  Enter         read new messages now\n");
+    fprintf(stream, "  /read         read recent messages\n");
+    fprintf(stream, "  /peer         choose another chat\n");
+    fprintf(stream, "  /peer <n>     switch directly to chat number n\n");
+    fprintf(stream, "  /peers        refresh the chat list\n");
+    fprintf(stream, "  /watch <sec>  set auto-read interval\n");
+    fprintf(stream, "  /watch off    disable auto-read\n");
+    fprintf(stream, "  /help         show this help\n");
+    fprintf(stream, "  /quit         exit\n\n");
+}
+
 int tg_mtproto_auth_chat_file(const char *host,
                               const char *port,
                               const char *api_file,
@@ -4737,10 +4802,15 @@ int tg_mtproto_auth_chat_file(const char *host,
 {
     char peer_index[32];
     char peer_label[128];
+    char requested_peer_text[32];
+    char requested_peer_index[32];
+    char requested_peer_label[128];
     char own_label[128];
     char line[512];
+    const char *peer_arg;
     unsigned long line_length;
     unsigned long last_seen_message_id;
+    unsigned long requested_last_seen_message_id;
     unsigned long watch_seconds;
     unsigned long parsed_watch_seconds;
     FILE *quiet;
@@ -4792,8 +4862,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         fprintf(stream, "%s: read-failed\n", label);
     }
     line_length = 0UL;
-    fprintf(stream,
-            "\nType text to send. Commands: /read /watch /peer /peers /quit\n");
+    tg_mtproto_chat_print_help(stream);
     fprintf(stream, "%s: auto-read every %lu second(s)\n", label,
             watch_seconds);
     tg_mtproto_chat_print_input_prompt(stream, own_label);
@@ -4847,6 +4916,11 @@ int tg_mtproto_auth_chat_file(const char *host,
             fprintf(stream, "%s: bye\n", label);
             return 0;
         }
+        if (strcmp(line, "/help") == 0 || strcmp(line, "help") == 0) {
+            tg_mtproto_chat_print_help(stream);
+            tg_mtproto_chat_print_input_prompt(stream, own_label);
+            continue;
+        }
         if (strcmp(line, "/peers") == 0) {
             quiet = tg_mtproto_open_quiet_stream(stream);
             rc = tg_mtproto_auth_list_peers_file(host, port, api_file,
@@ -4869,27 +4943,56 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_chat_print_input_prompt(stream, own_label);
             continue;
         }
-        if (strcmp(line, "/peer") == 0) {
-            fprintf(stream, "\nChoose a chat:\n\n");
-            tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
-            if (tg_mtproto_chat_prompt_line("Peer index: ", peer_index,
-                                            sizeof(peer_index), 1, stream,
-                                            label) != 0) {
-                return 2;
+        if (tg_mtproto_chat_peer_command_arg(line, &peer_arg)) {
+            if (peer_arg[0] == '\0') {
+                fprintf(stream, "\nChoose a chat:\n\n");
+                tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+                if (tg_mtproto_chat_prompt_line("Peer index: ",
+                                                requested_peer_text,
+                                                sizeof(requested_peer_text),
+                                                1, stream, label) != 0) {
+                    return 2;
+                }
+                if (tg_mtproto_chat_copy_peer_index(
+                        requested_peer_index, sizeof(requested_peer_index),
+                        requested_peer_text) != 0) {
+                    fprintf(stream, "%s: use /peer <number>\n", label);
+                    tg_mtproto_chat_print_input_prompt(stream, own_label);
+                    continue;
+                }
+            } else if (tg_mtproto_chat_copy_peer_index(
+                           requested_peer_index,
+                           sizeof(requested_peer_index), peer_arg) != 0) {
+                fprintf(stream, "%s: use /peer <number>\n", label);
+                tg_mtproto_chat_print_input_prompt(stream, own_label);
+                continue;
             }
-            if (tg_mtproto_load_peer_cache_label(peer_cache_file, peer_index,
-                                                 peer_label,
-                                                 sizeof(peer_label)) != 0) {
-                peer_label[0] = '\0';
+            if (tg_mtproto_load_peer_cache_label(peer_cache_file,
+                                                 requested_peer_index,
+                                                 requested_peer_label,
+                                                 sizeof(requested_peer_label))
+                != 0) {
+                fprintf(stream, "%s: peer-not-found\n", label);
+                tg_mtproto_chat_print_input_prompt(stream, own_label);
+                continue;
             }
-            last_seen_message_id = 0UL;
+            requested_last_seen_message_id = 0UL;
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
-                peer_cache_file, peer_index, "5", stream,
-                &last_seen_message_id, 0, 1, 1, peer_label, own_label);
+                peer_cache_file, requested_peer_index, "5", stream,
+                &requested_last_seen_message_id, 0, 1, 1,
+                requested_peer_label, own_label);
             if (rc != 0) {
                 fprintf(stream, "%s: read-failed\n", label);
+                tg_mtproto_chat_print_input_prompt(stream, own_label);
+                continue;
             }
+            strcpy(peer_index, requested_peer_index);
+            strcpy(peer_label, requested_peer_label);
+            last_seen_message_id = requested_last_seen_message_id;
+            fprintf(stream, "Selected: ");
+            tg_mtproto_print_cache_text(stream, peer_label);
+            fprintf(stream, "\n");
             tg_mtproto_chat_print_input_prompt(stream, own_label);
             continue;
         }
