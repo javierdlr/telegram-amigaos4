@@ -1660,6 +1660,9 @@ static int tg_mtproto_print_rpc_error(const char *label,
         fprintf(stream, "%s: password-missing\n", label);
     } else if (strcmp(error_message, "AUTH_KEY_UNREGISTERED") == 0) {
         fprintf(stream, "%s: auth-key-unregistered\n", label);
+    } else if (strcmp(error_message, "PEER_FLOOD") == 0) {
+        fprintf(stream, "%s: telegram-refused-send (PEER_FLOOD)\n",
+                label);
     } else {
         fprintf(stream, "%s: rpc-error %ld %s\n", label, error_code,
                 error_message);
