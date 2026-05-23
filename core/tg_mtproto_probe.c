@@ -4815,6 +4815,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     unsigned long parsed_watch_seconds;
     FILE *quiet;
     int rc;
+    int peer_history_ready;
     static const char label[] = "chat";
 
     if (stream == 0 || host == 0 || port == 0 || api_file == 0 ||
@@ -4861,6 +4862,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     if (rc != 0) {
         fprintf(stream, "%s: read-failed\n", label);
     }
+    peer_history_ready = rc == 0 ? 1 : 0;
     line_length = 0UL;
     tg_mtproto_chat_print_help(stream);
     fprintf(stream, "%s: auto-read every %lu second(s)\n", label,
@@ -4879,6 +4881,21 @@ int tg_mtproto_auth_chat_file(const char *host,
         }
         if (rc == 0) {
             if (line_length > 0UL) {
+                continue;
+            }
+            if (!peer_history_ready) {
+                quiet = tg_mtproto_open_quiet_stream(stream);
+                requested_last_seen_message_id = 0UL;
+                rc = tg_mtproto_auth_print_history_text_peer_file(
+                    host, port, api_file, auth_file, dc_id_text,
+                    peer_cache_file, peer_index, "5", quiet,
+                    &requested_last_seen_message_id, 0, 1, 0, peer_label,
+                    own_label);
+                tg_mtproto_close_quiet_stream(quiet, stream);
+                if (rc == 0) {
+                    last_seen_message_id = requested_last_seen_message_id;
+                    peer_history_ready = 1;
+                }
                 continue;
             }
             quiet = tg_mtproto_open_quiet_stream(stream);
@@ -4979,21 +4996,22 @@ int tg_mtproto_auth_chat_file(const char *host,
             strcpy(peer_index, requested_peer_index);
             strcpy(peer_label, requested_peer_label);
             last_seen_message_id = 0UL;
+            peer_history_ready = 0;
             fprintf(stream, "Selected: ");
             tg_mtproto_print_cache_text(stream, peer_label);
             fprintf(stream, "\n");
             requested_last_seen_message_id = 0UL;
+            quiet = tg_mtproto_open_quiet_stream(stream);
             rc = tg_mtproto_auth_print_history_text_peer_file(
                 host, port, api_file, auth_file, dc_id_text,
-                peer_cache_file, requested_peer_index, "5", stream,
-                &requested_last_seen_message_id, 0, 1, 1,
+                peer_cache_file, requested_peer_index, "5", quiet,
+                &requested_last_seen_message_id, 0, 1, 0,
                 requested_peer_label, own_label);
-            if (rc != 0) {
-                fprintf(stream, "%s: read-failed\n", label);
-                tg_mtproto_chat_print_input_prompt(stream, own_label);
-                continue;
+            tg_mtproto_close_quiet_stream(quiet, stream);
+            if (rc == 0) {
+                last_seen_message_id = requested_last_seen_message_id;
+                peer_history_ready = 1;
             }
-            last_seen_message_id = requested_last_seen_message_id;
             tg_mtproto_chat_print_input_prompt(stream, own_label);
             continue;
         }
