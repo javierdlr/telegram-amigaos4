@@ -98,11 +98,11 @@ come later, only if the platform constraints make them realistic.
 
 Current cross-platform pre-alpha release set:
 
-- [AmigaOS 3.x pre-alpha tester 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-prealpha-20260522-22bbd57)
-- [MorphOS pre-alpha tester 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-prealpha-20260522-22bbd57)
-- [AmigaOS 4.x pre-alpha tester 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-prealpha-20260522-22bbd57)
-- [AROS i386 ABIv0 TLS pre-alpha tester 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-tls-prealpha-20260522-22bbd57)
-- [AROS x86_64 diagnostic artifact 22bbd57](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260522-22bbd57)
+- [AmigaOS 3.x pre-alpha tester 492fe18](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-prealpha-20260523-492fe18)
+- [MorphOS pre-alpha tester 492fe18](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-prealpha-20260523-492fe18)
+- [AmigaOS 4.x pre-alpha tester 492fe18](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-prealpha-20260523-492fe18)
+- [AROS i386 ABIv0 TLS pre-alpha tester 492fe18](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-tls-prealpha-20260523-492fe18)
+- [AROS x86_64 diagnostic artifact 492fe18](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260523-492fe18)
 
 Packages include platform README files, `USER_RUNBOOK.md`, MTProto login notes
 and helper scripts. They do not include local tokens, API credentials, auth
