@@ -45,6 +45,7 @@ void tg_config_init(tg_config *config)
     config->mtproto_auth_message = 0;
     config->mtproto_auth_peer_cache_file = 0;
     config->mtproto_auth_peer_index = 0;
+    config->mtproto_auth_username = 0;
     config->mtproto_chat_peer_cache_file = 0;
     config->json_test_input = 0;
     config->json_test_field = 0;
@@ -177,6 +178,7 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_auth_get_dialogs = 0;
     config->run_mtproto_auth_get_dialogs_file = 0;
     config->run_mtproto_auth_list_peers_file = 0;
+    config->run_mtproto_auth_resolve_username_file = 0;
     config->run_mtproto_auth_get_history_self = 0;
     config->run_mtproto_auth_get_history_self_file = 0;
     config->run_mtproto_auth_get_history_peer_file = 0;
@@ -592,6 +594,19 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->mtproto_auth_file = argv[i + 4];
             config->mtproto_auth_dc_id = argv[i + 5];
             config->mtproto_auth_limit = argv[i + 6];
+            config->mtproto_auth_peer_cache_file = argv[i + 7];
+            i += 7;
+        } else if (strcmp(argv[i], "--mtproto-auth-resolve-username-file") == 0) {
+            if (i + 7 >= argc) {
+                return 1;
+            }
+            config->run_mtproto_auth_resolve_username_file = 1;
+            config->mtproto_auth_host = argv[i + 1];
+            config->mtproto_auth_port = argv[i + 2];
+            config->mtproto_auth_api_file = argv[i + 3];
+            config->mtproto_auth_file = argv[i + 4];
+            config->mtproto_auth_dc_id = argv[i + 5];
+            config->mtproto_auth_username = argv[i + 6];
             config->mtproto_auth_peer_cache_file = argv[i + 7];
             i += 7;
         } else if (strcmp(argv[i], "--mtproto-auth-get-history-self") == 0) {
@@ -1169,6 +1184,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Call messages.getDialogs using local api file\n");
     fprintf(stream, "      --mtproto-auth-list-peers-file <host> <port> <api-file> <auth-file> <dc-id> <limit> <peer-cache-file>\n");
     fprintf(stream, "                         Save a local cache of dialog peer handles\n");
+    fprintf(stream, "      --mtproto-auth-resolve-username-file <host> <port> <api-file> <auth-file> <dc-id> <username> <peer-cache-file>\n");
+    fprintf(stream, "                         Add one public username to the local peer cache\n");
     fprintf(stream, "      --mtproto-auth-get-history-self <host> <port> <api-id> <auth-file> <dc-id> <limit>\n");
     fprintf(stream, "                         Call messages.getHistory for inputPeerSelf\n");
     fprintf(stream, "      --mtproto-auth-get-history-self-file <host> <port> <api-file> <auth-file> <dc-id> <limit>\n");

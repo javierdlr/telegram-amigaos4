@@ -12,7 +12,7 @@
 
 Echo "Telegram Amiga MTProto auth inspect"
 FailAt 21
-Stack 65536
+Stack 262144
 
 IF "{AUTH}" EQ ""
     SET AUTHFILE "telegram-auth.bin"

@@ -1,0 +1,11 @@
+; Add one public Telegram username to telegram-peers.txt without loading the
+; full dialog list. Useful on heavy accounts and low-memory systems.
+
+FailAt 21
+Stack 262144
+.BRA {
+.KET }
+
+.KEY USERNAME/A
+
+telegram-test --mtproto-auth-resolve-username-file 149.154.167.91 443 telegram-api.txt telegram-auth.bin 4 {USERNAME} telegram-peers.txt <* >*

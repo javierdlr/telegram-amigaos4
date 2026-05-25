@@ -8,7 +8,7 @@
 Echo "Telegram Amiga"
 Echo "Author: Michele Dipace <michele.dipace@kaffeine.net>"
 FailAt 21
-Stack 65536
+Stack 262144
 
 IF "{HOST}" EQ ""
     SET TGHOST "149.154.167.91"

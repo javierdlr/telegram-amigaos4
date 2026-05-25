@@ -7,9 +7,11 @@
 ; from Workbench/Ambient/Wanderer.
 
 FailAt 21
-Stack 65536
+Stack 262144
+.BRA {
+.KET }
 
-Execute RunMTProtoStart
+Execute RunMTProtoStart <* >*
 
 IF WARN
     Echo ""

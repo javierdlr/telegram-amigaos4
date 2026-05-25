@@ -10,7 +10,7 @@
 Echo "Telegram Amiga"
 Echo "Author: Michele Dipace <michele.dipace@kaffeine.net>"
 FailAt 21
-Stack 65536
+Stack 262144
 
 IF "{API}" EQ ""
     IF EXISTS telegram-api.txt
@@ -55,12 +55,12 @@ ENDIF
 IF "{PROGRAM}" EQ ""
     IF EXISTS telegram-test
         Protect telegram-test +e
-        telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE"
+        telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
     ELSE
         Protect RAM:telegram-test +e
-        RAM:telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE"
+        RAM:telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
     ENDIF
 ELSE
     Protect {PROGRAM} +e
-    {PROGRAM} --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE"
+    {PROGRAM} --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
 ENDIF

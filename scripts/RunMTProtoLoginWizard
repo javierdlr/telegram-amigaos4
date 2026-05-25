@@ -12,7 +12,7 @@
 
 Echo "Telegram Amiga MTProto login wizard"
 FailAt 21
-Stack 65536
+Stack 262144
 
 IF "{HOST}" EQ ""
     SET TGHOST "149.154.167.50"

@@ -172,6 +172,21 @@ static int tg_run_mtproto_ensure_api_file(const char *api_file)
     return 0;
 }
 
+static int tg_run_mtproto_peer_cache_exists(const char *peer_cache_file)
+{
+    char probe[128];
+    unsigned long length;
+
+    if (peer_cache_file == 0 || peer_cache_file[0] == '\0') {
+        return 0;
+    }
+    if (tg_file_read_text(peer_cache_file, probe, sizeof(probe), &length) !=
+        TG_FILE_OK) {
+        return 0;
+    }
+    return length > 0UL;
+}
+
 static int tg_run_mtproto_start_file(const char *api_file,
                                      const char *auth_file,
                                      const char *code_hash_file,
@@ -188,6 +203,9 @@ static int tg_run_mtproto_start_file(const char *api_file,
         peer_cache_file == 0) {
         puts("mtproto start: invalid-arguments");
         return 2;
+    }
+    if (tg_net_connect_timeout_seconds() == 0UL) {
+        tg_net_set_connect_timeout_seconds(30UL);
     }
 
     if (tg_run_mtproto_ensure_api_file(api_file) != 0) {
@@ -225,6 +243,12 @@ static int tg_run_mtproto_start_file(const char *api_file,
                                              &dc_id_text) != 0) {
         printf("mtproto start: unsupported-dc %lu\n", session.dc_id);
         return 2;
+    }
+
+    if (!tg_run_mtproto_peer_cache_exists(peer_cache_file)) {
+        puts("Login complete.");
+        puts("No cached chat list found.");
+        puts("Use /add name inside TelegramAmiga to search users or groups.");
     }
 
     puts("Opening chat.");
@@ -4095,6 +4119,18 @@ int tg_app_run(int argc, char **argv)
                                                config.mtproto_auth_limit,
                                                config.mtproto_auth_peer_cache_file,
                                                stdout);
+    }
+
+    if (config.run_mtproto_auth_resolve_username_file) {
+        return tg_mtproto_auth_resolve_username_file(
+            config.mtproto_auth_host,
+            config.mtproto_auth_port,
+            config.mtproto_auth_api_file,
+            config.mtproto_auth_file,
+            config.mtproto_auth_dc_id,
+            config.mtproto_auth_username,
+            config.mtproto_auth_peer_cache_file,
+            stdout);
     }
 
     if (config.run_mtproto_auth_get_history_self) {

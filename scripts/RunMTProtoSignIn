@@ -12,7 +12,7 @@
 
 Echo "Telegram Amiga MTProto sign in"
 FailAt 21
-Stack 65536
+Stack 262144
 
 IF "{PHONE}" EQ ""
     Echo "Usage: Execute RunMTProtoSignIn <phone> <code> [host] [port] [dc] [api-file] [auth-file] [code-hash-file] [program]"

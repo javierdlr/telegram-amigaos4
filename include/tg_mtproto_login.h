@@ -184,6 +184,11 @@ tg_mtproto_tl_status tg_mtproto_build_invoke_with_layer(
     const unsigned char *query,
     unsigned long query_length);
 
+tg_mtproto_tl_status tg_mtproto_build_invoke_without_updates(
+    tg_mtproto_tl_writer *writer,
+    const unsigned char *query,
+    unsigned long query_length);
+
 tg_mtproto_tl_status tg_mtproto_build_init_connection(
     tg_mtproto_tl_writer *writer,
     unsigned long api_id,
@@ -246,6 +251,27 @@ tg_mtproto_tl_status tg_mtproto_build_users_get_self(
 
 tg_mtproto_tl_status tg_mtproto_build_messages_get_dialogs(
     tg_mtproto_tl_writer *writer,
+    unsigned long limit);
+tg_mtproto_tl_status tg_mtproto_build_messages_get_dialogs_page(
+    tg_mtproto_tl_writer *writer,
+    unsigned long limit,
+    unsigned long offset_id,
+    unsigned long offset_peer_constructor,
+    unsigned long offset_peer_id_hi,
+    unsigned long offset_peer_id_lo,
+    unsigned long offset_access_hash_hi,
+    unsigned long offset_access_hash_lo,
+    int offset_has_access_hash);
+
+tg_mtproto_tl_status tg_mtproto_build_contacts_resolve_username(
+    tg_mtproto_tl_writer *writer,
+    const char *username);
+tg_mtproto_tl_status tg_mtproto_build_contacts_resolve_username_flags(
+    tg_mtproto_tl_writer *writer,
+    const char *username);
+tg_mtproto_tl_status tg_mtproto_build_contacts_search(
+    tg_mtproto_tl_writer *writer,
+    const char *query,
     unsigned long limit);
 
 tg_mtproto_tl_status tg_mtproto_build_messages_get_history_self(
@@ -358,6 +384,17 @@ tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_list(
     tg_mtproto_dialog_peer_list *out);
 
 tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_cache(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_peer_cache *out);
+
+tg_mtproto_tl_status tg_mtproto_parse_resolved_peer_cache(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_peer_cache *out);
+tg_mtproto_tl_status tg_mtproto_parse_contacts_search_peer_cache(
     unsigned long constructor,
     const unsigned char *body,
     unsigned long body_length,

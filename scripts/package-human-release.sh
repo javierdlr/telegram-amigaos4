@@ -30,7 +30,9 @@ write_launcher() {
 ; Telegram Amiga human launcher.
 
 FailAt 21
-Stack 65536
+Stack 262144
+.BRA {
+.KET }
 
 Echo "Telegram Amiga"
 Echo "Author: Michele Dipace <michele.dipace@kaffeine.net>"
@@ -42,10 +44,10 @@ SET PEERSFILE "telegram-peers.txt"
 
 IF EXISTS telegram-test
     Protect telegram-test +e
-    telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE"
+    telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
 ELSE
     Protect RAM:telegram-test +e
-    RAM:telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE"
+    RAM:telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
 ENDIF
 
 IF WARN

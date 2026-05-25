@@ -8,7 +8,7 @@
 #include "tg_mtproto_crypto.h"
 #include "tg_mtproto_encrypted.h"
 
-#define TG_MTPROTO_ENCRYPTED_PACKET_MAX 4096U
+#define TG_MTPROTO_ENCRYPTED_PACKET_MAX 12288U
 
 static unsigned long tg_read_le32(const unsigned char *data)
 {
@@ -61,7 +61,7 @@ static void tg_mtproto_msg_key(
     unsigned int x,
     unsigned char msg_key[16])
 {
-    unsigned char input[32U + TG_MTPROTO_ENCRYPTED_PACKET_MAX];
+    static unsigned char input[32U + TG_MTPROTO_ENCRYPTED_PACKET_MAX];
     unsigned char digest[TG_MTPROTO_SHA256_LENGTH];
 
     memcpy(input, auth_key + 88U + x, 32U);
@@ -130,7 +130,7 @@ tg_mtproto_tl_status tg_mtproto_write_encrypted_message(
     const unsigned char *padding,
     unsigned long padding_length)
 {
-    unsigned char plaintext[TG_MTPROTO_ENCRYPTED_PACKET_MAX];
+    static unsigned char plaintext[TG_MTPROTO_ENCRYPTED_PACKET_MAX];
     unsigned char msg_key[16];
     unsigned char aes_key[32];
     unsigned char aes_iv[32];
@@ -205,7 +205,7 @@ static tg_mtproto_tl_status tg_mtproto_decrypt_encrypted_message_x(
     unsigned int x,
     tg_mtproto_encrypted_message *out)
 {
-    unsigned char decrypted[TG_MTPROTO_ENCRYPTED_PACKET_MAX];
+    static unsigned char decrypted[TG_MTPROTO_ENCRYPTED_PACKET_MAX];
     unsigned char expected_msg_key[16];
     unsigned char aes_key[32];
     unsigned char aes_iv[32];
@@ -288,7 +288,7 @@ int tg_mtproto_encrypted_self_test(void)
     unsigned long salt_lo;
     unsigned long auth_hi;
     unsigned long auth_lo;
-    tg_mtproto_encrypted_message decoded;
+    static tg_mtproto_encrypted_message decoded;
     tg_mtproto_tl_writer writer;
     unsigned int i;
 

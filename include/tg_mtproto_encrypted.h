@@ -9,7 +9,7 @@
 #include "tg_mtproto_rsa.h"
 #include "tg_mtproto_tl.h"
 
-#define TG_MTPROTO_ENCRYPTED_BODY_MAX 2048U
+#define TG_MTPROTO_ENCRYPTED_BODY_MAX 12288U
 
 typedef struct tg_mtproto_encrypted_message {
     unsigned long server_salt_hi;

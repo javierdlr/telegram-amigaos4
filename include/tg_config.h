@@ -52,6 +52,7 @@ typedef struct tg_config {
     const char *mtproto_auth_message;
     const char *mtproto_auth_peer_cache_file;
     const char *mtproto_auth_peer_index;
+    const char *mtproto_auth_username;
     const char *mtproto_chat_peer_cache_file;
     const char *json_test_input;
     const char *json_test_field;
@@ -184,6 +185,7 @@ typedef struct tg_config {
     int run_mtproto_auth_get_dialogs;
     int run_mtproto_auth_get_dialogs_file;
     int run_mtproto_auth_list_peers_file;
+    int run_mtproto_auth_resolve_username_file;
     int run_mtproto_auth_get_history_self;
     int run_mtproto_auth_get_history_self_file;
     int run_mtproto_auth_get_history_peer_file;
