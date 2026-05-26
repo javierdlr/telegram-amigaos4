@@ -6251,7 +6251,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     }
     if (tg_mtproto_send_saved_query_on_context(
             host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, quiet, label, 8U) != 0) {
+            writer.length, &result, quiet, label, 32U) != 0) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
