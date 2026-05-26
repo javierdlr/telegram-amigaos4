@@ -160,6 +160,7 @@ static tg_mtproto_tl_status tg_srp_make_proof_iterations(
     tg_mtproto_sha256(hash_input, TG_MTPROTO_SRP_VALUE_LENGTH * 2UL, k_hash);
     tg_srp_pad_right(k_hash, sizeof(k_hash), k);
 
+    tg_mtproto_progress_tick();
     tg_mtproto_bigint_mod_exp(g, random_a, TG_MTPROTO_SRP_VALUE_LENGTH,
                               p, out->a);
     out->a_length = TG_MTPROTO_SRP_VALUE_LENGTH;
@@ -169,6 +170,7 @@ static tg_mtproto_tl_status tg_srp_make_proof_iterations(
            TG_MTPROTO_SRP_VALUE_LENGTH);
     tg_mtproto_sha256(hash_input, TG_MTPROTO_SRP_VALUE_LENGTH * 2UL, u);
 
+    tg_mtproto_progress_tick();
     tg_mtproto_bigint_mod_exp(g, x, sizeof(x), p, v);
     tg_mtproto_bigint_mod_mul(k, v, p, kv);
     tg_mtproto_bigint_sub_mod(base, b, kv, p);
@@ -178,6 +180,7 @@ static tg_mtproto_tl_status tg_srp_make_proof_iterations(
     memcpy(exponent, ux, sizeof(exponent));
     tg_mtproto_bigint_add_bytes(exponent, sizeof(exponent),
                                 random_a, TG_MTPROTO_SRP_VALUE_LENGTH);
+    tg_mtproto_progress_tick();
     tg_mtproto_bigint_mod_exp(base, exponent, sizeof(exponent), p, s);
     tg_mtproto_sha256(s, sizeof(s), session_key);
 

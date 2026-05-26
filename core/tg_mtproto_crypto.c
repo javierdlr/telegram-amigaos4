@@ -36,6 +36,20 @@ typedef struct tg_sha512_context {
     unsigned long long length_lo;
 } tg_sha512_context;
 
+static void (*tg_mtproto_progress_hook)(void) = 0;
+
+void tg_mtproto_set_progress_hook(void (*hook)(void))
+{
+    tg_mtproto_progress_hook = hook;
+}
+
+void tg_mtproto_progress_tick(void)
+{
+    if (tg_mtproto_progress_hook != 0) {
+        tg_mtproto_progress_hook();
+    }
+}
+
 static unsigned long tg_rotl32(unsigned long value, unsigned long bits)
 {
     value &= 0xffffffffUL;
@@ -657,8 +671,15 @@ int tg_mtproto_pbkdf2_hmac_sha512(const unsigned char *password,
                                   unsigned long output_length)
 {
     unsigned char salt_block[TG_PBKDF2_SALT_BLOCK_MAX];
+    unsigned char key_block[TG_SHA512_BLOCK_SIZE];
+    unsigned char hashed_key[TG_MTPROTO_SHA512_LENGTH];
+    unsigned char pad[TG_SHA512_BLOCK_SIZE];
     unsigned char u[TG_MTPROTO_SHA512_LENGTH];
     unsigned char t[TG_MTPROTO_SHA512_LENGTH];
+    unsigned char inner[TG_MTPROTO_SHA512_LENGTH];
+    tg_sha512_context ipad_ctx;
+    tg_sha512_context opad_ctx;
+    tg_sha512_context ctx;
     unsigned long block_index;
     unsigned long generated;
     unsigned long copy_length;
@@ -670,6 +691,30 @@ int tg_mtproto_pbkdf2_hmac_sha512(const unsigned char *password,
         salt_length > TG_PBKDF2_SALT_BLOCK_MAX - 4UL) {
         return 1;
     }
+
+    /*
+     * Precompute the HMAC inner/outer SHA-512 midstates once (absorb the
+     * ipad/opad key blocks). Each PBKDF2 iteration then costs two block
+     * transforms instead of four, roughly halving the CPU cost of the 100k
+     * iteration loop on slow CPUs like the 68080.
+     */
+    memset(key_block, 0, sizeof(key_block));
+    if (password_length > TG_SHA512_BLOCK_SIZE) {
+        tg_mtproto_sha512(password, password_length, hashed_key);
+        memcpy(key_block, hashed_key, sizeof(hashed_key));
+    } else if (password_length > 0UL) {
+        memcpy(key_block, password, (size_t)password_length);
+    }
+    for (j = 0U; j < TG_SHA512_BLOCK_SIZE; ++j) {
+        pad[j] = (unsigned char)(key_block[j] ^ 0x36U);
+    }
+    tg_sha512_init(&ipad_ctx);
+    tg_sha512_update(&ipad_ctx, pad, sizeof(pad));
+    for (j = 0U; j < TG_SHA512_BLOCK_SIZE; ++j) {
+        pad[j] = (unsigned char)(key_block[j] ^ 0x5cU);
+    }
+    tg_sha512_init(&opad_ctx);
+    tg_sha512_update(&opad_ctx, pad, sizeof(pad));
 
     generated = 0UL;
     block_index = 1UL;
@@ -685,13 +730,27 @@ int tg_mtproto_pbkdf2_hmac_sha512(const unsigned char *password,
         salt_block[salt_length + 3UL] =
             (unsigned char)(block_index & 0xffUL);
 
-        tg_mtproto_hmac_sha512(password, password_length, salt_block,
-                               salt_length + 4UL, u);
+        /* U_1 = HMAC(password, salt || INT(block_index)) via the midstates. */
+        ctx = ipad_ctx;
+        tg_sha512_update(&ctx, salt_block, salt_length + 4UL);
+        tg_sha512_final(&ctx, inner);
+        ctx = opad_ctx;
+        tg_sha512_update(&ctx, inner, sizeof(inner));
+        tg_sha512_final(&ctx, u);
         memcpy(t, u, sizeof(t));
+
         for (i = 1UL; i < iterations; ++i) {
-            tg_mtproto_hmac_sha512(password, password_length, u, sizeof(u), u);
+            ctx = ipad_ctx;
+            tg_sha512_update(&ctx, u, sizeof(u));
+            tg_sha512_final(&ctx, inner);
+            ctx = opad_ctx;
+            tg_sha512_update(&ctx, inner, sizeof(inner));
+            tg_sha512_final(&ctx, u);
             for (j = 0U; j < TG_MTPROTO_SHA512_LENGTH; ++j) {
                 t[j] = (unsigned char)(t[j] ^ u[j]);
+            }
+            if ((i & 2047UL) == 0UL) {
+                tg_mtproto_progress_tick();
             }
         }
 

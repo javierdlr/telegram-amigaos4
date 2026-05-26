@@ -1043,6 +1043,21 @@ static int tg_mtproto_send_encrypted_query(
 }
 
 /*
+ * 2FA/SRP progress: installed as the crypto progress hook so the heavy
+ * PBKDF2 + modpow work (slow on 68080) animates a dot loader instead of looking
+ * frozen. Single-threaded: the active stream is held in a file-static pointer.
+ */
+static FILE *tg_login_progress_stream = 0;
+
+static void tg_login_progress_dot(void)
+{
+    if (tg_login_progress_stream != 0) {
+        fputc('.', tg_login_progress_stream);
+        fflush(tg_login_progress_stream);
+    }
+}
+
+/*
  * Login/auth progress indicator. Under TG_MTPROTO_DIAG it prints the full phase
  * line (useful when debugging the handshake); in a normal build it prints a
  * single progress dot, so the login shows a quiet semi-animated loader instead
@@ -3025,16 +3040,27 @@ static int tg_mtproto_auth_check_password_text(const char *host,
         fprintf(stream, "%s: secure-rng-unavailable\n", label);
         return 2;
     }
+    fprintf(stream, "Verifying password");
+    fflush(stream);
+    tg_login_progress_stream = stream;
+    tg_mtproto_set_progress_hook(tg_login_progress_dot);
     if (tg_mtproto_srp_make_proof(&password,
                                   (const unsigned char *)password_text,
                                   password_length, random_a, &proof) !=
         TG_MTPROTO_TL_OK) {
+        tg_mtproto_set_progress_hook(0);
+        tg_login_progress_stream = 0;
+        fputc('\n', stream);
         tg_mtproto_close_auth_context(&context);
         tg_mtproto_secure_zero(random_a, sizeof(random_a));
         tg_mtproto_secure_zero(password_text, sizeof(password_text));
         fprintf(stream, "%s: srp-proof-build-failed\n", label);
         return 2;
     }
+    tg_mtproto_set_progress_hook(0);
+    tg_login_progress_stream = 0;
+    fputc('\n', stream);
+    fflush(stream);
     tg_mtproto_secure_zero(random_a, sizeof(random_a));
     tg_mtproto_secure_zero(password_text, sizeof(password_text));
 

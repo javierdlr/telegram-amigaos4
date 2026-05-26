@@ -38,4 +38,13 @@ void tg_mtproto_aes256_ige_decrypt(unsigned char *data,
                                    const unsigned char iv[32]);
 int tg_mtproto_crypto_self_test(void);
 
+/*
+ * Optional progress hook for long CPU-bound crypto (PBKDF2/SRP on slow CPUs
+ * such as 68080). When a hook is installed, tg_mtproto_progress_tick() is
+ * called periodically so callers can animate a loader. The hook is a global,
+ * single-threaded opt-in; pass 0 to clear it.
+ */
+void tg_mtproto_set_progress_hook(void (*hook)(void));
+void tg_mtproto_progress_tick(void);
+
 #endif
