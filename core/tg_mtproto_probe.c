@@ -1042,6 +1042,28 @@ static int tg_mtproto_send_encrypted_query(
         context, body, body_length, rpc_result, stream, label, 32U);
 }
 
+/*
+ * Login/auth progress indicator. Under TG_MTPROTO_DIAG it prints the full phase
+ * line (useful when debugging the handshake); in a normal build it prints a
+ * single progress dot, so the login shows a quiet semi-animated loader instead
+ * of raw "mtproto ... phase ..." logs.
+ */
+static void tg_mtproto_login_phase(FILE *stream, const char *phase)
+{
+    if (stream == 0) {
+        return;
+    }
+#ifdef TG_MTPROTO_DIAG
+    if (phase != 0) {
+        fprintf(stream, "mtproto login: %s\n", phase);
+    }
+#else
+    (void)phase;
+    fputc('.', stream);
+#endif
+    fflush(stream);
+}
+
 static int tg_mtproto_open_auth_context(const char *host,
                                         const char *port,
                                         const char *dc_id_text,
@@ -1093,8 +1115,7 @@ static int tg_mtproto_open_auth_context(const char *host,
     }
     memset(context, 0, sizeof(*context));
 
-    fprintf(stream, "%s: auth-key phase rng dc %s.\n", label, dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key rng");
     if (!tg_mtproto_secure_random(nonce, sizeof(nonce)) ||
         !tg_mtproto_secure_random(new_nonce, sizeof(new_nonce)) ||
         !tg_mtproto_secure_random(padding, sizeof(padding)) ||
@@ -1106,9 +1127,7 @@ static int tg_mtproto_open_auth_context(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: auth-key phase req_pq dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key req_pq");
     tg_mtproto_client_message_id((unsigned long)time(0), 4UL, 0,
                                  &first_msg_id);
     tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
@@ -1128,9 +1147,7 @@ static int tg_mtproto_open_auth_context(const char *host,
     }
 
     error_buffer[0] = '\0';
-    fprintf(stream, "%s: auth-key phase connect dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key connect");
     net_status = tg_net_connect(&context->connection, host, port, error_buffer,
                                 sizeof(error_buffer));
     if (net_status != TG_NET_OK) {
@@ -1140,9 +1157,7 @@ static int tg_mtproto_open_auth_context(const char *host,
     }
     context->connection_open = 1;
 
-    fprintf(stream, "%s: auth-key phase res_pq dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key res_pq");
     net_status = tg_mtproto_send_all(&context->connection, packet,
                                      writer.length, error_buffer,
                                      sizeof(error_buffer));
@@ -1177,9 +1192,7 @@ static int tg_mtproto_open_auth_context(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: auth-key phase req_DH dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key req_DH");
     tg_mtproto_u32_be(p, p_bytes);
     tg_mtproto_u32_be(q, q_bytes);
     tg_mtproto_tl_writer_init(&writer, inner_data, sizeof(inner_data));
@@ -1242,9 +1255,7 @@ static int tg_mtproto_open_auth_context(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: auth-key phase server_DH dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key server_DH");
     net_status = tg_mtproto_send_all(&context->connection, packet,
                                      writer.length, error_buffer,
                                      sizeof(error_buffer));
@@ -1284,9 +1295,7 @@ static int tg_mtproto_open_auth_context(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: auth-key phase client_DH dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key client_DH");
     if (tg_mtproto_build_client_dh_request(&inner, new_nonce, b,
                                            client_padding, client_encrypted,
                                            &client_encrypted_length,
@@ -1323,9 +1332,7 @@ static int tg_mtproto_open_auth_context(const char *host,
         tg_mtproto_close_auth_context(context);
         return 2;
     }
-    fprintf(stream, "%s: auth-key phase set_client_DH dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key set_client_DH");
     net_status = tg_mtproto_send_all(&context->connection, packet,
                                      writer.length, error_buffer,
                                      sizeof(error_buffer));
@@ -1350,8 +1357,7 @@ static int tg_mtproto_open_auth_context(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: auth-key phase ready dc %s.\n", label, dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth-key ready");
     tg_mtproto_session_from_auth_key(&context->session, (unsigned long)dc_id,
                                      context->auth_key, new_nonce,
                                      res_pq.server_nonce,
@@ -1532,6 +1538,32 @@ static int tg_mtproto_prompt_line(const char *prompt,
         fprintf(stream, "%s: input-empty\n", label);
         return 2;
     }
+    return 0;
+}
+
+/* Reads a secret (2FA password) without echoing it where the console allows it. */
+static int tg_mtproto_prompt_hidden_line(const char *prompt,
+                                         char *out,
+                                         unsigned long out_size,
+                                         FILE *stream,
+                                         const char *label)
+{
+    if (out != 0 && out_size > 0UL) {
+        out[0] = '\0';
+    }
+    if (prompt == 0 || out == 0 || out_size == 0UL || stream == 0 ||
+        label == 0) {
+        return 2;
+    }
+    fputs(prompt, stream);
+    fflush(stream);
+    if (tg_platform_stdin_read_hidden_line(out, out_size) != 0) {
+        fprintf(stream, "%s: input-closed\n", label);
+        return 2;
+    }
+    fputc('\n', stream);    /* the typed Return was not echoed */
+    fflush(stream);
+    tg_mtproto_trim_line(out);
     return 0;
 }
 
@@ -2205,7 +2237,8 @@ static int tg_mtproto_send_saved_query_on_context(
                still alive and is reused, avoiding a reconnect + update flood. */
             tg_mtproto_close_auth_context(context);
         }
-        return 2;
+        return qrc == TG_MTPROTO_QUERY_SOFT_FAIL ?
+            TG_MTPROTO_QUERY_SOFT_FAIL : 2;
     }
     session_status = tg_mtproto_session_save_authorization(
         auth_file, &context->session, context->auth_key, 1);
@@ -2271,9 +2304,7 @@ int tg_mtproto_auth_send_code(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: phase build auth.sendCode dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth.sendCode build");
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_auth_send_code(&writer, phone_number, api_id,
                                         api_hash) != TG_MTPROTO_TL_OK) {
@@ -2301,17 +2332,13 @@ int tg_mtproto_auth_send_code(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: phase send encrypted auth.sendCode dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth.sendCode send");
     if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
                                         &result, stream, label) != 0) {
         tg_mtproto_close_auth_context(&context);
         return 2;
     }
-    fprintf(stream, "%s: phase response auth.sendCode dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth.sendCode response");
     tg_mtproto_skip_auth_context_close(&context, stream, label);
 
     if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
@@ -2452,9 +2479,7 @@ int tg_mtproto_auth_sign_in(const char *host,
     }
     context.session.dc_id = (unsigned long)dc_id;
 
-    fprintf(stream, "%s: phase build auth.signIn dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth.signIn build");
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_auth_sign_in(&writer, phone_number, code_hash,
                                       phone_code) != TG_MTPROTO_TL_OK) {
@@ -2482,17 +2507,13 @@ int tg_mtproto_auth_sign_in(const char *host,
         return 2;
     }
 
-    fprintf(stream, "%s: phase send encrypted auth.signIn dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth.signIn send");
     if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
                                         &result, stream, label) != 0) {
         tg_mtproto_close_auth_context(&context);
         return 2;
     }
-    fprintf(stream, "%s: phase response auth.signIn dc %s.\n", label,
-            dc_id_text);
-    fflush(stream);
+    tg_mtproto_login_phase(stream, "auth.signIn response");
     tg_mtproto_skip_auth_context_close(&context, stream, label);
 
     session_status = tg_mtproto_session_save_authorization(
@@ -3208,10 +3229,10 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
                                       current_dc_id_text, stream);
     tg_mtproto_secure_zero(code, sizeof(code));
     if (rc != 0) {
-        fprintf(stream, "2FA password required. Input may be visible.\n");
-        if (tg_mtproto_prompt_line("2FA password, empty to abort: ",
-                                   password, sizeof(password), 0, stream,
-                                   label) != 0) {
+        fprintf(stream, "2FA password required.\n");
+        if (tg_mtproto_prompt_hidden_line("2FA password, empty to abort: ",
+                                          password, sizeof(password), stream,
+                                          label) != 0) {
             tg_mtproto_secure_zero(phone, sizeof(phone));
             return 2;
         }
@@ -5210,6 +5231,19 @@ static const char *tg_mtproto_peer_cache_entry_kind(
     return "chat";
 }
 
+static int tg_mtproto_peer_cache_entry_is_openable(
+    const tg_mtproto_peer_cache_entry *entry)
+{
+    if (entry == 0 || entry->is_self) {
+        return 0;
+    }
+    if (entry->peer_constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR ||
+        entry->peer_constructor == TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR) {
+        return entry->has_access_hash;
+    }
+    return entry->peer_constructor == TG_MTPROTO_PEER_CHAT_CONSTRUCTOR;
+}
+
 static void tg_mtproto_print_search_result_line(
     FILE *stream,
     unsigned long index,
@@ -5233,7 +5267,11 @@ static void tg_mtproto_print_search_result_line(
         fprintf(stream, "%s",
                 tg_mtproto_peer_constructor_name(entry->peer_constructor));
     }
-    fprintf(stream, " [%s]\n", tg_mtproto_peer_cache_entry_kind(entry));
+    fprintf(stream, " [%s", tg_mtproto_peer_cache_entry_kind(entry));
+    if (!tg_mtproto_peer_cache_entry_is_openable(entry)) {
+        fprintf(stream, ", cannot open");
+    }
+    fprintf(stream, "]\n");
 }
 
 static int tg_mtproto_peer_cache_find_public_index(
@@ -5366,7 +5404,8 @@ static int tg_mtproto_peer_cache_add_selected(
     if (label != 0 && label_size > 0UL) {
         label[0] = '\0';
     }
-    if (path == 0 || selected == 0 || selected->is_self) {
+    if (path == 0 || selected == 0 ||
+        !tg_mtproto_peer_cache_entry_is_openable(selected)) {
         return 2;
     }
     has_cache = tg_mtproto_load_peer_cache_file(path, &cache) == 0;
@@ -5481,7 +5520,9 @@ static int tg_mtproto_auth_search_global_on_context(
 
     public_index = 0UL;
     for (i = 0UL; i < search_cache.count; ++i) {
-        if (search_cache.entries[i].is_self) {
+        if (search_cache.entries[i].is_self ||
+            !tg_mtproto_peer_cache_entry_is_openable(
+                &search_cache.entries[i])) {
             continue;
         }
         ++public_index;
@@ -5492,7 +5533,8 @@ static int tg_mtproto_auth_search_global_on_context(
                                             &search_cache.entries[i]);
     }
     if (public_index == 0UL) {
-        fprintf(stream, "No Telegram results. Try @username or a t.me link.\n");
+        fprintf(stream,
+                "No openable Telegram results. Try @username or a t.me link.\n");
         return 2;
     }
     if (tg_mtproto_chat_prompt_line(
@@ -5512,7 +5554,9 @@ static int tg_mtproto_auth_search_global_on_context(
     selected = 0;
     public_index = 0UL;
     for (i = 0UL; i < search_cache.count; ++i) {
-        if (search_cache.entries[i].is_self) {
+        if (search_cache.entries[i].is_self ||
+            !tg_mtproto_peer_cache_entry_is_openable(
+                &search_cache.entries[i])) {
             continue;
         }
         ++public_index;
@@ -5787,6 +5831,7 @@ static int tg_mtproto_auth_send_peer_on_context(
     const char *peer_cache_file,
     const char *peer_index_text,
     const char *message,
+    unsigned long *sent_message_id,
     FILE *stream)
 {
     unsigned char query[512];
@@ -5802,8 +5847,12 @@ static int tg_mtproto_auth_send_peer_on_context(
     tg_mtproto_rpc_result result;
     tg_mtproto_tl_writer writer;
     tg_mtproto_updates_summary updates;
+    int qrc;
     static const char label[] = "mtproto messages.sendMessage(peer)";
 
+    if (sent_message_id != 0) {
+        *sent_message_id = 0UL;
+    }
     if (stream == 0 || message == 0 || message[0] == '\0') {
         if (stream != 0) {
             fputs("mtproto messages.sendMessage(peer): invalid-arguments\n",
@@ -5830,10 +5879,13 @@ static int tg_mtproto_auth_send_peer_on_context(
         fprintf(stream, "%s: query-build-failed\n", label);
         return 2;
     }
-    if (tg_mtproto_send_saved_query_on_context(
+    memset(&result, 0, sizeof(result));
+    qrc = tg_mtproto_send_saved_query_on_context(
             host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, stream, label, 6U) != 0) {
-        return 2;
+            writer.length, &result, stream, label, 6U);
+    if (qrc != 0) {
+        return qrc == TG_MTPROTO_QUERY_SOFT_FAIL ?
+            TG_MTPROTO_QUERY_SOFT_FAIL : 2;
     }
     if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
         if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
@@ -5851,6 +5903,9 @@ static int tg_mtproto_auth_send_peer_on_context(
         fprintf(stream, "%s: updates-parse-failed constructor 0x%08lx\n",
                 label, result.result_constructor);
         return 2;
+    }
+    if (sent_message_id != 0 && updates.has_sent_message) {
+        *sent_message_id = updates.id;
     }
     return 0;
 }
@@ -5886,15 +5941,44 @@ static void tg_mtproto_replay_quiet_stream(FILE *quiet, FILE *fallback)
     }
 }
 
-static int tg_mtproto_quiet_stream_has_output(FILE *quiet, FILE *fallback)
+static void tg_mtproto_reset_quiet_stream(FILE *quiet, FILE *fallback)
 {
-    long position;
-
-    if (quiet == 0 || quiet == fallback) {
-        return 1;
+    if (quiet != 0 && quiet != fallback) {
+        rewind(quiet);
     }
-    position = ftell(quiet);
-    return position > 0L;
+}
+
+static long tg_mtproto_quiet_stream_length(FILE *quiet, FILE *fallback)
+{
+    if (quiet == 0 || quiet == fallback) {
+        return 0L;
+    }
+    return ftell(quiet);
+}
+
+static void tg_mtproto_replay_quiet_stream_length(FILE *quiet,
+                                                  FILE *fallback,
+                                                  long length)
+{
+    char buffer[256];
+    long remaining;
+    unsigned long chunk;
+
+    if (quiet == 0 || fallback == 0 || quiet == fallback || length <= 0L) {
+        return;
+    }
+    rewind(quiet);
+    remaining = length;
+    while (remaining > 0L) {
+        chunk = remaining > (long)sizeof(buffer) ?
+            (unsigned long)sizeof(buffer) : (unsigned long)remaining;
+        chunk = (unsigned long)fread(buffer, 1U, (size_t)chunk, quiet);
+        if (chunk == 0UL) {
+            break;
+        }
+        (void)fwrite(buffer, 1U, (size_t)chunk, fallback);
+        remaining -= (long)chunk;
+    }
 }
 
 static int tg_mtproto_chat_read_line(char *line,
@@ -6300,10 +6384,13 @@ int tg_mtproto_auth_chat_file(const char *host,
     unsigned long last_seen_message_id;
     unsigned long requested_last_seen_message_id;
     unsigned long printed_message_count;
+    unsigned long sent_message_id;
     unsigned long watch_seconds;
     unsigned long parsed_watch_seconds;
     unsigned long saved_timeout;
     FILE *quiet;
+    FILE *chat_quiet;
+    long chat_quiet_length;
     tg_mtproto_auth_context chat_context;
     int rc;
     int peer_command;
@@ -6319,6 +6406,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         return 2;
     }
     memset(&chat_context, 0, sizeof(chat_context));
+    chat_quiet = 0;
     api_id[0] = '\0';
     saved_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(5UL);
@@ -6392,6 +6480,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     /* Heavy accounts must reach the prompt before any blocking history read. */
     peer_history_ready = 0;
     line_length = 0UL;
+    chat_quiet = tg_mtproto_open_quiet_stream(stream);
     tg_mtproto_chat_print_help(stream);
     fprintf(stream, "Auto-read every %lu second(s).\n", watch_seconds);
     tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
@@ -6421,7 +6510,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 peer_history_ready = 1;
                 requested_last_seen_message_id = 0UL;
                 printed_message_count = 0UL;
-                quiet = tg_mtproto_open_quiet_stream(stream);
+                quiet = chat_quiet;
+                tg_mtproto_reset_quiet_stream(quiet, stream);
                 rc = tg_mtproto_auth_print_history_text_peer_on_context(
                     host, port, api_id, auth_file, dc_id_text, &chat_context,
                     peer_cache_file, peer_index, "5", quiet,
@@ -6430,37 +6520,41 @@ int tg_mtproto_auth_chat_file(const char *host,
                 if (rc == 0) {
                     last_seen_message_id = requested_last_seen_message_id;
                 }
+                chat_quiet_length =
+                    tg_mtproto_quiet_stream_length(quiet, stream);
                 if (printed_message_count > 0UL &&
-                    tg_mtproto_quiet_stream_has_output(quiet, stream)) {
+                    (quiet == stream || chat_quiet_length > 0L)) {
                     fprintf(stream, "\n");
-                    tg_mtproto_replay_quiet_stream(quiet, stream);
+                    tg_mtproto_replay_quiet_stream_length(
+                        quiet, stream, chat_quiet_length);
                     tg_mtproto_chat_print_input_prompt(stream, own_label,
                                                        peer_label);
                 }
-                tg_mtproto_close_quiet_stream(quiet, stream);
                 continue;
             }
-            quiet = tg_mtproto_open_quiet_stream(stream);
+            quiet = chat_quiet;
+            tg_mtproto_reset_quiet_stream(quiet, stream);
             printed_message_count = 0UL;
             rc = tg_mtproto_auth_print_history_text_peer_on_context(
                 host, port, api_id, auth_file, dc_id_text, &chat_context,
                 peer_cache_file, peer_index, "5", quiet,
-                &last_seen_message_id, &printed_message_count, 1, 0, 0,
+                &last_seen_message_id, &printed_message_count, 1, 1, 0,
                 peer_label, own_label);
+            chat_quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
             if (rc == 0 && printed_message_count > 0UL &&
-                tg_mtproto_quiet_stream_has_output(quiet, stream)) {
+                (quiet == stream || chat_quiet_length > 0L)) {
                 fprintf(stream, "\n");
-                tg_mtproto_replay_quiet_stream(quiet, stream);
-                tg_mtproto_close_quiet_stream(quiet, stream);
+                tg_mtproto_replay_quiet_stream_length(
+                    quiet, stream, chat_quiet_length);
                 tg_mtproto_chat_print_input_prompt(stream, own_label,
                                                    peer_label);
                 continue;
             }
-            tg_mtproto_close_quiet_stream(quiet, stream);
             continue;
         }
         if (rc < 0) {
             fprintf(stream, "Input closed.\n");
+            tg_mtproto_close_quiet_stream(chat_quiet, stream);
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
             return 0;
@@ -6476,7 +6570,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             rc = tg_mtproto_auth_print_history_text_peer_on_context(
                 host, port, api_id, auth_file, dc_id_text, &chat_context,
                 peer_cache_file, peer_index, "5", stream,
-                &last_seen_message_id, 0, 1, 0, 0, peer_label, own_label);
+                &last_seen_message_id, 0, 1, 1, 0, peer_label, own_label);
             if (rc != 0) {
                 fprintf(stream, "Could not read messages now.\n");
             }
@@ -6485,6 +6579,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         }
         if (strcmp(line, "/quit") == 0 || strcmp(line, "quit") == 0) {
             fprintf(stream, "Bye.\n");
+            tg_mtproto_close_quiet_stream(chat_quiet, stream);
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
             return 0;
@@ -6516,6 +6611,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                 if (tg_mtproto_chat_prompt_line("Search: ", line,
                                                 sizeof(line), 1, stream,
                                                 label) != 0) {
+                    tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
                     return 2;
@@ -6536,6 +6632,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                 if (tg_mtproto_chat_prompt_line("Remove chat number: ", line,
                                                 sizeof(line), 1, stream,
                                                 label) != 0) {
+                    tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
                     return 2;
@@ -6571,6 +6668,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                                             requested_peer_text,
                                             sizeof(requested_peer_text), 1,
                                             stream, label) != 0) {
+                tg_mtproto_close_quiet_stream(chat_quiet, stream);
                 tg_mtproto_close_auth_context(&chat_context);
                 tg_net_set_connect_timeout_seconds(saved_timeout);
                 return 2;
@@ -6601,6 +6699,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                 if (tg_mtproto_chat_prompt_line("Name, username or t.me link: ",
                                                 line, sizeof(line), 1,
                                                 stream, label) != 0) {
+                    tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
                     return 2;
@@ -6684,6 +6783,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                                                 requested_peer_text,
                                                 sizeof(requested_peer_text),
                                                 1, stream, label) != 0) {
+                    tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
                     return 2;
@@ -6763,14 +6863,27 @@ int tg_mtproto_auth_chat_file(const char *host,
         quiet = tg_mtproto_open_quiet_stream(stream);
         rc = tg_mtproto_auth_send_peer_on_context(
             host, port, api_id, auth_file, dc_id_text, &chat_context,
-            peer_cache_file, peer_index, line, quiet);
+            peer_cache_file, peer_index, line, &sent_message_id, quiet);
         if (rc != 0) {
             tg_mtproto_close_quiet_stream(quiet, stream);
-            fprintf(stream, "Message was not confirmed. Use Enter to refresh.\n");
+            if (rc == TG_MTPROTO_QUERY_SOFT_FAIL) {
+                fprintf(stream,
+                        "Message not confirmed. Press Enter to refresh.\n");
+            } else {
+                fprintf(stream, "Could not send message.\n");
+            }
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
         }
         tg_mtproto_close_quiet_stream(quiet, stream);
+        if (sent_message_id > last_seen_message_id) {
+            last_seen_message_id = sent_message_id;
+        }
+        if (sent_message_id != 0UL) {
+            fprintf(stream, "Message sent (id %lu).\n", sent_message_id);
+        } else {
+            fprintf(stream, "Message sent.\n");
+        }
         tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     }
 }

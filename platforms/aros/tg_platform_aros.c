@@ -26,6 +26,8 @@
 #include <proto/exec.h>
 
 struct Library *SocketBase = 0;
+#else
+#include <termios.h>
 #endif
 
 #if TG_ENABLE_TLS
@@ -129,6 +131,82 @@ int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
     }
     *out_char = ch;
     return 1;
+#endif
+}
+
+int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size)
+{
+#if defined(__AROS__)
+    unsigned long pos;
+    char ch;
+    LONG got;
+
+    if (out == 0 || out_size == 0UL) {
+        return -1;
+    }
+    out[0] = '\0';
+    pos = 0UL;
+    SetMode(Input(), 1);    /* RAW console: no echo, no line editing */
+    for (;;) {
+        got = Read(Input(), &ch, 1);
+        if (got <= 0) {
+            SetMode(Input(), 0);
+            return -1;
+        }
+        if (ch == '\n' || ch == '\r') {
+            break;
+        }
+        if (ch == '\b' || ch == 0x7f) {
+            if (pos > 0UL) {
+                --pos;
+            }
+            continue;
+        }
+        if (pos + 1UL < out_size) {
+            out[pos++] = ch;
+        }
+    }
+    out[pos] = '\0';
+    SetMode(Input(), 0);    /* restore cooked mode */
+    return 0;
+#else
+    struct termios old_term;
+    struct termios new_term;
+    int have_term;
+    unsigned long pos;
+    int c;
+
+    if (out == 0 || out_size == 0UL) {
+        return -1;
+    }
+    out[0] = '\0';
+    pos = 0UL;
+    have_term = (tcgetattr(0, &old_term) == 0);
+    if (have_term) {
+        new_term = old_term;
+        new_term.c_lflag &= ~(tcflag_t)ECHO;
+        (void)tcsetattr(0, TCSANOW, &new_term);
+    }
+    for (;;) {
+        c = getchar();
+        if (c == EOF) {
+            if (have_term) {
+                (void)tcsetattr(0, TCSANOW, &old_term);
+            }
+            return (pos > 0UL) ? 0 : -1;
+        }
+        if (c == '\n' || c == '\r') {
+            break;
+        }
+        if (pos + 1UL < out_size) {
+            out[pos++] = (char)c;
+        }
+    }
+    out[pos] = '\0';
+    if (have_term) {
+        (void)tcsetattr(0, TCSANOW, &old_term);
+    }
+    return 0;
 #endif
 }
 

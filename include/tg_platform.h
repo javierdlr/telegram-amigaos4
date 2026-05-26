@@ -57,6 +57,16 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds);
 int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char);
 
 /**
+ * Reads one line from standard input WITHOUT echoing it (for secrets such as a
+ * 2FA password). The trailing newline is not stored and out is NUL terminated.
+ *
+ * Returns 0 on success and -1 when input is closed or failed. On consoles that
+ * cannot suppress echo the platform falls back to a normal read, so callers
+ * must not assume the input was hidden on every target.
+ */
+int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size);
+
+/**
  * Fills bytes with platform-provided random data.
  *
  * Returns non-zero on success. A zero return means the platform backend does

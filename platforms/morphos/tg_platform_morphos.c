@@ -29,6 +29,10 @@
 
 #include "tg_platform.h"
 
+#ifndef SHUT_RDWR
+#define SHUT_RDWR 2
+#endif
+
 const char *tg_platform_name(void)
 {
     return "MorphOS";
@@ -84,6 +88,42 @@ int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
     }
     *out_char = ch;
     return 1;
+}
+
+int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size)
+{
+    unsigned long pos;
+    char ch;
+    LONG got;
+
+    if (out == 0 || out_size == 0UL) {
+        return -1;
+    }
+    out[0] = '\0';
+    pos = 0UL;
+    SetMode(Input(), 1);    /* RAW console: no echo, no line editing */
+    for (;;) {
+        got = Read(Input(), &ch, 1);
+        if (got <= 0) {
+            SetMode(Input(), 0);
+            return -1;
+        }
+        if (ch == '\n' || ch == '\r') {
+            break;
+        }
+        if (ch == '\b' || ch == 0x7f) {
+            if (pos > 0UL) {
+                --pos;
+            }
+            continue;
+        }
+        if (pos + 1UL < out_size) {
+            out[pos++] = ch;
+        }
+    }
+    out[pos] = '\0';
+    SetMode(Input(), 0);    /* restore cooked mode */
+    return 0;
 }
 
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
@@ -328,6 +368,7 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
+        (void)shutdown((int)connection->platform_handle, SHUT_RDWR);
         close((int)connection->platform_handle);
     }
 }
