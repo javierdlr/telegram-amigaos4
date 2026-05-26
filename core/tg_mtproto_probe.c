@@ -88,6 +88,10 @@ static int tg_mtproto_auth_check_password_text(const char *host,
                                                const char *password_input,
                                                FILE *stream);
 
+static FILE *tg_mtproto_open_quiet_stream(FILE *fallback);
+static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback);
+static void tg_mtproto_replay_quiet_stream(FILE *quiet, FILE *fallback);
+
 static int tg_mtproto_production_endpoint_for_dc(unsigned long dc_id,
                                                  const char **host,
                                                  const char **dc_id_text)
@@ -2561,8 +2565,10 @@ int tg_mtproto_auth_sign_in(const char *host,
         return 2;
     }
 
+#ifdef TG_MTPROTO_DIAG
     fprintf(stream, "%s: signed in\n", label);
     fprintf(stream, "%s: auth state updated\n", label);
+#endif
     return 0;
 }
 
@@ -3111,8 +3117,10 @@ static int tg_mtproto_auth_check_password_text(const char *host,
         return 2;
     }
 
+#ifdef TG_MTPROTO_DIAG
     fprintf(stream, "%s: signed in\n", label);
     fprintf(stream, "%s: auth state updated\n", label);
+#endif
     return 0;
 }
 
@@ -3280,8 +3288,16 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
     }
 
     tg_mtproto_secure_zero(phone, sizeof(phone));
-    rc = tg_mtproto_auth_status_file(current_host, port, api_file, auth_file,
-                                     current_dc_id_text, stream);
+    {
+        FILE *status_quiet = tg_mtproto_open_quiet_stream(stream);
+        rc = tg_mtproto_auth_status_file(current_host, port, api_file,
+                                         auth_file, current_dc_id_text,
+                                         status_quiet);
+        if (rc != 0) {
+            tg_mtproto_replay_quiet_stream(status_quiet, stream);
+        }
+        tg_mtproto_close_quiet_stream(status_quiet, stream);
+    }
     if (rc != 0) {
         return rc;
     }
@@ -5908,7 +5924,7 @@ static int tg_mtproto_auth_send_peer_on_context(
     memset(&result, 0, sizeof(result));
     qrc = tg_mtproto_send_saved_query_on_context(
             host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, stream, label, 6U);
+            writer.length, &result, stream, label, 16U);
     if (qrc != 0) {
         return qrc == TG_MTPROTO_QUERY_SOFT_FAIL ?
             TG_MTPROTO_QUERY_SOFT_FAIL : 2;
@@ -6235,7 +6251,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     }
     if (tg_mtproto_send_saved_query_on_context(
             host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, quiet, label, 2U) != 0) {
+            writer.length, &result, quiet, label, 8U) != 0) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
@@ -6443,9 +6459,8 @@ int tg_mtproto_auth_chat_file(const char *host,
         rc = tg_mtproto_auth_list_peers_file(host, port, api_file, auth_file,
                                              dc_id_text, peer_limit,
                                              peer_cache_file, quiet);
-        if (rc != 0) {
-            tg_mtproto_replay_quiet_stream(quiet, stream);
-        }
+        /* Heavy accounts return messages.dialogsSlice and list-peers fails;
+           keep its technical log quiet and fall back to /add. */
         tg_mtproto_close_quiet_stream(quiet, stream);
     }
     if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
@@ -6453,9 +6468,6 @@ int tg_mtproto_auth_chat_file(const char *host,
         rc = tg_mtproto_auth_list_peers_file(host, port, api_file, auth_file,
                                              dc_id_text, "1",
                                              peer_cache_file, quiet);
-        if (rc != 0) {
-            tg_mtproto_replay_quiet_stream(quiet, stream);
-        }
         tg_mtproto_close_quiet_stream(quiet, stream);
     }
     if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
