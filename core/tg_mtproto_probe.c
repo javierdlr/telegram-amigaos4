@@ -46,6 +46,14 @@
  * heavy accounts. Other callers treat any non-zero return as a plain failure.
  */
 #define TG_MTPROTO_QUERY_SOFT_FAIL 3
+/*
+ * Total wall-clock budget for one encrypted query's receive phase. On a heavy
+ * account the persistent connection carries a dense update stream and the
+ * matching rpc_result is interleaved far back; a plain count bound cuts off too
+ * early. We keep reading/ACKing past updates until the result OR this budget
+ * elapses, with the per-call attempt count as a high safety ceiling.
+ */
+#define TG_MTPROTO_QUERY_BUDGET_SECONDS 12UL
 #define TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR 0x3072cfa1UL
 #define TG_MTPROTO_BAD_MSG_NOTIFICATION_CONSTRUCTOR 0xa7eff811UL
 #define TG_MTPROTO_BAD_SERVER_SALT_CONSTRUCTOR 0xedab447bUL
@@ -814,6 +822,7 @@ static int tg_mtproto_send_encrypted_query_limited(
     unsigned long encrypted_padding_length;
     unsigned long payload_length;
     unsigned long response_length;
+    unsigned long query_start_time;
     unsigned int attempt;
     unsigned int receive_attempt;
     int retry_request;
@@ -833,6 +842,7 @@ static int tg_mtproto_send_encrypted_query_limited(
     if (max_receive_attempts == 0U) {
         max_receive_attempts = 32U;
     }
+    query_start_time = (unsigned long)time(0);
 
 #ifdef TG_MTPROTO_DIAG
     fprintf(stream, "%s: encrypted query phase enter.\n", label);
@@ -895,6 +905,10 @@ static int tg_mtproto_send_encrypted_query_limited(
         memset(&bad_msg, 0, sizeof(bad_msg));
         for (receive_attempt = 0U; receive_attempt < max_receive_attempts;
              ++receive_attempt) {
+            if ((unsigned long)time(0) - query_start_time >=
+                    TG_MTPROTO_QUERY_BUDGET_SECONDS) {
+                break;  /* time budget hit: soft-fail, connection still alive */
+            }
             if (net_status == TG_NET_OK) {
 #ifdef TG_MTPROTO_DIAG
                 fprintf(stream,
@@ -5928,7 +5942,7 @@ static int tg_mtproto_auth_send_peer_on_context(
     memset(&result, 0, sizeof(result));
     qrc = tg_mtproto_send_saved_query_on_context(
             host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, stream, label, 16U);
+            writer.length, &result, stream, label, 200U);
     if (qrc != 0) {
         return qrc == TG_MTPROTO_QUERY_SOFT_FAIL ?
             TG_MTPROTO_QUERY_SOFT_FAIL : 2;
@@ -6255,7 +6269,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     }
     if (tg_mtproto_send_saved_query_on_context(
             host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, quiet, label, 32U) != 0) {
+            writer.length, &result, quiet, label, 200U) != 0) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
@@ -6276,9 +6290,10 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         return 2;
     }
 #ifdef TG_MTPROTO_DIAG
-    fprintf(stream, "%s: diag result=0x%08lx body=%lu count=%lu total=%lu\n",
+    fprintf(stream,
+            "%s: diag result=0x%08lx body=%lu count=%lu total=%lu abort=0x%08lx\n",
             label, result.result_constructor, result.result_body_length,
-            texts.count, texts.total_message_count);
+            texts.count, texts.total_message_count, texts.abort_constructor);
     fflush(stream);
 #endif
     tg_mtproto_close_quiet_stream(quiet, stream);

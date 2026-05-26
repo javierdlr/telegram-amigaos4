@@ -167,6 +167,7 @@ typedef struct tg_mtproto_message_text_list {
     unsigned long count;
     unsigned long total_message_count;
     int truncated;
+    unsigned long abort_constructor; /* msg constructor that stopped the walk, else 0 */
     tg_mtproto_message_text messages[TG_MTPROTO_MESSAGE_TEXT_LIST_MAX];
 } tg_mtproto_message_text_list;
 

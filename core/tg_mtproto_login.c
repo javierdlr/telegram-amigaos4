@@ -3025,8 +3025,14 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
         out->total_message_count = count;
     }
     for (i = 0UL; i < count; ++i) {
+        unsigned long peek_constructor =
+            (reader.offset + 4UL <= reader.length) ?
+                tg_read_u32_le(reader.buffer + reader.offset) : 0UL;
         if (tg_read_common_message_text(&reader, &message) !=
             TG_MTPROTO_TL_OK) {
+            /* Stop here: a TL Message we cannot fully parse cannot be skipped
+               (its length is unknown). Record the constructor for diagnosis. */
+            out->abort_constructor = peek_constructor;
             return TG_MTPROTO_TL_OK;
         }
         if (message.has_text) {
