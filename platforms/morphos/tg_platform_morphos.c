@@ -126,6 +126,14 @@ int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size)
     return 0;
 }
 
+int tg_platform_stdin_set_raw(int enabled)
+{
+    if (SetMode(Input(), enabled ? 1 : 0)) {
+        return 0;
+    }
+    return -1;
+}
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
     int fd;

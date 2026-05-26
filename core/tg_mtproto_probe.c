@@ -6041,6 +6041,153 @@ static void tg_mtproto_replay_quiet_stream_length(FILE *quiet,
     }
 }
 
+/* Command/message history for the interactive chat (Up/Down recall). */
+#define TG_CHAT_HISTORY_MAX 16U
+#define TG_CHAT_HISTORY_LEN 512U
+static char tg_chat_history[TG_CHAT_HISTORY_MAX][TG_CHAT_HISTORY_LEN];
+static unsigned long tg_chat_history_count = 0UL;
+static long tg_chat_history_recall = -1L;
+
+static void tg_chat_history_reset(void)
+{
+    tg_chat_history_count = 0UL;
+    tg_chat_history_recall = -1L;
+}
+
+static void tg_chat_history_add(const char *text)
+{
+    unsigned long i;
+
+    if (text == 0 || text[0] == '\0') {
+        tg_chat_history_recall = -1L;
+        return;
+    }
+    if (tg_chat_history_count > 0UL &&
+        strcmp(tg_chat_history[tg_chat_history_count - 1UL], text) == 0) {
+        tg_chat_history_recall = -1L;
+        return;
+    }
+    if (tg_chat_history_count >= TG_CHAT_HISTORY_MAX) {
+        for (i = 1UL; i < TG_CHAT_HISTORY_MAX; ++i) {
+            strcpy(tg_chat_history[i - 1UL], tg_chat_history[i]);
+        }
+        tg_chat_history_count = TG_CHAT_HISTORY_MAX - 1UL;
+    }
+    strncpy(tg_chat_history[tg_chat_history_count], text,
+            TG_CHAT_HISTORY_LEN - 1UL);
+    tg_chat_history[tg_chat_history_count][TG_CHAT_HISTORY_LEN - 1UL] = '\0';
+    ++tg_chat_history_count;
+    tg_chat_history_recall = -1L;
+}
+
+/*
+ * Chat input reader. In raw mode it echoes characters itself and supports
+ * backspace plus Up/Down command-history recall (cursor keys arrive as
+ * ESC '[' 'A'/'B' or the single-byte CSI 0x9B 'A'/'B'); in cooked fallback
+ * mode (raw == 0) it just accumulates the line as before, without echo.
+ */
+static int tg_mtproto_chat_read_line_edit(char *line,
+                                          unsigned long line_size,
+                                          unsigned long *line_length,
+                                          unsigned long timeout_seconds,
+                                          int raw,
+                                          FILE *stream)
+{
+    char ch;
+    int rc;
+    unsigned long i;
+    long idx;
+    int direction;
+
+    if (line == 0 || line_size == 0UL || line_length == 0 || stream == 0) {
+        return -1;
+    }
+    rc = tg_platform_stdin_read_char(timeout_seconds, &ch);
+    if (rc <= 0) {
+        return rc;
+    }
+    if (ch == '\r' || ch == '\n') {
+        if (*line_length >= line_size) {
+            *line_length = line_size - 1UL;
+        }
+        line[*line_length] = '\0';
+        if (raw) {
+            fputc('\n', stream);
+            fflush(stream);
+        }
+        tg_chat_history_add(line);
+        *line_length = 0UL;
+        return 1;
+    }
+    if (ch == '\b' || ch == 127) {
+        if (*line_length > 0UL) {
+            --(*line_length);
+            if (raw) {
+                fputs("\b \b", stream);
+                fflush(stream);
+            }
+        }
+        return 0;
+    }
+    if (raw && (ch == 0x1B || ch == (char)0x9BU)) {
+        if (ch == 0x1B) {
+            if (tg_platform_stdin_read_char(0UL, &ch) <= 0 || ch != '[') {
+                return 0;
+            }
+        }
+        if (tg_platform_stdin_read_char(0UL, &ch) <= 0) {
+            return 0;
+        }
+        direction = (int)(unsigned char)ch;
+        if (direction != 'A' && direction != 'B') {
+            return 0;
+        }
+        if (tg_chat_history_count == 0UL) {
+            return 0;
+        }
+        if (direction == 'A') {
+            if (tg_chat_history_recall < 0L) {
+                idx = (long)tg_chat_history_count - 1L;
+            } else if (tg_chat_history_recall > 0L) {
+                idx = tg_chat_history_recall - 1L;
+            } else {
+                idx = 0L;
+            }
+        } else {
+            if (tg_chat_history_recall < 0L) {
+                return 0;
+            }
+            idx = tg_chat_history_recall + 1L;
+        }
+        for (i = 0UL; i < *line_length; ++i) {
+            fputs("\b \b", stream);
+        }
+        if (direction == 'B' && idx >= (long)tg_chat_history_count) {
+            *line_length = 0UL;
+            line[0] = '\0';
+            tg_chat_history_recall = -1L;
+            fflush(stream);
+            return 0;
+        }
+        tg_chat_history_recall = idx;
+        strncpy(line, tg_chat_history[idx], line_size - 1UL);
+        line[line_size - 1UL] = '\0';
+        *line_length = (unsigned long)strlen(line);
+        fputs(line, stream);
+        fflush(stream);
+        return 0;
+    }
+    if (*line_length + 1UL < line_size) {
+        line[*line_length] = ch;
+        ++(*line_length);
+        if (raw) {
+            fputc(ch, stream);
+            fflush(stream);
+        }
+    }
+    return 0;
+}
+
 static int tg_mtproto_chat_read_line(char *line,
                                      unsigned long line_size,
                                      unsigned long *line_length,
@@ -6457,6 +6604,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     int rc;
     int peer_command;
     int peer_history_ready;
+    int chat_raw;
     static const char label[] = "chat";
     static const char peer_limit[] = "5";
 
@@ -6472,6 +6620,10 @@ int tg_mtproto_auth_chat_file(const char *host,
     api_id[0] = '\0';
     saved_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(5UL);
+    /* Try raw console input for per-key echo + Up/Down history recall. If the
+       console cannot be put in raw mode, fall back to plain line input. */
+    chat_raw = (tg_platform_stdin_set_raw(1) == 0);
+    tg_chat_history_reset();
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         rc = 0;
     } else {
@@ -6507,6 +6659,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         tg_mtproto_replay_quiet_stream(quiet, stream);
         tg_mtproto_close_quiet_stream(quiet, stream);
         tg_net_set_connect_timeout_seconds(saved_timeout);
+        if (chat_raw) { tg_platform_stdin_set_raw(0); }
         return 2;
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
@@ -6521,6 +6674,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         label) != 0) {
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 2;
         }
         if (tg_mtproto_load_peer_cache_label(peer_cache_file, peer_index,
@@ -6544,14 +6698,16 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     for (;;) {
         if (watch_seconds == 0UL) {
-            rc = tg_mtproto_chat_read_line(line, sizeof(line), &line_length,
-                                           3600UL);
+            rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
+                                                &line_length, 3600UL, chat_raw,
+                                                stream);
             if (rc == 0) {
                 continue;
             }
         } else {
-            rc = tg_mtproto_chat_read_line(line, sizeof(line), &line_length,
-                                           watch_seconds);
+            rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
+                                                &line_length, watch_seconds,
+                                                chat_raw, stream);
         }
         if (rc == 0) {
             if (line_length > 0UL) {
@@ -6615,6 +6771,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 0;
         }
         tg_mtproto_trim_line(line);
@@ -6640,6 +6797,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 0;
         }
         if (strcmp(line, "/help") == 0 || strcmp(line, "help") == 0) {
@@ -6689,6 +6847,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
                 search_arg = line;
@@ -6710,6 +6869,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
                 remove_arg = line;
@@ -6746,6 +6906,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                 tg_mtproto_close_quiet_stream(chat_quiet, stream);
                 tg_mtproto_close_auth_context(&chat_context);
                 tg_net_set_connect_timeout_seconds(saved_timeout);
+            if (chat_raw) { tg_platform_stdin_set_raw(0); }
                 return 2;
             }
             if (tg_mtproto_chat_copy_peer_index(
@@ -6777,6 +6938,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
                 username_arg = line;
@@ -6861,6 +7023,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
                 if (tg_mtproto_chat_copy_peer_index(

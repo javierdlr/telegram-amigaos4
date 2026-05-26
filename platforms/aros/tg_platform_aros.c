@@ -210,6 +210,40 @@ int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size)
 #endif
 }
 
+int tg_platform_stdin_set_raw(int enabled)
+{
+#if defined(__AROS__)
+    if (SetMode(Input(), enabled ? 1 : 0)) {
+        return 0;
+    }
+    return -1;
+#else
+    static struct termios saved;
+    static int saved_valid = 0;
+    struct termios raw;
+
+    if (enabled) {
+        if (tcgetattr(0, &saved) != 0) {
+            return -1;
+        }
+        saved_valid = 1;
+        raw = saved;
+        raw.c_lflag &= ~(tcflag_t)(ICANON | ECHO);
+        raw.c_cc[VMIN] = 1;
+        raw.c_cc[VTIME] = 0;
+        if (tcsetattr(0, TCSANOW, &raw) != 0) {
+            return -1;
+        }
+        return 0;
+    }
+    if (saved_valid) {
+        (void)tcsetattr(0, TCSANOW, &saved);
+        saved_valid = 0;
+    }
+    return 0;
+#endif
+}
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
     int fd;

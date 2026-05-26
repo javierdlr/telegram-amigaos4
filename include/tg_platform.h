@@ -67,6 +67,16 @@ int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char);
 int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size);
 
 /**
+ * Switches standard input between raw (no echo, no line editing, one keystroke
+ * at a time) and the normal cooked mode. Used by the interactive chat to do its
+ * own line editing and command-history recall.
+ *
+ * Returns 0 when the mode was changed and -1 when the console cannot be put in
+ * raw mode; callers must fall back to plain line input on -1.
+ */
+int tg_platform_stdin_set_raw(int enabled);
+
+/**
  * Fills bytes with platform-provided random data.
  *
  * Returns non-zero on success. A zero return means the platform backend does

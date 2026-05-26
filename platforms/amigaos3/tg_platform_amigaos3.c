@@ -199,6 +199,19 @@ int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size)
 #endif
 }
 
+int tg_platform_stdin_set_raw(int enabled)
+{
+#if defined(__amigaos3__)
+    if (SetMode(Input(), enabled ? 1 : 0)) {
+        return 0;
+    }
+    return -1;
+#else
+    (void)enabled;
+    return -1;
+#endif
+}
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
 #if defined(__amigaos3__)
