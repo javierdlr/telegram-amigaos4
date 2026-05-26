@@ -12,42 +12,28 @@ Echo "Author: Michele Dipace <michele.dipace@kaffeine.net>"
 FailAt 21
 Stack 262144
 
+; Auth/hash/peers default to the program drawer (relative to the launcher's
+; directory), NOT RAM:, so they survive a reboot / ramdisk clear.
 IF "{API}" EQ ""
-    IF EXISTS telegram-api.txt
-        SET APIFILE "telegram-api.txt"
-    ELSE
-        SET APIFILE "RAM:telegram-api.txt"
-    ENDIF
+    SET APIFILE "telegram-api.txt"
 ELSE
     SET APIFILE "{API}"
 ENDIF
 
 IF "{AUTH}" EQ ""
-    IF EXISTS telegram-auth.bin
-        SET AUTHFILE "telegram-auth.bin"
-    ELSE
-        SET AUTHFILE "RAM:telegram-auth.bin"
-    ENDIF
+    SET AUTHFILE "telegram-auth.bin"
 ELSE
     SET AUTHFILE "{AUTH}"
 ENDIF
 
 IF "{CODEHASH}" EQ ""
-    IF EXISTS phone-code-hash.txt
-        SET HASHFILE "phone-code-hash.txt"
-    ELSE
-        SET HASHFILE "RAM:phone-code-hash.txt"
-    ENDIF
+    SET HASHFILE "phone-code-hash.txt"
 ELSE
     SET HASHFILE "{CODEHASH}"
 ENDIF
 
 IF "{PEERS}" EQ ""
-    IF EXISTS telegram-peers.txt
-        SET PEERSFILE "telegram-peers.txt"
-    ELSE
-        SET PEERSFILE "RAM:telegram-peers.txt"
-    ENDIF
+    SET PEERSFILE "telegram-peers.txt"
 ELSE
     SET PEERSFILE "{PEERS}"
 ENDIF

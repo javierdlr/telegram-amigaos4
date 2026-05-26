@@ -1861,7 +1861,11 @@ static int tg_mtproto_print_rpc_error(const char *label,
     }
     if (strcmp(error_message, "SESSION_PASSWORD_NEEDED") == 0 ||
         strcmp(error_message, "PHONE_PASSWORD_PROTECTED") == 0) {
+        /* Expected during login: the wizard prints the human "2FA password
+           required." line, so keep this technical marker out of normal builds. */
+#ifdef TG_MTPROTO_DIAG
         fprintf(stream, "%s: two-factor-password-required\n", label);
+#endif
     } else if (strcmp(error_message, "PASSWORD_HASH_INVALID") == 0) {
         fprintf(stream, "%s: password-invalid\n", label);
     } else if (strcmp(error_message, "SRP_ID_INVALID") == 0) {
@@ -6364,6 +6368,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
     fprintf(stream, "  /search text  find cached chats by name or username\n");
     fprintf(stream, "  /add name     search Telegram and add a chat\n");
     fprintf(stream, "  /remove n     remove cached chat n\n");
+    fprintf(stream, "  /history      show recent messages without new-message filtering\n");
     fprintf(stream, "  /watch sec    set auto-read interval\n");
     fprintf(stream, "  /watch off    disable auto-read\n");
     fprintf(stream, "  /help         show this help\n");
@@ -6637,6 +6642,23 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
             fprintf(stream,
                     "Type a number, /search text, or /add name.\n");
+            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            continue;
+        }
+        if (strcmp(line, "/history") == 0) {
+            if (peer_index[0] == '\0') {
+                fprintf(stream, "Choose a chat first with /peers or /add name.\n");
+                tg_mtproto_chat_print_input_prompt(stream, own_label,
+                                                   peer_label);
+                continue;
+            }
+            rc = tg_mtproto_auth_print_history_text_peer_on_context(
+                host, port, api_id, auth_file, dc_id_text, &chat_context,
+                peer_cache_file, peer_index, "10", stream,
+                0, 0, 0, 1, 1, peer_label, own_label);
+            if (rc != 0) {
+                fprintf(stream, "Could not read message history now.\n");
+            }
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
         }
@@ -6917,11 +6939,11 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (sent_message_id > last_seen_message_id) {
             last_seen_message_id = sent_message_id;
         }
-        if (sent_message_id != 0UL) {
-            fprintf(stream, "Message sent (id %lu).\n", sent_message_id);
-        } else {
-            fprintf(stream, "Message sent.\n");
-        }
+        /* Confirm delivery with a ">" marker beside the message instead of a
+           verbose "Message sent" line. */
+        fprintf(stream, "> ");
+        tg_mtproto_print_cache_text(stream, line);
+        fprintf(stream, "\n");
         tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     }
 }
