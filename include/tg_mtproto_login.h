@@ -158,6 +158,9 @@ typedef struct tg_mtproto_message_text {
     unsigned long id;
     unsigned long date;
     unsigned long flags;
+    unsigned long from_constructor; /* sender peer kind (PEER_*), 0 if absent */
+    unsigned long from_id_hi;
+    unsigned long from_id_lo;
     int is_out;
     int has_text;
     char text[TG_MTPROTO_MESSAGE_TEXT_MAX];

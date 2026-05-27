@@ -2575,9 +2575,13 @@ static tg_mtproto_tl_status tg_read_common_message_text(
     }
     out->flags = flags;
     out->is_out = (flags & 2UL) != 0UL;
-    if ((flags & (1UL << 8)) != 0UL &&
-        tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_INVALID_DATA;
+    if ((flags & (1UL << 8)) != 0UL) {
+        if (tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        out->from_constructor = peer.peer_constructor;
+        out->from_id_hi = peer.id_hi;
+        out->from_id_lo = peer.id_lo;
     }
     if ((flags & (1UL << 29)) != 0UL &&
         tg_mtproto_tl_read_u32(reader, &scratch_lo) != TG_MTPROTO_TL_OK) {
@@ -2677,6 +2681,29 @@ static tg_mtproto_tl_status tg_read_common_message_text(
         return TG_MTPROTO_TL_OK;
     }
     return TG_MTPROTO_TL_OK;
+}
+
+static int tg_message_text_resync(tg_mtproto_tl_reader *reader,
+                                  unsigned long start_offset)
+{
+    unsigned long pos;
+    unsigned long constructor;
+
+    if (reader == 0 || start_offset >= reader->length) {
+        return 0;
+    }
+    pos = (start_offset + 3UL) & ~3UL;
+    while (pos + 4UL <= reader->length) {
+        constructor = tg_read_u32_le(reader->buffer + pos);
+        if (constructor == TG_MESSAGE_CONSTRUCTOR ||
+            constructor == TG_MESSAGE_EMPTY_CONSTRUCTOR ||
+            constructor == TG_MESSAGE_SERVICE_CONSTRUCTOR) {
+            reader->offset = pos;
+            return 1;
+        }
+        pos += 4UL;
+    }
+    return 0;
 }
 
 tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_cache(
@@ -2975,6 +3002,7 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
     unsigned long count;
     unsigned long scratch;
     unsigned long i;
+    unsigned long message_start;
 
     if (body == 0 || out == 0) {
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
@@ -3024,15 +3052,23 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
     if (constructor == TG_MESSAGES_MESSAGES_CONSTRUCTOR) {
         out->total_message_count = count;
     }
-    for (i = 0UL; i < count; ++i) {
+    i = 0UL;
+    while (i < count && reader.offset < reader.length) {
         unsigned long peek_constructor =
             (reader.offset + 4UL <= reader.length) ?
                 tg_read_u32_le(reader.buffer + reader.offset) : 0UL;
+        message_start = reader.offset;
         if (tg_read_common_message_text(&reader, &message) !=
             TG_MTPROTO_TL_OK) {
-            /* Stop here: a TL Message we cannot fully parse cannot be skipped
-               (its length is unknown). Record the constructor for diagnosis. */
+            /*
+             * Older parser paths can stop on media tails such as
+             * messageMediaDocument. Try to resync to the next TL Message
+             * constructor so /history can keep showing the surrounding text.
+             */
             out->abort_constructor = peek_constructor;
+            if (tg_message_text_resync(&reader, message_start + 4UL)) {
+                continue;
+            }
             return TG_MTPROTO_TL_OK;
         }
         if (message.has_text) {
@@ -3043,6 +3079,7 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
                 out->truncated = 1;
             }
         }
+        ++i;
     }
     if (count > TG_MTPROTO_MESSAGE_TEXT_LIST_MAX) {
         out->truncated = 1;

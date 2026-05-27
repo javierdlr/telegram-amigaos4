@@ -54,6 +54,15 @@
  * elapses, with the per-call attempt count as a high safety ceiling.
  */
 #define TG_MTPROTO_QUERY_BUDGET_SECONDS 12UL
+
+/*
+ * Raw chat input is useful for command history, but Amiga CON: also emits raw
+ * window/control events as byte sequences. Keep it opt-in until those events
+ * are parsed instead of leaking into the chat line on real systems.
+ */
+#ifndef TG_ENABLE_CHAT_RAW_INPUT
+#define TG_ENABLE_CHAT_RAW_INPUT 0
+#endif
 #define TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR 0x3072cfa1UL
 #define TG_MTPROTO_BAD_MSG_NOTIFICATION_CONSTRUCTOR 0xa7eff811UL
 #define TG_MTPROTO_BAD_SERVER_SALT_CONSTRUCTOR 0xedab447bUL
@@ -6620,9 +6629,16 @@ int tg_mtproto_auth_chat_file(const char *host,
     api_id[0] = '\0';
     saved_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(5UL);
-    /* Try raw console input for per-key echo + Up/Down history recall. If the
-       console cannot be put in raw mode, fall back to plain line input. */
+    /*
+     * Raw input stays opt-in for now. On real Amiga CON: the close gadget and
+     * other window events can arrive as raw CSI-style numeric sequences; in the
+     * normal human client that is worse than losing Up/Down recall.
+     */
+#if TG_ENABLE_CHAT_RAW_INPUT
     chat_raw = (tg_platform_stdin_set_raw(1) == 0);
+#else
+    chat_raw = 0;
+#endif
     tg_chat_history_reset();
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         rc = 0;
