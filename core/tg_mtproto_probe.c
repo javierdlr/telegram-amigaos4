@@ -64,6 +64,12 @@
  */
 #define TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED 4
 #define TG_MTPROTO_SIGN_IN_CODE_INVALID 5
+/*
+ * auth.checkPassword outcome: the 2FA password was wrong (PASSWORD_HASH_INVALID).
+ * The login wizard re-prompts for the password instead of aborting the whole
+ * login. Naive callers still see this as a plain non-zero failure.
+ */
+#define TG_MTPROTO_CHECK_PASSWORD_INVALID 6
 
 /*
  * Raw chat input is useful for command history, but Amiga CON: also emits raw
@@ -3153,8 +3159,20 @@ static int tg_mtproto_auth_check_password_text(const char *host,
         return 2;
     }
     if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        char check_password_error[128];
+        long check_password_error_code;
+
         if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
             fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        if (tg_mtproto_parse_rpc_error(result.result_body - 4U,
+                                       result.result_body_length + 4U,
+                                       &check_password_error_code,
+                                       check_password_error,
+                                       sizeof(check_password_error)) ==
+                TG_MTPROTO_TL_OK &&
+            strcmp(check_password_error, "PASSWORD_HASH_INVALID") == 0) {
+            return TG_MTPROTO_CHECK_PASSWORD_INVALID;
         }
         return 2;
     }
@@ -3286,11 +3304,11 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
         migrate_dc = (unsigned long)(rc - TG_MTPROTO_PHONE_MIGRATE_RC_BASE);
         if (tg_mtproto_production_endpoint_for_dc(migrate_dc, &migrate_host,
                                                  &migrate_dc_text) == 0) {
-            fprintf(stream, "Using Telegram DC %s.\n", migrate_dc_text);
+            /* The account is homed on another DC. Migrate silently and let the
+               same progress dots keep running, rather than announcing the DC
+               switch and printing a second "Sending login code request." */
             current_host = migrate_host;
             current_dc_id_text = migrate_dc_text;
-            fprintf(stream, "Sending login code request.\n");
-            fflush(stream);
             rc = tg_mtproto_auth_send_code_file(current_host, port,
                                                 current_dc_id_text, api_file,
                                                 phone, auth_file,
@@ -3334,23 +3352,32 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
     }
     if (rc == TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED) {
         fprintf(stream, "2FA password required.\n");
-        if (tg_mtproto_prompt_hidden_line("2FA password, empty to abort: ",
-                                          password, sizeof(password), stream,
-                                          label) != 0) {
-            tg_mtproto_secure_zero(phone, sizeof(phone));
-            return 2;
-        }
-        if (password[0] == '\0') {
-            tg_mtproto_secure_zero(phone, sizeof(phone));
+        for (;;) {
+            if (tg_mtproto_prompt_hidden_line("2FA password, empty to abort: ",
+                                              password, sizeof(password),
+                                              stream, label) != 0) {
+                tg_mtproto_secure_zero(phone, sizeof(phone));
+                return 2;
+            }
+            if (password[0] == '\0') {
+                tg_mtproto_secure_zero(phone, sizeof(phone));
+                tg_mtproto_secure_zero(password, sizeof(password));
+                fprintf(stream, "%s: aborted\n", label);
+                return 2;
+            }
+            rc = tg_mtproto_auth_check_password_text(current_host, port, api_id,
+                                                     auth_file,
+                                                     current_dc_id_text,
+                                                     password, stream);
             tg_mtproto_secure_zero(password, sizeof(password));
-            fprintf(stream, "%s: aborted\n", label);
-            return rc;
+            if (rc != TG_MTPROTO_CHECK_PASSWORD_INVALID) {
+                break;
+            }
+            /* Wrong password: re-prompt instead of dropping out of the wizard. */
+            fprintf(stream,
+                    "That password was not accepted. Try again "
+                    "(empty to abort).\n");
         }
-        rc = tg_mtproto_auth_check_password_text(current_host, port, api_id,
-                                                 auth_file,
-                                                 current_dc_id_text,
-                                                 password, stream);
-        tg_mtproto_secure_zero(password, sizeof(password));
         if (rc != 0) {
             tg_mtproto_secure_zero(phone, sizeof(phone));
             return rc;
