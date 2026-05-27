@@ -6804,7 +6804,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             rc = tg_mtproto_auth_print_history_text_peer_on_context(
                 host, port, api_id, auth_file, dc_id_text, &chat_context,
                 peer_cache_file, peer_index, "5", quiet,
-                &last_seen_message_id, &printed_message_count, 1, 1, 0,
+                &last_seen_message_id, &printed_message_count, 1, 0, 0,
                 peer_label, own_label);
             chat_quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
             if (rc == 0 && printed_message_count > 0UL &&
@@ -6837,7 +6837,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             rc = tg_mtproto_auth_print_history_text_peer_on_context(
                 host, port, api_id, auth_file, dc_id_text, &chat_context,
                 peer_cache_file, peer_index, "5", stream,
-                &last_seen_message_id, 0, 1, 1, 0, peer_label, own_label);
+                &last_seen_message_id, 0, 1, 0, 0, peer_label, own_label);
             if (rc != 0) {
                 fprintf(stream, "Could not read messages now.\n");
             }
@@ -7169,11 +7169,14 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (sent_message_id > last_seen_message_id) {
             last_seen_message_id = sent_message_id;
         }
-        /* Confirm delivery with a ">" marker beside the message instead of a
-           verbose "Message sent" line. */
-        fprintf(stream, "> ");
-        tg_mtproto_print_cache_text(stream, line);
-        fprintf(stream, "\n");
+        /* Confirm delivery with a compact "[v]" check on its own line instead
+           of re-printing the whole message. Re-printing the text (plus the
+           auto-read poll echoing our own outgoing message) made it look like
+           the typed line was repeated several times. The console already
+           echoed what was typed, so a small marker is enough. Latin-1 display
+           targets cannot render a real check glyph (U+2713 -> '?'), so use an
+           ASCII checkmark. */
+        fprintf(stream, "[v]\n");
         tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     }
 }
