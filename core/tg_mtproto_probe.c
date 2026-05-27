@@ -5563,9 +5563,15 @@ static int tg_mtproto_auth_search_global_on_context(
         fprintf(stream, "Search text is too long.\n");
         return 2;
     }
+    /* Use the same generous receive budget as send/history (200 attempts,
+       still capped by TG_MTPROTO_QUERY_BUDGET_SECONDS). On a busy account the
+       contacts.found reply arrives behind a backlog of update messages on the
+       persistent chat connection; a small cap (was 8) exhausted before the
+       reply was seen and surfaced as "Could not search Telegram now.", which
+       in turn forced the exact-@username resolveUsername fallback. */
     if (tg_mtproto_send_saved_query_on_context(
             host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, quiet, label, 8U) != 0) {
+            writer.length, &result, quiet, label, 200U) != 0) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         fprintf(stream, "Could not search Telegram now.\n");
         return 2;
