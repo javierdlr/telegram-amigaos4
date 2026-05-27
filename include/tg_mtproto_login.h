@@ -136,6 +136,10 @@ typedef struct tg_mtproto_peer_cache {
     unsigned long user_count;
     unsigned long chat_count;
     int truncated;
+    /* When non-zero, the user/chat scanners add new entries for every peer
+       found in the response instead of only enriching existing dialog peers.
+       Used to collect message senders (group/channel members) for display. */
+    int collect_all;
     tg_mtproto_peer_cache_entry entries[TG_MTPROTO_PEER_CACHE_MAX];
 } tg_mtproto_peer_cache;
 

@@ -1864,7 +1864,17 @@ static int tg_peer_cache_apply_user(tg_mtproto_peer_cache *cache,
 
     entry = tg_peer_cache_find(cache, TG_PEER_USER_CONSTRUCTOR,
                                user->id_hi, user->id_lo);
-    if (entry == 0 || !entry->from_dialog) {
+    if (entry == 0) {
+        if (!cache->collect_all) {
+            return 0;
+        }
+        entry = tg_peer_cache_add(cache, TG_PEER_USER_CONSTRUCTOR,
+                                  user->id_hi, user->id_lo);
+        if (entry == 0) {
+            return 0;
+        }
+        entry->from_dialog = 1;
+    } else if (!entry->from_dialog && !cache->collect_all) {
         return 0;
     }
     entry->has_access_hash = user->has_access_hash;
@@ -1919,7 +1929,16 @@ static int tg_peer_cache_apply_chat(tg_mtproto_peer_cache *cache,
     tg_mtproto_peer_cache_entry *entry;
 
     entry = tg_peer_cache_find(cache, peer_constructor, id_hi, id_lo);
-    if (entry == 0 || !entry->from_dialog) {
+    if (entry == 0) {
+        if (!cache->collect_all) {
+            return 0;
+        }
+        entry = tg_peer_cache_add(cache, peer_constructor, id_hi, id_lo);
+        if (entry == 0) {
+            return 0;
+        }
+        entry->from_dialog = 1;
+    } else if (!entry->from_dialog && !cache->collect_all) {
         return 0;
     }
     entry->has_access_hash = has_access_hash;
@@ -2717,6 +2736,11 @@ void tg_mtproto_parse_message_peers(const unsigned char *body,
     if (body == 0) {
         return;
     }
+    /* No dialog peers are pre-seeded here, so allow the scanners to add a new
+       entry for every user/chat referenced in the response. Otherwise the
+       enrich-only path would leave the cache empty and group messages would
+       fall back to the chat title instead of the actual sender name. */
+    out->collect_all = 1;
     (void)tg_peer_cache_scan_chats(body, body_length, out);
     (void)tg_peer_cache_scan_users(body, body_length, out);
 }
