@@ -56,6 +56,16 @@
 #define TG_MTPROTO_QUERY_BUDGET_SECONDS 12UL
 
 /*
+ * auth.signIn outcome codes so the login wizard can tell apart the cases that
+ * otherwise all collapse to a generic non-zero: a correct code on a 2FA account
+ * (server asks for the password) versus a rejected code (user should retry the
+ * code, NOT jump into the 2FA flow -- doing so previously led to a confusing
+ * "auth-key-unregistered" on checkPassword). Naive callers still see non-zero.
+ */
+#define TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED 4
+#define TG_MTPROTO_SIGN_IN_CODE_INVALID 5
+
+/*
  * Raw chat input is useful for command history, but Amiga CON: also emits raw
  * window/control events as byte sequences. Keep it opt-in until those events
  * are parsed instead of leaking into the chat line on real systems.
@@ -2571,8 +2581,26 @@ int tg_mtproto_auth_sign_in(const char *host,
     }
 
     if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        char sign_in_error[128];
+        long sign_in_error_code;
+
         if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
             fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        if (tg_mtproto_parse_rpc_error(result.result_body - 4U,
+                                       result.result_body_length + 4U,
+                                       &sign_in_error_code, sign_in_error,
+                                       sizeof(sign_in_error)) ==
+            TG_MTPROTO_TL_OK) {
+            if (strcmp(sign_in_error, "SESSION_PASSWORD_NEEDED") == 0 ||
+                strcmp(sign_in_error, "PHONE_PASSWORD_PROTECTED") == 0) {
+                return TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED;
+            }
+            if (strcmp(sign_in_error, "PHONE_CODE_INVALID") == 0 ||
+                strcmp(sign_in_error, "PHONE_CODE_EMPTY") == 0 ||
+                strcmp(sign_in_error, "PHONE_CODE_EXPIRED") == 0) {
+                return TG_MTPROTO_SIGN_IN_CODE_INVALID;
+            }
         }
         return 2;
     }
@@ -3275,21 +3303,36 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
     }
 
     fprintf(stream, "\nTelegram login code received.\n");
-    fprintf(stream, "Type the Telegram code and press Return.\n");
     fflush(stream);
-    if (tg_mtproto_prompt_line("Telegram code: ", code, sizeof(code), 1,
-                               stream, label) != 0) {
-        tg_mtproto_secure_zero(phone, sizeof(phone));
-        return 2;
+    /* Re-prompt when Telegram rejects the code instead of mistaking it for a
+       2FA challenge (which then failed confusingly on checkPassword). */
+    rc = TG_MTPROTO_SIGN_IN_CODE_INVALID;
+    while (rc == TG_MTPROTO_SIGN_IN_CODE_INVALID) {
+        fprintf(stream, "Type the Telegram code and press Return.\n");
+        fflush(stream);
+        if (tg_mtproto_prompt_line("Telegram code (empty to abort): ", code,
+                                   sizeof(code), 0, stream, label) != 0) {
+            tg_mtproto_secure_zero(phone, sizeof(phone));
+            return 2;
+        }
+        if (code[0] == '\0') {
+            tg_mtproto_secure_zero(phone, sizeof(phone));
+            fprintf(stream, "%s: aborted\n", label);
+            return 2;
+        }
+        fprintf(stream, "Checking Telegram code.\n");
+        fflush(stream);
+        rc = tg_mtproto_auth_sign_in_file(current_host, port, api_file,
+                                          auth_file, phone, code_hash_file,
+                                          code, current_dc_id_text, stream);
+        tg_mtproto_secure_zero(code, sizeof(code));
+        if (rc == TG_MTPROTO_SIGN_IN_CODE_INVALID) {
+            fprintf(stream,
+                    "That code was not accepted. Check the latest Telegram "
+                    "message and try again.\n");
+        }
     }
-
-    fprintf(stream, "Checking Telegram code.\n");
-    fflush(stream);
-    rc = tg_mtproto_auth_sign_in_file(current_host, port, api_file, auth_file,
-                                      phone, code_hash_file, code,
-                                      current_dc_id_text, stream);
-    tg_mtproto_secure_zero(code, sizeof(code));
-    if (rc != 0) {
+    if (rc == TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED) {
         fprintf(stream, "2FA password required.\n");
         if (tg_mtproto_prompt_hidden_line("2FA password, empty to abort: ",
                                           password, sizeof(password), stream,
@@ -3312,6 +3355,10 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
             tg_mtproto_secure_zero(phone, sizeof(phone));
             return rc;
         }
+    } else if (rc != 0) {
+        /* Any other sign-in failure was already reported by auth.signIn. */
+        tg_mtproto_secure_zero(phone, sizeof(phone));
+        return rc;
     }
 
     tg_mtproto_secure_zero(phone, sizeof(phone));
@@ -6632,8 +6679,11 @@ static void tg_mtproto_chat_print_input_prompt(FILE *stream,
         return;
     }
     if (peer_label != 0 && peer_label[0] != '\0') {
+        /* Truncate the bracketed chat name the same way the message lines do,
+           so a long group title does not push the typing position far right. */
         fprintf(stream, "[");
-        tg_mtproto_print_cache_text(stream, peer_label);
+        tg_mtproto_print_label_truncated(stream, peer_label,
+                                         TG_MTPROTO_GROUP_LABEL_MAX);
         fprintf(stream, "] ");
     }
     if (own_label != 0 && own_label[0] != '\0') {
