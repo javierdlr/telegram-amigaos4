@@ -3172,7 +3172,7 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_config_summary config;
     tg_mtproto_dialog_peer_list peer_list;
     tg_mtproto_dialogs_summary dialogs;
-    tg_mtproto_message_text_list text_list;
+    static tg_mtproto_message_text_list text_list;
     tg_mtproto_peer_cache peer_cache;
     tg_mtproto_messages_summary messages;
     tg_mtproto_password_summary password;

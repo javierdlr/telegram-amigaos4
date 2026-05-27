@@ -6394,7 +6394,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     unsigned long printed;
     unsigned long k;
     FILE *quiet;
-    tg_mtproto_message_text_list texts;
+    static tg_mtproto_message_text_list texts;
     static tg_mtproto_peer_cache sender_cache;
     tg_mtproto_rpc_result result;
     tg_mtproto_tl_writer writer;

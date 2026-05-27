@@ -151,7 +151,7 @@ typedef struct tg_mtproto_messages_summary {
     int is_channel_messages;
 } tg_mtproto_messages_summary;
 
-#define TG_MTPROTO_MESSAGE_TEXT_MAX 256U
+#define TG_MTPROTO_MESSAGE_TEXT_MAX 4096U
 #define TG_MTPROTO_MESSAGE_TEXT_LIST_MAX 8U
 
 typedef struct tg_mtproto_message_text {
