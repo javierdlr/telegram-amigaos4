@@ -14,8 +14,15 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
+#include <exec/types.h>
+#include <exec/io.h>
+#include <exec/memory.h>
+#include <devices/timer.h>
 #include <proto/dos.h>
+#include <proto/exec.h>
+#include <proto/timer.h>
 
 #ifndef TG_ENABLE_TLS
 #define TG_ENABLE_TLS 0
@@ -28,6 +35,7 @@
 #endif
 
 #include "tg_platform.h"
+#include "tg_mtproto_crypto.h"
 
 #ifndef SHUT_RDWR
 #define SHUT_RDWR 2
@@ -134,6 +142,167 @@ int tg_platform_stdin_set_raw(int enabled)
     return -1;
 }
 
+/*
+ * MorphOS ships no /dev/urandom and the default build links no TLS, so neither
+ * the device path nor OpenSSL's RAND_bytes is available; the previous code then
+ * returned failure and the MTProto login aborted with "secure-rng-unavailable".
+ * Provide a self-contained entropy source: sample the high-resolution E-Clock
+ * (timer.device) plus several time/memory/address sources, whiten everything
+ * through SHA-512 and run a SHA-512 hash-chain DRBG. /dev/urandom (should a
+ * future MorphOS expose it) and OpenSSL RAND_bytes stay preferred.
+ */
+struct Library *TimerBase = 0; /* declared (extern) by <proto/timer.h> */
+static struct MsgPort *tg_morphos_timer_port = 0;
+static struct timerequest *tg_morphos_timer_req = 0;
+static int tg_morphos_timer_state = -1; /* -1 untried, 0 unavailable, 1 ready */
+
+static void tg_morphos_timer_open(void)
+{
+    if (tg_morphos_timer_state >= 0) {
+        return;
+    }
+    tg_morphos_timer_state = 0;
+    tg_morphos_timer_port = CreateMsgPort();
+    if (tg_morphos_timer_port == 0) {
+        return;
+    }
+    tg_morphos_timer_req = (struct timerequest *)CreateIORequest(
+        tg_morphos_timer_port, (ULONG)sizeof(struct timerequest));
+    if (tg_morphos_timer_req == 0) {
+        DeleteMsgPort(tg_morphos_timer_port);
+        tg_morphos_timer_port = 0;
+        return;
+    }
+    if (OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_MICROHZ,
+                   (struct IORequest *)tg_morphos_timer_req, 0L) != 0) {
+        DeleteIORequest((struct IORequest *)tg_morphos_timer_req);
+        DeleteMsgPort(tg_morphos_timer_port);
+        tg_morphos_timer_req = 0;
+        tg_morphos_timer_port = 0;
+        return;
+    }
+    TimerBase = (struct Library *)tg_morphos_timer_req->tr_node.io_Device;
+    tg_morphos_timer_state = 1;
+}
+
+static void tg_morphos_fold(unsigned char *pool, unsigned long pool_size,
+                            unsigned long *pos, unsigned long value)
+{
+    unsigned int b;
+
+    for (b = 0; b < (unsigned int)sizeof(unsigned long); ++b) {
+        pool[(*pos) % pool_size] ^= (unsigned char)(value & 0xffUL);
+        value >>= 8;
+        ++(*pos);
+    }
+}
+
+static void tg_morphos_gather(unsigned char digest[TG_MTPROTO_SHA512_LENGTH])
+{
+    unsigned char pool[128];
+    unsigned long pos;
+    unsigned long i;
+    struct timeval tv;
+    struct DateStamp ds;
+    struct EClockVal ev;
+    volatile unsigned long spin;
+
+    memset(pool, 0, sizeof(pool));
+    pos = 0;
+    /* Address-layout and coarse system state. */
+    tg_morphos_fold(pool, sizeof(pool), &pos, (unsigned long)pool);
+    tg_morphos_fold(pool, sizeof(pool), &pos, (unsigned long)&pos);
+    tg_morphos_fold(pool, sizeof(pool), &pos, (unsigned long)digest);
+    tg_morphos_fold(pool, sizeof(pool), &pos, AvailMem(MEMF_ANY));
+    tg_morphos_fold(pool, sizeof(pool), &pos, AvailMem(MEMF_CHIP));
+    tg_morphos_fold(pool, sizeof(pool), &pos, AvailMem(MEMF_FAST));
+    tg_morphos_fold(pool, sizeof(pool), &pos, (unsigned long)time(0));
+    tg_morphos_fold(pool, sizeof(pool), &pos, (unsigned long)clock());
+    memset(&ds, 0, sizeof(ds));
+    DateStamp(&ds);
+    tg_morphos_fold(pool, sizeof(pool), &pos, (unsigned long)ds.ds_Days);
+    tg_morphos_fold(pool, sizeof(pool), &pos, (unsigned long)ds.ds_Minute);
+    tg_morphos_fold(pool, sizeof(pool), &pos, (unsigned long)ds.ds_Tick);
+    /* Time-jitter loop: read the high-resolution clocks while doing a variable
+       amount of work so scheduling/interrupt jitter perturbs the samples. */
+    spin = 1;
+    for (i = 0; i < 64UL; ++i) {
+        unsigned long s;
+
+        if (gettimeofday(&tv, 0) == 0) {
+            tg_morphos_fold(pool, sizeof(pool), &pos,
+                            (unsigned long)tv.tv_sec);
+            tg_morphos_fold(pool, sizeof(pool), &pos,
+                            (unsigned long)tv.tv_usec);
+        }
+        if (tg_morphos_timer_state == 1) {
+            ReadEClock(&ev);
+            tg_morphos_fold(pool, sizeof(pool), &pos, ev.ev_lo);
+            tg_morphos_fold(pool, sizeof(pool), &pos, ev.ev_hi);
+        }
+        for (s = 0; s < (spin & 0x3fUL); ++s) {
+            spin += (spin << 2) + 0x9e3779b9UL + i;
+        }
+    }
+    tg_mtproto_sha512(pool, sizeof(pool), digest);
+    memset(pool, 0, sizeof(pool));
+}
+
+static int tg_morphos_random_fallback(unsigned char *bytes,
+                                      unsigned long byte_count)
+{
+    static unsigned char state[TG_MTPROTO_SHA512_LENGTH];
+    static int seeded = 0;
+    unsigned char fresh[TG_MTPROTO_SHA512_LENGTH];
+    unsigned char block[TG_MTPROTO_SHA512_LENGTH];
+    unsigned char mix[2 * TG_MTPROTO_SHA512_LENGTH];
+    unsigned long produced;
+    unsigned long counter;
+    unsigned long chunk;
+    unsigned int j;
+
+    tg_morphos_timer_open();
+    tg_morphos_gather(fresh);
+    if (!seeded) {
+        memcpy(state, fresh, sizeof(state));
+        seeded = 1;
+    }
+    /* state := SHA512(state || fresh) -- absorb new entropy each call. */
+    memcpy(mix, state, TG_MTPROTO_SHA512_LENGTH);
+    memcpy(mix + TG_MTPROTO_SHA512_LENGTH, fresh, TG_MTPROTO_SHA512_LENGTH);
+    tg_mtproto_sha512(mix, sizeof(mix), state);
+
+    produced = 0;
+    counter = 0;
+    while (produced < byte_count) {
+        unsigned long c;
+
+        memcpy(mix, state, TG_MTPROTO_SHA512_LENGTH);
+        c = counter;
+        for (j = 0; j < 8U; ++j) {
+            mix[TG_MTPROTO_SHA512_LENGTH + j] = (unsigned char)(c & 0xffUL);
+            c >>= 8;
+        }
+        tg_mtproto_sha512(mix, TG_MTPROTO_SHA512_LENGTH + 8UL, block);
+        chunk = byte_count - produced;
+        if (chunk > (unsigned long)TG_MTPROTO_SHA512_LENGTH) {
+            chunk = (unsigned long)TG_MTPROTO_SHA512_LENGTH;
+        }
+        memcpy(bytes + produced, block, chunk);
+        produced += chunk;
+        ++counter;
+    }
+    /* Ratchet the state so a later call differs even without fresh entropy. */
+    memcpy(mix, state, TG_MTPROTO_SHA512_LENGTH);
+    mix[TG_MTPROTO_SHA512_LENGTH] = 0x01;
+    tg_mtproto_sha512(mix, TG_MTPROTO_SHA512_LENGTH + 1UL, state);
+
+    memset(fresh, 0, sizeof(fresh));
+    memset(block, 0, sizeof(block));
+    memset(mix, 0, sizeof(mix));
+    return 1;
+}
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
     int fd;
@@ -150,25 +319,26 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
     if (fd < 0) {
         fd = open("/dev/random", O_RDONLY);
     }
-    if (fd < 0) {
-#if TG_ENABLE_TLS
-        if (RAND_bytes(bytes, (int)byte_count) == 1) {
+    if (fd >= 0) {
+        offset = 0;
+        while (offset < byte_count) {
+            got = read(fd, bytes + offset, byte_count - offset);
+            if (got <= 0) {
+                break;
+            }
+            offset += (unsigned long)got;
+        }
+        close(fd);
+        if (offset >= byte_count) {
             return 1;
         }
+    }
+#if TG_ENABLE_TLS
+    if (RAND_bytes(bytes, (int)byte_count) == 1) {
+        return 1;
+    }
 #endif
-        return 0;
-    }
-    offset = 0;
-    while (offset < byte_count) {
-        got = read(fd, bytes + offset, byte_count - offset);
-        if (got <= 0) {
-            close(fd);
-            return 0;
-        }
-        offset += (unsigned long)got;
-    }
-    close(fd);
-    return 1;
+    return tg_morphos_random_fallback(bytes, byte_count);
 }
 
 static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer_size,
