@@ -3873,6 +3873,71 @@ static void tg_mtproto_print_cache_text(FILE *stream, const char *text)
 #endif
 }
 
+/* Maximum number of UTF-8 characters of a group/channel title shown as the
+   per-line "[group]" prefix before it is truncated with "..". */
+#define TG_MTPROTO_GROUP_LABEL_MAX 16UL
+
+/* Print at most max_chars UTF-8 characters of label, appending ".." when the
+   label was longer. Counting whole UTF-8 sequences (not raw bytes) keeps
+   accented/multibyte titles from being cut in the middle of a character. */
+static void tg_mtproto_print_label_truncated(FILE *stream, const char *label,
+                                             unsigned long max_chars)
+{
+    char buf[128];
+    unsigned long i;
+    unsigned long out;
+    unsigned long chars;
+    int truncated;
+
+    if (stream == 0 || label == 0) {
+        return;
+    }
+    i = 0UL;
+    out = 0UL;
+    chars = 0UL;
+    truncated = 0;
+    while (label[i] != '\0') {
+        unsigned char lead;
+        unsigned long seq;
+        unsigned long k;
+
+        if (chars >= max_chars) {
+            truncated = 1;
+            break;
+        }
+        lead = (unsigned char)label[i];
+        if (lead < 0x80U) {
+            seq = 1UL;
+        } else if ((lead & 0xE0U) == 0xC0U) {
+            seq = 2UL;
+        } else if ((lead & 0xF0U) == 0xE0U) {
+            seq = 3UL;
+        } else if ((lead & 0xF8U) == 0xF0U) {
+            seq = 4UL;
+        } else {
+            seq = 1UL;
+        }
+        if (out + seq >= sizeof(buf)) {
+            truncated = 1;
+            break;
+        }
+        for (k = 0UL; k < seq && label[i] != '\0'; ++k) {
+            buf[out++] = label[i++];
+        }
+        ++chars;
+    }
+    if (truncated) {
+        while (out > 0UL && buf[out - 1UL] == ' ') {
+            --out;
+        }
+    }
+    buf[out] = '\0';
+    tg_mtproto_print_cache_text(stream, buf);
+    if (truncated) {
+        fputs("..", stream);
+    }
+}
+
 static void tg_mtproto_copy_cache_field(char *dest,
                                         unsigned long dest_size,
                                         const char *begin,
@@ -6395,6 +6460,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     unsigned long access_hash_hi;
     unsigned long access_hash_lo;
     int has_access_hash;
+    int is_group;
     unsigned long i;
     unsigned long max_seen_message_id;
     unsigned long printed;
@@ -6423,6 +6489,8 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
+    is_group = (peer_constructor == TG_MTPROTO_PEER_CHAT_CONSTRUCTOR ||
+                peer_constructor == TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR);
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_get_history_peer(
             &writer, peer_constructor, peer_id_hi, peer_id_lo,
@@ -6488,6 +6556,15 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         if (!include_outgoing && texts.messages[i].is_out) {
             continue;
         }
+        /* In a group/channel prefix every line with the (truncated) chat title
+           so the user keeps both the group and the sender in view. 1:1 chats
+           skip the prefix: there the peer already is the sender. */
+        if (is_group && peer_label != 0 && peer_label[0] != '\0') {
+            fputc('[', stream);
+            tg_mtproto_print_label_truncated(stream, peer_label,
+                                             TG_MTPROTO_GROUP_LABEL_MAX);
+            fprintf(stream, "] ");
+        }
         if (texts.messages[i].is_out) {
             if (own_label != 0 && own_label[0] != '\0') {
                 tg_mtproto_print_cache_text(stream, own_label);
@@ -6518,9 +6595,15 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
             if (sender != 0) {
                 tg_mtproto_print_cache_text(stream, sender);
                 fprintf(stream, ": ");
-            } else if (peer_label != 0 && peer_label[0] != '\0') {
+            } else if (!is_group && peer_label != 0 &&
+                       peer_label[0] != '\0') {
+                /* 1:1 chat: the peer is the sender. */
                 tg_mtproto_print_cache_text(stream, peer_label);
                 fprintf(stream, ": ");
+            } else if (is_group) {
+                /* Group sender we could not resolve; the [group] prefix is
+                   already shown, so just mark the unknown author. */
+                fprintf(stream, "?: ");
             } else {
                 fprintf(stream, "them: ");
             }
