@@ -2706,6 +2706,21 @@ static int tg_message_text_resync(tg_mtproto_tl_reader *reader,
     return 0;
 }
 
+void tg_mtproto_parse_message_peers(const unsigned char *body,
+                                    unsigned long body_length,
+                                    tg_mtproto_peer_cache *out)
+{
+    if (out == 0) {
+        return;
+    }
+    memset(out, 0, sizeof(*out));
+    if (body == 0) {
+        return;
+    }
+    (void)tg_peer_cache_scan_chats(body, body_length, out);
+    (void)tg_peer_cache_scan_users(body, body_length, out);
+}
+
 tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_cache(
     unsigned long constructor,
     const unsigned char *body,

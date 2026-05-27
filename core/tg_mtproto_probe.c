@@ -6392,8 +6392,10 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     unsigned long i;
     unsigned long max_seen_message_id;
     unsigned long printed;
+    unsigned long k;
     FILE *quiet;
     tg_mtproto_message_text_list texts;
+    static tg_mtproto_peer_cache sender_cache;
     tg_mtproto_rpc_result result;
     tg_mtproto_tl_writer writer;
     static const char label[] = "mtproto messages.getHistory(peer)";
@@ -6454,6 +6456,10 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
 #endif
     tg_mtproto_close_quiet_stream(quiet, stream);
 
+    /* Resolve group-message senders from the response's users/chats. */
+    tg_mtproto_parse_message_peers(result.result_body,
+                                   result.result_body_length, &sender_cache);
+
     max_seen_message_id = last_seen_message_id != 0 ?
         *last_seen_message_id : 0UL;
     printed = 0UL;
@@ -6483,11 +6489,35 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
             } else {
                 fprintf(stream, "me: ");
             }
-        } else if (peer_label != 0 && peer_label[0] != '\0') {
-            tg_mtproto_print_cache_text(stream, peer_label);
-            fprintf(stream, ": ");
         } else {
-            fprintf(stream, "them: ");
+            const char *sender = 0;
+            if (texts.messages[i].from_constructor != 0UL) {
+                for (k = 0UL; k < sender_cache.count; ++k) {
+                    if (sender_cache.entries[k].peer_constructor ==
+                            texts.messages[i].from_constructor &&
+                        sender_cache.entries[k].id_hi ==
+                            texts.messages[i].from_id_hi &&
+                        sender_cache.entries[k].id_lo ==
+                            texts.messages[i].from_id_lo) {
+                        if (sender_cache.entries[k].title[0] != '\0') {
+                            sender = sender_cache.entries[k].title;
+                        } else if (sender_cache.entries[k].username[0] !=
+                                   '\0') {
+                            sender = sender_cache.entries[k].username;
+                        }
+                        break;
+                    }
+                }
+            }
+            if (sender != 0) {
+                tg_mtproto_print_cache_text(stream, sender);
+                fprintf(stream, ": ");
+            } else if (peer_label != 0 && peer_label[0] != '\0') {
+                tg_mtproto_print_cache_text(stream, peer_label);
+                fprintf(stream, ": ");
+            } else {
+                fprintf(stream, "them: ");
+            }
         }
         tg_mtproto_print_cache_text(stream, texts.messages[i].text);
         fprintf(stream, "\n");

@@ -418,6 +418,14 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
     unsigned long body_length,
     tg_mtproto_message_text_list *out);
 
+/*
+ * Extracts users/chats/channels referenced by a messages.* response into a peer
+ * cache, so a group history can resolve each message's from_id to a name.
+ */
+void tg_mtproto_parse_message_peers(const unsigned char *body,
+                                    unsigned long body_length,
+                                    tg_mtproto_peer_cache *out);
+
 tg_mtproto_tl_status tg_mtproto_parse_updates_summary(
     unsigned long constructor,
     const unsigned char *body,
