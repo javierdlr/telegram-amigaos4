@@ -3304,11 +3304,15 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
         migrate_dc = (unsigned long)(rc - TG_MTPROTO_PHONE_MIGRATE_RC_BASE);
         if (tg_mtproto_production_endpoint_for_dc(migrate_dc, &migrate_host,
                                                  &migrate_dc_text) == 0) {
-            /* The account is homed on another DC. Migrate silently and let the
-               same progress dots keep running, rather than announcing the DC
-               switch and printing a second "Sending login code request." */
+            /* Show the DC switch and re-announce sendCode so the user has a
+               visible midway marker during the long DH handshake. (We tried
+               making this silent but the resulting one-long-gap-before-dots
+               looked like a freeze on slow CPUs / flaky links.) */
+            fprintf(stream, "Using Telegram DC %s.\n", migrate_dc_text);
             current_host = migrate_host;
             current_dc_id_text = migrate_dc_text;
+            fprintf(stream, "Sending login code request.\n");
+            fflush(stream);
             rc = tg_mtproto_auth_send_code_file(current_host, port,
                                                 current_dc_id_text, api_file,
                                                 phone, auth_file,
