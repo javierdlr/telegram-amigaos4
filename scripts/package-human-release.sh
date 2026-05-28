@@ -221,7 +221,12 @@ package_one() {
 
     cp "$binary" "$dest/telegram-test"
     write_launcher "$dest/TelegramAmiga"
-    cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
+    if [ "$expected" = "amigaos4" ] &&
+        [ -f "$ROOT_DIR/assets/TelegramAmigaOS4.info" ]; then
+        cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$dest/TelegramAmiga.info"
+    else
+        cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
+    fi
     cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/telegram-api.txt"
     write_readme "$dest/README.txt" "$platform"
 

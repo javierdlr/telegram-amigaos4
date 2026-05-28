@@ -37,7 +37,11 @@ mkdir -p "$DEST_DIR/scripts"
 cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
 cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
 cp "$ROOT_DIR/scripts/TelegramAmiga" "$DEST_DIR/TelegramAmiga"
-cp "$ROOT_DIR/assets/TelegramAmiga.info" "$DEST_DIR/TelegramAmiga.info"
+if [ -f "$ROOT_DIR/assets/TelegramAmigaOS4.info" ]; then
+  cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$DEST_DIR/TelegramAmiga.info"
+else
+  cp "$ROOT_DIR/assets/TelegramAmiga.info" "$DEST_DIR/TelegramAmiga.info"
+fi
 cp "$ROOT_DIR/scripts/BuildAmigaOS4Offline" "$DEST_DIR/BuildAmigaOS4Offline"
 cp "$ROOT_DIR/scripts/BuildAmigaOS4AmiSSL" "$DEST_DIR/BuildAmigaOS4AmiSSL"
 cp "$ROOT_DIR/scripts/RunAmigaOS4Preflight" "$DEST_DIR/RunAmigaOS4Preflight"
