@@ -492,6 +492,9 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
                                    unsigned long buffer_size, unsigned long *bytes_received,
                                    char *error_buffer, unsigned long error_buffer_size)
 {
+    unsigned long timeout_seconds;
+    fd_set read_fds;
+    struct timeval timeout;
     long rc;
 
     if (bytes_received != 0) {
@@ -499,6 +502,33 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
     }
     if (error_buffer != 0 && error_buffer_size > 0) {
         error_buffer[0] = '\0';
+    }
+
+    /* Bound the blocking recv() with a select() timeout, mirroring the MorphOS
+       backend. Without this the encrypted-query receive loop in
+       tg_mtproto_send_saved_query_on_context() can block forever inside recv()
+       when the server goes quiet (e.g. a contacts.search from /add with no
+       prompt reply): its 12s wall-clock budget is only checked between reads,
+       so a stuck recv() never lets it fire and the chat hangs after /add. */
+    timeout_seconds = tg_net_connect_timeout_seconds();
+    if (timeout_seconds == 0UL) {
+        timeout_seconds = 30UL;
+    }
+    FD_ZERO(&read_fds);
+    FD_SET((int)connection->platform_handle, &read_fds);
+    timeout.tv_sec = (long)timeout_seconds;
+    timeout.tv_usec = 0;
+    rc = select((int)connection->platform_handle + 1, &read_fds, 0, 0,
+                &timeout);
+    if (rc <= 0 || !FD_ISSET((int)connection->platform_handle, &read_fds)) {
+        if (rc == 0) {
+            tg_platform_set_error(error_buffer, error_buffer_size,
+                                  "socket receive timed out");
+        } else {
+            tg_platform_set_error(error_buffer, error_buffer_size,
+                                  strerror(errno));
+        }
+        return TG_NET_RECV_FAILED;
     }
 
     rc = recv((int)connection->platform_handle, buffer, buffer_size, 0);
