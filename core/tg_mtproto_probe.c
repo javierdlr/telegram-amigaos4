@@ -1106,6 +1106,51 @@ static void tg_login_progress_dot(void)
  * single progress dot, so the login shows a quiet semi-animated loader instead
  * of raw "mtproto ... phase ..." logs.
  */
+/*
+ * Tell the user WHERE Telegram delivered the login code.
+ *
+ * On accounts that already have a Telegram session somewhere, the server
+ * picks `auth.sentCodeTypeApp` and pushes the code through those clients
+ * instead of an SMS. Without this hint the user keeps waiting for a text
+ * message that will never arrive (the AROS / desktop-only setup hits this).
+ */
+static void tg_mtproto_print_login_code_hint(FILE *stream,
+                                             unsigned long type_constructor)
+{
+    const char *hint = 0;
+
+    if (stream == 0) {
+        return;
+    }
+    switch (type_constructor) {
+    case 0x3dbb5986UL: /* auth.sentCodeTypeApp */
+        hint = "Check your other Telegram apps (mobile/desktop/web) for the"
+               " code.";
+        break;
+    case 0xc000bba2UL: /* auth.sentCodeTypeSms */
+    case 0xa416ac81UL: /* auth.sentCodeTypeSmsWord */
+    case 0xb37794afUL: /* auth.sentCodeTypeSmsPhrase */
+    case 0xd9565c39UL: /* auth.sentCodeTypeFragmentSms */
+    case 0x009fd736UL: /* auth.sentCodeTypeFirebaseSms */
+        hint = "Telegram is sending the code by SMS to your phone.";
+        break;
+    case 0x5353e5a7UL: /* auth.sentCodeTypeCall */
+        hint = "Telegram will call your phone and speak the code.";
+        break;
+    case 0xab03c6d9UL: /* auth.sentCodeTypeFlashCall */
+    case 0x82006484UL: /* auth.sentCodeTypeMissedCall */
+        hint = "Telegram is calling: the last digits of the caller ID are the"
+               " code.";
+        break;
+    case 0xf450f59bUL: /* auth.sentCodeTypeEmailCode */
+        hint = "Check your email for the code.";
+        break;
+    default:
+        return; /* unknown delivery type - stay silent rather than mislead */
+    }
+    fprintf(stream, "%s\n", hint);
+}
+
 static void tg_mtproto_login_phase(FILE *stream, const char *phase)
 {
     if (stream == 0) {
@@ -2456,6 +2501,7 @@ int tg_mtproto_auth_send_code(const char *host,
     }
 
     fprintf(stream, "Login code sent.\n");
+    tg_mtproto_print_login_code_hint(stream, sent_code.type_constructor);
     fflush(stream);
     return 0;
 }
