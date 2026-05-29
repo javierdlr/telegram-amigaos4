@@ -29,12 +29,21 @@ marks `cross/ppc-morphos-sdk` with the `morphos-sdk-license` condition.
 The explicit `ACCEPT_LHA_LICENSE=1` opt-in is also required because pkgsrc uses
 `archivers/lha` to extract the MorphOS SDK archive.
 
+By default this flow uses an embedded Dockerfile template and does not read a
+tracked file from this repository. To use a custom file, pass
+`MORPHOS_CROSS_DOCKERFILE=/path/to/Dockerfile`.
+
 Useful overrides:
 
 ```sh
 ACCEPT_MORPHOS_SDK_LICENSE=1 ACCEPT_LHA_LICENSE=1 MAKE_JOBS=8 scripts/docker-morphos-cross-image.sh
 ACCEPT_MORPHOS_SDK_LICENSE=1 ACCEPT_LHA_LICENSE=1 PKGSRC_BRANCH=pkgsrc-2026Q1 scripts/docker-morphos-cross-image.sh
 ACCEPT_MORPHOS_SDK_LICENSE=1 ACCEPT_LHA_LICENSE=1 IMAGE=telegram-amiga-morphos-cross:local scripts/docker-morphos-cross-image.sh
+```
+
+```sh
+MORPHOS_CROSS_DOCKERFILE=/path/to/custom-morphos-cross.Dockerfile \
+ACCEPT_MORPHOS_SDK_LICENSE=1 ACCEPT_LHA_LICENSE=1 scripts/docker-morphos-cross-image.sh
 ```
 
 ## Build Telegram Amiga For MorphOS

@@ -96,17 +96,19 @@ come later, only if the platform constraints make them realistic.
 
 ## Public Releases
 
-Current cross-platform pre-alpha release set:
+Current human packages include a one-click launcher, icon, README and a bundled
+public `telegram-api.txt` for TelegramAmiga. They do not include local tokens,
+auth files, phone-code files, passwords or peer caches.
 
-- [AmigaOS 3.x pre-alpha tester aac07e2](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-prealpha-20260523-aac07e2)
-- [MorphOS pre-alpha tester aac07e2](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-prealpha-20260523-aac07e2)
-- [AmigaOS 4.x pre-alpha tester aac07e2](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-prealpha-20260523-aac07e2)
-- [AROS i386 ABIv0 TLS pre-alpha tester aac07e2](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-tls-prealpha-20260523-aac07e2)
-- [AROS x86_64 diagnostic artifact aac07e2](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260523-aac07e2)
+Latest human releases:
 
-Current human packages include a one-click launcher, icon, README and a
-bundled public `telegram-api.txt` for TelegramAmiga. They do not include local
-tokens, auth files, phone-code files, passwords or peer caches.
+- [AmigaOS 3.x human release 20260528](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-human-20260528-8fe171b)
+- [MorphOS human release 20260528](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-human-20260528-8fe171b)
+- [AmigaOS 4.x human release 20260529](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-human-20260529-os4human-startfix)
+- [AROS i386 ABIv0 human release 20260528](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-human-20260528-91b0506)
+
+AROS x86_64 is not part of the current user release set. It remains a
+diagnostic/porting target until the runtime path is stable.
 
 ## Quick Start: MTProto Account Chat
 

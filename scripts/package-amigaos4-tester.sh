@@ -36,6 +36,7 @@ cp "$ROOT_DIR/docs/MTPROTO_REAL_LOGIN.md" "$DEST_DIR/MTPROTO_REAL_LOGIN.md"
 mkdir -p "$DEST_DIR/scripts"
 cp "$ROOT_DIR"/scripts/mtproto-*.sh "$DEST_DIR/scripts/"
 cp "$ROOT_DIR"/scripts/RunMTProto* "$DEST_DIR/"
+cp "$ROOT_DIR/scripts/RunMTProtoStart" "$DEST_DIR/RunMTProtoStart"
 cp "$ROOT_DIR/scripts/TelegramAmiga" "$DEST_DIR/TelegramAmiga"
 if [ -f "$ROOT_DIR/assets/TelegramAmigaOS4.info" ]; then
   cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$DEST_DIR/TelegramAmiga.info"
@@ -47,6 +48,11 @@ cp "$ROOT_DIR/scripts/BuildAmigaOS4AmiSSL" "$DEST_DIR/BuildAmigaOS4AmiSSL"
 cp "$ROOT_DIR/scripts/RunAmigaOS4Preflight" "$DEST_DIR/RunAmigaOS4Preflight"
 cp "$ROOT_DIR/scripts/RunAmigaOS4GetMe" "$DEST_DIR/RunAmigaOS4GetMe"
 cp "$ROOT_DIR/scripts/RunAmigaOS4HumanChat" "$DEST_DIR/RunAmigaOS4HumanChat"
+
+if [ ! -f "$DEST_DIR/RunMTProtoStart" ]; then
+    echo "Package error: missing RunMTProtoStart launcher helper." >&2
+    exit 1
+fi
 
 cat > "$DEST_DIR/README.txt" <<EOF
 Telegram Amiga - AmigaOS 4.x pre-alpha tester

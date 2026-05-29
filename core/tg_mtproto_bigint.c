@@ -17,13 +17,13 @@
 #define TG_ENABLE_TLS 0
 #endif
 
-/* Use OpenSSL/AmiSSL BN_mod_exp whenever a bignum-capable TLS backend is
-   linked. This is essential on slow targets (e.g. AmigaOS4 on emulated PPC):
-   the naive square-and-multiply modexp of a 2048-bit DH exponent is so slow
-   that the MTProto auth handshake exceeds the server's timeout and the server
-   closes the connection (set-client-dh-failed). AmigaOS4 links AmiSSL via
-   TG_AMIGAOS4_ENABLE_AMISSL, which previously was NOT covered here. */
-#if TG_AMIGAOS3_ENABLE_AMISSL || TG_AMIGAOS4_ENABLE_AMISSL || TG_ENABLE_TLS
+/* Use a fast bignum TLS backend's BN_mod_exp when one is linked: real OpenSSL
+   on AROS (TG_ENABLE_TLS) and AmiSSL on AmigaOS3. AmigaOS4 deliberately does
+   NOT use this path: AmiSSL's BN_mod_exp is slow (or falls back) on emulated
+   PPC (~60s per 2048-bit modexp, which blows past the auth handshake timeout).
+   OS4 instead uses the in-tree Montgomery modexp below, which is O(n^2),
+   ~25x faster here, and has no AmiSSL dependency. */
+#if TG_AMIGAOS3_ENABLE_AMISSL || TG_ENABLE_TLS
 #define TG_MTPROTO_BIGINT_USE_OPENSSL 1
 #include <openssl/bn.h>
 #else
@@ -259,6 +259,124 @@ void tg_mtproto_bigint_mod_mul(
     memcpy(out, result, TG_MTPROTO_BIGINT_SIZE);
 }
 
+/* ---- Fast modular exponentiation: little-endian Montgomery (CIOS) ----
+   The historical mod_exp/mod_mul above are bit-by-bit double-and-add, i.e.
+   O(n^3) over a 2048-bit operand. On a slow target (AmigaOS4 on emulated PPC)
+   that is ~60s per modexp, so the two DH modexps blow past the server's auth
+   handshake timeout. Montgomery multiplication is O(n^2) and is ~25x faster
+   here, with no AmiSSL/OpenSSL dependency. */
+
+#define TG_BN_WORDS (TG_MTPROTO_BIGINT_SIZE / 4U)
+typedef unsigned long long tg_bn_dword;   /* 64-bit accumulator */
+
+static int tg_w_cmp(const unsigned int *a, const unsigned int *b,
+                    unsigned long nw)
+{
+    long i;
+    for (i = (long)nw - 1L; i >= 0L; --i) {
+        if (a[i] < b[i]) {
+            return -1;
+        }
+        if (a[i] > b[i]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void tg_w_sub(unsigned int *a, const unsigned int *b, unsigned long nw)
+{
+    unsigned long i;
+    tg_bn_dword borrow;
+
+    borrow = 0ULL;
+    for (i = 0UL; i < nw; ++i) {
+        tg_bn_dword d;
+        d = (tg_bn_dword)a[i] - (tg_bn_dword)b[i] - borrow;
+        a[i] = (unsigned int)d;
+        borrow = (d >> 32) & 1ULL;
+    }
+}
+
+static void tg_w_double_mod(unsigned int *x, const unsigned int *m,
+                            unsigned long nw)
+{
+    unsigned long i;
+    unsigned int carry;
+
+    carry = 0U;
+    for (i = 0UL; i < nw; ++i) {
+        tg_bn_dword v;
+        v = ((tg_bn_dword)x[i] << 1) | carry;
+        x[i] = (unsigned int)v;
+        carry = (unsigned int)(v >> 32) & 1U;
+    }
+    if (carry != 0U || tg_w_cmp(x, m, nw) >= 0) {
+        tg_w_sub(x, m, nw);
+    }
+}
+
+/* -m^-1 mod 2^32, m odd (Newton's iteration; doubles correct bits each step) */
+static unsigned int tg_w_inv0(unsigned int m0)
+{
+    unsigned int inv;
+    inv = m0;                         /* correct mod 8 */
+    inv = inv * (2U - m0 * inv);      /* mod 2^6  */
+    inv = inv * (2U - m0 * inv);      /* mod 2^12 */
+    inv = inv * (2U - m0 * inv);      /* mod 2^24 */
+    inv = inv * (2U - m0 * inv);      /* mod 2^48 -> covers 2^32 */
+    return (unsigned int)(0U - inv);  /* -m0^-1 mod 2^32 */
+}
+
+/* out = a*b*R^-1 mod m (CIOS), little-endian 32-bit words, m odd,
+   n_inv0 = -m^-1 mod 2^32 */
+static void tg_mont_mul_w(unsigned int *out, const unsigned int *a,
+                          const unsigned int *b, const unsigned int *m,
+                          unsigned int n_inv0, unsigned long nw)
+{
+    unsigned int t[TG_BN_WORDS + 2U];
+    unsigned long i;
+    unsigned long j;
+    tg_bn_dword carry;
+    tg_bn_dword sum;
+    unsigned int mm;
+
+    for (i = 0UL; i < nw + 2UL; ++i) {
+        t[i] = 0U;
+    }
+    for (i = 0UL; i < nw; ++i) {
+        tg_bn_dword bi;
+        bi = (tg_bn_dword)b[i];
+        carry = 0ULL;
+        for (j = 0UL; j < nw; ++j) {
+            sum = (tg_bn_dword)t[j] + (tg_bn_dword)a[j] * bi + carry;
+            t[j] = (unsigned int)sum;
+            carry = sum >> 32;
+        }
+        sum = (tg_bn_dword)t[nw] + carry;
+        t[nw] = (unsigned int)sum;
+        t[nw + 1UL] = (unsigned int)(sum >> 32);
+        mm = (unsigned int)((tg_bn_dword)t[0] * (tg_bn_dword)n_inv0);
+        carry = ((tg_bn_dword)t[0] +
+                 (tg_bn_dword)mm * (tg_bn_dword)m[0]) >> 32;
+        for (j = 1UL; j < nw; ++j) {
+            sum = (tg_bn_dword)t[j] + (tg_bn_dword)mm * (tg_bn_dword)m[j] +
+                  carry;
+            t[j - 1UL] = (unsigned int)sum;
+            carry = sum >> 32;
+        }
+        sum = (tg_bn_dword)t[nw] + carry;
+        t[nw - 1UL] = (unsigned int)sum;
+        t[nw] = t[nw + 1UL] + (unsigned int)(sum >> 32);
+    }
+    for (i = 0UL; i < nw; ++i) {
+        out[i] = t[i];
+    }
+    if (t[nw] != 0U || tg_w_cmp(out, m, nw) >= 0) {
+        tg_w_sub(out, m, nw);
+    }
+}
+
 void tg_mtproto_bigint_mod_exp(
     const unsigned char base[TG_MTPROTO_BIGINT_SIZE],
     const unsigned char *exponent,
@@ -266,9 +384,20 @@ void tg_mtproto_bigint_mod_exp(
     const unsigned char modulus[TG_MTPROTO_BIGINT_SIZE],
     unsigned char output[TG_MTPROTO_BIGINT_SIZE])
 {
-    unsigned char result[TG_MTPROTO_BIGINT_SIZE];
-    unsigned char power[TG_MTPROTO_BIGINT_SIZE];
-    unsigned long bit;
+    unsigned long nb = TG_MTPROTO_BIGINT_SIZE;
+    unsigned long nw = TG_BN_WORDS;
+    unsigned int m_w[TG_BN_WORDS];
+    unsigned int base_w[TG_BN_WORDS];
+    unsigned int rr[TG_BN_WORDS];
+    unsigned int mont_base[TG_BN_WORDS];
+    unsigned int x[TG_BN_WORDS];
+    unsigned int one_w[TG_BN_WORDS];
+    unsigned int tmp[TG_BN_WORDS];
+    unsigned int n_inv0;
+    unsigned long i;
+    unsigned long k;
+    long top;
+    long bit;
 
 #if TG_MTPROTO_BIGINT_USE_OPENSSL
     if (tg_bigint_mod_exp_openssl(base, exponent, exponent_length, modulus,
@@ -277,19 +406,91 @@ void tg_mtproto_bigint_mod_exp(
     }
 #endif
 
-    memset(result, 0, sizeof(result));
-    result[TG_MTPROTO_BIGINT_SIZE - 1U] = 1U;
-    tg_bigint_mod_reduce(base, modulus, power);
     if (exponent_length > TG_MTPROTO_BIGINT_EXP_MAX) {
         exponent_length = TG_MTPROTO_BIGINT_EXP_MAX;
     }
-    for (bit = 0UL; bit < exponent_length * 8UL; ++bit) {
-        if (tg_bigint_bit(exponent, exponent_length, bit)) {
-            tg_mtproto_bigint_mod_mul(result, power, modulus, result);
+
+    /* Montgomery needs an odd modulus; fall back to the simple bit method for
+       an even modulus (does not occur for DH/RSA). */
+    if ((modulus[nb - 1UL] & 1U) == 0U) {
+        unsigned char result[TG_MTPROTO_BIGINT_SIZE];
+        unsigned char power[TG_MTPROTO_BIGINT_SIZE];
+        memset(result, 0, sizeof(result));
+        result[TG_MTPROTO_BIGINT_SIZE - 1U] = 1U;
+        tg_bigint_mod_reduce(base, modulus, power);
+        for (bit = 0L; bit < (long)(exponent_length * 8UL); ++bit) {
+            if (tg_bigint_bit(exponent, exponent_length, (unsigned long)bit)) {
+                tg_mtproto_bigint_mod_mul(result, power, modulus, result);
+            }
+            tg_mtproto_bigint_mod_mul(power, power, modulus, power);
         }
-        tg_mtproto_bigint_mod_mul(power, power, modulus, power);
+        memcpy(output, result, TG_MTPROTO_BIGINT_SIZE);
+        return;
     }
-    memcpy(output, result, TG_MTPROTO_BIGINT_SIZE);
+
+    /* big-endian bytes -> little-endian 32-bit words */
+    for (k = 0UL; k < nw; ++k) {
+        unsigned long p = nb - 4UL * (k + 1UL);
+        m_w[k] = ((unsigned int)modulus[p] << 24) |
+                 ((unsigned int)modulus[p + 1UL] << 16) |
+                 ((unsigned int)modulus[p + 2UL] << 8) |
+                 (unsigned int)modulus[p + 3UL];
+        base_w[k] = ((unsigned int)base[p] << 24) |
+                    ((unsigned int)base[p + 1UL] << 16) |
+                    ((unsigned int)base[p + 2UL] << 8) |
+                    (unsigned int)base[p + 3UL];
+    }
+
+    n_inv0 = tg_w_inv0(m_w[0]);
+
+    /* reduce base modulo modulus (DH/RSA base < modulus, so 0-1 subtraction) */
+    while (tg_w_cmp(base_w, m_w, nw) >= 0) {
+        tg_w_sub(base_w, m_w, nw);
+    }
+
+    /* rr = R^2 mod m, R = 2^(32*nw): start at 1, double 2*(32*nw) times mod m */
+    for (i = 0UL; i < nw; ++i) {
+        rr[i] = 0U;
+    }
+    rr[0] = 1U;
+    for (k = 0UL; k < 64UL * nw; ++k) {
+        tg_w_double_mod(rr, m_w, nw);
+    }
+
+    for (i = 0UL; i < nw; ++i) {
+        one_w[i] = 0U;
+    }
+    one_w[0] = 1U;
+    tg_mont_mul_w(x, one_w, rr, m_w, n_inv0, nw);          /* x = mont(1) */
+    tg_mont_mul_w(mont_base, base_w, rr, m_w, n_inv0, nw); /* base * R mod m */
+
+    top = -1L;
+    for (bit = (long)(exponent_length * 8UL) - 1L; bit >= 0L; --bit) {
+        if (tg_bigint_bit(exponent, exponent_length, (unsigned long)bit)) {
+            top = bit;
+            break;
+        }
+    }
+
+    /* left-to-right square-and-multiply in Montgomery form */
+    for (bit = top; bit >= 0L; --bit) {
+        tg_mont_mul_w(tmp, x, x, m_w, n_inv0, nw);
+        memcpy(x, tmp, sizeof(tmp));
+        if (tg_bigint_bit(exponent, exponent_length, (unsigned long)bit)) {
+            tg_mont_mul_w(tmp, x, mont_base, m_w, n_inv0, nw);
+            memcpy(x, tmp, sizeof(tmp));
+        }
+    }
+
+    /* leave Montgomery form: result = x * R^-1 mod m = mont_mul(x, 1) */
+    tg_mont_mul_w(tmp, x, one_w, m_w, n_inv0, nw);
+    for (k = 0UL; k < nw; ++k) {
+        unsigned long p = nb - 4UL * (k + 1UL);
+        output[p] = (unsigned char)(tmp[k] >> 24);
+        output[p + 1UL] = (unsigned char)(tmp[k] >> 16);
+        output[p + 2UL] = (unsigned char)(tmp[k] >> 8);
+        output[p + 3UL] = (unsigned char)tmp[k];
+    }
 }
 
 void tg_mtproto_bigint_from_u32(

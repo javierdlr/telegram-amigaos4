@@ -3,6 +3,8 @@
 
 build/*
 !.gitkeep
+http-root/
+*.log
 
 telegram-token.txt
 telegram-password.txt

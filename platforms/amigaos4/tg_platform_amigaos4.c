@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <time.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
 #include <proto/socket.h>
@@ -42,6 +43,7 @@
 #endif
 
 #include "tg_platform.h"
+#include "tg_mtproto_crypto.h"
 
 #if defined(__amigaos4__)
 struct Library *SocketBase = 0;
@@ -189,6 +191,146 @@ int tg_platform_stdin_set_raw(int enabled)
 #endif
 }
 
+#if defined(__amigaos4__)
+/*
+ * In-tree CSPRNG for AmigaOS 4.x (SHA-256 Hash-DRBG).
+ *
+ * AmiSSL's first RAND_bytes() call triggers OpenSSL provider initialisation
+ * and DRBG (re)seeding, which is pathologically slow on OS4 / emulated PPC
+ * (measured ~2 minutes before the first random byte is produced). MTProto on
+ * OS4 uses the in-tree big-integer and SHA implementations for all of its
+ * cryptography, so we avoid AmiSSL entirely for randomness: we gather local
+ * entropy and run it through SHA-256 in a Hash-DRBG construction.
+ *
+ * Entropy sources: PPC time-base register (high resolution, jitter), wall
+ * clock (gettimeofday + time), several run-varying addresses and a per-call
+ * counter. Each call mixes fresh entropy into a working key, emits output as
+ * SHA-256(key || block-counter), then ratchets the persistent state forward
+ * (SHA-256(key || 0x01)) so prior output cannot be reconstructed.
+ */
+static unsigned char tg_os4_drbg_state[TG_MTPROTO_SHA256_LENGTH];
+static int tg_os4_drbg_ready = 0;
+
+static unsigned long tg_os4_timebase(void)
+{
+    unsigned long tb = 0;
+#if defined(__GNUC__)
+    __asm__ volatile("mftb %0" : "=r"(tb));
+#endif
+    return tb;
+}
+
+static unsigned long tg_os4_entropy_gather(unsigned char *buf, unsigned long cap)
+{
+    unsigned long n = 0;
+    unsigned long i;
+    struct timeval tv;
+    time_t now;
+    void *p;
+    struct Task *task;
+
+    now = time(0);
+    if (n + sizeof(now) <= cap) {
+        memcpy(buf + n, &now, sizeof(now));
+        n += sizeof(now);
+    }
+
+    /* High-resolution time-base sampled in a variable-duration jitter loop. */
+    for (i = 0; i < 96UL && n + sizeof(unsigned long) <= cap; ++i) {
+        unsigned long tb = tg_os4_timebase();
+        volatile unsigned long spin;
+        unsigned long k;
+        memcpy(buf + n, &tb, sizeof(tb));
+        n += sizeof(tb);
+        spin = tb;
+        for (k = 0; k < (tb & 0x3fUL); ++k) {
+            spin = (spin * 2654435761UL) + k;
+        }
+        (void)spin;
+        if (n + sizeof(tv) <= cap) {
+            gettimeofday(&tv, 0);
+            memcpy(buf + n, &tv, sizeof(tv));
+            n += sizeof(tv);
+        }
+    }
+
+    p = (void *)&tv;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    p = (void *)buf;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    p = (void *)IExec;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    task = FindTask(0);
+    if (n + sizeof(task) <= cap) { memcpy(buf + n, &task, sizeof(task)); n += sizeof(task); }
+
+    return n;
+}
+
+static void tg_os4_drbg_seed(void)
+{
+    unsigned char pool[1024];
+    unsigned long len = tg_os4_entropy_gather(pool, sizeof(pool));
+    tg_mtproto_sha256(pool, len, tg_os4_drbg_state);
+    tg_os4_drbg_ready = 1;
+}
+
+static void tg_os4_drbg_generate(unsigned char *out, unsigned long n)
+{
+    static unsigned long calls = 0;
+    unsigned char key[TG_MTPROTO_SHA256_LENGTH];
+    unsigned char block[TG_MTPROTO_SHA256_LENGTH];
+    unsigned long off;
+    unsigned long ctr;
+
+    if (!tg_os4_drbg_ready) {
+        tg_os4_drbg_seed();
+    }
+
+    /* Derive a per-call working key from the state plus fresh entropy. */
+    {
+        unsigned char work[TG_MTPROTO_SHA256_LENGTH + 32];
+        unsigned long wn = TG_MTPROTO_SHA256_LENGTH;
+        struct timeval tv;
+        unsigned long tb = tg_os4_timebase();
+        memcpy(work, tg_os4_drbg_state, TG_MTPROTO_SHA256_LENGTH);
+        gettimeofday(&tv, 0);
+        ++calls;
+        memcpy(work + wn, &tv, sizeof(tv)); wn += sizeof(tv);
+        memcpy(work + wn, &tb, sizeof(tb)); wn += sizeof(tb);
+        memcpy(work + wn, &calls, sizeof(calls)); wn += sizeof(calls);
+        tg_mtproto_sha256(work, wn, key);
+    }
+
+    off = 0;
+    ctr = 0;
+    while (off < n) {
+        unsigned char cb[TG_MTPROTO_SHA256_LENGTH + 4];
+        unsigned long take;
+        memcpy(cb, key, TG_MTPROTO_SHA256_LENGTH);
+        cb[TG_MTPROTO_SHA256_LENGTH + 0] = (unsigned char)((ctr >> 24) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 1] = (unsigned char)((ctr >> 16) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 2] = (unsigned char)((ctr >> 8) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 3] = (unsigned char)(ctr & 0xffUL);
+        tg_mtproto_sha256(cb, sizeof(cb), block);
+        take = n - off;
+        if (take > TG_MTPROTO_SHA256_LENGTH) {
+            take = TG_MTPROTO_SHA256_LENGTH;
+        }
+        memcpy(out + off, block, take);
+        off += take;
+        ++ctr;
+    }
+
+    /* Ratchet the persistent state forward. */
+    {
+        unsigned char rb[TG_MTPROTO_SHA256_LENGTH + 1];
+        memcpy(rb, key, TG_MTPROTO_SHA256_LENGTH);
+        rb[TG_MTPROTO_SHA256_LENGTH] = 0x01;
+        tg_mtproto_sha256(rb, sizeof(rb), tg_os4_drbg_state);
+    }
+}
+#endif /* __amigaos4__ */
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
 #if defined(__amigaos4__)
@@ -198,14 +340,8 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
     if (byte_count == 0) {
         return 1;
     }
-#if TG_AMIGAOS4_ENABLE_AMISSL
-    if (tg_amigaos4_amissl_init(0, 0) == 0 &&
-        RAND_bytes(bytes, (int)byte_count) == 1) {
-        return 1;
-    }
-#endif
-    memset(bytes, 0, byte_count);
-    return 0;
+    tg_os4_drbg_generate(bytes, byte_count);
+    return 1;
 #else
     int fd;
     unsigned long offset;

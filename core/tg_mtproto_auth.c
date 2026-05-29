@@ -123,33 +123,74 @@ static unsigned long long tg_mtproto_u64_mod_mul(unsigned long long a,
     return result;
 }
 
+/* Brent's variant of Pollard's rho. Compared with the Floyd version it uses
+   fewer modular multiplications per step and, crucially, batches the gcd so a
+   64-bit modular gcd (a slow software division on 32-bit targets such as
+   AmigaOS4) runs once per ~128 steps instead of every step. This is what makes
+   pq factoring fast enough on emulated PPC (was ~120s, now a few seconds). */
 static unsigned long long tg_mtproto_pollard_rho(unsigned long long n,
                                                  unsigned long long c)
 {
     unsigned long long x;
     unsigned long long y;
-    unsigned long long d;
+    unsigned long long ys;
+    unsigned long long q;
+    unsigned long long g;
+    unsigned long long r;
     unsigned long long diff;
-    unsigned long steps;
+    unsigned long long i;
+    unsigned long long k;
+    unsigned long long limit;
+    const unsigned long long m = 128ULL;
 
-    x = 2ULL;
+    if ((n & 1ULL) == 0ULL) {
+        return 2ULL;
+    }
+
     y = 2ULL;
-    d = 1ULL;
-    steps = 0UL;
-
-    while (d == 1ULL && steps < 100000UL) {
-        x = (tg_mtproto_u64_mod_mul(x, x, n) + c) % n;
-        y = (tg_mtproto_u64_mod_mul(y, y, n) + c) % n;
-        y = (tg_mtproto_u64_mod_mul(y, y, n) + c) % n;
-        diff = x > y ? x - y : y - x;
-        d = tg_mtproto_u64_gcd(diff, n);
-        ++steps;
+    x = 2ULL;
+    ys = 2ULL;
+    q = 1ULL;
+    g = 1ULL;
+    r = 1ULL;
+    while (g == 1ULL) {
+        x = y;
+        for (i = 0ULL; i < r; ++i) {
+            y = (tg_mtproto_u64_mod_mul(y, y, n) + c) % n;
+        }
+        k = 0ULL;
+        while (k < r && g == 1ULL) {
+            ys = y;
+            limit = (r - k) < m ? (r - k) : m;
+            for (i = 0ULL; i < limit; ++i) {
+                y = (tg_mtproto_u64_mod_mul(y, y, n) + c) % n;
+                diff = x > y ? x - y : y - x;
+                if (diff != 0ULL) {
+                    q = tg_mtproto_u64_mod_mul(q, diff, n);
+                }
+            }
+            g = tg_mtproto_u64_gcd(q, n);
+            k += m;
+        }
+        r <<= 1;
+        if (r > 4000000ULL) {
+            break;
+        }
     }
 
-    if (d == n || d == 1ULL) {
-        return 0ULL;
+    if (g == n || g <= 1ULL) {
+        g = 1ULL;
+        do {
+            ys = (tg_mtproto_u64_mod_mul(ys, ys, n) + c) % n;
+            diff = x > ys ? x - ys : ys - x;
+            g = tg_mtproto_u64_gcd(diff, n);
+        } while (g == 1ULL);
     }
-    return d;
+
+    if (g > 1ULL && g < n) {
+        return g;
+    }
+    return 0ULL;
 }
 
 static int tg_mtproto_fingerprint_equal(const tg_mtproto_fingerprint *a,
