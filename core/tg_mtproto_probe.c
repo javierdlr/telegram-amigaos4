@@ -1469,6 +1469,22 @@ static int tg_mtproto_open_auth_context(const char *host,
     context->last_msg_id = third_msg_id;
     context->session.last_msg_id_hi = third_msg_id.hi;
     context->session.last_msg_id_lo = third_msg_id.lo;
+    /* Seed the server-time offset from the handshake's server_time so the very
+       first encrypted query already carries a server-aligned msg_id. Without
+       this, a client whose local clock is wrong (notably AmigaOS4 on emulated
+       PPC, which drifts and resets to the 1978 epoch) sends the first query
+       with a stale msg_id and the server answers bad_msg_notification 16/17.
+       With a correct clock the delta is ~0, so other platforms are unaffected. */
+    {
+        unsigned long handshake_now = (unsigned long)time(0);
+        if ((unsigned long)inner.server_time >= handshake_now) {
+            context->server_time_delta_seconds =
+                (long)((unsigned long)inner.server_time - handshake_now);
+        } else {
+            context->server_time_delta_seconds =
+                -(long)(handshake_now - (unsigned long)inner.server_time);
+        }
+    }
     return 0;
 }
 
