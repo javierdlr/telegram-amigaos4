@@ -9,11 +9,21 @@
 #define TG_AMIGAOS3_ENABLE_AMISSL 0
 #endif
 
+#if !defined(TG_AMIGAOS4_ENABLE_AMISSL)
+#define TG_AMIGAOS4_ENABLE_AMISSL 0
+#endif
+
 #if !defined(TG_ENABLE_TLS)
 #define TG_ENABLE_TLS 0
 #endif
 
-#if TG_AMIGAOS3_ENABLE_AMISSL || TG_ENABLE_TLS
+/* Use OpenSSL/AmiSSL BN_mod_exp whenever a bignum-capable TLS backend is
+   linked. This is essential on slow targets (e.g. AmigaOS4 on emulated PPC):
+   the naive square-and-multiply modexp of a 2048-bit DH exponent is so slow
+   that the MTProto auth handshake exceeds the server's timeout and the server
+   closes the connection (set-client-dh-failed). AmigaOS4 links AmiSSL via
+   TG_AMIGAOS4_ENABLE_AMISSL, which previously was NOT covered here. */
+#if TG_AMIGAOS3_ENABLE_AMISSL || TG_AMIGAOS4_ENABLE_AMISSL || TG_ENABLE_TLS
 #define TG_MTPROTO_BIGINT_USE_OPENSSL 1
 #include <openssl/bn.h>
 #else
