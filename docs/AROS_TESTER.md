@@ -107,22 +107,11 @@ current standard-CRT output is not runtime-valid. See
 If `make` reports `Clock skew detected`, check the AROS system date/time or
 refresh the source timestamps after unpacking the archive.
 
-## Offline Test
+## Common test walkthrough
 
-```text
-telegram-test --help
-telegram-test --telegram-json-self-test
-telegram-test --telegram-get-updates-self-test
-telegram-test --telegram-read-once-state-self-test
-telegram-test --telegram-offset-state-self-test
-telegram-test --telegram-inbox-self-test
-telegram-test --telegram-echo-once-self-test
-telegram-test --telegram-send-message-self-test
-telegram-test --telegram-client-state-self-test
-telegram-test --telegram-client-self-test
-telegram-test --telegram-text-client-self-test
-telegram-test --telegram-tls-status
-```
+For the shared Bot-API command walkthrough — offline self-tests, creating a test bot, reading messages, human chat, the manual console and reporting results — see `HOW_TO_TEST.md` and `USER_RUNBOOK.md` (included in this package). On AROS, prefix commands with `--data-dir PROGDIR:` as shown below where required.
+
+## AROS Notes
 
 Expected TLS status without validation flags:
 
@@ -148,37 +137,16 @@ Use `Execute`; it is tolerant of ZIP extraction clearing script protection
 bits. The helpers pass `--data-dir PROGDIR:` so token and state files stay next
 to `telegram-test`.
 
-Plain network diagnostics:
-
-```text
-telegram-test --net-test example.com 80
-telegram-test --http-test example.com 80 /
-```
-
-These tests do not require a Telegram token.
-
-TLS diagnostics, no Telegram token required:
-
-```text
-telegram-test --https-test api.telegram.org 443 /
-telegram-test --telegram-preflight
-```
-
-TLS diagnostics with certificate validation:
-
-```text
-telegram-test --tls-verify --tls-ca-file ca-bundle.crt --https-test api.telegram.org 443 /
-telegram-test --tls-verify --tls-ca-file ca-bundle.crt --telegram-preflight
-```
-
 On the current AROS One test VM, a YAM CA bundle from the AROS One DVD passed
-this check after being copied to `DH0:TGTEST/ca-bundle.crt`.
+the certificate-validation check after being copied to
+`DH0:TGTEST/ca-bundle.crt`.
 
 If DNS resolution fails immediately after boot or after several short network
 tests, run a simple network diagnostic such as `--net-test api.telegram.org 443`
 and retry the HTTPS command.
 
-Live Bot API check, after creating `telegram-token.txt` in the same drawer:
+On AROS, the default-flow Bot API commands take a `--data-dir PROGDIR:` prefix
+so token and state files stay next to `telegram-test`:
 
 ```text
 telegram-test --data-dir PROGDIR: --telegram-getme-default
@@ -188,25 +156,6 @@ telegram-test --data-dir PROGDIR: --telegram-client-console
 telegram-test --data-dir PROGDIR: --telegram-human-chat
 ```
 
-Inside `telegram-client-console`, use `/read` or `/refresh` to poll, `/chats`
-to list saved chats, `/last` to show the last inbox line, `/status` to show
-local status, `/open <index>` or a bare numeric index to enter a
-line-oriented chat, `/send <text>` to send to the selected chat,
-`/send-id <chat-id> <text>` to send directly when the chat list is empty and
-`/quit` to quit. The selected chat is persisted in
-`telegram-selected-chat.txt`.
-Inside chat mode, type normal text to send. Use `/watch <seconds>` in the
-top-level prompt or chat mode to auto-read while waiting, or `/watch off` to
-disable it. It does not send replies automatically.
-
-For a terse human chat, use
-`telegram-test --data-dir PROGDIR: --telegram-human-chat`. Type normal text to
-send, press Enter on an empty line to check for replies, and type `quit` to
-exit. If no chat is selected yet, send a Telegram message to the bot and press
-Enter, or type the Bot API chat id once. This mode does not redraw a prompt,
-waits silently when there are no updates, keeps log lines out of the chat
-transcript, and still appends `telegram-inbox.log`.
-
 Once a chat has been saved by polling a message from the bot, send by saved
 chat index with:
 
@@ -215,21 +164,3 @@ telegram-test --data-dir PROGDIR: --telegram-chats-default
 telegram-test --data-dir PROGDIR: --telegram-reply-default 1 "Hello from AROS"
 telegram-test --data-dir PROGDIR: --telegram-send-last-default "Hello from AROS"
 ```
-
-## Reporting Results
-
-Please report:
-
-- AROS distribution and version;
-- 32-bit or 64-bit;
-- compiler name and version;
-- whether AmiSSL is installed;
-- whether OpenSSL/TLS was enabled;
-- whether `--tls-verify` was tested and which CA bundle/path was used;
-- full output of the offline test commands;
-- output of the plain TCP/HTTP diagnostics, if networking is configured;
-- output of HTTPS, `getMe`, read-only polling and controlled reply/send tests,
-  if a disposable token was used;
-- whether the build required changing `CC` or other Makefile variables.
-
-Do not include Telegram tokens or screenshots containing tokens.
