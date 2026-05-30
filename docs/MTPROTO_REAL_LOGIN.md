@@ -125,25 +125,15 @@ telegram-test --mtproto-chat-file $HOST $PORT telegram-api.txt telegram-auth.bin
 telegram-test --mtproto-auth-get-history-self-file $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 ```
 
-Wrapper equivalents:
+Each step has a `scripts/mtproto-<name>.sh` wrapper taking the same arguments
+(e.g. `mtproto-send-code.sh`, `mtproto-sign-in.sh`, `mtproto-login-wizard.sh`,
+`mtproto-check-password.sh`, `mtproto-list-peers.sh`, `mtproto-chat.sh`). Three
+combined read-only smokes are also provided:
 
 ```text
-scripts/mtproto-send-code.sh $HOST $PORT $DC_ID telegram-api.txt <phone> telegram-auth.bin phone-code-hash.txt
-scripts/mtproto-sign-in.sh $HOST $PORT telegram-api.txt telegram-auth.bin <phone> phone-code-hash.txt <code> $DC_ID
-scripts/mtproto-login-wizard.sh $HOST $PORT $DC_ID telegram-api.txt telegram-auth.bin phone-code-hash.txt
-scripts/mtproto-get-password.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
-scripts/mtproto-check-password.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-password.txt
-scripts/mtproto-login-status.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
-scripts/mtproto-get-config.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID
-scripts/mtproto-get-dialogs.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
-scripts/mtproto-list-peers.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 20 telegram-peers.txt
-scripts/mtproto-get-history-peer.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt 1 1
-scripts/mtproto-chat.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID telegram-peers.txt
-scripts/mtproto-get-history-self.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
 scripts/mtproto-readonly-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10
-scripts/mtproto-login-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
-scripts/mtproto-safe-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
-scripts/mtproto-safe-smoke.sh $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 ./telegram-test
+scripts/mtproto-login-smoke.sh    $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
+scripts/mtproto-safe-smoke.sh     $HOST $PORT telegram-api.txt telegram-auth.bin $DC_ID 10 telegram-password.txt
 ```
 
 The read-only smoke wrapper runs status, config, dialog summary and Saved

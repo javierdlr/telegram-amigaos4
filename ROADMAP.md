@@ -33,44 +33,18 @@ on at least one real Amiga-like platform.
 - First message receive tests
 - Inbox-format receive-only polling with persistent offsets
 
-## Near-Term Technical Milestones
+## Current Status
 
-- Keep MorphOS and AmigaOS 3.x at the same verified level: TLS preflight,
-  `getMe`, receive-only polling and offset persistence.
-- Continue improving inbox output into the first practical text-reading
-  workflow. Current command-line inbox output already includes date/time,
-  sender, message kind, compact summaries and optional append-only logs.
-- Add controlled send-message workflows without automatic replies by default.
-  Current command-line aliases support manual sends after reading a chat id or
-  by selecting a saved chat from the local chat list.
-- Add small local conversation state files once the receive/send command line
-  flows are stable. Current append-only inbox logs and one-line chat state are
-  the first step.
-- The first manual-client preview now exists as `telegram-session-default`,
-  combining one receive pass, offset persistence, inbox logging and
-  one-line-per-chat state without sending replies.
-- A bounded manual-client loop and simple saved-chat listing now exist through
-  `telegram-session-loop-default`, `telegram-chats` and
-  `telegram-send-chat-default`.
-- A first single-command text preview now exists as
-  `telegram-manual-client-default`: it polls read-only updates, updates local
-  inbox/chat files and prints the saved chat list without automatic sends.
-- A shorter default workflow now exists as `telegram-client-default`,
-  `telegram-chats-default`, `telegram-reply-default` and
-  `telegram-send-last-default`, using default local state files and keeping the
-  most recently active chat at index 1.
-- A first interactive manual console now exists as `telegram-client-console`.
-  It can poll, list saved chats, send an explicit indexed reply and quit.
-- TLS security status is explicit through `telegram-tls-status`; certificate
-  validation is still a required future task before normal secure use.
-- AROS now has a BSD-socket TCP backend validated on AROS One i386 alt-abiv0
-  with offline self-tests, plain TCP/HTTP diagnostics, HTTPS preflight and
-  Telegram `getMe`. TLS builds link against OpenSSL from the AROS SDK.
-- Keep AROS and AmigaOS 4.x buildable while their networking/TLS backends are
-  developed with community or hardware feedback.
-- Bring the new AmigaOS 4.x/QEMU target to the offline self-test level first:
-  install or provide a PPC AmigaOS 4 toolchain, build the stub backend, then
-  run parser/manual-client self-tests before implementing TCP/TLS.
+The project has moved past the Bot-API diagnostic tester to a real MTProto
+client:
+
+- MTProto human releases ship for AmigaOS 3.x, MorphOS, AROS i386 and
+  AmigaOS 4.x: login wizard, 2FA/SRP, saved chat list, read and send.
+- A Bot-API text path stays available as a fallback for tokens/bots.
+- TLS certificate validation has passed a live CA-bundle smoke test on all four
+  platforms (see `docs/TLS_CERTIFICATES.md`).
+- Ongoing: entropy hardening on emulated targets, broader community testing and
+  packaging polish.
 
 ## Phase 4: User Interface
 

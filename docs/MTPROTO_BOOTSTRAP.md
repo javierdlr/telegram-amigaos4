@@ -5,58 +5,31 @@ SPDX-License-Identifier: MIT
 
 # MTProto Bootstrap
 
-This branch starts the MTProto work as an isolated experimental path. It does
-not replace the stable Bot API tester. User-login commands now exist, but they
-are explicit supervised probes rather than a general-purpose client.
+This is the developer reference for the MTProto client: the auth-key handshake,
+the user-login commands and the saved-session RPCs. The Bot API text path
+remains available as a fallback.
 
 ## Scope
 
-Current MTProto code is offline by default:
+The MTProto implementation covers the full auth-key handshake and the
+user-login/session layer:
 
-- TL little-endian primitive writer/reader;
-- TL `bytes`/`string` length and 4-byte padding handling;
-- `req_pq_multi` constructor serialization sample;
-- MTProto plain-message envelope sample with `auth_key_id = 0`;
-- TCP abridged and intermediate transport init plus packet framing samples;
-- static bootstrap DC name mapping based on Telegram web endpoint names;
-- deterministic client `msg_id` generation rules;
-- supervised `req_pq_multi` probe packet builder;
-- `resPQ` parser with nonce validation;
-- `pq` factorization tests;
-- RSA public-key fingerprint selection against a known-fingerprint list;
-- built-in Telegram production RSA public key material;
-- `p_q_inner_data_dc` and `req_DH_params` serialization;
-- MTProto RSA_PAD with AES-256-IGE and raw RSA public encryption;
-- live `req_DH_params` probe with `server_DH_params_ok` parsing;
-- `server_DH_inner_data` AES-IGE decrypt plus nonce/hash validation;
-- DH prime/g and public-value range validation against Telegram's known
-  authorization prime;
-- `client_DH_inner_data` and `set_client_DH_params` serialization;
-- `dh_gen_ok` parsing and non-persistent auth-key derivation;
-- `auth_key_id` and initial `server_salt` metadata derivation;
-- MTProto 2.0 encrypted-message framing and response decryption;
-- supervised encrypted `ping`/`pong` probe after auth-key creation;
-- platform RNG plumbing for probes;
-- curated auth-key file save/load helpers that refuse to save when secure RNG
-  is unavailable;
-- `initConnection`, `invokeWithLayer`, `auth.sendCode`, `auth.signIn`,
-  `auth.signUp`,
-  `rpc_result`, `rpc_error`, `bad_msg_notification` and `bad_server_salt`
-  serialization/parsing scaffolding;
-- explicit live `auth.sendCode` and `auth.signIn` commands, still isolated from
-  the Bot API path;
-- explicit `auth.signUp` command for validated test numbers that return
-  signup-required;
-- saved-session `help.getConfig`, `account.getPassword` and
-  `users.getUsers(inputUserSelf)` probes;
-- first saved-session `messages.getDialogs`, `messages.getHistory` on
-  `inputPeerSelf`, and `messages.sendMessage` to Saved Messages probes;
-- read-only dialog peer extraction from `messages.getDialogs` for user, chat
-  and channel peer ids, without printing message text or contact names;
-- best-effort `msgs_ack` for encrypted RPC responses and containers;
-- local session-forget command for plaintext auth test files;
-- portable SHA-1 and SHA-256 primitives with known-answer tests;
-- local MTProto session-state save/load skeleton.
+- transport: TL little-endian writer/reader, TCP abridged/intermediate framing,
+  plain and MTProto 2.0 encrypted envelopes, deterministic `msg_id`,
+  `bad_msg_notification` / `bad_server_salt` recovery, best-effort `msgs_ack`;
+- handshake: `req_pq_multi` -> `resPQ` (nonce check, `pq` factorization, RSA
+  fingerprint selection, built-in production RSA keys) -> `req_DH_params`
+  (RSA_PAD + AES-256-IGE) -> `server_DH_params_ok` decrypt + nonce/hash/prime
+  validation -> `set_client_DH_params` -> `dh_gen_ok` -> auth-key + initial
+  `server_salt` derivation;
+- login: `initConnection`/`invokeWithLayer`, `auth.sendCode`/`signIn`/`signUp`,
+  SRP 2FA via `account.getPassword` + `auth.checkPassword`, and an interactive
+  login wizard;
+- session: `help.getConfig`, `users.getUsers(self)`, `messages.getDialogs`
+  (with a local peer cache), `messages.getHistory`, `messages.sendMessage`, an
+  interactive chat mode, and local session-state save/load;
+- crypto: in-tree SHA-1/SHA-256, AES-256-IGE, RSA and big-int modexp, SRP, each
+  with known-answer self-tests; auth-key files refuse to save without secure RNG.
 
 The optional `--mtproto-req-pq-probe <host> <port>` and
 `--mtproto-req-dh-probe <host> <port> <dc-id>` commands are supervised
@@ -272,48 +245,24 @@ mtproto session self-test: ok
 mtproto self-test: ok
 ```
 
-## Design Boundary
+## Notes
 
-MTProto remains separate from the Bot API path:
-
-- no Bot API command depends on MTProto modules;
-- live MTProto user-auth commands are explicit and separate from Bot API
-  commands;
 - auth-key files are plaintext local test artifacts and must not be committed;
-- local auth-key deletion is explicit through `--mtproto-auth-forget`;
-- shared network/TLS/file helpers may be reused only after Bot API regression
-  tests stay green;
-- target-side validation starts only after offline MTProto self-tests are stable.
+  delete them with `--mtproto-auth-forget`;
+- the Bot API text path stays independent and does not depend on MTProto modules.
 
 ## Protocol References
 
-The bootstrap follows the official Telegram MTProto documentation:
+The implementation follows the official Telegram MTProto documentation. Core
+references (method/constructor pages are linked from these):
 
-- <https://core.telegram.org/mtproto>
 - <https://core.telegram.org/mtproto/description>
 - <https://core.telegram.org/mtproto/serialize>
 - <https://core.telegram.org/mtproto/transports>
 - <https://core.telegram.org/mtproto/auth_key>
 - <https://core.telegram.org/mtproto/samples-auth_key>
-- <https://core.telegram.org/schema/mtproto>
-- <https://core.telegram.org/mtproto/service_messages>
 - <https://core.telegram.org/mtproto/security_guidelines>
-- <https://core.telegram.org/method/auth.sendCode>
-- <https://core.telegram.org/method/auth.signIn>
-- <https://core.telegram.org/method/auth.signUp>
-- <https://core.telegram.org/method/help.getConfig>
-- <https://core.telegram.org/method/account.getPassword>
-- <https://core.telegram.org/method/users.getUsers>
-- <https://core.telegram.org/constructor/inputUserSelf>
-- <https://core.telegram.org/method/messages.getDialogs>
-- <https://core.telegram.org/constructor/dialog>
-- <https://core.telegram.org/constructor/message>
-- <https://core.telegram.org/constructor/messageEmpty>
-- <https://core.telegram.org/constructor/messageService>
-- <https://core.telegram.org/method/messages.getHistory>
-- <https://core.telegram.org/method/messages.sendMessage>
-- <https://core.telegram.org/type/InputPeer>
-- <https://core.telegram.org/constructor/inputPeerUser>
+- <https://core.telegram.org/schema/mtproto>
 - <https://core.telegram.org/api/srp>
 
 Important constraints for this codebase:
@@ -328,16 +277,8 @@ Important constraints for this codebase:
 
 ## Next Steps
 
-Next MTProto work should stay behind explicit self-tests:
+Open MTProto work (keep changes behind the explicit self-tests):
 
-1. validate the auth commands on Telegram Test DC with a generated test number;
-2. add SRP modular exponentiation and proof assembly from the parsed
-   `account.Password` parameters, then wire it into the existing
-   `auth.checkPassword` builder;
-3. validate `users.getUsers(inputUserSelf)` after sign-in;
-4. harden group/channel transcript rendering with sender labels from message
-   metadata, not only the selected peer label;
-5. add better peer filtering/searching for large account dialog lists;
-6. validate saved-session commands on AmigaOS3, MorphOS and AROS;
-7. keep Bot API and MTProto user login commands separate until login,
-   encrypted RPC parsing and session persistence are covered by tests.
+1. better peer filtering/searching for large account dialog lists;
+2. broader saved-session validation across platforms and account types;
+3. entropy hardening for the in-tree RNG on emulated targets.
