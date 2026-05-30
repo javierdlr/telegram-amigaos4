@@ -62,6 +62,37 @@ EOF
 write_readme() {
     readme_path=$1
     readme_platform=$2
+
+    case "$readme_platform" in
+    "AmigaOS 3.x")
+        readme_requirements="System requirements
+-------------------
+
+- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) with a working TCP/IP stack
+  (Roadshow, AmiTCP, Miami/MiamiDx) providing bsdsocket.library, plus a
+  working internet connection.
+- ixemul.library installed (LIBS:ixemul.library): this m68k build links
+  through the ixemul C runtime.
+- AmiSSL 5.18 or newer, using the variant that matches your CPU:
+    * 68060             -> AmiSSL 68060 variant
+    * Vampire / 68080   -> AmiSSL 68020/030/040/080 variant
+  If you swap AmiSSL libraries while the system is running, reboot or run
+  'Avail FLUSH' before starting.
+- A 68020 or better CPU (tested on 68080 / Vampire).
+- A few MB of free RAM; the launcher requests Stack 262144.
+"
+        ;;
+    *)
+        readme_requirements="System requirements
+-------------------
+
+- $readme_platform with a working TCP/IP stack (bsdsocket) and a working
+  internet connection.
+- A few MB of free RAM; the launcher requests Stack 262144.
+"
+        ;;
+    esac
+
     cat > "$readme_path" <<EOF
 Telegram Amiga
 ==============
@@ -73,6 +104,7 @@ Telegram Amiga is an early text-mode Telegram client for Amiga-like systems.
 This package is meant for human testing: open the drawer and double-click the
 TelegramAmiga icon.
 
+$readme_requirements
 Included files
 --------------
 
