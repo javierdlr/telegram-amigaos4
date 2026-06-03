@@ -11,6 +11,10 @@
  *
  * TG_NET_CLOSED means the peer closed the connection cleanly. TG_NET_UNSUPPORTED
  * is returned by platform stubs that do not implement networking yet.
+ * TG_NET_TIMEOUT means a bounded recv() elapsed with no data and nothing
+ * consumed from the stream, so the caller may safely retry (used by the
+ * encrypted-query receive loop to keep polling within its time budget instead
+ * of hard-failing on the first quiet interval).
  */
 typedef enum tg_net_status {
     TG_NET_OK = 0,
@@ -20,7 +24,8 @@ typedef enum tg_net_status {
     TG_NET_SEND_FAILED = 4,
     TG_NET_RECV_FAILED = 5,
     TG_NET_CLOSED = 6,
-    TG_NET_UNSUPPORTED = 7
+    TG_NET_UNSUPPORTED = 7,
+    TG_NET_TIMEOUT = 8
 } tg_net_status;
 
 /**

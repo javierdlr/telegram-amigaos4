@@ -341,6 +341,12 @@ static tg_net_status tg_mtproto_recv_exact(tg_net_connection *connection,
         status = tg_net_recv(connection, data + offset, length - offset,
                              &received, error_buffer, error_buffer_size);
         if (status != TG_NET_OK) {
+            /* A timeout after part of this chunk was already read cannot be
+               retried without losing the consumed bytes -> hard failure. Only a
+               timeout with nothing consumed (offset == 0) stays retryable. */
+            if (status == TG_NET_TIMEOUT && offset != 0UL) {
+                return TG_NET_RECV_FAILED;
+            }
             return status;
         }
         if (received == 0) {
@@ -383,7 +389,9 @@ static tg_net_status tg_mtproto_recv_abridged_packet(
         status = tg_mtproto_recv_exact(connection, length_header + 1, 3,
                                        error_buffer, error_buffer_size);
         if (status != TG_NET_OK) {
-            return status;
+            /* The length byte was already consumed, so a timeout here leaves the
+               packet half-read and is not safely retryable -> hard failure. */
+            return status == TG_NET_TIMEOUT ? TG_NET_RECV_FAILED : status;
         }
         length_words = ((unsigned long)length_header[1]) |
                        (((unsigned long)length_header[2]) << 8) |
@@ -395,8 +403,9 @@ static tg_net_status tg_mtproto_recv_abridged_packet(
         return TG_NET_RECV_FAILED;
     }
 
-    return tg_mtproto_recv_exact(connection, payload, *payload_length,
-                                 error_buffer, error_buffer_size);
+    status = tg_mtproto_recv_exact(connection, payload, *payload_length,
+                                   error_buffer, error_buffer_size);
+    return status == TG_NET_TIMEOUT ? TG_NET_RECV_FAILED : status;
 }
 
 static unsigned long tg_mtproto_read_u32_le(const unsigned char *data)
@@ -953,6 +962,18 @@ static int tg_mtproto_send_encrypted_query_limited(
                 net_status = tg_mtproto_recv_abridged_packet(
                     &context->connection, response, sizeof(response),
                     &response_length, error_buffer, sizeof(error_buffer));
+            }
+            if (net_status == TG_NET_TIMEOUT) {
+                /* No data within the per-recv timeout, and nothing was consumed
+                   from the stream: keep polling within the wall-clock budget
+                   (checked at the top of this loop) instead of failing the whole
+                   query on the first quiet interval. This is the common case
+                   while waiting for an rpc_result on a slow link; without it a
+                   single quiet recv surfaced as "Could not send message". A
+                   genuinely wedged session still soft-fails once the budget is
+                   spent, and the chat loop's reconnect-on-stall recovers it. */
+                net_status = TG_NET_OK;
+                continue;
             }
             if (net_status != TG_NET_OK) {
                 fprintf(stream, "%s: transport-failed (%s)\n", label,

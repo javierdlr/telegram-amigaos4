@@ -120,6 +120,8 @@ const char *tg_net_status_name(tg_net_status status)
         return "closed";
     case TG_NET_UNSUPPORTED:
         return "unsupported";
+    case TG_NET_TIMEOUT:
+        return "timeout";
     default:
         return "unknown";
     }

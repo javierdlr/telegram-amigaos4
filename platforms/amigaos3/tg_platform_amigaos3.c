@@ -423,7 +423,7 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
             tg_platform_set_error(error_buffer, error_buffer_size,
                                   sel == 0 ? "socket receive timed out"
                                            : "socket receive failed");
-            return TG_NET_RECV_FAILED;
+            return sel == 0 ? TG_NET_TIMEOUT : TG_NET_RECV_FAILED;
         }
     }
 #endif
