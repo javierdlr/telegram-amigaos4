@@ -391,6 +391,43 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
         error_buffer[0] = '\0';
     }
 
+#if TG_AMIGAOS3_ENABLE_AMISSL
+    /* Bound the blocking recv() with a select() timeout, mirroring the
+       AmigaOS4/MorphOS/AROS backends. Without this the encrypted-query receive
+       loop in tg_mtproto_send_saved_query_on_context() can block forever inside
+       recv() when a long-idle TCP connection is dropped silently (no FIN): its
+       ~12s wall-clock budget is only checked between reads, so a stuck recv()
+       never lets it fire and the chat session freezes after a while.
+
+       The bsdsocket/ixemul select() uses the devices/timer.h `struct timeval`
+       (whose tv_sec/tv_usec are union aliases of tv_secs/tv_micro) already in
+       scope via proto/dos.h, so no <sys/time.h> is pulled in (which would clash
+       with devices/timer.h). */
+    {
+        unsigned long timeout_seconds;
+        fd_set read_fds;
+        struct timeval timeout;
+        long sel;
+
+        timeout_seconds = tg_net_connect_timeout_seconds();
+        if (timeout_seconds == 0UL) {
+            timeout_seconds = 30UL;
+        }
+        FD_ZERO(&read_fds);
+        FD_SET((int)connection->platform_handle, &read_fds);
+        timeout.tv_sec = (long)timeout_seconds;
+        timeout.tv_usec = 0;
+        sel = select((int)connection->platform_handle + 1, &read_fds, 0, 0,
+                     &timeout);
+        if (sel <= 0 || !FD_ISSET((int)connection->platform_handle, &read_fds)) {
+            tg_platform_set_error(error_buffer, error_buffer_size,
+                                  sel == 0 ? "socket receive timed out"
+                                           : "socket receive failed");
+            return TG_NET_RECV_FAILED;
+        }
+    }
+#endif
+
     rc = recv(connection->platform_handle, buffer, (long)buffer_size, 0);
     if (rc < 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, "socket receive failed");
