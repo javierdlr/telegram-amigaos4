@@ -192,6 +192,12 @@ Private-message sends may be refused by Telegram with PEER_FLOOD for new or
 restricted accounts. If that happens, stop retrying for a while. Group chats
 can still be used as the write test path.
 
+If typed keys do not match the characters shown on screen, check the operating
+system keymap first. TelegramAmiga reads from the system console; keyboard
+layout is handled by the Amiga-like OS, not by the client. Set the correct
+layout in the system input preferences or startup files before testing accented
+characters.
+
 Keep screenshots clean: do not show phone numbers, login codes, passwords,
 tokens, telegram-auth.bin, or private messages.
 EOF

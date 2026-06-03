@@ -199,6 +199,17 @@ If a Bot API token is exposed, revoke it with BotFather. If account login
 material is exposed, treat the Telegram account as compromised and rotate what
 can be rotated.
 
+## Keyboard Layouts And Accented Characters
+
+TelegramAmiga reads text from the system console. Keyboard layout handling is
+done by the Amiga-like operating system, not by the client.
+
+If typed keys do not match the characters shown on screen, set the correct
+system keymap first, for example through the platform's input preferences or
+startup configuration. This is especially important when testing accented
+characters such as `à`, `è`, `ì`, `ò` and `ù`, and when using VNC, QEMU or
+remote-desktop tools that may apply their own keyboard mapping.
+
 ## Bot API Fallback Mode
 
 Bot API mode is still useful for target validation and bot-based experiments.
