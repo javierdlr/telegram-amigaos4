@@ -267,6 +267,14 @@ void tg_mtproto_bigint_mod_mul(
    here, with no AmiSSL/OpenSSL dependency. */
 
 #define TG_BN_WORDS (TG_MTPROTO_BIGINT_SIZE / 4U)
+
+/* The word-based Montgomery path uses 64-bit (unsigned long long) products.
+   On m68k the AmiSSL build links with -nodefaultlibs and has no libgcc, so the
+   64-bit multiply helper __muldi3 is unresolved. These helpers are therefore
+   compiled only for the in-tree backends (AmigaOS4, AROS without TLS); the
+   AmiSSL/OpenSSL builds (AmigaOS3, TLS) use BN_mod_exp plus a 32-bit bit-by-bit
+   fallback instead. */
+#if !TG_MTPROTO_BIGINT_USE_OPENSSL
 typedef unsigned long long tg_bn_dword;   /* 64-bit accumulator */
 
 static int tg_w_cmp(const unsigned int *a, const unsigned int *b,
@@ -376,6 +384,7 @@ static void tg_mont_mul_w(unsigned int *out, const unsigned int *a,
         tg_w_sub(out, m, nw);
     }
 }
+#endif /* !TG_MTPROTO_BIGINT_USE_OPENSSL */
 
 void tg_mtproto_bigint_mod_exp(
     const unsigned char base[TG_MTPROTO_BIGINT_SIZE],
@@ -384,6 +393,34 @@ void tg_mtproto_bigint_mod_exp(
     const unsigned char modulus[TG_MTPROTO_BIGINT_SIZE],
     unsigned char output[TG_MTPROTO_BIGINT_SIZE])
 {
+#if TG_MTPROTO_BIGINT_USE_OPENSSL
+    unsigned char result[TG_MTPROTO_BIGINT_SIZE];
+    unsigned char power[TG_MTPROTO_BIGINT_SIZE];
+    long bit;
+
+    if (tg_bigint_mod_exp_openssl(base, exponent, exponent_length, modulus,
+                                  output)) {
+        return;
+    }
+    /* OpenSSL/AmiSSL BN unavailable or failed (rare): bit-by-bit
+       double-and-add fallback. It uses only 32-bit operations, so the m68k
+       AmiSSL build (which links with -nodefaultlibs and has no libgcc) needs no
+       64-bit multiply helper. The word-based Montgomery below is compiled only
+       for the in-tree backends (AmigaOS4, AROS without TLS). */
+    if (exponent_length > TG_MTPROTO_BIGINT_EXP_MAX) {
+        exponent_length = TG_MTPROTO_BIGINT_EXP_MAX;
+    }
+    memset(result, 0, sizeof(result));
+    result[TG_MTPROTO_BIGINT_SIZE - 1U] = 1U;
+    tg_bigint_mod_reduce(base, modulus, power);
+    for (bit = 0L; bit < (long)(exponent_length * 8UL); ++bit) {
+        if (tg_bigint_bit(exponent, exponent_length, (unsigned long)bit)) {
+            tg_mtproto_bigint_mod_mul(result, power, modulus, result);
+        }
+        tg_mtproto_bigint_mod_mul(power, power, modulus, power);
+    }
+    memcpy(output, result, TG_MTPROTO_BIGINT_SIZE);
+#else
     unsigned long nb = TG_MTPROTO_BIGINT_SIZE;
     unsigned long nw = TG_BN_WORDS;
     unsigned int m_w[TG_BN_WORDS];
@@ -398,13 +435,6 @@ void tg_mtproto_bigint_mod_exp(
     unsigned long k;
     long top;
     long bit;
-
-#if TG_MTPROTO_BIGINT_USE_OPENSSL
-    if (tg_bigint_mod_exp_openssl(base, exponent, exponent_length, modulus,
-                                  output)) {
-        return;
-    }
-#endif
 
     if (exponent_length > TG_MTPROTO_BIGINT_EXP_MAX) {
         exponent_length = TG_MTPROTO_BIGINT_EXP_MAX;
@@ -491,6 +521,7 @@ void tg_mtproto_bigint_mod_exp(
         output[p + 2UL] = (unsigned char)(tmp[k] >> 8);
         output[p + 3UL] = (unsigned char)tmp[k];
     }
+#endif /* TG_MTPROTO_BIGINT_USE_OPENSSL */
 }
 
 void tg_mtproto_bigint_from_u32(
