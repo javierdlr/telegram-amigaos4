@@ -56,6 +56,14 @@
 #define TG_MTPROTO_QUERY_BUDGET_SECONDS 12UL
 
 /*
+ * Consecutive failed reads/sends in the interactive chat loop before it drops
+ * and reopens the connection. Recovers a wedged long-running session (stale
+ * salt/seqno, or a silently dropped TCP link) instead of polling a dead session
+ * forever.
+ */
+#define TG_MTPROTO_CHAT_STALL_LIMIT 3UL
+
+/*
  * auth.signIn outcome codes so the login wizard can tell apart the cases that
  * otherwise all collapse to a generic non-zero: a correct code on a 2FA account
  * (server asks for the password) versus a rejected code (user should retry the
@@ -974,6 +982,12 @@ static int tg_mtproto_send_encrypted_query_limited(
                         label);
                 return 2;
             }
+            /* Keep the server-time delta current on every decrypted server
+               message, not just on bad_msg 16/17. A mid-session reconnect zeroes
+               the context (delta=0), so without this an OS3 box with a drifting
+               clock would keep emitting msg_ids outside the +/-300s window and
+               the first post-reconnect query would fail. */
+            tg_mtproto_sync_time_from_server(context, &decrypted);
 #ifdef TG_MTPROTO_DIAG
             fprintf(stream, "%s: encrypted query phase parse body %lu.\n",
                     label, decrypted.body_length);
@@ -3992,6 +4006,45 @@ static void tg_mtproto_print_display_codepoint(FILE *stream, unsigned long cp)
         }
     }
 }
+
+/* Encode an ISO-8859-1 (Amiga console/keymap) line as UTF-8 for the MTProto
+   wire. 0x00-0x7F pass through; 0x80-0xFF -> two-byte UTF-8. Output can be up to
+   twice the input length. Returns 1 on success, 0 if it would overflow dst (dst
+   is then left empty). Without this, an accented character typed on the Amiga
+   (e.g. 'a-grave' = 0xE0) is sent as a lone 0xE0 byte, which is invalid UTF-8
+   and Telegram replaces it with U+FFFD. */
+static int tg_mtproto_latin1_to_utf8(const char *src, char *dst,
+                                     unsigned long dst_size)
+{
+    const unsigned char *s;
+    unsigned long i;
+    unsigned long o;
+
+    if (src == 0 || dst == 0 || dst_size == 0UL) {
+        return 0;
+    }
+    s = (const unsigned char *)src;
+    o = 0UL;
+    for (i = 0UL; s[i] != '\0'; ++i) {
+        unsigned char c = s[i];
+        if (c < 0x80U) {
+            if (o + 1UL >= dst_size) {
+                dst[0] = '\0';
+                return 0;
+            }
+            dst[o++] = (char)c;
+        } else {
+            if (o + 2UL >= dst_size) {
+                dst[0] = '\0';
+                return 0;
+            }
+            dst[o++] = (char)(0xc0U | (c >> 6));
+            dst[o++] = (char)(0x80U | (c & 0x3fU));
+        }
+    }
+    dst[o] = '\0';
+    return 1;
+}
 #endif
 
 static void tg_mtproto_print_cache_text(FILE *stream, const char *text)
@@ -6856,6 +6909,9 @@ int tg_mtproto_auth_chat_file(const char *host,
     char removed_label[128];
     char api_id[32];
     char line[512];
+#if TG_MTPROTO_DISPLAY_LATIN1
+    char send_line[1024];
+#endif
     const char *peer_arg;
     const char *username_arg;
     const char *search_arg;
@@ -6864,6 +6920,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     unsigned long last_seen_message_id;
     unsigned long requested_last_seen_message_id;
     unsigned long printed_message_count;
+    unsigned long consecutive_failures;
     unsigned long sent_message_id;
     unsigned long watch_seconds;
     unsigned long parsed_watch_seconds;
@@ -6970,6 +7027,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     /* Heavy accounts must reach the prompt before any blocking history read. */
     peer_history_ready = 0;
     line_length = 0UL;
+    consecutive_failures = 0UL;
     chat_quiet = tg_mtproto_open_quiet_stream(stream);
     tg_mtproto_chat_print_help(stream);
     fprintf(stream, "Auto-read every %lu second(s).\n", watch_seconds);
@@ -7032,6 +7090,16 @@ int tg_mtproto_auth_chat_file(const char *host,
                 peer_cache_file, peer_index, "5", quiet,
                 &last_seen_message_id, &printed_message_count, 1, 0, 0,
                 peer_label, own_label);
+            if (rc == 0) {
+                consecutive_failures = 0UL;
+            } else if (++consecutive_failures >= TG_MTPROTO_CHAT_STALL_LIMIT) {
+                /* The shared session looks wedged (e.g. stale salt/seqno after a
+                   long idle, or repeated soft timeouts that keep the connection
+                   open). Drop it so the next poll reopens a fresh connection and
+                   resumes, instead of polling a dead session forever. */
+                tg_mtproto_close_auth_context(&chat_context);
+                consecutive_failures = 0UL;
+            }
             chat_quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
             if (rc == 0 && printed_message_count > 0UL &&
                 (quiet == stream || chat_quiet_length > 0L)) {
@@ -7377,9 +7445,27 @@ int tg_mtproto_auth_chat_file(const char *host,
             continue;
         }
         quiet = tg_mtproto_open_quiet_stream(stream);
-        rc = tg_mtproto_auth_send_peer_on_context(
-            host, port, api_id, auth_file, dc_id_text, &chat_context,
-            peer_cache_file, peer_index, line, &sent_message_id, quiet);
+        {
+            const char *send_text = line;
+#if TG_MTPROTO_DISPLAY_LATIN1
+            /* The typed line is ISO-8859-1 (Amiga keymap); convert to UTF-8 so
+               accented characters reach Telegram intact. On overflow fall back
+               to the raw line (best effort). */
+            if (tg_mtproto_latin1_to_utf8(line, send_line, sizeof(send_line))) {
+                send_text = send_line;
+            }
+#endif
+            rc = tg_mtproto_auth_send_peer_on_context(
+                host, port, api_id, auth_file, dc_id_text, &chat_context,
+                peer_cache_file, peer_index, send_text, &sent_message_id,
+                quiet);
+        }
+        if (rc == 0) {
+            consecutive_failures = 0UL;
+        } else if (++consecutive_failures >= TG_MTPROTO_CHAT_STALL_LIMIT) {
+            tg_mtproto_close_auth_context(&chat_context);
+            consecutive_failures = 0UL;
+        }
         if (rc != 0) {
             tg_mtproto_close_quiet_stream(quiet, stream);
             if (rc == TG_MTPROTO_QUERY_SOFT_FAIL) {
