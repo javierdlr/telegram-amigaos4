@@ -6240,7 +6240,7 @@ static int tg_mtproto_auth_send_peer_on_context(
     memset(&result, 0, sizeof(result));
     qrc = tg_mtproto_send_saved_query_on_context(
             host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, stream, label, 200U);
+            writer.length, &result, stream, label, 600U);
     if (qrc != 0) {
         return qrc == TG_MTPROTO_QUERY_SOFT_FAIL ?
             TG_MTPROTO_QUERY_SOFT_FAIL : 2;
@@ -6679,6 +6679,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     unsigned long access_hash_lo;
     int has_access_hash;
     int is_group;
+    int query_rc;
     unsigned long i;
     unsigned long max_seen_message_id;
     unsigned long printed;
@@ -6717,11 +6718,16 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
-    if (tg_mtproto_send_saved_query_on_context(
-            host, port, api_id, auth_file, dc_id_text, context, query,
-            writer.length, &result, quiet, label, 200U) != 0) {
+    /* Propagate the real query result (SOFT_FAIL vs hard 2) instead of
+       collapsing to 2, so the chat shows "slow link" (timeout) vs "error N".
+       A higher receive cap lets one read drain more of a heavy account's
+       pending-update backlog before the time budget is spent. */
+    query_rc = tg_mtproto_send_saved_query_on_context(
+        host, port, api_id, auth_file, dc_id_text, context, query,
+        writer.length, &result, quiet, label, 600U);
+    if (query_rc != 0) {
         tg_mtproto_close_quiet_stream(quiet, stream);
-        return 2;
+        return query_rc;
     }
     if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
         (void)tg_mtproto_print_rpc_error(label, &result, quiet);
