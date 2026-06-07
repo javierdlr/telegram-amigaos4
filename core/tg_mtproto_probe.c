@@ -7058,34 +7058,6 @@ int tg_mtproto_auth_chat_file(const char *host,
     fprintf(stream, "Auto-read every %lu second(s).\n", watch_seconds);
     tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     for (;;) {
-        if (peer_index[0] != '\0' && !peer_history_ready) {
-            /* Show the recent conversation immediately when a chat is opened or
-               switched, before waiting for input, so the user sees context right
-               away (the old behaviour only showed it after the first 2s idle
-               auto-read tick). Bounded by the per-query time budget. */
-            peer_history_ready = 1;
-            requested_last_seen_message_id = 0UL;
-            printed_message_count = 0UL;
-            quiet = chat_quiet;
-            tg_mtproto_reset_quiet_stream(quiet, stream);
-            rc = tg_mtproto_auth_print_history_text_peer_on_context(
-                host, port, api_id, auth_file, dc_id_text, &chat_context,
-                peer_cache_file, peer_index, "5", quiet,
-                &requested_last_seen_message_id, &printed_message_count,
-                0, 1, 0, peer_label, own_label);
-            if (rc == 0) {
-                last_seen_message_id = requested_last_seen_message_id;
-                consecutive_failures = 0UL;
-            }
-            chat_quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
-            if (printed_message_count > 0UL &&
-                (quiet == stream || chat_quiet_length > 0L)) {
-                fprintf(stream, "\n");
-                tg_mtproto_replay_quiet_stream_length(quiet, stream,
-                                                      chat_quiet_length);
-            }
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
-        }
         if (watch_seconds == 0UL) {
             rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
                                                 &line_length, 3600UL, chat_raw,
@@ -7105,9 +7077,36 @@ int tg_mtproto_auth_chat_file(const char *host,
             if (peer_index[0] == '\0') {
                 continue;
             }
-            /* Opening history is now shown immediately at the top of the loop
-               when a chat is selected, so here we only do the periodic
-               auto-read of new messages. */
+            if (!peer_history_ready) {
+                /* One-shot: try once to show the opening history, then switch
+                   to normal auto-read. No empty 2s retry loop (which on heavy
+                   accounts kept reconnecting). include_outgoing shows both
+                   sides of the recent conversation when the chat opens. */
+                peer_history_ready = 1;
+                requested_last_seen_message_id = 0UL;
+                printed_message_count = 0UL;
+                quiet = chat_quiet;
+                tg_mtproto_reset_quiet_stream(quiet, stream);
+                rc = tg_mtproto_auth_print_history_text_peer_on_context(
+                    host, port, api_id, auth_file, dc_id_text, &chat_context,
+                    peer_cache_file, peer_index, "5", quiet,
+                    &requested_last_seen_message_id, &printed_message_count,
+                    0, 1, 0, peer_label, own_label);
+                if (rc == 0) {
+                    last_seen_message_id = requested_last_seen_message_id;
+                }
+                chat_quiet_length =
+                    tg_mtproto_quiet_stream_length(quiet, stream);
+                if (printed_message_count > 0UL &&
+                    (quiet == stream || chat_quiet_length > 0L)) {
+                    fprintf(stream, "\n");
+                    tg_mtproto_replay_quiet_stream_length(
+                        quiet, stream, chat_quiet_length);
+                    tg_mtproto_chat_print_input_prompt(stream, own_label,
+                                                       peer_label);
+                }
+                continue;
+            }
             quiet = chat_quiet;
             tg_mtproto_reset_quiet_stream(quiet, stream);
             printed_message_count = 0UL;
