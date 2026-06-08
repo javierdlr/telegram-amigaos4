@@ -27,7 +27,7 @@ The main development line is MTProto.
 
 The goal is a usable text-first Telegram client for:
 
-- AmigaOS 3.x
+- AmigaOS 3.x (no AmiSSL required — all crypto is in-tree; needs a 68020+ CPU)
 - MorphOS
 - AmigaOS 4.x
 - AROS i386
@@ -102,7 +102,7 @@ auth files, phone-code files, passwords or peer caches.
 
 Latest human releases:
 
-- [AmigaOS 3.x human release 20260528](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-human-20260528-8fe171b)
+- [AmigaOS 3.x human release 20260608 (AmiSSL-free, 68020+)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-human-20260608-1a74a0f)
 - [MorphOS human release 20260528](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-human-20260528-8fe171b)
 - [AmigaOS 4.x human release 20260529](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-human-20260529-os4human-startfix)
 - [AROS i386 ABIv0 human release 20260528](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-human-20260528-91b0506)
