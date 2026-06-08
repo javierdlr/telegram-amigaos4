@@ -102,7 +102,7 @@ auth files, phone-code files, passwords or peer caches.
 
 Latest human releases:
 
-- [AmigaOS 3.x human release 20260608 (AmiSSL-free, 68020+)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-human-20260608-1a74a0f)
+- [AmigaOS 3.x human release 20260608 (AmiSSL-free, 68020-68060)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-human-20260608-2685523)
 - [MorphOS human release 20260608](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-human-20260608-7485311)
 - [AmigaOS 4.x human release 20260608](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-human-20260608-7485311)
 - [AROS i386 ABIv0 human release 20260608](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-human-20260608-7485311)
