@@ -903,6 +903,8 @@ tg_mtproto_tl_status tg_mtproto_build_client_dh_request(
     unsigned char iv[32];
     unsigned char digest[TG_MTPROTO_SHA1_LENGTH];
     unsigned long g_b_offset;
+    unsigned long b_offset;
+    unsigned long b_length;
     unsigned long inner_length;
     unsigned long total_length;
     unsigned long pad_length;
@@ -917,14 +919,19 @@ tg_mtproto_tl_status tg_mtproto_build_client_dh_request(
 
     memset(base, 0, sizeof(base));
     base[TG_MTPROTO_DH_VALUE_MAX - 1U] = (unsigned char)inner->g;
-    tg_mtproto_bigint_mod_exp(base, b, TG_MTPROTO_DH_VALUE_MAX,
-                              inner->dh_prime, g_b);
+    b_offset = tg_mtproto_bigint_trim(b, TG_MTPROTO_DH_VALUE_MAX);
+    b_length = TG_MTPROTO_DH_VALUE_MAX - b_offset;
+    if (b_length == 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    tg_mtproto_bigint_mod_exp(base, b + b_offset, b_length, inner->dh_prime,
+                              g_b);
 
     memset(g_a, 0, sizeof(g_a));
     memcpy(g_a + TG_MTPROTO_DH_VALUE_MAX - inner->g_a_length, inner->g_a,
            (size_t)inner->g_a_length);
-    tg_mtproto_bigint_mod_exp(g_a, b, TG_MTPROTO_DH_VALUE_MAX,
-                              inner->dh_prime, auth_key);
+    tg_mtproto_bigint_mod_exp(g_a, b + b_offset, b_length, inner->dh_prime,
+                              auth_key);
 
     g_b_offset = tg_mtproto_bigint_trim(g_b, sizeof(g_b));
     tg_mtproto_tl_writer_init(&writer, inner_data, sizeof(inner_data));

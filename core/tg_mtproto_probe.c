@@ -40,10 +40,10 @@
 #define TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR 0x73f1f8dcUL
 /*
  * tg_mtproto_send_encrypted_query_limited soft-failure code: no matching
- * rpc_result within the bound (or bad_msg retries exhausted) but the TCP
- * connection is still alive and reusable. Callers on a persistent context must
- * NOT close the session in this case, to avoid a reconnect+update-flood loop on
- * heavy accounts. Other callers treat any non-zero return as a plain failure.
+ * rpc_result within the bound (or bad_msg retries exhausted). The TCP
+ * connection may still be alive, but a late rpc_result can poison the next
+ * query on a persistent chat context, so context callers close and reopen after
+ * a soft failure.
  */
 #define TG_MTPROTO_QUERY_SOFT_FAIL 3
 /*
@@ -62,6 +62,12 @@
  * forever.
  */
 #define TG_MTPROTO_CHAT_STALL_LIMIT 3UL
+#define TG_MTPROTO_CHAT_OPEN_HISTORY_ATTEMPTS 3U
+/* First login on OS3 can be slow, but a blocking recv() must not leave the
+   user staring at progress dots for minutes. This is deliberately wider than
+   the failed 5s experiment and only wraps the phone-code request. */
+#define TG_MTPROTO_LOGIN_NETWORK_TIMEOUT_SECONDS 20UL
+#define TG_MTPROTO_LOGIN_QUERY_BUDGET_SECONDS 45UL
 
 /*
  * auth.signIn outcome codes so the login wizard can tell apart the cases that
@@ -855,7 +861,8 @@ static int tg_mtproto_send_encrypted_query_limited(
     tg_mtproto_rpc_result *rpc_result,
     FILE *stream,
     const char *label,
-    unsigned int max_receive_attempts)
+    unsigned int max_receive_attempts,
+    unsigned long query_budget_seconds)
 {
     unsigned char encrypted_padding[64];
     static unsigned char payload[3072];
@@ -887,6 +894,9 @@ static int tg_mtproto_send_encrypted_query_limited(
     }
     if (max_receive_attempts == 0U) {
         max_receive_attempts = 32U;
+    }
+    if (query_budget_seconds == 0UL) {
+        query_budget_seconds = TG_MTPROTO_QUERY_BUDGET_SECONDS;
     }
     query_start_time = (unsigned long)time(0);
 
@@ -948,11 +958,18 @@ static int tg_mtproto_send_encrypted_query_limited(
         net_status = tg_mtproto_send_all(&context->connection, packet,
                                          writer.length, error_buffer,
                                          sizeof(error_buffer));
+        if (net_status == TG_NET_OK) {
+            /* MTProto seq_no is consumed by sending the content-related
+               request, not by receiving its rpc_result. Advance it immediately
+               so a soft timeout followed by a retry does not resend another
+               content message with the same session_id/seq_no pair. */
+            context->session.seq_no += 2UL;
+        }
         memset(&bad_msg, 0, sizeof(bad_msg));
         for (receive_attempt = 0U; receive_attempt < max_receive_attempts;
              ++receive_attempt) {
             if ((unsigned long)time(0) - query_start_time >=
-                    TG_MTPROTO_QUERY_BUDGET_SECONDS) {
+                    query_budget_seconds) {
                 break;  /* time budget hit: soft-fail, connection still alive */
             }
             if (net_status == TG_NET_OK) {
@@ -1077,7 +1094,6 @@ static int tg_mtproto_send_encrypted_query_limited(
                         label);
                 fflush(stream);
 #endif
-                context->session.seq_no += 2UL;
                 return 0;
             }
             response_constructor = decrypted.body_length >= 4UL ?
@@ -1121,7 +1137,21 @@ static int tg_mtproto_send_encrypted_query(
     const char *label)
 {
     return tg_mtproto_send_encrypted_query_limited(
-        context, body, body_length, rpc_result, stream, label, 32U);
+        context, body, body_length, rpc_result, stream, label, 32U,
+        TG_MTPROTO_QUERY_BUDGET_SECONDS);
+}
+
+static int tg_mtproto_send_encrypted_query_login(
+    tg_mtproto_auth_context *context,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_rpc_result *rpc_result,
+    FILE *stream,
+    const char *label)
+{
+    return tg_mtproto_send_encrypted_query_limited(
+        context, body, body_length, rpc_result, stream, label, 96U,
+        TG_MTPROTO_LOGIN_QUERY_BUDGET_SECONDS);
 }
 
 /*
@@ -1200,6 +1230,11 @@ static void tg_mtproto_login_phase(FILE *stream, const char *phase)
         fprintf(stream, "mtproto login: %s\n", phase);
     }
 #else
+    /* Human build: the login is fast now (WaitSelect recv + DC4 bootstrap), so
+       the per-phase progress strings ("Contacting Telegram", "Preparing secure
+       login key", ...) are just noise. Emit one dot per phase instead; the
+       verbose per-phase names remain available in the TG_MTPROTO_DIAG build
+       above for development. */
     (void)phase;
     fputc('.', stream);
 #endif
@@ -1258,16 +1293,21 @@ static int tg_mtproto_open_auth_context(const char *host,
     memset(context, 0, sizeof(*context));
 
     tg_mtproto_login_phase(stream, "auth-key rng");
+    memset(b, 0, sizeof(b));
     if (!tg_mtproto_secure_random(nonce, sizeof(nonce)) ||
         !tg_mtproto_secure_random(new_nonce, sizeof(new_nonce)) ||
         !tg_mtproto_secure_random(padding, sizeof(padding)) ||
         !tg_mtproto_secure_random(temp_key, sizeof(temp_key)) ||
-        !tg_mtproto_secure_random(b, sizeof(b)) ||
+        !tg_mtproto_secure_random(
+            b + TG_MTPROTO_DH_VALUE_MAX -
+                TG_MTPROTO_DH_PRIVATE_EXPONENT_BYTES,
+            TG_MTPROTO_DH_PRIVATE_EXPONENT_BYTES) ||
         !tg_mtproto_secure_random(client_padding, sizeof(client_padding)) ||
         !tg_mtproto_secure_random(session_id, sizeof(session_id))) {
         fprintf(stream, "%s: secure-rng-unavailable\n", label);
         return 2;
     }
+    b[TG_MTPROTO_DH_VALUE_MAX - TG_MTPROTO_DH_PRIVATE_EXPONENT_BYTES] |= 0x80U;
 
     tg_mtproto_login_phase(stream, "auth-key req_pq");
     tg_mtproto_client_message_id((unsigned long)time(0), 4UL, 0,
@@ -2297,7 +2337,7 @@ static int tg_mtproto_send_saved_query_limited(const char *host,
     }
     if (tg_mtproto_send_encrypted_query_limited(
             &context, wrapped_query, writer.length, result, stream, label,
-            max_receive_attempts) != 0) {
+            max_receive_attempts, TG_MTPROTO_QUERY_BUDGET_SECONDS) != 0) {
         if (skip_close_on_failure) {
             tg_mtproto_skip_auth_context_close(&context, stream, label);
         } else {
@@ -2391,14 +2431,12 @@ static int tg_mtproto_send_saved_query_on_context(
     }
     qrc = tg_mtproto_send_encrypted_query_limited(
             context, wrapped_query, writer.length, result, stream, label,
-            max_receive_attempts);
+            max_receive_attempts, TG_MTPROTO_QUERY_BUDGET_SECONDS);
     if (qrc != 0) {
-        if (qrc != TG_MTPROTO_QUERY_SOFT_FAIL) {
-            /* Hard/transport failure: the connection is dead, so close it and
-               let the next query reopen it. On a soft failure the session is
-               still alive and is reused, avoiding a reconnect + update flood. */
-            tg_mtproto_close_auth_context(context);
-        }
+        /* A soft failure means the matching rpc_result was not seen within the
+           receive budget. Keep no stale stream around: the late reply may still
+           arrive and be mistaken for the next command's response. */
+        tg_mtproto_close_auth_context(context);
         return qrc == TG_MTPROTO_QUERY_SOFT_FAIL ?
             TG_MTPROTO_QUERY_SOFT_FAIL : 2;
     }
@@ -2495,8 +2533,9 @@ int tg_mtproto_auth_send_code(const char *host,
     }
 
     tg_mtproto_login_phase(stream, "auth.sendCode send");
-    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
-                                        &result, stream, label) != 0) {
+    if (tg_mtproto_send_encrypted_query_login(
+            &context, wrapped_query, writer.length, &result, stream,
+            label) != 0) {
         tg_mtproto_close_auth_context(&context);
         return 2;
     }
@@ -2610,6 +2649,7 @@ int tg_mtproto_auth_sign_in(const char *host,
     tg_mtproto_session_status session_status;
     tg_mtproto_tl_writer writer;
     long dc_id;
+    int qrc;
     static const char label[] = "mtproto auth.signIn";
 
     if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
@@ -2671,8 +2711,17 @@ int tg_mtproto_auth_sign_in(const char *host,
     }
 
     tg_mtproto_login_phase(stream, "auth.signIn send");
-    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
-                                        &result, stream, label) != 0) {
+    qrc = tg_mtproto_send_encrypted_query_login(
+        &context, wrapped_query, writer.length, &result, stream, label);
+    if (qrc != 0) {
+        if (qrc == TG_MTPROTO_QUERY_SOFT_FAIL) {
+            session_status = tg_mtproto_session_save_authorization(
+                auth_file, &context.session, context.auth_key, 1);
+            if (session_status != TG_MTPROTO_SESSION_OK) {
+                fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                        tg_mtproto_session_status_name(session_status));
+            }
+        }
         tg_mtproto_close_auth_context(&context);
         return 2;
     }
@@ -3115,6 +3164,7 @@ static int tg_mtproto_auth_check_password_text(const char *host,
     tg_mtproto_srp_proof proof;
     tg_mtproto_tl_writer writer;
     long dc_id;
+    int qrc;
     static const char label[] = "mtproto auth.checkPassword";
 
     if (stream == 0 || host == 0 || port == 0 || api_id_text == 0 ||
@@ -3152,8 +3202,17 @@ static int tg_mtproto_auth_check_password_text(const char *host,
         fprintf(stream, "%s: get-password-build-failed\n", label);
         return 2;
     }
-    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
-                                        &result, stream, label) != 0) {
+    qrc = tg_mtproto_send_encrypted_query_login(
+        &context, wrapped_query, writer.length, &result, stream, label);
+    if (qrc != 0) {
+        if (qrc == TG_MTPROTO_QUERY_SOFT_FAIL) {
+            session_status = tg_mtproto_session_save_authorization(
+                auth_file, &context.session, context.auth_key, 1);
+            if (session_status != TG_MTPROTO_SESSION_OK) {
+                fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                        tg_mtproto_session_status_name(session_status));
+            }
+        }
         tg_mtproto_close_auth_context(&context);
         tg_mtproto_secure_zero(password_text, sizeof(password_text));
         return 2;
@@ -3245,8 +3304,17 @@ static int tg_mtproto_auth_check_password_text(const char *host,
         return 2;
     }
     tg_mtproto_secure_zero(&proof, sizeof(proof));
-    if (tg_mtproto_send_encrypted_query(&context, wrapped_query, writer.length,
-                                        &result, stream, label) != 0) {
+    qrc = tg_mtproto_send_encrypted_query_login(
+        &context, wrapped_query, writer.length, &result, stream, label);
+    if (qrc != 0) {
+        if (qrc == TG_MTPROTO_QUERY_SOFT_FAIL) {
+            session_status = tg_mtproto_session_save_authorization(
+                auth_file, &context.session, context.auth_key, 1);
+            if (session_status != TG_MTPROTO_SESSION_OK) {
+                fprintf(stream, "%s: auth-file-save-failed (%s)\n", label,
+                        tg_mtproto_session_status_name(session_status));
+            }
+        }
         tg_mtproto_close_auth_context(&context);
         return 2;
     }
@@ -3368,6 +3436,8 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
     char password[512];
     const char *current_host;
     const char *current_dc_id_text;
+    unsigned long saved_timeout;
+    int restore_timeout;
     int rc;
     static const char label[] = "mtproto login wizard";
 
@@ -3392,6 +3462,14 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
 
     current_host = host;
     current_dc_id_text = dc_id_text;
+    saved_timeout = tg_net_connect_timeout_seconds();
+    restore_timeout = 0;
+    if (saved_timeout == 0UL ||
+        saved_timeout > TG_MTPROTO_LOGIN_NETWORK_TIMEOUT_SECONDS) {
+        tg_net_set_connect_timeout_seconds(
+            TG_MTPROTO_LOGIN_NETWORK_TIMEOUT_SECONDS);
+        restore_timeout = 1;
+    }
     fprintf(stream, "Sending login code request.\n");
     fflush(stream);
     rc = tg_mtproto_auth_send_code_file(current_host, port,
@@ -3419,6 +3497,9 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
                                                 phone, auth_file,
                                                 code_hash_file, stream);
         }
+    }
+    if (restore_timeout) {
+        tg_net_set_connect_timeout_seconds(saved_timeout);
     }
     if (rc != 0) {
         tg_mtproto_secure_zero(phone, sizeof(phone));
@@ -6892,6 +6973,70 @@ static void tg_mtproto_chat_print_help(FILE *stream)
     fprintf(stream, "  /quit         exit\n\n");
 }
 
+static int tg_mtproto_chat_open_history(FILE *stream,
+                                        FILE *quiet,
+                                        const char *host,
+                                        const char *port,
+                                        const char *api_id,
+                                        const char *auth_file,
+                                        const char *dc_id_text,
+                                        tg_mtproto_auth_context *context,
+                                        const char *peer_cache_file,
+                                        const char *peer_index,
+                                        const char *peer_label,
+                                        const char *own_label,
+                                        unsigned long *last_seen_message_id)
+{
+    unsigned int attempt;
+    unsigned long requested_last_seen_message_id;
+    unsigned long printed_message_count;
+    long quiet_length;
+    int rc;
+
+    if (stream == 0 || quiet == 0 || peer_index == 0 ||
+        peer_index[0] == '\0' || last_seen_message_id == 0) {
+        return 0;
+    }
+
+    fprintf(stream, "Opening chat");
+    fflush(stream);
+    for (attempt = 0; attempt < TG_MTPROTO_CHAT_OPEN_HISTORY_ATTEMPTS;
+         ++attempt) {
+        if (attempt > 0U) {
+            fprintf(stream, ".");
+            fflush(stream);
+        }
+        requested_last_seen_message_id = 0UL;
+        printed_message_count = 0UL;
+        tg_mtproto_reset_quiet_stream(quiet, stream);
+        rc = tg_mtproto_auth_print_history_text_peer_on_context(
+            host, port, api_id, auth_file, dc_id_text, context,
+            peer_cache_file, peer_index, "5", quiet,
+            &requested_last_seen_message_id, &printed_message_count,
+            0, 1, 0, peer_label, own_label);
+        if (rc == 0) {
+            *last_seen_message_id = requested_last_seen_message_id;
+            quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
+            fprintf(stream, "\n");
+            if (printed_message_count > 0UL &&
+                (quiet == stream || quiet_length > 0L)) {
+                tg_mtproto_replay_quiet_stream_length(
+                    quiet, stream, quiet_length);
+            }
+            return 0;
+        }
+        tg_mtproto_close_auth_context(context);
+    }
+    fprintf(stream, "\n");
+    if (rc == TG_MTPROTO_QUERY_SOFT_FAIL) {
+        fprintf(stream,
+                "No reply yet (slow link). Press Enter to retry reading.\n");
+    } else {
+        fprintf(stream, "Could not load recent messages now (error %d).\n", rc);
+    }
+    return rc;
+}
+
 static void tg_mtproto_chat_load_own_label(const char *host,
                                            const char *port,
                                            const char *api_id,
@@ -6949,7 +7094,6 @@ int tg_mtproto_auth_chat_file(const char *host,
     const char *remove_arg;
     unsigned long line_length;
     unsigned long last_seen_message_id;
-    unsigned long requested_last_seen_message_id;
     unsigned long printed_message_count;
     unsigned long consecutive_failures;
     unsigned long sent_message_id;
@@ -7062,8 +7206,18 @@ int tg_mtproto_auth_chat_file(const char *host,
     chat_quiet = tg_mtproto_open_quiet_stream(stream);
     tg_mtproto_chat_print_help(stream);
     fprintf(stream, "Auto-read every %lu second(s).\n", watch_seconds);
-    tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+    if (peer_index[0] == '\0') {
+        tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+    }
     for (;;) {
+        if (peer_index[0] != '\0' && !peer_history_ready) {
+            peer_history_ready = 1;
+            (void)tg_mtproto_chat_open_history(
+                stream, chat_quiet, host, port, api_id, auth_file, dc_id_text,
+                &chat_context, peer_cache_file, peer_index, peer_label,
+                own_label, &last_seen_message_id);
+            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+        }
         if (watch_seconds == 0UL) {
             rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
                                                 &line_length, 3600UL, chat_raw,
@@ -7081,36 +7235,6 @@ int tg_mtproto_auth_chat_file(const char *host,
                 continue;
             }
             if (peer_index[0] == '\0') {
-                continue;
-            }
-            if (!peer_history_ready) {
-                /* One-shot: try once to show the opening history, then switch
-                   to normal auto-read. No empty 2s retry loop (which on heavy
-                   accounts kept reconnecting). include_outgoing shows both
-                   sides of the recent conversation when the chat opens. */
-                peer_history_ready = 1;
-                requested_last_seen_message_id = 0UL;
-                printed_message_count = 0UL;
-                quiet = chat_quiet;
-                tg_mtproto_reset_quiet_stream(quiet, stream);
-                rc = tg_mtproto_auth_print_history_text_peer_on_context(
-                    host, port, api_id, auth_file, dc_id_text, &chat_context,
-                    peer_cache_file, peer_index, "5", quiet,
-                    &requested_last_seen_message_id, &printed_message_count,
-                    0, 1, 0, peer_label, own_label);
-                if (rc == 0) {
-                    last_seen_message_id = requested_last_seen_message_id;
-                }
-                chat_quiet_length =
-                    tg_mtproto_quiet_stream_length(quiet, stream);
-                if (printed_message_count > 0UL &&
-                    (quiet == stream || chat_quiet_length > 0L)) {
-                    fprintf(stream, "\n");
-                    tg_mtproto_replay_quiet_stream_length(
-                        quiet, stream, chat_quiet_length);
-                    tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                       peer_label);
-                }
                 continue;
             }
             quiet = chat_quiet;
@@ -7304,6 +7428,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                 fprintf(stream, "Current chat: ");
                 tg_mtproto_print_cache_text(stream, peer_label);
                 fprintf(stream, "\n");
+                continue;
             }
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
@@ -7373,6 +7498,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     fprintf(stream, "%s", peer_index);
                 }
                 fprintf(stream, "\n");
+                continue;
             } else {
                 fprintf(stream, "\nChat added. Cached chats:\n\n");
                 tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
@@ -7439,7 +7565,6 @@ int tg_mtproto_auth_chat_file(const char *host,
             fprintf(stream, "Current chat: ");
             tg_mtproto_print_cache_text(stream, peer_label);
             fprintf(stream, "\n");
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
         }
         if (strcmp(line, "/read") == 0) {

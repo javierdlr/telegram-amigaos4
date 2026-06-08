@@ -13,6 +13,11 @@
 #define TG_MTPROTO_RSA_PADDED_LENGTH 256U
 #define TG_MTPROTO_DH_ENCRYPTED_ANSWER_MAX 1024U
 #define TG_MTPROTO_DH_VALUE_MAX 256U
+/* 256-bit private DH exponent for MTProto auth-key bootstrap. The public
+   values remain full-size modulo Telegram's 2048-bit safe prime; this keeps
+   roughly 128-bit discrete-log strength while avoiding very slow 2048-bit
+   exponentiation on classic Amiga targets. */
+#define TG_MTPROTO_DH_PRIVATE_EXPONENT_BYTES 32U
 #define TG_MTPROTO_AUTH_KEY_LENGTH 256U
 
 typedef struct tg_mtproto_public_key {

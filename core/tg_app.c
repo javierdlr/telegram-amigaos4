@@ -224,7 +224,7 @@ static int tg_run_mtproto_start_file(const char *api_file,
             puts("Saved login is not usable. Starting login wizard.");
         }
         rc = tg_mtproto_auth_login_wizard_file(
-            "149.154.167.50", "443", "2", api_file, auth_file,
+            "149.154.167.91", "443", "4", api_file, auth_file,
             code_hash_file, stdout);
         if (rc != 0) {
             return rc;
