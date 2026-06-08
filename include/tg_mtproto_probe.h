@@ -17,6 +17,7 @@ tg_mtproto_tl_status tg_mtproto_build_req_pq_multi(
     const unsigned char nonce[16]);
 
 int tg_mtproto_req_pq_probe(const char *host, const char *port, FILE *stream);
+int tg_mtproto_2fa_bench(FILE *stream);
 int tg_mtproto_req_dh_probe(const char *host, const char *port,
                             const char *dc_id_text, FILE *stream);
 int tg_mtproto_auth_send_code(const char *host,

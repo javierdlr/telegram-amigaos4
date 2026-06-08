@@ -13,6 +13,13 @@
 #define TG_MTPROTO_SRP_VALUE_LENGTH 256U
 #define TG_MTPROTO_SRP_EXP_LENGTH 512U
 
+/* Bytes of randomness in the client's private SRP exponent 'a'. Only g^a (a
+   full-size residue) is sent, so a's length is the client's choice: a 256-bit
+   'a' keeps standard SRP security yet shrinks the g^a and base^(a+u*x) modexps
+   from ~2048-bit to ~256-/~512-bit exponents -- a big 2FA speed-up on m68k.
+   Mirrors the DH handshake's TG_MTPROTO_DH_PRIVATE_EXPONENT_BYTES. */
+#define TG_MTPROTO_SRP_PRIVATE_EXPONENT_BYTES 32U
+
 typedef struct tg_mtproto_srp_proof {
     unsigned char a[TG_MTPROTO_SRP_VALUE_LENGTH];
     unsigned long a_length;

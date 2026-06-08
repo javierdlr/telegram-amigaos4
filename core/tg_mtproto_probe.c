@@ -21,6 +21,7 @@
 #endif
 
 #include "tg_mtproto_auth.h"
+#include "tg_mtproto_bigint.h"
 #include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_envelope.h"
 #include "tg_mtproto_login.h"
@@ -3261,12 +3262,24 @@ static int tg_mtproto_auth_check_password_text(const char *host,
         fprintf(stream, "%s: auth state updated\n", label);
         return 0;
     }
-    if (!tg_mtproto_secure_random(random_a, sizeof(random_a))) {
+    /* Use a 256-bit private SRP exponent 'a' (low bytes only; big-endian) with
+       the top bit forced, instead of a full 2048-bit one. Only g^a leaves the
+       device, so a's bit-length is the client's choice; 256 bits keeps standard
+       SRP security while shrinking two of the three 2048-bit modexps (g^a and
+       base^(a+u*x)) to ~256-/~512-bit exponents -- a big 2FA speed-up for AmiSSL
+       BN_mod_exp on m68k. Same lever as TG_MTPROTO_DH_PRIVATE_EXPONENT_BYTES. */
+    memset(random_a, 0, sizeof(random_a));
+    if (!tg_mtproto_secure_random(
+            random_a + TG_MTPROTO_SRP_VALUE_LENGTH -
+                TG_MTPROTO_SRP_PRIVATE_EXPONENT_BYTES,
+            TG_MTPROTO_SRP_PRIVATE_EXPONENT_BYTES)) {
         tg_mtproto_close_auth_context(&context);
         tg_mtproto_secure_zero(password_text, sizeof(password_text));
         fprintf(stream, "%s: secure-rng-unavailable\n", label);
         return 2;
     }
+    random_a[TG_MTPROTO_SRP_VALUE_LENGTH -
+             TG_MTPROTO_SRP_PRIVATE_EXPONENT_BYTES] |= 0x80U;
     fprintf(stream, "Verifying password");
     fflush(stream);
     tg_login_progress_stream = stream;
@@ -7705,6 +7718,89 @@ tg_mtproto_tl_status tg_mtproto_build_req_pq_multi(
 
     return tg_mtproto_write_plain_message(writer, message_id_hi, message_id_lo,
                                           body, body_writer.length);
+}
+
+/* Non-interactive 2FA cost breakdown for slow CPUs. Times the two parts of an
+   SRP password check in isolation: the fixed PBKDF2-HMAC-SHA512 100000-iteration
+   x-derivation, and a 2048-bit modexp with a full vs a 256-bit exponent (the
+   g^a / base^(a+u*x) lever). No network, no auth files. */
+int tg_mtproto_2fa_bench(FILE *stream)
+{
+    unsigned char password[16];
+    unsigned char salt[8];
+    unsigned char derived[TG_MTPROTO_SHA512_LENGTH];
+    unsigned char base[TG_MTPROTO_BIGINT_SIZE];
+    unsigned char modulus[TG_MTPROTO_BIGINT_SIZE];
+    unsigned char exp_full[TG_MTPROTO_BIGINT_SIZE];
+    unsigned char exp_short[TG_MTPROTO_BIGINT_SIZE];
+    unsigned char result[TG_MTPROTO_BIGINT_SIZE];
+    unsigned long t0;
+    unsigned long t1;
+    unsigned int i;
+
+    if (stream == 0) {
+        return 2;
+    }
+
+    for (i = 0U; i < sizeof(password); ++i) {
+        password[i] = (unsigned char)(i + 1U);
+    }
+    for (i = 0U; i < sizeof(salt); ++i) {
+        salt[i] = (unsigned char)(0x10U + i);
+    }
+    for (i = 0U; i < TG_MTPROTO_BIGINT_SIZE; ++i) {
+        base[i] = (unsigned char)((i * 7U) + 1U);
+        modulus[i] = (unsigned char)((i * 5U) + 3U);
+        exp_full[i] = (unsigned char)((i * 3U) + 9U);
+    }
+    base[0] = 0x00U;                                  /* base < modulus */
+    modulus[0] |= 0x80U;                              /* full 2048-bit */
+    modulus[TG_MTPROTO_BIGINT_SIZE - 1U] |= 0x01U;    /* odd modulus */
+    memset(exp_short, 0, sizeof(exp_short));
+    for (i = 0U; i < 32U; ++i) {
+        exp_short[TG_MTPROTO_BIGINT_SIZE - 32U + i] =
+            (unsigned char)((i * 3U) + 9U);
+    }
+    exp_short[TG_MTPROTO_BIGINT_SIZE - 32U] |= 0x80U; /* 256-bit value */
+
+    fprintf(stream, "2fa bench: PBKDF2-HMAC-SHA512 100000 iters...\n");
+    fflush(stream);
+    t0 = (unsigned long)time(0);
+    tg_mtproto_pbkdf2_hmac_sha512(password, sizeof(password), salt,
+                                  sizeof(salt), 100000UL, derived,
+                                  sizeof(derived));
+    t1 = (unsigned long)time(0);
+    fprintf(stream, "2fa bench: PBKDF2 100000 = %lus\n",
+            (unsigned long)(t1 - t0));
+    fflush(stream);
+
+    fprintf(stream, "2fa bench: modexp 2048-bit exponent (2 ops)...\n");
+    fflush(stream);
+    t0 = (unsigned long)time(0);
+    for (i = 0U; i < 2U; ++i) {
+        tg_mtproto_bigint_mod_exp(base, exp_full, TG_MTPROTO_BIGINT_SIZE,
+                                  modulus, result);
+    }
+    t1 = (unsigned long)time(0);
+    fprintf(stream, "2fa bench: modexp 2048-bit exp = %lus / 2 ops\n",
+            (unsigned long)(t1 - t0));
+    fflush(stream);
+
+    fprintf(stream, "2fa bench: modexp 256-bit exponent (2 ops)...\n");
+    fflush(stream);
+    t0 = (unsigned long)time(0);
+    for (i = 0U; i < 2U; ++i) {
+        tg_mtproto_bigint_mod_exp(base, exp_short, TG_MTPROTO_BIGINT_SIZE,
+                                  modulus, result);
+    }
+    t1 = (unsigned long)time(0);
+    fprintf(stream, "2fa bench: modexp 256-bit exp = %lus / 2 ops\n",
+            (unsigned long)(t1 - t0));
+    fflush(stream);
+
+    fputs("2fa bench: done\n", stream);
+    fflush(stream);
+    return 0;
 }
 
 int tg_mtproto_req_pq_probe(const char *host, const char *port, FILE *stream)

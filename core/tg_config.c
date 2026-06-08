@@ -156,6 +156,7 @@ void tg_config_init(tg_config *config)
     config->run_mtproto_self_test = 0;
     config->run_mtproto_self_test_fast = 0;
     config->run_mtproto_self_test_heavy = 0;
+    config->run_mtproto_2fa_bench = 0;
     config->run_mtproto_req_pq_probe = 0;
     config->run_mtproto_req_dh_probe = 0;
     config->run_mtproto_auth_send_code = 0;
@@ -336,6 +337,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_mtproto_self_test_fast = 1;
         } else if (strcmp(argv[i], "--mtproto-self-test-heavy") == 0) {
             config->run_mtproto_self_test_heavy = 1;
+        } else if (strcmp(argv[i], "--mtproto-2fa-bench") == 0) {
+            config->run_mtproto_2fa_bench = 1;
         } else if (strcmp(argv[i], "--mtproto-req-pq-probe") == 0) {
             if (i + 2 >= argc) {
                 return 1;
