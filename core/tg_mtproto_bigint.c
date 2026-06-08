@@ -337,49 +337,80 @@ static unsigned int tg_w_inv0(unsigned int m0)
     return (unsigned int)(0U - inv);  /* -m0^-1 mod 2^32 */
 }
 
+#if defined(TG_MTPROTO_BIGINT_M68K_ASM)
+#include <exec/execbase.h>
+#include <proto/exec.h>
+/* The 68060 does NOT implement the 64-bit-result mulu.l (mulu.l Dn,Dh:Dl) used
+   by the asm below: it traps to the 060 software package, or faults if that is
+   not installed. So the build is compiled -m68060 (GCC then emits __muldi3 for
+   64-bit C multiplies instead of that instruction), the asm re-enables the
+   instruction only for its own block via ".chip 68040", and at runtime the asm
+   path is taken ONLY on CPUs that actually have it: 68020/030/040 and the
+   68080/Vampire (which reports AFB_68060=0, seen as 68040 + extensions). A real
+   68060 (AFB_68060=1) and a bare 68000/010 fall back to the portable C path. */
+static int tg_mont_hw64mul(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = ((SysBase->AttnFlags & AFF_68020) &&
+                  !(SysBase->AttnFlags & AFF_68060)) ? 1 : 0;
+    }
+    return cached;
+}
+#endif
+
 /* {dst[k], carry} = src[k] + b[k]*w + carry, for k = 0..n-1; returns the final
    carry word. dst may trail src by one word (the Montgomery reduction shift).
-   On 68020+ this is hand-written asm: this toolchain only compiles correctly at
-   -O0, where the C multiply-accumulate is dominated by stack traffic. The asm
-   keeps the row in registers with the hardware mulu.l (32x32->64) and addx,
-   which is the hot path of the whole modexp. The C version is the reference
-   used by every other target (and as a cross-check). */
+   On a CPU with the hardware 64-bit mulu.l this is hand-written asm: at -O0 (the
+   only level this toolchain compiles correctly) the C multiply-accumulate is
+   dominated by stack traffic, while the asm keeps the row in registers with
+   mulu.l (32x32->64) and addx. Everywhere else -- the 68060, and every non-68k
+   target -- the portable C version runs (it is also the cross-check). */
 static unsigned int tg_mont_mac(unsigned int *dst, const unsigned int *src,
                                 const unsigned int *b, unsigned int w,
                                 unsigned int carry, unsigned long n)
 {
-#if defined(__mc68020__) && !defined(TG_BIGINT_NO_M68K_ASM)
-    __asm__ volatile (
-        "    tst.l   %5\n"
-        "    beq.s   2f\n"
-        "    moveq   #0,%%d4\n"
-        "1:\n"
-        "    move.l  (%2)+,%%d0\n"        /* d0 = b[k]               */
-        "    mulu.l  %3,%%d1:%%d0\n"      /* d1:d0 = b[k] * w        */
-        "    add.l   %4,%%d0\n"           /* += carry (low)          */
-        "    addx.l  %%d4,%%d1\n"         /*   carry into high       */
-        "    add.l   (%1)+,%%d0\n"        /* += src[k] (low)         */
-        "    addx.l  %%d4,%%d1\n"         /*   carry into high       */
-        "    move.l  %%d0,(%0)+\n"        /* dst[k] = low 32         */
-        "    move.l  %%d1,%4\n"           /* carry  = high 32        */
-        "    subq.l  #1,%5\n"
-        "    bne.s   1b\n"
-        "2:\n"
-        : "+a"(dst), "+a"(src), "+a"(b), "+d"(w), "+d"(carry), "+d"(n)
-        :
-        : "d0", "d1", "d4", "cc", "memory");
-    return carry;
-#else
-    unsigned long k;
-    for (k = 0UL; k < n; ++k) {
-        tg_bn_dword s;
-        s = (tg_bn_dword)src[k] + (tg_bn_dword)b[k] * (tg_bn_dword)w +
-            (tg_bn_dword)carry;
-        dst[k] = (unsigned int)s;
-        carry = (unsigned int)(s >> 32);
+#if defined(TG_MTPROTO_BIGINT_M68K_ASM)
+    if (tg_mont_hw64mul()) {
+        /* ".chip 68040" re-enables the 64-bit mulu.l for this block even though
+           the file is built -m68060; the runtime check above guarantees we only
+           reach here on a CPU that implements it. ".chip 68060" restores the
+           assembler so later GCC code stays 68060-safe. */
+        __asm__ volatile (
+            "    .chip 68040\n"
+            "    tst.l   %5\n"
+            "    beq.s   2f\n"
+            "    moveq   #0,%%d4\n"
+            "1:\n"
+            "    move.l  (%2)+,%%d0\n"        /* d0 = b[k]               */
+            "    mulu.l  %3,%%d1:%%d0\n"      /* d1:d0 = b[k] * w        */
+            "    add.l   %4,%%d0\n"           /* += carry (low)          */
+            "    addx.l  %%d4,%%d1\n"         /*   carry into high       */
+            "    add.l   (%1)+,%%d0\n"        /* += src[k] (low)         */
+            "    addx.l  %%d4,%%d1\n"         /*   carry into high       */
+            "    move.l  %%d0,(%0)+\n"        /* dst[k] = low 32         */
+            "    move.l  %%d1,%4\n"           /* carry  = high 32        */
+            "    subq.l  #1,%5\n"
+            "    bne.s   1b\n"
+            "2:\n"
+            "    .chip 68060\n"
+            : "+a"(dst), "+a"(src), "+a"(b), "+d"(w), "+d"(carry), "+d"(n)
+            :
+            : "d0", "d1", "d4", "cc", "memory");
+        return carry;
     }
-    return carry;
 #endif
+    {
+        unsigned long k;
+        for (k = 0UL; k < n; ++k) {
+            tg_bn_dword s;
+            s = (tg_bn_dword)src[k] + (tg_bn_dword)b[k] * (tg_bn_dword)w +
+                (tg_bn_dword)carry;
+            dst[k] = (unsigned int)s;
+            carry = (unsigned int)(s >> 32);
+        }
+        return carry;
+    }
 }
 
 /* out = a*b*R^-1 mod m (CIOS), little-endian 32-bit words, m odd,

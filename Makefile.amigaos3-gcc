@@ -23,14 +23,18 @@ else
 CSTD ?= c89
 endif
 
-# -m68020 enables the hardware 32x32->64 mulu.l (and 32-bit divu.l), a big speed
-# win for the in-tree Montgomery modexp. The client already targets "68020 or
-# better" (tested on 68080/Vampire), so this does not narrow CPU support.
+# -m68060 keeps the C code off the 64-bit-result mulu.l/divu.l that the 68060
+# does not implement (GCC emits __muldi3 instead -- supplied in-tree below). On
+# this gcc 6.5, ONLY -m68060 avoids it: -m68020/-m68020-60 still emit it. The
+# fast asm Montgomery hot loop (TG_MTPROTO_BIGINT_M68K_ASM) re-enables the
+# instruction for its own block via ".chip 68040" and is taken at runtime only
+# on CPUs that have it (68020/030/040 and 68080/Vampire); a real 68060 and a
+# bare 68000 take the portable C path -- see tg_mont_hw64mul() in
+# core/tg_mtproto_bigint.c. The client targets "68020 or better".
 # NOTE: this m68k-amigaos-gcc 6.5 toolchain miscompiles (hangs) at -O1/-O2, so
-# keep -O0 for correctness. -m68020 still gives the big win: hardware mulu.l
-# (32x32->64) for the in-tree Montgomery modexp. The client already targets
-# "68020 or better" (tested on 68080/Vampire), so this does not narrow support.
-CFLAGS ?= -std=$(CSTD) -Wall -Wextra -O0 -m68020 -mcrt=ixemul -Iinclude
+# -O0 is required for correctness.
+CFLAGS ?= -std=$(CSTD) -Wall -Wextra -O0 -m68060 -mcrt=ixemul -Iinclude
+CFLAGS += -DTG_MTPROTO_BIGINT_M68K_ASM=1
 LDFLAGS ?= -mcrt=ixemul -nodefaultlibs
 LDLIBS ?= -lc -lamiga
 TARGET ?= build/amigaos3/telegram-test
