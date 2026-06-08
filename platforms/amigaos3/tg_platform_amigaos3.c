@@ -23,7 +23,11 @@
 #endif
 
 #if defined(__amigaos3__)
+#include <time.h>
 #include <proto/dos.h>
+#include <proto/exec.h>
+#include <proto/timer.h>
+#include <devices/timer.h>
 #include <unistd.h>
 #else
 #include <unistd.h>
@@ -56,6 +60,7 @@
 #endif
 
 #include "tg_platform.h"
+#include "tg_mtproto_crypto.h"
 
 #if defined(__amigaos3__) && TG_AMIGAOS3_ENABLE_AMISSL
 #ifndef TG_AMIGAOS3_AMISSL_API_VERSION
@@ -212,6 +217,157 @@ int tg_platform_stdin_set_raw(int enabled)
 #endif
 }
 
+#if defined(__amigaos3__)
+/*
+ * In-tree CSPRNG for AmigaOS 3.x (SHA-256 Hash-DRBG), so the m68k client needs
+ * NO AmiSSL for randomness. Mirrors the AmigaOS 4 construction; the only
+ * platform difference is the high-resolution entropy source: timer.device's
+ * E-Clock (ReadEClock) sampled in a variable-duration jitter loop, plus the
+ * coarse clock, several run-varying addresses and a per-call counter. Output is
+ * SHA-256(key || counter); the persistent state is ratcheted forward after each
+ * call (SHA-256(key || 0x01)) so earlier output cannot be reconstructed.
+ *
+ * SECURITY NOTE: validate entropy on real m68k hardware via --platform-rng-test
+ * before trusting this for production logins.
+ */
+struct Device *TimerBase = 0;           /* used by the proto/timer.h inlines */
+static struct timerequest tg_os3_timereq;
+static struct MsgPort *tg_os3_timeport = 0;
+static int tg_os3_timer_tried = 0;
+static unsigned char tg_os3_drbg_state[TG_MTPROTO_SHA256_LENGTH];
+static int tg_os3_drbg_ready = 0;
+
+static void tg_os3_timer_open(void)
+{
+    if (tg_os3_timer_tried) {
+        return;
+    }
+    tg_os3_timer_tried = 1;
+    tg_os3_timeport = CreateMsgPort();
+    if (tg_os3_timeport == 0) {
+        return;
+    }
+    memset(&tg_os3_timereq, 0, sizeof(tg_os3_timereq));
+    tg_os3_timereq.tr_node.io_Message.mn_ReplyPort = tg_os3_timeport;
+    if (OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
+                   (struct IORequest *)&tg_os3_timereq, 0) == 0) {
+        TimerBase = tg_os3_timereq.tr_node.io_Device;
+    }
+}
+
+static unsigned long tg_os3_timebase(void)
+{
+    struct EClockVal ev;
+    if (TimerBase == 0) {
+        return (unsigned long)time(0);
+    }
+    ReadEClock(&ev);
+    return (unsigned long)ev.ev_lo;
+}
+
+static unsigned long tg_os3_entropy_gather(unsigned char *buf, unsigned long cap)
+{
+    unsigned long n = 0;
+    unsigned long i;
+    unsigned long t;
+    void *p;
+    struct Task *task;
+
+    tg_os3_timer_open();
+
+    t = (unsigned long)time(0);
+    if (n + sizeof(t) <= cap) { memcpy(buf + n, &t, sizeof(t)); n += sizeof(t); }
+
+    for (i = 0; i < 128UL && n + sizeof(unsigned long) <= cap; ++i) {
+        unsigned long tb = tg_os3_timebase();
+        volatile unsigned long spin;
+        unsigned long k;
+        memcpy(buf + n, &tb, sizeof(tb));
+        n += sizeof(tb);
+        spin = tb;
+        for (k = 0; k < (tb & 0x3fUL); ++k) {
+            spin = (spin * 2654435761UL) + k;
+        }
+        (void)spin;
+    }
+
+    p = (void *)&n;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    p = (void *)buf;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    p = (void *)SysBase;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    task = FindTask(0);
+    if (n + sizeof(task) <= cap) {
+        memcpy(buf + n, &task, sizeof(task));
+        n += sizeof(task);
+    }
+
+    return n;
+}
+
+static void tg_os3_drbg_seed(void)
+{
+    unsigned char pool[1024];
+    unsigned long len = tg_os3_entropy_gather(pool, sizeof(pool));
+    tg_mtproto_sha256(pool, len, tg_os3_drbg_state);
+    tg_os3_drbg_ready = 1;
+}
+
+static void tg_os3_drbg_generate(unsigned char *out, unsigned long n)
+{
+    static unsigned long calls = 0;
+    unsigned char key[TG_MTPROTO_SHA256_LENGTH];
+    unsigned char block[TG_MTPROTO_SHA256_LENGTH];
+    unsigned char work[TG_MTPROTO_SHA256_LENGTH + 16];
+    unsigned long off;
+    unsigned long ctr;
+    unsigned long wn;
+    unsigned long tb;
+
+    if (!tg_os3_drbg_ready) {
+        tg_os3_drbg_seed();
+    }
+
+    wn = TG_MTPROTO_SHA256_LENGTH;
+    tb = tg_os3_timebase();
+    ++calls;
+    memcpy(work, tg_os3_drbg_state, TG_MTPROTO_SHA256_LENGTH);
+    memcpy(work + wn, &tb, sizeof(tb));
+    wn += sizeof(tb);
+    memcpy(work + wn, &calls, sizeof(calls));
+    wn += sizeof(calls);
+    tg_mtproto_sha256(work, wn, key);
+
+    off = 0;
+    ctr = 0;
+    while (off < n) {
+        unsigned char cb[TG_MTPROTO_SHA256_LENGTH + 4];
+        unsigned long take;
+        memcpy(cb, key, TG_MTPROTO_SHA256_LENGTH);
+        cb[TG_MTPROTO_SHA256_LENGTH + 0] = (unsigned char)((ctr >> 24) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 1] = (unsigned char)((ctr >> 16) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 2] = (unsigned char)((ctr >> 8) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 3] = (unsigned char)(ctr & 0xffUL);
+        tg_mtproto_sha256(cb, sizeof(cb), block);
+        take = n - off;
+        if (take > TG_MTPROTO_SHA256_LENGTH) {
+            take = TG_MTPROTO_SHA256_LENGTH;
+        }
+        memcpy(out + off, block, take);
+        off += take;
+        ++ctr;
+    }
+
+    {
+        unsigned char rb[TG_MTPROTO_SHA256_LENGTH + 1];
+        memcpy(rb, key, TG_MTPROTO_SHA256_LENGTH);
+        rb[TG_MTPROTO_SHA256_LENGTH] = 0x01;
+        tg_mtproto_sha256(rb, sizeof(rb), tg_os3_drbg_state);
+    }
+}
+#endif /* __amigaos3__ */
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
 #if defined(__amigaos3__)
@@ -221,14 +377,8 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
     if (byte_count == 0) {
         return 1;
     }
-#if TG_AMIGAOS3_ENABLE_AMISSL
-    if (tg_amigaos3_amissl_init(0, 0) == 0 &&
-        RAND_bytes(bytes, (int)byte_count) == 1) {
-        return 1;
-    }
-#endif
-    memset(bytes, 0, byte_count);
-    return 0;
+    tg_os3_drbg_generate(bytes, byte_count);
+    return 1;
 #else
     int fd;
     unsigned long offset;

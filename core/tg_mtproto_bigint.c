@@ -17,13 +17,14 @@
 #define TG_ENABLE_TLS 0
 #endif
 
-/* Use a fast bignum TLS backend's BN_mod_exp when one is linked: real OpenSSL
-   on AROS (TG_ENABLE_TLS) and AmiSSL on AmigaOS3. AmigaOS4 deliberately does
-   NOT use this path: AmiSSL's BN_mod_exp is slow (or falls back) on emulated
-   PPC (~60s per 2048-bit modexp, which blows past the auth handshake timeout).
-   OS4 instead uses the in-tree Montgomery modexp below, which is O(n^2),
-   ~25x faster here, and has no AmiSSL dependency. */
-#if TG_AMIGAOS3_ENABLE_AMISSL || TG_ENABLE_TLS
+/* Use a linked OpenSSL BN_mod_exp only on AROS real-OpenSSL builds
+   (TG_ENABLE_TLS). Everywhere else -- AmigaOS4 and now AmigaOS3 -- use the
+   in-tree Montgomery modexp below: O(n^2), no AmiSSL/OpenSSL dependency, and far
+   faster than AmiSSL's BN_mod_exp on emulated/68k hardware (~60s per 2048-bit
+   modexp was measured through the AmiSSL path on OS4). The 68k build links
+   -nodefaultlibs, so it also defines TG_PROVIDE_MULDI3 to supply the one libgcc
+   helper (__muldi3) the 64-bit Montgomery math needs. */
+#if TG_ENABLE_TLS
 #define TG_MTPROTO_BIGINT_USE_OPENSSL 1
 #include <openssl/bn.h>
 #else
@@ -336,6 +337,51 @@ static unsigned int tg_w_inv0(unsigned int m0)
     return (unsigned int)(0U - inv);  /* -m0^-1 mod 2^32 */
 }
 
+/* {dst[k], carry} = src[k] + b[k]*w + carry, for k = 0..n-1; returns the final
+   carry word. dst may trail src by one word (the Montgomery reduction shift).
+   On 68020+ this is hand-written asm: this toolchain only compiles correctly at
+   -O0, where the C multiply-accumulate is dominated by stack traffic. The asm
+   keeps the row in registers with the hardware mulu.l (32x32->64) and addx,
+   which is the hot path of the whole modexp. The C version is the reference
+   used by every other target (and as a cross-check). */
+static unsigned int tg_mont_mac(unsigned int *dst, const unsigned int *src,
+                                const unsigned int *b, unsigned int w,
+                                unsigned int carry, unsigned long n)
+{
+#if defined(__mc68020__) && !defined(TG_BIGINT_NO_M68K_ASM)
+    __asm__ volatile (
+        "    tst.l   %5\n"
+        "    beq.s   2f\n"
+        "    moveq   #0,%%d4\n"
+        "1:\n"
+        "    move.l  (%2)+,%%d0\n"        /* d0 = b[k]               */
+        "    mulu.l  %3,%%d1:%%d0\n"      /* d1:d0 = b[k] * w        */
+        "    add.l   %4,%%d0\n"           /* += carry (low)          */
+        "    addx.l  %%d4,%%d1\n"         /*   carry into high       */
+        "    add.l   (%1)+,%%d0\n"        /* += src[k] (low)         */
+        "    addx.l  %%d4,%%d1\n"         /*   carry into high       */
+        "    move.l  %%d0,(%0)+\n"        /* dst[k] = low 32         */
+        "    move.l  %%d1,%4\n"           /* carry  = high 32        */
+        "    subq.l  #1,%5\n"
+        "    bne.s   1b\n"
+        "2:\n"
+        : "+a"(dst), "+a"(src), "+a"(b), "+d"(w), "+d"(carry), "+d"(n)
+        :
+        : "d0", "d1", "d4", "cc", "memory");
+    return carry;
+#else
+    unsigned long k;
+    for (k = 0UL; k < n; ++k) {
+        tg_bn_dword s;
+        s = (tg_bn_dword)src[k] + (tg_bn_dword)b[k] * (tg_bn_dword)w +
+            (tg_bn_dword)carry;
+        dst[k] = (unsigned int)s;
+        carry = (unsigned int)(s >> 32);
+    }
+    return carry;
+#endif
+}
+
 /* out = a*b*R^-1 mod m (CIOS), little-endian 32-bit words, m odd,
    n_inv0 = -m^-1 mod 2^32 */
 static void tg_mont_mul_w(unsigned int *out, const unsigned int *a,
@@ -344,36 +390,25 @@ static void tg_mont_mul_w(unsigned int *out, const unsigned int *a,
 {
     unsigned int t[TG_BN_WORDS + 2U];
     unsigned long i;
-    unsigned long j;
-    tg_bn_dword carry;
     tg_bn_dword sum;
     unsigned int mm;
+    unsigned int carry;
 
     for (i = 0UL; i < nw + 2UL; ++i) {
         t[i] = 0U;
     }
     for (i = 0UL; i < nw; ++i) {
-        tg_bn_dword bi;
-        bi = (tg_bn_dword)b[i];
-        carry = 0ULL;
-        for (j = 0UL; j < nw; ++j) {
-            sum = (tg_bn_dword)t[j] + (tg_bn_dword)a[j] * bi + carry;
-            t[j] = (unsigned int)sum;
-            carry = sum >> 32;
-        }
-        sum = (tg_bn_dword)t[nw] + carry;
+        carry = tg_mont_mac(t, t, a, b[i], 0U, nw);   /* t += a * b[i] */
+        sum = (tg_bn_dword)t[nw] + (tg_bn_dword)carry;
         t[nw] = (unsigned int)sum;
         t[nw + 1UL] = (unsigned int)(sum >> 32);
+
         mm = (unsigned int)((tg_bn_dword)t[0] * (tg_bn_dword)n_inv0);
-        carry = ((tg_bn_dword)t[0] +
-                 (tg_bn_dword)mm * (tg_bn_dword)m[0]) >> 32;
-        for (j = 1UL; j < nw; ++j) {
-            sum = (tg_bn_dword)t[j] + (tg_bn_dword)mm * (tg_bn_dword)m[j] +
-                  carry;
-            t[j - 1UL] = (unsigned int)sum;
-            carry = sum >> 32;
-        }
-        sum = (tg_bn_dword)t[nw] + carry;
+        carry = (unsigned int)(((tg_bn_dword)t[0] +
+                 (tg_bn_dword)mm * (tg_bn_dword)m[0]) >> 32);
+        carry = tg_mont_mac(t, t + 1UL, m + 1UL, mm, carry, nw - 1UL); /* reduce */
+
+        sum = (tg_bn_dword)t[nw] + (tg_bn_dword)carry;
         t[nw - 1UL] = (unsigned int)sum;
         t[nw] = t[nw + 1UL] + (unsigned int)(sum >> 32);
     }
@@ -675,3 +710,56 @@ int tg_mtproto_bigint_self_test(void)
 
     return 0;
 }
+
+#if defined(TG_PROVIDE_MULDI3) && TG_PROVIDE_MULDI3
+/*
+ * 64-bit multiply for the AmigaOS 3 m68k build, which links -nodefaultlibs (no
+ * libgcc). The in-tree Montgomery modexp above uses 64-bit multiplies that GCC
+ * lowers to __muldi3; supply it here. Built from 16x16->32 partial products so
+ * it never recurses into a 64-bit multiply. Pure C, endian-neutral; correct on
+ * a 32-bit-long target (validated against the native product over 30M cases).
+ */
+unsigned long long __muldi3(unsigned long long a, unsigned long long b);
+unsigned long long __muldi3(unsigned long long a, unsigned long long b)
+{
+    unsigned long a_lo;
+    unsigned long a_hi;
+    unsigned long b_lo;
+    unsigned long b_hi;
+    unsigned long al;
+    unsigned long ah;
+    unsigned long bl;
+    unsigned long bh;
+    unsigned long ll;
+    unsigned long lh;
+    unsigned long hl;
+    unsigned long hh;
+    unsigned long cross;
+    unsigned long res_lo;
+    unsigned long res_hi;
+    unsigned long long result;
+
+    a_lo = (unsigned long)a;
+    a_hi = (unsigned long)(a >> 32);
+    b_lo = (unsigned long)b;
+    b_hi = (unsigned long)(b >> 32);
+
+    al = a_lo & 0xFFFFUL;
+    ah = a_lo >> 16;
+    bl = b_lo & 0xFFFFUL;
+    bh = b_lo >> 16;
+
+    ll = al * bl;
+    lh = al * bh;
+    hl = ah * bl;
+    hh = ah * bh;
+
+    cross = (ll >> 16) + (lh & 0xFFFFUL) + (hl & 0xFFFFUL);
+    res_lo = (ll & 0xFFFFUL) | ((cross & 0xFFFFUL) << 16);
+    res_hi = hh + (lh >> 16) + (hl >> 16) + (cross >> 16);
+
+    result = ((unsigned long long)res_hi << 32) | (unsigned long long)res_lo;
+    result += ((unsigned long long)(a_lo * b_hi + a_hi * b_lo)) << 32;
+    return result;
+}
+#endif /* TG_PROVIDE_MULDI3 */

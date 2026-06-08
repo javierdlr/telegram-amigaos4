@@ -23,10 +23,21 @@ else
 CSTD ?= c89
 endif
 
-CFLAGS ?= -std=$(CSTD) -Wall -Wextra -O0 -mcrt=ixemul -Iinclude
+# -m68020 enables the hardware 32x32->64 mulu.l (and 32-bit divu.l), a big speed
+# win for the in-tree Montgomery modexp. The client already targets "68020 or
+# better" (tested on 68080/Vampire), so this does not narrow CPU support.
+# NOTE: this m68k-amigaos-gcc 6.5 toolchain miscompiles (hangs) at -O1/-O2, so
+# keep -O0 for correctness. -m68020 still gives the big win: hardware mulu.l
+# (32x32->64) for the in-tree Montgomery modexp. The client already targets
+# "68020 or better" (tested on 68080/Vampire), so this does not narrow support.
+CFLAGS ?= -std=$(CSTD) -Wall -Wextra -O0 -m68020 -mcrt=ixemul -Iinclude
 LDFLAGS ?= -mcrt=ixemul -nodefaultlibs
 LDLIBS ?= -lc -lamiga
 TARGET ?= build/amigaos3/telegram-test
+
+# The 68k build links -nodefaultlibs (no libgcc), so supply __muldi3 in-tree for
+# the 64-bit Montgomery modexp (see core/tg_mtproto_bigint.c).
+CFLAGS += -DTG_PROVIDE_MULDI3=1
 
 ifeq ($(ENABLE_AMISSL),1)
 CFLAGS += -DTG_AMIGAOS3_ENABLE_AMISSL=1 -DTG_AMIGAOS3_AMISSL_API_VERSION=$(AMISSL_API_VERSION) -I$(AMISSL_SDK)/include

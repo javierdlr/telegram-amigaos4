@@ -14,7 +14,8 @@ PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/human-releases"}
 DATE_STAMP=${DATE_STAMP:-$(date +%Y%m%d)}
 COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 
-AMIGAOS3_BINARY=${AMIGAOS3_BINARY:-"$ROOT_DIR/build/amigaos3/telegram-test-amissl"}
+# Default to the AmiSSL-free m68k build (in-tree crypto, no AmiSSL needed).
+AMIGAOS3_BINARY=${AMIGAOS3_BINARY:-"$ROOT_DIR/build/amigaos3/telegram-test"}
 MORPHOS_BINARY=${MORPHOS_BINARY:-"$ROOT_DIR/build/morphos-cross/telegram-test"}
 AMIGAOS4_BINARY=${AMIGAOS4_BINARY:-"$ROOT_DIR/build/amigaos4/telegram-test"}
 AROS_I386_BINARY=${AROS_I386_BINARY:-"$ROOT_DIR/build/aros-i386-abiv0/telegram-test"}
@@ -73,13 +74,15 @@ write_readme() {
   working internet connection.
 - ixemul.library installed (LIBS:ixemul.library): this m68k build links
   through the ixemul C runtime.
-- AmiSSL 5.18 or newer, using the variant that matches your CPU:
-    * 68060             -> AmiSSL 68060 variant
-    * Vampire / 68080   -> AmiSSL 68020/030/040/080 variant
-  If you swap AmiSSL libraries while the system is running, reboot or run
-  'Avail FLUSH' before starting.
-- A 68020 or better CPU (tested on 68080 / Vampire).
+- A 68020 or better CPU. This build uses 68020 instructions (hardware 32x32
+  multiply) and will NOT run on a plain 68000. Tested on 68080/Vampire;
+  community testing on 68020/030/040/060 is welcome.
 - A few MB of free RAM; the launcher requests Stack 262144.
+
+NO AmiSSL needed: all cryptography (RSA, Diffie-Hellman, SRP 2FA, AES, SHA)
+is built into the program. The first login does some heavy big-number math
+and may take a minute on slower 68k CPUs; this is a one-time cost (the saved
+login is reused afterwards) and normal chatting stays fast.
 "
         ;;
     *)
