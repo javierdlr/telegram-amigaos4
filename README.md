@@ -30,7 +30,8 @@ The main development line is MTProto.
 
 The goal is a usable text-first Telegram client for:
 
-- AmigaOS 3.x (no AmiSSL required — all crypto is in-tree; needs a 68020+ CPU)
+- AmigaOS 3.x (native build: no ixemul.library and no AmiSSL required — all
+  crypto is in-tree; needs a 68020+ CPU)
 - MorphOS
 - AmigaOS 4.x
 - AROS i386
