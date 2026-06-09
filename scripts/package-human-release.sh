@@ -292,5 +292,5 @@ package_one() {
 package_one "AmigaOS 3.x" "$AMIGAOS3_BINARY" "amigaos3" "amigaos3"
 package_one "MorphOS" "$MORPHOS_BINARY" "morphos" "morphos"
 package_one "AmigaOS 4.x" "$AMIGAOS4_BINARY" "amigaos4" "amigaos4"
-package_one "AROS i386 ABIv0" "$AROS_I386_BINARY" "aros-i386-abiv0" "aros-i386"
+package_one "AROS i386 ABIv0" "$AROS_I386_BINARY" "aros-i386" "aros-i386"
 package_one "AROS x86_64" "$AROS_X86_64_BINARY" "aros-x86_64" "aros-x86_64"
