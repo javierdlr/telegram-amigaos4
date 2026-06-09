@@ -54,7 +54,7 @@
  * early. We keep reading/ACKing past updates until the result OR this budget
  * elapses, with the per-call attempt count as a high safety ceiling.
  */
-#define TG_MTPROTO_QUERY_BUDGET_SECONDS 12UL
+#define TG_MTPROTO_QUERY_BUDGET_SECONDS 20UL
 
 /*
  * Consecutive failed reads/sends in the interactive chat loop before it drops
@@ -7135,7 +7135,11 @@ int tg_mtproto_auth_chat_file(const char *host,
     chat_quiet = 0;
     api_id[0] = '\0';
     saved_timeout = tg_net_connect_timeout_seconds();
-    tg_net_set_connect_timeout_seconds(5UL);
+    /* A busy account's first getDialogs page can be slow to stream in on some
+       stacks (notably MorphOS bsdsocket), so allow a generous per-recv window;
+       a too-short timeout aborts mid-frame, desyncs the link and leaves the
+       client stuck at "Loading chats...". */
+    tg_net_set_connect_timeout_seconds(20UL);
     /*
      * Raw input stays opt-in for now. On real Amiga CON: the close gadget and
      * other window events can arrive as raw CSI-style numeric sequences; in the
