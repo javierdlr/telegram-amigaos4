@@ -36,7 +36,10 @@ struct Library *SocketBase = 0;
 #include <openssl/ssl.h>
 #endif
 
+#include <time.h>
+
 #include "tg_platform.h"
+#include "tg_mtproto_crypto.h"
 
 const char *tg_platform_name(void)
 {
@@ -244,6 +247,136 @@ int tg_platform_stdin_set_raw(int enabled)
 #endif
 }
 
+/*
+ * In-tree CSPRNG fallback for AROS (SHA-256 Hash-DRBG).
+ *
+ * Real AROS has no /dev/urandom and this MTProto build links no TLS, so the
+ * POSIX random path returns nothing and login fails with "secure-rng-
+ * unavailable". Mirror the AmigaOS 3/4 backends: gather local entropy (x86 TSC
+ * jitter, wall clock, run-varying addresses, a per-call counter) and run it
+ * through SHA-256 in a Hash-DRBG. Only used when /dev/urandom is absent, so the
+ * macOS host build keeps using the real kernel CSPRNG.
+ */
+static unsigned char tg_aros_drbg_state[TG_MTPROTO_SHA256_LENGTH];
+static int tg_aros_drbg_ready = 0;
+
+static unsigned long tg_aros_timebase(void)
+{
+    unsigned long tb = 0;
+#if defined(__i386__) || defined(__x86_64__)
+    unsigned int lo = 0;
+    unsigned int hi = 0;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    tb = (unsigned long)lo ^ ((unsigned long)hi << 13);
+#else
+    struct timeval tv;
+    gettimeofday(&tv, 0);
+    tb = (unsigned long)tv.tv_usec ^ ((unsigned long)tv.tv_sec << 8);
+#endif
+    return tb;
+}
+
+static unsigned long tg_aros_entropy_gather(unsigned char *buf,
+                                            unsigned long cap)
+{
+    unsigned long n = 0;
+    unsigned long i;
+    struct timeval tv;
+    time_t now;
+    void *p;
+
+    now = time(0);
+    if (n + sizeof(now) <= cap) {
+        memcpy(buf + n, &now, sizeof(now));
+        n += sizeof(now);
+    }
+    for (i = 0; i < 96UL && n + sizeof(unsigned long) <= cap; ++i) {
+        unsigned long tb = tg_aros_timebase();
+        volatile unsigned long spin;
+        unsigned long k;
+        memcpy(buf + n, &tb, sizeof(tb));
+        n += sizeof(tb);
+        spin = tb;
+        for (k = 0; k < (tb & 0x3fUL); ++k) {
+            spin = (spin * 2654435761UL) + k;
+        }
+        (void)spin;
+        if (n + sizeof(tv) <= cap) {
+            gettimeofday(&tv, 0);
+            memcpy(buf + n, &tv, sizeof(tv));
+            n += sizeof(tv);
+        }
+    }
+    p = (void *)&tv;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    p = (void *)buf;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    p = (void *)tg_aros_drbg_state;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    p = (void *)&n;
+    if (n + sizeof(p) <= cap) { memcpy(buf + n, &p, sizeof(p)); n += sizeof(p); }
+    return n;
+}
+
+static void tg_aros_drbg_seed(void)
+{
+    unsigned char pool[1024];
+    unsigned long len = tg_aros_entropy_gather(pool, sizeof(pool));
+    tg_mtproto_sha256(pool, len, tg_aros_drbg_state);
+    tg_aros_drbg_ready = 1;
+}
+
+static void tg_aros_drbg_generate(unsigned char *out, unsigned long n)
+{
+    static unsigned long calls = 0;
+    unsigned char key[TG_MTPROTO_SHA256_LENGTH];
+    unsigned char block[TG_MTPROTO_SHA256_LENGTH];
+    unsigned long off;
+    unsigned long ctr;
+
+    if (!tg_aros_drbg_ready) {
+        tg_aros_drbg_seed();
+    }
+    {
+        unsigned char work[TG_MTPROTO_SHA256_LENGTH + 32];
+        unsigned long wn = TG_MTPROTO_SHA256_LENGTH;
+        struct timeval tv;
+        unsigned long tb = tg_aros_timebase();
+        memcpy(work, tg_aros_drbg_state, TG_MTPROTO_SHA256_LENGTH);
+        gettimeofday(&tv, 0);
+        ++calls;
+        memcpy(work + wn, &tv, sizeof(tv)); wn += sizeof(tv);
+        memcpy(work + wn, &tb, sizeof(tb)); wn += sizeof(tb);
+        memcpy(work + wn, &calls, sizeof(calls)); wn += sizeof(calls);
+        tg_mtproto_sha256(work, wn, key);
+    }
+    off = 0;
+    ctr = 0;
+    while (off < n) {
+        unsigned char cb[TG_MTPROTO_SHA256_LENGTH + 4];
+        unsigned long take;
+        memcpy(cb, key, TG_MTPROTO_SHA256_LENGTH);
+        cb[TG_MTPROTO_SHA256_LENGTH + 0] = (unsigned char)((ctr >> 24) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 1] = (unsigned char)((ctr >> 16) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 2] = (unsigned char)((ctr >> 8) & 0xffUL);
+        cb[TG_MTPROTO_SHA256_LENGTH + 3] = (unsigned char)(ctr & 0xffUL);
+        tg_mtproto_sha256(cb, sizeof(cb), block);
+        take = n - off;
+        if (take > TG_MTPROTO_SHA256_LENGTH) {
+            take = TG_MTPROTO_SHA256_LENGTH;
+        }
+        memcpy(out + off, block, take);
+        off += take;
+        ++ctr;
+    }
+    {
+        unsigned char rb[TG_MTPROTO_SHA256_LENGTH + 1];
+        memcpy(rb, key, TG_MTPROTO_SHA256_LENGTH);
+        rb[TG_MTPROTO_SHA256_LENGTH] = 0x01;
+        tg_mtproto_sha256(rb, sizeof(rb), tg_aros_drbg_state);
+    }
+}
+
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
 {
     int fd;
@@ -260,24 +393,27 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count)
     if (fd < 0) {
         fd = open("/dev/random", O_RDONLY);
     }
-    if (fd < 0) {
-#if TG_ENABLE_TLS
-        if (RAND_bytes(bytes, (int)byte_count) == 1) {
+    if (fd >= 0) {
+        offset = 0;
+        while (offset < byte_count) {
+            got = read(fd, bytes + offset, byte_count - offset);
+            if (got <= 0) {
+                break;
+            }
+            offset += (unsigned long)got;
+        }
+        close(fd);
+        if (offset >= byte_count) {
             return 1;
         }
+    }
+#if TG_ENABLE_TLS
+    if (RAND_bytes(bytes, (int)byte_count) == 1) {
+        return 1;
+    }
 #endif
-        return 0;
-    }
-    offset = 0;
-    while (offset < byte_count) {
-        got = read(fd, bytes + offset, byte_count - offset);
-        if (got <= 0) {
-            close(fd);
-            return 0;
-        }
-        offset += (unsigned long)got;
-    }
-    close(fd);
+    /* No /dev/urandom on real AROS: use the in-tree Hash-DRBG. */
+    tg_aros_drbg_generate(bytes, byte_count);
     return 1;
 }
 
