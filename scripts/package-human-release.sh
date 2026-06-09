@@ -24,6 +24,11 @@ AROS_I386_BINARY=${AROS_I386_BINARY:-"$ROOT_DIR/build/aros-i386-abiv0/telegram-t
 AROS_X86_64_BINARY=${AROS_X86_64_BINARY:-"$ROOT_DIR/build/aros-x86_64/telegram-test"}
 
 mkdir -p "$PACKAGE_ROOT"
+# Short community-facing names: Telegram-<platform>-<date>.zip (the commit id is
+# kept inside README.txt as "Build:" and in the GitHub tag, not in the filename).
+rm -f "$PACKAGE_ROOT"/Telegram-*-"$DATE_STAMP".zip
+rm -rf "$PACKAGE_ROOT"/Telegram-*-"$DATE_STAMP"
+# Also clear any leftovers from the previous long naming scheme.
 rm -f "$PACKAGE_ROOT"/telegram-amiga-*-human-"$DATE_STAMP"-*.zip
 rm -rf "$PACKAGE_ROOT"/telegram-amiga-*-human-"$DATE_STAMP"-*
 
@@ -257,7 +262,7 @@ package_one() {
             ;;
     esac
 
-    drawer="telegram-amiga-$suffix-human-$DATE_STAMP-$COMMIT_ID"
+    drawer="Telegram-$suffix-$DATE_STAMP"
     dest="$PACKAGE_ROOT/$drawer"
     rm -rf "$dest"
     mkdir -p "$dest"
