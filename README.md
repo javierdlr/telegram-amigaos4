@@ -21,6 +21,9 @@ Telegram Amiga is a non-commercial community project, created as a gift to the
 Amiga community and as an exploration of what a practical modern messaging
 client can look like on constrained and historical platforms.
 
+Development diary and lab notes:
+https://androidlab.it/telegram-amiga-diario-sviluppo-client-mtproto/
+
 ## Direction
 
 The main development line is MTProto.
