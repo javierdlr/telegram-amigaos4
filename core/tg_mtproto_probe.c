@@ -91,6 +91,11 @@
  * window/control events as byte sequences. Keep it opt-in until those events
  * are parsed instead of leaking into the chat line on real systems.
  */
+/* Raw console input (Up/Down history) needs every interactive prompt -- the
+   chat picker and /add selection, not just the main input loop -- to echo and
+   line-edit in raw mode; until that is wired up, raw mode left those prompts
+   silent. Keep it off so the keyboard works; re-enable once the prompts are
+   raw-aware. */
 #ifndef TG_ENABLE_CHAT_RAW_INPUT
 #define TG_ENABLE_CHAT_RAW_INPUT 0
 #endif
@@ -6532,6 +6537,16 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         }
         direction = (int)(unsigned char)ch;
         if (direction != 'A' && direction != 'B') {
+            /* Not Up/Down. Consume the rest of an unrecognised CSI sequence
+               (window close/resize events arrive as ESC [ <params> <final>) so
+               its trailing bytes do not leak into the typed line. CSI param and
+               intermediate bytes are 0x20-0x3F; the final byte is 0x40-0x7E. */
+            while (direction >= 0x20 && direction < 0x40) {
+                if (tg_platform_stdin_read_char(0UL, &ch) <= 0) {
+                    break;
+                }
+                direction = (int)(unsigned char)ch;
+            }
             return 0;
         }
         if (tg_chat_history_count == 0UL) {
@@ -7141,9 +7156,11 @@ int tg_mtproto_auth_chat_file(const char *host,
        client stuck at "Loading chats...". */
     tg_net_set_connect_timeout_seconds(20UL);
     /*
-     * Raw input stays opt-in for now. On real Amiga CON: the close gadget and
-     * other window events can arrive as raw CSI-style numeric sequences; in the
-     * normal human client that is worse than losing Up/Down recall.
+     * Raw console input enables Up/Down command-history recall. On real Amiga
+     * CON: the close gadget and other window events arrive as CSI-style escape
+     * sequences; the line editor now consumes any unrecognised CSI fully (see
+     * tg_mtproto_chat_read_line_edit) so those events no longer leak stray bytes
+     * into the typed line. Falls back to cooked input if set_raw is unsupported.
      */
 #if TG_ENABLE_CHAT_RAW_INPUT
     chat_raw = (tg_platform_stdin_set_raw(1) == 0);
