@@ -1,0 +1,67 @@
+# Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+# SPDX-License-Identifier: MIT
+#
+# EXPERIMENTAL: AmigaOS 3.x build with the native clib2 runtime instead of
+# ixemul, so the resulting binary needs no ixemul.library at runtime.
+#
+# The networking backend already opens bsdsocket.library directly (SocketBase,
+# WaitSelect, CloseSocket); this Makefile tests whether clib2 supplies the rest
+# of the C runtime (stdio/malloc/time) and BSD socket glue without ixemul.
+
+CC := m68k-amigaos-gcc
+ENABLE_GZIP ?= 0
+ENABLE_GZIP_PUFF ?= 1
+CSTD ?= c89
+
+# clib2 instead of ixemul. Keep -m68060 (so GCC emits __muldi3 rather than the
+# 68060's missing 64-bit mulu.l) and -O0 (this gcc 6.5 miscompiles the modexp at
+# -O1/-O2). Default link path is used so libgcc supplies __muldi3 -- if that is
+# unavailable we fall back to the in-tree copy via TG_PROVIDE_MULDI3 below.
+CFLAGS ?= -std=$(CSTD) -Wall -Wextra -O0 -m68060 -mcrt=clib2 -Iinclude
+CFLAGS += -DTG_MTPROTO_BIGINT_M68K_ASM=1
+# No ixemul: reach bsdsocket.library directly via the SDK inlines.
+CFLAGS += -DTG_AMIGAOS3_NOIXEMUL=1
+
+# Without ixemul there is no ixemul/include/limits.h to short-circuit GCC's
+# limits.h #include_next chain, so sys-include/limits.h ends up with nowhere to
+# go. Put GCC's own include-fixed/ (which carries the final limits.h and
+# ULONG_MAX) after the system dirs so the chain resolves.
+GCC_INCLUDE_FIXED := $(shell $(CC) -print-file-name=include-fixed)
+CFLAGS += -idirafter $(GCC_INCLUDE_FIXED)
+LDFLAGS ?= -mcrt=clib2
+LDLIBS ?= -lamiga
+TARGET ?= build/amigaos3-clib2/telegram-test
+
+# clib2's default link does not pull libgcc's __muldi3 here, so use the in-tree
+# 64-bit multiply (same as the ixemul build).
+PROVIDE_MULDI3 ?= 1
+ifeq ($(PROVIDE_MULDI3),1)
+CFLAGS += -DTG_PROVIDE_MULDI3=1
+endif
+
+ifeq ($(ENABLE_GZIP),1)
+CFLAGS += -DTG_ENABLE_GZIP=1
+LDLIBS += -lz
+endif
+
+ifeq ($(ENABLE_GZIP_PUFF),1)
+CFLAGS += -DTG_ENABLE_GZIP_PUFF=1 -Ithird_party/puff
+PUFF_SRC := third_party/puff/puff.c
+else
+PUFF_SRC :=
+endif
+
+SRC := src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_console.c core/tg_client_state.c core/tg_offset_state.c core/tg_text_client.c core/tg_file.c core/tg_http.c core/tg_https.c core/tg_json.c core/tg_telegram.c core/tg_log.c core/tg_mtproto.c core/tg_mtproto_auth.c core/tg_mtproto_bigint.c core/tg_mtproto_dc.c core/tg_mtproto_envelope.c core/tg_mtproto_encrypted.c core/tg_mtproto_login.c core/tg_mtproto_message_id.c core/tg_mtproto_probe.c core/tg_mtproto_rsa.c core/tg_mtproto_crypto.c core/tg_mtproto_session.c core/tg_mtproto_srp.c core/tg_mtproto_tl.c core/tg_mtproto_transport.c core/tg_net.c core/tg_tls.c platforms/amigaos3/tg_platform_amigaos3.c $(PUFF_SRC)
+
+.PHONY: all clean
+
+all: $(TARGET)
+
+$(TARGET): $(SRC) | build/amigaos3-clib2
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC) $(LDLIBS)
+
+build/amigaos3-clib2:
+	mkdir -p build/amigaos3-clib2
+
+clean:
+	rm -f $(TARGET)

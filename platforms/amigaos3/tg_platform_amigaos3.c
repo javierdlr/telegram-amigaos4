@@ -14,6 +14,19 @@
 #define TG_AMIGAOS3_ENABLE_AMISSL 0
 #endif
 
+/* When built without ixemul (clib2/libnix), the C library provides no BSD
+   socket calls, so we must reach bsdsocket.library directly through the
+   AmigaOS SDK inlines (proto/socket.h). */
+#ifndef TG_AMIGAOS3_NOIXEMUL
+#define TG_AMIGAOS3_NOIXEMUL 0
+#endif
+
+/* Both AmiSSL and the no-ixemul build talk to bsdsocket.library directly
+   (SocketBase + proto/socket.h inlines), so they share the socket open/close/
+   WaitSelect path. The plain ixemul build uses the C library's sockets. */
+#define TG_AMIGAOS3_BSDSOCKET_DIRECT \
+    (TG_AMIGAOS3_ENABLE_AMISSL || TG_AMIGAOS3_NOIXEMUL)
+
 #if defined(__amigaos3__)
 #include <errno.h>
 #include <netdb.h>
@@ -33,9 +46,10 @@
 #include <unistd.h>
 #endif
 
-#if defined(__amigaos3__) && TG_AMIGAOS3_ENABLE_AMISSL
+#if defined(__amigaos3__) && (TG_AMIGAOS3_ENABLE_AMISSL || TG_AMIGAOS3_NOIXEMUL)
 #include <proto/exec.h>
-/* ixemul ships BSD headers without the guard names expected by Roadshow. */
+/* Some BSD headers want a few guard names that ixemul (and a few C libraries)
+   omit; define them so proto/socket.h pulls cleanly. */
 #ifndef SYS_MBUF_H
 #define SYS_MBUF_H
 #endif
@@ -48,7 +62,13 @@
 #ifndef _NET_ROUTE_H_
 #define _NET_ROUTE_H_
 #endif
+/* socket()/connect()/recv()/send()/gethostbyname()/CloseSocket()/WaitSelect()
+   resolve to bsdsocket.library inlines through SocketBase -- required without
+   ixemul, and also used by the AmiSSL path. */
 #include <proto/socket.h>
+#endif
+
+#if defined(__amigaos3__) && TG_AMIGAOS3_ENABLE_AMISSL
 #include <proto/amissl.h>
 #include <proto/amisslmaster.h>
 #include <amissl/amissl.h>
@@ -78,6 +98,15 @@ const char stack_size[] = "$STACK:65536";
 
 static int tg_amigaos3_amissl_init(char *error_buffer,
                                    unsigned long error_buffer_size);
+#endif
+
+#if defined(__amigaos3__) && TG_AMIGAOS3_NOIXEMUL && !TG_AMIGAOS3_ENABLE_AMISSL
+/* bsdsocket.library base used by the proto/socket.h inlines (no ixemul to
+   provide BSD sockets). Opened in tg_amigaos3_socket_open(). */
+struct Library *SocketBase = 0;
+/* Embed a big stack cookie for the modexp / PBKDF2 crypto when launched
+   outside a shell (e.g. by double-clicking the icon). */
+const char stack_size[] = "$STACK:262144";
 #endif
 
 const char *tg_platform_name(void)
@@ -422,7 +451,7 @@ static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer
     }
 }
 
-#if TG_AMIGAOS3_ENABLE_AMISSL
+#if TG_AMIGAOS3_BSDSOCKET_DIRECT
 static int tg_amigaos3_socket_open(char *error_buffer, unsigned long error_buffer_size)
 {
     if (SocketBase != 0) {
@@ -460,13 +489,13 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
         return TG_NET_INVALID_ARGUMENT;
     }
 
-#if TG_AMIGAOS3_ENABLE_AMISSL
+#if TG_AMIGAOS3_BSDSOCKET_DIRECT
     if (tg_amigaos3_socket_open(error_buffer, error_buffer_size) != 0) {
         return TG_NET_CONNECT_FAILED;
     }
 #endif
 
-#if TG_AMIGAOS3_ENABLE_AMISSL
+#if TG_AMIGAOS3_BSDSOCKET_DIRECT
     host_entry = (struct hostent *)gethostbyname((STRPTR)host);
 #else
     host_entry = gethostbyname((char *)host);
@@ -495,7 +524,7 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
         return TG_NET_OK;
     }
 
-#if TG_AMIGAOS3_ENABLE_AMISSL
+#if TG_AMIGAOS3_BSDSOCKET_DIRECT
     CloseSocket((long)sock);
 #else
     close(sock);
@@ -541,7 +570,7 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
         error_buffer[0] = '\0';
     }
 
-#if TG_AMIGAOS3_ENABLE_AMISSL
+#if TG_AMIGAOS3_BSDSOCKET_DIRECT
     /* Bound the blocking recv() with a bsdsocket WaitSelect() timeout (see the
        detailed note at the WaitSelect call below for why it must NOT be ixemul
        select()). Without a bounded wait the encrypted-query receive loop in
@@ -608,12 +637,19 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
-#if TG_AMIGAOS3_ENABLE_AMISSL
+#if TG_AMIGAOS3_BSDSOCKET_DIRECT
         CloseSocket((long)connection->platform_handle);
+#if TG_AMIGAOS3_ENABLE_AMISSL
         if (!tg_amigaos3_amissl_initialized && SocketBase != 0) {
             CloseLibrary(SocketBase);
             SocketBase = 0;
         }
+#else
+        if (SocketBase != 0) {
+            CloseLibrary(SocketBase);
+            SocketBase = 0;
+        }
+#endif
 #else
         close((int)connection->platform_handle);
 #endif
