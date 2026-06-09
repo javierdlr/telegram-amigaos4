@@ -106,7 +106,7 @@ auth files, phone-code files, passwords or peer caches.
 
 Latest human releases:
 
-- [AmigaOS 3.x human release 20260609 (native — no ixemul / no AmiSSL, 68020-68060)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-human-20260609-3e41a2a)
+- [AmigaOS 3.x human release 20260609 (native — no ixemul / no AmiSSL, Up/Down history fix)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-human-20260609-6050721)
 - [MorphOS human release 20260609 (chat-list fix)](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-human-20260609-03bc1a3)
 - [AmigaOS 4.x human release 20260609 (chat-list fix)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-human-20260609-03bc1a3)
 - [AROS i386 ABIv0 human release 20260609 (chat-list + RNG fix)](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-abiv0-human-20260609-03bc1a3)
