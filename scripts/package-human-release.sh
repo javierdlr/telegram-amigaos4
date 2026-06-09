@@ -262,8 +262,11 @@ package_one() {
 
     cp "$binary" "$dest/telegram-test"
     write_launcher "$dest/TelegramAmiga"
-    if [ "$expected" = "amigaos4" ] &&
-        [ -f "$ROOT_DIR/assets/TelegramAmigaOS4.info" ]; then
+    # Use the richer 64x64 colour icon (originally the OS4 one) on every platform.
+    # It is a standard project icon (do_Type=4, default tool C:IconX, same launch)
+    # with an appended colour icon, and carries a planar fallback, so OS3.x /
+    # MorphOS / AROS / OS4 all show it. Falls back to the basic icon if missing.
+    if [ -f "$ROOT_DIR/assets/TelegramAmigaOS4.info" ]; then
         cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$dest/TelegramAmiga.info"
     else
         cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
