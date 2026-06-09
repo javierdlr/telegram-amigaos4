@@ -37,6 +37,10 @@
 #define TG_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
 #define TG_DIALOG_CONSTRUCTOR 0xd58a08c6UL
+#define TG_DIALOG_FOLDER_CONSTRUCTOR 0x71bd134cUL
+#define TG_FOLDER_CONSTRUCTOR 0xff544e65UL
+#define TG_CHAT_PHOTO_EMPTY_CONSTRUCTOR 0x37c1011cUL
+#define TG_CHAT_PHOTO_CONSTRUCTOR 0x1c6e1c11UL
 #define TG_PEER_NOTIFY_SETTINGS_CONSTRUCTOR 0x99622c0cUL
 #define TG_NOTIFICATION_SOUND_DEFAULT_CONSTRUCTOR 0x97e8bebeUL
 #define TG_NOTIFICATION_SOUND_NONE_CONSTRUCTOR 0x6f0c34dfUL
@@ -1398,14 +1402,30 @@ static tg_mtproto_tl_status tg_skip_draft_message(
     tg_mtproto_tl_reader *reader)
 {
     unsigned long constructor;
+    unsigned long flags;
+    unsigned long scratch;
 
     if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    if (constructor == TG_DRAFT_MESSAGE_EMPTY_CONSTRUCTOR) {
-        return TG_MTPROTO_TL_OK;
+    if (constructor != TG_DRAFT_MESSAGE_EMPTY_CONSTRUCTOR) {
+        /* A real draftMessage#3fccf7ef carries reply_to/entities/media that are
+           expensive (and risky) to skip field-by-field. Signal the caller so it
+           can stop walking the dialog vector gracefully and fall back to the
+           whole-body peer scan instead of corrupting the read offset. */
+        return TG_MTPROTO_TL_INVALID_DATA;
     }
-    return TG_MTPROTO_TL_INVALID_DATA;
+    /* draftMessageEmpty#1b0c841a flags:# date:flags.0?int. Telegram now sends
+       the "empty" draft with a flags word and an optional clear date, so the
+       old zero-field skip desynced every dialog that had ever held a draft. */
+    if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & 1UL) != 0UL &&
+        tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return TG_MTPROTO_TL_OK;
 }
 
 static tg_mtproto_tl_status tg_read_peer_ref(tg_mtproto_tl_reader *reader,
@@ -1428,6 +1448,63 @@ static tg_mtproto_tl_status tg_read_peer_ref(tg_mtproto_tl_reader *reader,
     }
 }
 
+static tg_mtproto_tl_status tg_skip_chat_photo(tg_mtproto_tl_reader *reader)
+{
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long scratch_hi;
+    unsigned long scratch_lo;
+
+    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (constructor == TG_CHAT_PHOTO_EMPTY_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_OK;
+    }
+    if (constructor != TG_CHAT_PHOTO_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    /* chatPhoto#1c6e1c11 flags:# has_video:flags.0?true photo_id:long
+       stripped_thumb:flags.1?bytes dc_id:int */
+    if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &scratch_hi, &scratch_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & 2UL) != 0UL && tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return tg_mtproto_tl_read_u32(reader, &scratch_lo);
+}
+
+static tg_mtproto_tl_status tg_skip_folder(tg_mtproto_tl_reader *reader)
+{
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long scratch;
+
+    /* folder#ff544e65 flags:# autofill_new_broadcasts:flags.0?true
+       exclude_pinned:flags.1?true emoticon:flags.3?string id:int title:string
+       photo:flags.2?ChatPhoto */
+    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK ||
+        constructor != TG_FOLDER_CONSTRUCTOR ||
+        tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & 8UL) != 0UL && tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+        tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & 4UL) != 0UL &&
+        tg_skip_chat_photo(reader) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
 static tg_mtproto_tl_status tg_read_dialog_peer(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_dialog_peer *peer)
@@ -1436,8 +1513,31 @@ static tg_mtproto_tl_status tg_read_dialog_peer(
     unsigned long flags;
     unsigned long scratch;
 
-    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK ||
-        constructor != TG_DIALOG_CONSTRUCTOR ||
+    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (constructor == TG_DIALOG_FOLDER_CONSTRUCTOR) {
+        /* dialogFolder#71bd134c folder:Folder peer:Peer top_message:int
+           unread_muted_peers_count:int unread_unmuted_peers_count:int
+           unread_muted_messages_count:int unread_unmuted_messages_count:int.
+           This is the Archived-chats container, not a selectable chat: consume
+           its bytes and leave peer->peer_constructor 0 so callers skip it while
+           the real dialogs that follow it still parse. */
+        tg_mtproto_dialog_peer folder_peer;
+        memset(&folder_peer, 0, sizeof(folder_peer));
+        if (tg_skip_folder(reader) != TG_MTPROTO_TL_OK ||
+            tg_read_peer_ref(reader, &folder_peer) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        peer->peer_constructor = 0UL;
+        return TG_MTPROTO_TL_OK;
+    }
+    if (constructor != TG_DIALOG_CONSTRUCTOR ||
         tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
         tg_read_peer_ref(reader, peer) != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(reader, &peer->top_message) !=
@@ -1566,7 +1666,10 @@ tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_list(
     for (i = 0UL; i < count; ++i) {
         memset(&peer, 0, sizeof(peer));
         if (tg_read_dialog_peer(&reader, &peer) != TG_MTPROTO_TL_OK) {
-            return TG_MTPROTO_TL_INVALID_DATA;
+            break;  /* unparseable dialog: keep what we parsed so far */
+        }
+        if (peer.peer_constructor == 0UL) {
+            continue;  /* dialogFolder container, not a real peer */
         }
         if (out->count < TG_MTPROTO_DIALOG_PEER_MAX) {
             out->peers[out->count] = peer;
@@ -2783,7 +2886,14 @@ tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_cache(
     for (i = 0UL; i < count; ++i) {
         memset(&peer, 0, sizeof(peer));
         if (tg_read_dialog_peer(&reader, &peer) != TG_MTPROTO_TL_OK) {
-            return TG_MTPROTO_TL_INVALID_DATA;
+            /* An unparseable dialog (e.g. a real draftMessage with media) would
+               desync the rest of the vector. Stop walking dialogs but keep what
+               we have; the whole-body chat/user scans below still recover the
+               remaining peers. */
+            break;
+        }
+        if (peer.peer_constructor == 0UL) {
+            continue;  /* dialogFolder container, not a real peer */
         }
         entry = tg_peer_cache_add(out, peer.peer_constructor, peer.id_hi,
                                   peer.id_lo);

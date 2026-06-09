@@ -7147,6 +7147,8 @@ int tg_mtproto_auth_chat_file(const char *host,
     chat_raw = 0;
 #endif
     tg_chat_history_reset();
+    fputs("Loading chats...\n", stream);
+    fflush(stream);
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         rc = 0;
     } else {
@@ -7173,6 +7175,8 @@ int tg_mtproto_auth_chat_file(const char *host,
     if (rc != 0) {
         fprintf(stream, "Using cached chats.\n");
     }
+    fputs("Opening session...\n", stream);
+    fflush(stream);
     quiet = tg_mtproto_open_quiet_stream(stream);
     if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
                                     quiet, label) != 0 ||
@@ -7186,6 +7190,8 @@ int tg_mtproto_auth_chat_file(const char *host,
         return 2;
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
+    fputs("Loading profile...\n", stream);
+    fflush(stream);
     tg_mtproto_chat_load_own_label(host, port, api_id, auth_file, dc_id_text,
                                    &chat_context, peer_cache_file,
                                    own_label, sizeof(own_label), stream);

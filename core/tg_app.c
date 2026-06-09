@@ -3828,6 +3828,17 @@ int tg_app_run(int argc, char **argv)
     char net_error[128];
     const char *program_name;
 
+    /*
+     * Amiga consoles (CON:) are not always reported as interactive by the C
+     * runtime, so stdout can default to full buffering. Under MorphOS/Ambient
+     * (IconX) that hides interactive prompts: the program looks "stuck" at the
+     * last newline-flushed line while it is really waiting for keyboard input.
+     * Force unbuffered stdout/stderr so every prompt appears immediately on
+     * every platform.
+     */
+    setvbuf(stdout, (char *)0, _IONBF, 0);
+    setvbuf(stderr, (char *)0, _IONBF, 0);
+
     program_name = "telegram-test";
     if (argc > 0 && argv[0] != 0) {
         program_name = argv[0];
