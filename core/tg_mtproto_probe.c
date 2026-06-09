@@ -87,17 +87,20 @@
 #define TG_MTPROTO_CHECK_PASSWORD_INVALID 6
 
 /*
- * Raw chat input is useful for command history, but Amiga CON: also emits raw
- * window/control events as byte sequences. Keep it opt-in until those events
- * are parsed instead of leaking into the chat line on real systems.
+ * Raw chat input gives Up/Down command-history recall. It requires every
+ * interactive prompt -- the chat picker, Search, Remove and /add selection, not
+ * just the main input loop -- to echo and line-edit in raw mode, otherwise those
+ * prompts look silent (typing produces nothing) and the keyboard appears dead.
+ *
+ * That is now wired up: tg_mtproto_chat_prompt_line drives the same raw-aware
+ * editor as the main loop (via the tg_chat_input_raw flag), and the editor fully
+ * consumes any unrecognised CSI sequence (Amiga CON: window close/resize events
+ * arrive as ESC '[' ... or single-byte CSI 0x9B ...) so they never leak into the
+ * typed line. So raw mode is on by default; it falls back to cooked input
+ * automatically if tg_platform_stdin_set_raw is unsupported on the target.
  */
-/* Raw console input (Up/Down history) needs every interactive prompt -- the
-   chat picker and /add selection, not just the main input loop -- to echo and
-   line-edit in raw mode; until that is wired up, raw mode left those prompts
-   silent. Keep it off so the keyboard works; re-enable once the prompts are
-   raw-aware. */
 #ifndef TG_ENABLE_CHAT_RAW_INPUT
-#define TG_ENABLE_CHAT_RAW_INPUT 0
+#define TG_ENABLE_CHAT_RAW_INPUT 1
 #endif
 #define TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR 0x3072cfa1UL
 #define TG_MTPROTO_BAD_MSG_NOTIFICATION_CONSTRUCTOR 0xa7eff811UL
@@ -6445,6 +6448,18 @@ static char tg_chat_history[TG_CHAT_HISTORY_MAX][TG_CHAT_HISTORY_LEN];
 static unsigned long tg_chat_history_count = 0UL;
 static long tg_chat_history_recall = -1L;
 
+/*
+ * Whether the interactive chat currently has stdin in raw console mode. Set at
+ * the top of the chat loop once tg_platform_stdin_set_raw(1) succeeds, and read
+ * by tg_mtproto_chat_prompt_line so the sub-prompts (Peer index, Search, Remove,
+ * /add name, search result number) echo and line-edit the same way as the main
+ * input loop. Without this, raw mode left those cooked prompts silent -- typing
+ * produced nothing on screen, which looked like a dead keyboard. Every caller of
+ * tg_mtproto_chat_prompt_line runs inside the chat loop, so setting this once per
+ * chat entry is sufficient.
+ */
+static int tg_chat_input_raw = 0;
+
 static void tg_chat_history_reset(void)
 {
     tg_chat_history_count = 0UL;
@@ -6479,8 +6494,13 @@ static void tg_chat_history_add(const char *text)
 
 /*
  * Chat input reader. In raw mode it echoes characters itself and supports
- * backspace plus Up/Down command-history recall (cursor keys arrive as
- * ESC '[' 'A'/'B' or the single-byte CSI 0x9B 'A'/'B'); in cooked fallback
+ * backspace plus, when use_history is set, Up/Down command-history recall
+ * (cursor keys arrive as ESC '[' 'A'/'B' or the single-byte CSI 0x9B 'A'/'B').
+ * Unrecognised CSI sequences (window close/resize events) are always consumed so
+ * they never leak into the typed line. When use_history is 0 the reader still
+ * echoes and line-edits but does not record or recall history -- used by the
+ * sub-prompts (Peer index, /add name, ...) so answering them does not pollute
+ * the message history and Up/Down there is simply swallowed. In cooked fallback
  * mode (raw == 0) it just accumulates the line as before, without echo.
  */
 static int tg_mtproto_chat_read_line_edit(char *line,
@@ -6488,6 +6508,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                                           unsigned long *line_length,
                                           unsigned long timeout_seconds,
                                           int raw,
+                                          int use_history,
                                           FILE *stream)
 {
     char ch;
@@ -6512,7 +6533,9 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             fputc('\n', stream);
             fflush(stream);
         }
-        tg_chat_history_add(line);
+        if (use_history) {
+            tg_chat_history_add(line);
+        }
         *line_length = 0UL;
         return 1;
     }
@@ -6549,7 +6572,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             }
             return 0;
         }
-        if (tg_chat_history_count == 0UL) {
+        if (!use_history || tg_chat_history_count == 0UL) {
             return 0;
         }
         if (direction == 'A') {
@@ -6595,42 +6618,6 @@ static int tg_mtproto_chat_read_line_edit(char *line,
     return 0;
 }
 
-static int tg_mtproto_chat_read_line(char *line,
-                                     unsigned long line_size,
-                                     unsigned long *line_length,
-                                     unsigned long timeout_seconds)
-{
-    char ch;
-    int rc;
-
-    if (line == 0 || line_size == 0 || line_length == 0) {
-        return -1;
-    }
-    rc = tg_platform_stdin_read_char(timeout_seconds, &ch);
-    if (rc <= 0) {
-        return rc;
-    }
-    if (ch == '\r' || ch == '\n') {
-        if (*line_length >= line_size) {
-            *line_length = line_size - 1UL;
-        }
-        line[*line_length] = '\0';
-        *line_length = 0UL;
-        return 1;
-    }
-    if (ch == '\b' || ch == 127) {
-        if (*line_length > 0UL) {
-            --(*line_length);
-        }
-        return 0;
-    }
-    if (*line_length + 1UL < line_size) {
-        line[*line_length] = ch;
-        ++(*line_length);
-    }
-    return 0;
-}
-
 static int tg_mtproto_chat_prompt_line(const char *prompt,
                                        char *out,
                                        unsigned long out_size,
@@ -6652,7 +6639,13 @@ static int tg_mtproto_chat_prompt_line(const char *prompt,
     fflush(stream);
     line_length = 0UL;
     for (;;) {
-        rc = tg_mtproto_chat_read_line(out, out_size, &line_length, 3600UL);
+        /* Drive the same editor as the main loop so the prompt echoes and
+           line-edits in raw mode (use_history = 0: do not record/recall the
+           message history for these one-shot answers). In cooked fallback mode
+           tg_chat_input_raw is 0 and it behaves like the old reader. */
+        rc = tg_mtproto_chat_read_line_edit(out, out_size, &line_length,
+                                            3600UL, tg_chat_input_raw, 0,
+                                            stream);
         if (rc < 0) {
             fprintf(stream, "%s: input-closed\n", label);
             return 2;
@@ -7167,6 +7160,9 @@ int tg_mtproto_auth_chat_file(const char *host,
 #else
     chat_raw = 0;
 #endif
+    /* Let tg_mtproto_chat_prompt_line (Peer index / Search / /add prompts) echo
+       and line-edit in the same mode as the main loop. */
+    tg_chat_input_raw = chat_raw;
     tg_chat_history_reset();
     fputs("Loading chats...\n", stream);
     fflush(stream);
@@ -7261,14 +7257,14 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (watch_seconds == 0UL) {
             rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
                                                 &line_length, 3600UL, chat_raw,
-                                                stream);
+                                                1, stream);
             if (rc == 0) {
                 continue;
             }
         } else {
             rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
                                                 &line_length, watch_seconds,
-                                                chat_raw, stream);
+                                                chat_raw, 1, stream);
         }
         if (rc == 0) {
             if (line_length > 0UL) {
