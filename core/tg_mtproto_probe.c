@@ -266,6 +266,11 @@ static unsigned long tg_chat_notify_dropped = 0UL;
 static unsigned long tg_chat_notify_recent_ids[TG_CHAT_NOTIFY_RECENT];
 static unsigned long tg_chat_notify_recent_pos = 0UL;
 static int tg_chat_notify_armed = 0;
+/* Console bell (BEL -> screen flash on Amiga consoles) on notifications. */
+static int tg_chat_bell_enabled = 1;
+/* Day (local-frame epoch/86400) of the last transcript line, for the
+   "--- 10 Jun ---" separators; 0 = nothing printed yet this chat. */
+static unsigned long tg_chat_day_shown = 0UL;
 
 static void tg_chat_notify_reset(int armed)
 {
@@ -379,6 +384,12 @@ static void tg_chat_notify_collect_one(const unsigned char *body,
 
 static void tg_chat_notify_collect(const unsigned char *body,
                                    unsigned long body_length);
+static unsigned long tg_mtproto_chat_local_epoch(unsigned long message_date,
+                                                 long server_delta);
+static void tg_mtproto_chat_print_message_time(FILE *stream,
+                                               unsigned long local_epoch);
+static void tg_mtproto_chat_print_day_separator(FILE *stream,
+                                                unsigned long local_epoch);
 
 static void tg_mtproto_probe_random(unsigned char *bytes, unsigned long length)
 {
@@ -5939,6 +5950,8 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
     char type[24];
     char *title;
     char *username;
+    char *unread_text;
+    unsigned long unread_count;
     int printed_single_header;
     int printed_group_header;
     int is_current;
@@ -5995,6 +6008,11 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
                 }
             }
             is_current = current_index != 0UL && index == current_index;
+            unread_count = 0UL;
+            unread_text = strstr(line, " unread ");
+            if (unread_text != 0) {
+                (void)sscanf(unread_text + 8, "%lu", &unread_count);
+            }
             if (is_current) {
                 tg_console_ui_role(stream, TG_UI_ROLE_PROMPT);
             }
@@ -6020,6 +6038,11 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
                 }
             } else {
                 tg_mtproto_print_cache_text(stream, type);
+            }
+            if (unread_count > 0UL) {
+                tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
+                fprintf(stream, " %lu new", unread_count);
+                tg_console_ui_reset(stream);
             }
             if (is_current) {
                 fputs(" *", stream);
@@ -7567,6 +7590,19 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         /* In a group/channel prefix every line with the (truncated) chat title
            so the user keeps both the group and the sender in view. 1:1 chats
            skip the prefix: there the peer already is the sender. */
+        if (texts.messages[i].date != 0UL) {
+            unsigned long local_epoch;
+
+            local_epoch = tg_mtproto_chat_local_epoch(
+                texts.messages[i].date, context->server_time_delta_seconds);
+            if (tg_chat_day_shown != local_epoch / 86400UL) {
+                if (tg_chat_day_shown != 0UL) {
+                    tg_mtproto_chat_print_day_separator(stream, local_epoch);
+                }
+                tg_chat_day_shown = local_epoch / 86400UL;
+            }
+            tg_mtproto_chat_print_message_time(stream, local_epoch);
+        }
         if (is_group && peer_label != 0 && peer_label[0] != '\0') {
             tg_console_ui_role(stream, TG_UI_ROLE_GROUP);
             fputc('[', stream);
@@ -7679,6 +7715,67 @@ static void tg_mtproto_chat_print_system_line(FILE *stream, const char *text)
     tg_console_ui_reset(stream);
     tg_console_ui_end_line(stream);
     fflush(stream);
+}
+
+/*
+ * Maps a server-side message date into the machine's wall-clock frame.
+ * Amiga clocks usually store local time, which time() then reports as if it
+ * were UTC; the server delta (server UTC minus local clock) therefore
+ * carries the timezone offset, and subtracting it maps server dates back to
+ * the local wall clock. Rendering uses gmtime so no host timezone is
+ * applied a second time.
+ */
+static unsigned long tg_mtproto_chat_local_epoch(unsigned long message_date,
+                                                 long server_delta)
+{
+    if (server_delta > 0L && (unsigned long)server_delta < message_date) {
+        return message_date - (unsigned long)server_delta;
+    }
+    if (server_delta < 0L) {
+        return message_date + (unsigned long)(0L - server_delta);
+    }
+    return message_date;
+}
+
+/* "[HH:MM] " prefix for one transcript line, in the quiet context colour. */
+static void tg_mtproto_chat_print_message_time(FILE *stream,
+                                               unsigned long local_epoch)
+{
+    time_t when;
+    struct tm *parts;
+
+    when = (time_t)local_epoch;
+    parts = gmtime(&when);
+    if (parts == 0) {
+        return;
+    }
+    tg_console_ui_role(stream, TG_UI_ROLE_GROUP);
+    fprintf(stream, "[%02d:%02d]", parts->tm_hour, parts->tm_min);
+    tg_console_ui_reset(stream);
+    fputc(' ', stream);
+}
+
+/* "--- 10 Jun ---" separator when the transcript crosses a day boundary. */
+static void tg_mtproto_chat_print_day_separator(FILE *stream,
+                                                unsigned long local_epoch)
+{
+    static const char *month_names[12] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    time_t when;
+    struct tm *parts;
+
+    when = (time_t)local_epoch;
+    parts = gmtime(&when);
+    if (parts == 0 || parts->tm_mon < 0 || parts->tm_mon > 11) {
+        return;
+    }
+    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
+    fprintf(stream, "--- %d %s ---", parts->tm_mday,
+            month_names[parts->tm_mon]);
+    tg_console_ui_reset(stream);
+    tg_console_ui_end_line(stream);
 }
 
 /* Clear the prompt line before printing asynchronous output (auto-read
@@ -7841,6 +7938,10 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
         tg_console_ui_reset(stream);
         tg_console_ui_end_line(stream);
     }
+    if (tg_chat_bell_enabled) {
+        /* BEL: Amiga consoles render it as the system DisplayBeep flash. */
+        fputc('\a', stream);
+    }
     tg_chat_notify_count = 0UL;
     tg_chat_notify_dropped = 0UL;
     fflush(stream);
@@ -7865,6 +7966,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /watch sec    set auto-read interval",
         "  /watch off    disable auto-read",
         "  /color        toggle colours (or /color on|off)",
+        "  /bell         toggle the notification flash/bell",
         "  /help         show this help",
         "  /quit         exit",
         0
@@ -8068,6 +8170,7 @@ int tg_mtproto_auth_chat_file(const char *host,
        the server to actually push updates on the chat's connection (one-shot
        commands keep them suppressed via invokeWithoutUpdates). */
     tg_chat_notify_reset(1);
+    tg_chat_day_shown = 0UL;
     tg_mtproto_set_session_updates(1);
     tg_mtproto_chat_print_system_line(stream, "Loading chats...");
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
@@ -8295,6 +8398,21 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_chat_print_system_line(
                 stream,
                 tg_console_ui_color_active() ? "Colors on." : "Colors off.");
+            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            continue;
+        }
+        color_arg = 0;
+        if (tg_mtproto_chat_named_command_arg(line, "/bell", &color_arg) ||
+            tg_mtproto_chat_named_command_arg(line, "bell", &color_arg)) {
+            if (color_arg != 0 && strcmp(color_arg, "on") == 0) {
+                tg_chat_bell_enabled = 1;
+            } else if (color_arg != 0 && strcmp(color_arg, "off") == 0) {
+                tg_chat_bell_enabled = 0;
+            } else {
+                tg_chat_bell_enabled = !tg_chat_bell_enabled;
+            }
+            tg_mtproto_chat_print_system_line(
+                stream, tg_chat_bell_enabled ? "Bell on." : "Bell off.");
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
         }

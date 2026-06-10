@@ -179,7 +179,11 @@ drops an entry. `/watch <seconds>` changes the auto-read interval and
 `/watch off` disables it. Up/Down arrows recall typed lines.
 
 The chat opens on a black high-contrast screen: contact names bold in the
-accent colour, your own name bold white, system lines dim. Multi-line messages
+accent colour, your own name bold white, system lines dim. Message lines are
+prefixed with their [HH:MM] time and a separator marks day changes. Messages
+arriving in other chats (users, groups, channels) appear as highlighted
+`[n] Name: preview` lines: press Fn or type the number to jump there
+(`/bell off` disables the console flash). Multi-line messages
 keep their line breaks; emoji are rendered as text emoticons (`:)` `<3` `(y)`)
 because Amiga consoles cannot draw emoji glyphs. `/color` (or `/color off`)
 toggles colours at runtime; `--ui-theme plain` keeps the normal window

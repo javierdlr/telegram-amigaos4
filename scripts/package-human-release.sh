@@ -202,17 +202,27 @@ Commands:
   /history      show recent messages again
   /watch sec    change the auto-read interval (/watch off disables it)
   /color        toggle colours (also /color on or /color off)
+  /bell         toggle the notification flash/bell
   /help         show commands
   /quit         exit
 
 Up/Down arrows recall what you typed before.
+
+When a message arrives in ANOTHER chat -- a contact, a group or a channel --
+a highlighted line shows it without leaving the current one:
+
+  [3] Mario Rossi: see you tomorrow...
+
+The number is the chat-list position: press F3 (or type 3 and Enter) to jump
+there. The console flashes too; /bell off disables that.
 
 How it looks
 ------------
 
 The chat uses a black high-contrast screen by default: sender names are bold
 (your contact in the accent colour, you in white), system messages are dim,
-and multi-line messages keep their line breaks. Emoji are shown as classic
+every message line starts with its [HH:MM] time, a separator marks day
+changes, and multi-line messages keep their line breaks. Emoji are shown as classic
 text emoticons like :) :D <3 (y) because Amiga consoles cannot draw emoji
 glyphs; flags become their two country letters (IT, DE) and other symbols a
 small generic mark. A bold [ok] confirms every sent message.

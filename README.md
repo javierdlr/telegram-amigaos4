@@ -62,7 +62,11 @@ MTProto account mode currently supports:
   account has permission;
 - interactive chat mode with peer-name transcript lines;
 - coloured high-contrast chat screen (dark theme) with emoji-to-emoticon
-  rendering and real line breaks in messages;
+  rendering, [HH:MM] timestamps, day separators and real line breaks in
+  messages;
+- live cross-chat notifications: messages arriving in other chats (users,
+  groups, channels) show as highlighted lines with the chat number to jump
+  there;
 - quick chat switching: function keys F1..F10, Tab back to the previous
   chat, bare chat numbers;
 - Up/Down command history and auto-read while waiting for keyboard input;
@@ -180,6 +184,7 @@ Enter              read new messages now
 /history           show recent messages again
 /watch 2           auto-read every 2 seconds (/watch off disables)
 /color             toggle colours (/color on|off)
+/bell              toggle the notification flash/bell
 /help              show commands
 /quit              exit
 ```
