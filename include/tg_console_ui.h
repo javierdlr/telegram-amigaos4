@@ -69,6 +69,13 @@ int tg_console_ui_theme(void);
 void tg_console_ui_enter_screen(FILE *stream);
 void tg_console_ui_leave_screen(FILE *stream);
 
+/* End an output line. In the dark theme this erases to the end of the line
+   first (ESC [ K) so the row is painted with the black background all the
+   way to the window border -- consoles that scroll in rows with the plain
+   window colour (AmigaOS 3.x) would otherwise show black only behind the
+   text. Elsewhere it is just a newline. */
+void tg_console_ui_end_line(FILE *stream);
+
 /* Output charset for targets whose display layer transcodes UTF-8 to
    ISO-8859-1 (the Amiga consoles). UTF8 passes message text through raw and
    upgrades markers to real glyphs; pick it when running over ssh or any

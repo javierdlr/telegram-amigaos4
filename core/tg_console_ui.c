@@ -23,7 +23,15 @@
 static int tg_ui_color_mode = TG_UI_COLOR_AUTO;
 static int tg_ui_interactive = 0;
 static int tg_ui_charset = TG_UI_CHARSET_LATIN1;
+/* MorphOS shells do not keep the stock Workbench palette (pen 1 showed up
+   red on real Ambient), so the black-background theme defaults off there
+   until the right pen is confirmed per console; --ui-theme dark re-enables
+   it explicitly. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+static int tg_ui_theme = TG_UI_THEME_PLAIN;
+#else
 static int tg_ui_theme = TG_UI_THEME_DARK;
+#endif
 static int tg_ui_screen_entered = 0;
 
 void tg_console_ui_set_color_mode(int mode)
@@ -159,4 +167,16 @@ void tg_console_ui_leave_screen(FILE *stream)
     fputs("\033[0m\n", stream);
     fflush(stream);
     tg_ui_screen_entered = 0;
+}
+
+void tg_console_ui_end_line(FILE *stream)
+{
+    if (stream == 0) {
+        return;
+    }
+    if (tg_console_ui_color_active() && tg_ui_theme == TG_UI_THEME_DARK) {
+        fputs("\033[K\n", stream);
+        return;
+    }
+    fputc('\n', stream);
 }

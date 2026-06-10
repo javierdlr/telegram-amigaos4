@@ -4356,7 +4356,8 @@ static void tg_mtproto_print_message_text(FILE *stream, const char *text)
                 continue;
             }
             if (cp == '\n') {
-                fputs("\n  ", stream);
+                tg_console_ui_end_line(stream);
+                fputs("  ", stream);
                 continue;
             }
             tg_mtproto_print_display_codepoint(stream, cp);
@@ -4371,7 +4372,8 @@ static void tg_mtproto_print_message_text(FILE *stream, const char *text)
             continue;
         }
         if (cp == '\n') {
-            fputs("\n  ", stream);
+            tg_console_ui_end_line(stream);
+            fputs("  ", stream);
             continue;
         }
         if (cp == '\t') {
@@ -5555,15 +5557,17 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
             }
             if (is_user) {
                 if (!printed_single_header) {
-                    fprintf(stream, "Single chats:\n");
+                    fputs("Single chats:", stream);
+                    tg_console_ui_end_line(stream);
                     printed_single_header = 1;
                 }
             } else {
                 if (!printed_group_header) {
                     if (printed_single_header) {
-                        fprintf(stream, "\n");
+                        tg_console_ui_end_line(stream);
                     }
-                    fprintf(stream, "Groups and channels:\n");
+                    fputs("Groups and channels:", stream);
+                    tg_console_ui_end_line(stream);
                     printed_group_header = 1;
                 }
             }
@@ -5598,7 +5602,7 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
                 fputs(" *", stream);
                 tg_console_ui_reset(stream);
             }
-            fprintf(stream, "\n");
+            tg_console_ui_end_line(stream);
         }
     }
     if (!printed_single_header && !printed_group_header) {
@@ -7199,7 +7203,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
             fputc(' ', stream);
         }
         tg_mtproto_print_message_text(stream, texts.messages[i].text);
-        fprintf(stream, "\n");
+        tg_console_ui_end_line(stream);
         ++printed;
     }
     if (last_seen_message_id != 0) {
@@ -7250,7 +7254,7 @@ static void tg_mtproto_chat_print_system_line(FILE *stream, const char *text)
     tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
     fputs(text, stream);
     tg_console_ui_reset(stream);
-    fputc('\n', stream);
+    tg_console_ui_end_line(stream);
     fflush(stream);
 }
 
@@ -7290,29 +7294,39 @@ static void tg_mtproto_chat_redraw_input(FILE *stream,
 
 static void tg_mtproto_chat_print_help(FILE *stream)
 {
+    static const char *help_lines[] = {
+        "",
+        "Commands:",
+        "  text          send a message",
+        "  Enter         read new messages now",
+        "  number        switch to chat number",
+        "  F1..F10       switch to chat 1..10 (shift: 11..20)",
+        "  Tab           back to the previous chat",
+        "  /swap         back to the previous chat",
+        "  /peers        show cached chats",
+        "  /search text  find cached chats by name or username",
+        "  /add name     search Telegram and add a chat",
+        "  /remove n     remove cached chat n",
+        "  /history      show recent messages without new-message filtering",
+        "  /watch sec    set auto-read interval",
+        "  /watch off    disable auto-read",
+        "  /color        toggle colours (or /color on|off)",
+        "  /help         show this help",
+        "  /quit         exit",
+        0
+    };
+    unsigned long i;
+
     if (stream == 0) {
         return;
     }
     tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
-    fprintf(stream, "\nCommands:\n");
-    fprintf(stream, "  text          send a message\n");
-    fprintf(stream, "  Enter         read new messages now\n");
-    fprintf(stream, "  number        switch to chat number\n");
-    fprintf(stream, "  F1..F10       switch to chat 1..10 (shift: 11..20)\n");
-    fprintf(stream, "  Tab           back to the previous chat\n");
-    fprintf(stream, "  /swap         back to the previous chat\n");
-    fprintf(stream, "  /peers        show cached chats\n");
-    fprintf(stream, "  /search text  find cached chats by name or username\n");
-    fprintf(stream, "  /add name     search Telegram and add a chat\n");
-    fprintf(stream, "  /remove n     remove cached chat n\n");
-    fprintf(stream, "  /history      show recent messages without new-message filtering\n");
-    fprintf(stream, "  /watch sec    set auto-read interval\n");
-    fprintf(stream, "  /watch off    disable auto-read\n");
-    fprintf(stream, "  /color        toggle colours (or /color on|off)\n");
-    fprintf(stream, "  /help         show this help\n");
-    fprintf(stream, "  /quit         exit\n");
+    for (i = 0UL; help_lines[i] != 0; ++i) {
+        fputs(help_lines[i], stream);
+        tg_console_ui_end_line(stream);
+    }
     tg_console_ui_reset(stream);
-    fputc('\n', stream);
+    tg_console_ui_end_line(stream);
 }
 
 static int tg_mtproto_chat_open_history(FILE *stream,
@@ -7581,7 +7595,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
     fprintf(stream, "Auto-read every %lu second(s).", watch_seconds);
     tg_console_ui_reset(stream);
-    fputc('\n', stream);
+    tg_console_ui_end_line(stream);
     if (peer_index[0] == '\0') {
         tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     }
