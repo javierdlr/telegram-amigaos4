@@ -85,6 +85,14 @@ int tg_platform_stdin_set_raw(int enabled);
  */
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count);
 
+/*
+ * Returns non-zero when the user asked to abort (Amiga family: the shell
+ * break signal SIGBREAKF_CTRL_C, left pending so the caller's main loop can
+ * also see it). Network wait loops poll this so a stalled connection can be
+ * abandoned with Ctrl+C instead of requiring a reboot.
+ */
+int tg_platform_break_pending(void);
+
 /**
  * Platform TCP connect implementation used by tg_net_connect().
  *

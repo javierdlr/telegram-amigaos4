@@ -1165,6 +1165,10 @@ static int tg_mtproto_send_encrypted_query_limited(
             context->session.seq_no += 2UL;
         }
         memset(&bad_msg, 0, sizeof(bad_msg));
+        if (tg_platform_break_pending()) {
+            fprintf(stream, "%s: user-break\n", label);
+            return 2;
+        }
         for (receive_attempt = 0U; receive_attempt < max_receive_attempts;
              ++receive_attempt) {
             if ((unsigned long)time(0) - query_start_time >=
@@ -1278,6 +1282,10 @@ static int tg_mtproto_send_encrypted_query_limited(
                 }
                 fprintf(stream, "%s: bad-msg error-code %lu\n", label,
                         bad_msg.error_code);
+                return 2;
+            }
+            if (tg_platform_break_pending()) {
+                fprintf(stream, "%s: user-break\n", label);
                 return 2;
             }
             tg_mtproto_ack_encrypted_message(context, &decrypted, stream,
@@ -8118,8 +8126,11 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
         tg_console_ui_end_line(stream);
     }
     if (tg_chat_bell_enabled) {
-        /* BEL: Amiga consoles render it as the system DisplayBeep flash. */
-        fputc('\a', stream);
+        /* BEL: Amiga consoles render it as the system DisplayBeep flash.
+           Send it to the real console, outside any captured line: inside
+           TUI transcript content some consoles (AROS) draw the control byte
+           as a stray glyph instead of beeping. */
+        fputc('\a', tg_chat_tui_stream != 0 ? tg_chat_tui_stream : stream);
     }
     tg_chat_notify_count = 0UL;
     tg_chat_notify_dropped = 0UL;

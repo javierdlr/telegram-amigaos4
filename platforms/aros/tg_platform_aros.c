@@ -24,6 +24,7 @@
 #include <exec/libraries.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
+#include <dos/dos.h>
 
 struct Library *SocketBase = 0;
 #else
@@ -960,3 +961,13 @@ void tg_platform_tls_close(tg_tls_connection *connection)
 }
 
 #endif
+
+int tg_platform_break_pending(void)
+{
+#if defined(__AROS__)
+    /* Peek without clearing: the break stays pending for outer loops. */
+    return (SetSignal(0L, 0L) & SIGBREAKF_CTRL_C) != 0L;
+#else
+    return 0;
+#endif
+}

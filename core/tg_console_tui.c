@@ -133,6 +133,12 @@ static void tg_tui_clipped_line(FILE *stream, const char *text)
             }
             continue;
         }
+        if ((unsigned char)*text < 0x20U) {
+            /* Control bytes inside transcript content (stray BEL, CR...)
+               would render as odd glyphs on some consoles: drop them. */
+            ++text;
+            continue;
+        }
         fputc(*text, stream);
         ++text;
         ++printed;
