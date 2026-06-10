@@ -7920,8 +7920,10 @@ static void tg_mtproto_chat_redraw_input(FILE *stream,
                                          unsigned long line_length,
                                          int raw)
 {
-    tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
-                                        0UL, tg_chat_input_raw);
+    /* Direct printer here: tg_mtproto_chat_show_prompt delegates to this
+       function in linear mode, so calling it back would recurse forever
+       (field guru on AROS: stack out of range at show_prompt). */
+    tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     if (raw && line != 0 && line_length > 0UL) {
         fwrite(line, 1, (size_t)line_length, stream);
         fflush(stream);
@@ -8364,6 +8366,14 @@ int tg_mtproto_auth_chat_file(const char *host,
        window-size report); falls back to the linear flow otherwise. */
     tg_chat_tui_stream = stream;
     if (!chat_raw || !tg_console_tui_enter(stream, " Telegram Amiga ")) {
+        /* No full-screen layout: if the console did not even answer the
+           size query it may not interpret CSI at all (seen on an AROS
+           console type that prints 0x9B as a glyph), so AUTO colours stay
+           off in the linear flow; --ui-color on still forces them. */
+        if (chat_raw &&
+            tg_console_ui_color_mode() == TG_UI_COLOR_AUTO) {
+            tg_console_ui_set_interactive(0);
+        }
         /* Dark theme: paint the window black before the first output. */
         tg_console_ui_enter_screen(stream);
     }
