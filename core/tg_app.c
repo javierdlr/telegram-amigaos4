@@ -3893,6 +3893,16 @@ int tg_app_run(int argc, char **argv)
             return 2;
         }
     }
+    if (config.ui_tui != 0) {
+        if (strcmp(config.ui_tui, "on") == 0) {
+            tg_console_tui_set_enabled(1);
+        } else if (strcmp(config.ui_tui, "off") == 0) {
+            tg_console_tui_set_enabled(0);
+        } else {
+            fprintf(stderr, "ui-tui: use on or off\n");
+            return 2;
+        }
+    }
     if (config.ui_charset != 0) {
         if (strcmp(config.ui_charset, "latin1") == 0) {
             tg_console_ui_set_charset(TG_UI_CHARSET_LATIN1);

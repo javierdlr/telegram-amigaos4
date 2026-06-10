@@ -33,6 +33,7 @@
 #include "tg_mtproto_transport.h"
 #include "tg_console.h"
 #include "tg_console_ui.h"
+#include "tg_console_tui.h"
 #include "tg_file.h"
 #include "tg_net.h"
 #include "tg_platform.h"
@@ -270,6 +271,16 @@ static unsigned long tg_chat_notify_dropped = 0UL;
 static unsigned long tg_chat_notify_recent_ids[TG_CHAT_NOTIFY_RECENT];
 static unsigned long tg_chat_notify_recent_pos = 0UL;
 static int tg_chat_notify_armed = 0;
+/* The real console stream while the chat runs, for TUI components that must
+   bypass capture streams (input-row redraws from the editor and the
+   sub-prompts). 0 outside the chat. */
+static FILE *tg_chat_tui_stream = 0;
+static void tg_mtproto_chat_show_prompt(FILE *stream,
+                                        const char *own_label,
+                                        const char *peer_label,
+                                        const char *pending,
+                                        unsigned long pending_length,
+                                        int raw);
 /* Console bell (BEL -> screen flash on Amiga consoles) on notifications. */
 static int tg_chat_bell_enabled = 1;
 /* Day (local-frame epoch/86400) of the last transcript line, for the
@@ -7095,14 +7106,48 @@ static void tg_mtproto_replay_quiet_stream_length(FILE *quiet,
                                                   long length)
 {
     char buffer[256];
+    char line[512];
+    unsigned long line_length;
     long remaining;
     unsigned long chunk;
+    unsigned long i;
 
     if (quiet == 0 || fallback == 0 || quiet == fallback || length <= 0L) {
         return;
     }
     rewind(quiet);
     remaining = length;
+    if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+        /* Full-screen mode: feed the captured bytes line by line into the
+           transcript region instead of streaming them at the cursor. */
+        line_length = 0UL;
+        while (remaining > 0L) {
+            chunk = remaining > (long)sizeof(buffer) ?
+                (unsigned long)sizeof(buffer) : (unsigned long)remaining;
+            chunk = (unsigned long)fread(buffer, 1U, (size_t)chunk, quiet);
+            if (chunk == 0UL) {
+                break;
+            }
+            for (i = 0UL; i < chunk; ++i) {
+                if (buffer[i] == '\n') {
+                    line[line_length] = '\0';
+                    tg_console_tui_line(tg_chat_tui_stream, line);
+                    line_length = 0UL;
+                    continue;
+                }
+                if (line_length + 1UL < sizeof(line)) {
+                    line[line_length] = buffer[i];
+                    ++line_length;
+                }
+            }
+            remaining -= (long)chunk;
+        }
+        if (line_length > 0UL) {
+            line[line_length] = '\0';
+            tg_console_tui_line(tg_chat_tui_stream, line);
+        }
+        return;
+    }
     while (remaining > 0L) {
         chunk = remaining > (long)sizeof(buffer) ?
             (unsigned long)sizeof(buffer) : (unsigned long)remaining;
@@ -7215,7 +7260,16 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             *line_length = line_size - 1UL;
         }
         line[*line_length] = '\0';
-        if (raw) {
+        if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+            /* Push the submitted line into the transcript so the dialogue
+               keeps reading naturally, then clear the input row. */
+            char echo_line[640];
+
+            sprintf(echo_line, "%.90s%.500s", tg_console_tui_prompt(), line);
+            tg_console_tui_line(tg_chat_tui_stream, echo_line);
+            tg_console_tui_input(tg_chat_tui_stream,
+                                 tg_console_tui_prompt(), 0, 0UL);
+        } else if (raw) {
             fputc('\n', stream);
             fflush(stream);
         }
@@ -7228,7 +7282,11 @@ static int tg_mtproto_chat_read_line_edit(char *line,
     if (ch == '\b' || ch == 127) {
         if (*line_length > 0UL) {
             --(*line_length);
-            if (raw) {
+            if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+                tg_console_tui_input(tg_chat_tui_stream,
+                                     tg_console_tui_prompt(), line,
+                                     *line_length);
+            } else if (raw) {
                 fputs("\b \b", stream);
                 fflush(stream);
             }
@@ -7261,12 +7319,16 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 direction = (int)(unsigned char)ch;
             }
             if (direction == '~' && fkey <= 19UL && line_size >= 16UL) {
-                for (i = 0UL; i < *line_length; ++i) {
-                    fputs("\b \b", stream);
+                if (!tg_console_tui_active()) {
+                    for (i = 0UL; i < *line_length; ++i) {
+                        fputs("\b \b", stream);
+                    }
                 }
                 sprintf(line, "/peer %lu", fkey + 1UL);
                 *line_length = 0UL;
-                fputc('\n', stream);
+                if (!tg_console_tui_active()) {
+                    fputc('\n', stream);
+                }
                 fflush(stream);
                 return 1;
             }
@@ -7302,13 +7364,19 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             }
             idx = tg_chat_history_recall + 1L;
         }
-        for (i = 0UL; i < *line_length; ++i) {
-            fputs("\b \b", stream);
+        if (!tg_console_tui_active()) {
+            for (i = 0UL; i < *line_length; ++i) {
+                fputs("\b \b", stream);
+            }
         }
         if (direction == 'B' && idx >= (long)tg_chat_history_count) {
             *line_length = 0UL;
             line[0] = '\0';
             tg_chat_history_recall = -1L;
+            if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+                tg_console_tui_input(tg_chat_tui_stream,
+                                     tg_console_tui_prompt(), 0, 0UL);
+            }
             fflush(stream);
             return 0;
         }
@@ -7316,14 +7384,24 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         strncpy(line, tg_chat_history[idx], line_size - 1UL);
         line[line_size - 1UL] = '\0';
         *line_length = (unsigned long)strlen(line);
-        fputs(line, stream);
+        if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+            tg_console_tui_input(tg_chat_tui_stream,
+                                 tg_console_tui_prompt(), line,
+                                 *line_length);
+        } else {
+            fputs(line, stream);
+        }
         fflush(stream);
         return 0;
     }
     if (*line_length + 1UL < line_size) {
         line[*line_length] = ch;
         ++(*line_length);
-        if (raw) {
+        if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+            tg_console_tui_input(tg_chat_tui_stream,
+                                 tg_console_tui_prompt(), line,
+                                 *line_length);
+        } else if (raw) {
             fputc(ch, stream);
             fflush(stream);
         }
@@ -7348,8 +7426,13 @@ static int tg_mtproto_chat_prompt_line(const char *prompt,
         label == 0) {
         return 2;
     }
-    fputs(prompt, stream);
-    fflush(stream);
+    if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+        tg_console_tui_set_prompt(prompt);
+        tg_console_tui_input(tg_chat_tui_stream, prompt, 0, 0UL);
+    } else {
+        fputs(prompt, stream);
+        fflush(stream);
+    }
     line_length = 0UL;
     for (;;) {
         /* Drive the same editor as the main loop so the prompt echoes and
@@ -7715,7 +7798,16 @@ static void tg_mtproto_chat_print_input_prompt(FILE *stream,
 /* One status/info line in the system colour. */
 static void tg_mtproto_chat_print_system_line(FILE *stream, const char *text)
 {
+    char line[256];
+
     if (stream == 0 || text == 0) {
+        return;
+    }
+    if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+        sprintf(line, "%.16s%.200s%.16s",
+                tg_console_ui_role_string(TG_UI_ROLE_SYSTEM), text,
+                tg_console_ui_role_string(TG_UI_ROLE_RESET));
+        tg_console_tui_line(tg_chat_tui_stream, line);
         return;
     }
     tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
@@ -7793,7 +7885,7 @@ static void tg_mtproto_chat_print_day_separator(FILE *stream,
    stacking up. Cooked consoles cannot redraw, so just move to a fresh line. */
 static void tg_mtproto_chat_clear_input_line(FILE *stream, int raw)
 {
-    if (stream == 0) {
+    if (stream == 0 || tg_console_tui_active()) {
         return;
     }
     if (raw) {
@@ -7813,11 +7905,73 @@ static void tg_mtproto_chat_redraw_input(FILE *stream,
                                          unsigned long line_length,
                                          int raw)
 {
-    tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+    tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
     if (raw && line != 0 && line_length > 0UL) {
         fwrite(line, 1, (size_t)line_length, stream);
         fflush(stream);
     }
+}
+
+/* Shows the input prompt in the current mode: in the TUI it caches the
+   rendered prompt and redraws the fixed input row (with any pending text);
+   in linear mode it prints the prompt (and re-echoes the pending text when
+   raw, matching the old redraw behaviour). */
+static void tg_mtproto_chat_show_prompt(FILE *stream,
+                                        const char *own_label,
+                                        const char *peer_label,
+                                        const char *pending,
+                                        unsigned long pending_length,
+                                        int raw)
+{
+    char prompt_text[96];
+    FILE *capture;
+    unsigned long length;
+    int ch;
+
+    if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+        capture = tmpfile();
+        if (capture != 0) {
+            tg_mtproto_chat_print_input_prompt(capture, own_label,
+                                               peer_label);
+            rewind(capture);
+            length = 0UL;
+            for (;;) {
+                ch = fgetc(capture);
+                if (ch == EOF || ch == '\n') {
+                    break;
+                }
+                if (length + 1UL < sizeof(prompt_text)) {
+                    prompt_text[length] = (char)ch;
+                    ++length;
+                }
+            }
+            prompt_text[length] = '\0';
+            fclose(capture);
+            tg_console_tui_set_prompt(prompt_text);
+        }
+        tg_console_tui_input(tg_chat_tui_stream, tg_console_tui_prompt(),
+                             pending, pending_length);
+        return;
+    }
+    tg_mtproto_chat_redraw_input(stream, own_label, peer_label, pending,
+                                 pending_length, raw);
+}
+
+/* Updates the TUI status bar with the open chat's name. */
+static void tg_mtproto_chat_tui_status(const char *peer_label)
+{
+    char status[96];
+
+    if (!tg_console_tui_active() || tg_chat_tui_stream == 0) {
+        return;
+    }
+    if (peer_label != 0 && peer_label[0] != '\0') {
+        sprintf(status, " Telegram Amiga - %.60s ", peer_label);
+    } else {
+        sprintf(status, " Telegram Amiga ");
+    }
+    tg_console_tui_status(tg_chat_tui_stream, status);
 }
 
 /* Finds the public chat-list index (and label) of a cached peer id. */
@@ -8188,8 +8342,13 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_chat_input_raw = chat_raw;
     /* Colour AUTO mode keys off the same signal: a real interactive console. */
     tg_console_ui_set_interactive(chat_raw);
-    /* Dark theme: paint the window black before the first output. */
-    tg_console_ui_enter_screen(stream);
+    /* Full-screen layout when the console cooperates (needs raw mode for the
+       window-size report); falls back to the linear flow otherwise. */
+    tg_chat_tui_stream = stream;
+    if (!chat_raw || !tg_console_tui_enter(stream, " Telegram Amiga ")) {
+        /* Dark theme: paint the window black before the first output. */
+        tg_console_ui_enter_screen(stream);
+    }
     tg_chat_history_reset();
     /* Arm the cross-chat notification collector for this chat run, and ask
        the server to actually push updates on the chat's connection (one-shot
@@ -8235,7 +8394,9 @@ int tg_mtproto_auth_chat_file(const char *host,
         tg_mtproto_replay_quiet_stream(quiet, stream);
         tg_mtproto_close_quiet_stream(quiet, stream);
         tg_net_set_connect_timeout_seconds(saved_timeout);
-        tg_console_ui_leave_screen(stream);
+        tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
+            tg_console_ui_leave_screen(stream);
         if (chat_raw) { tg_platform_stdin_set_raw(0); }
         return 2;
     }
@@ -8247,13 +8408,19 @@ int tg_mtproto_auth_chat_file(const char *host,
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         tg_mtproto_chat_print_system_line(stream, "Choose a chat:");
         fputc('\n', stream);
-        tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
-                                           peer_index);
+        {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_mtproto_print_peer_cache_public(peer_cache_file, tui_cap,
+                                               peer_index);
+            tg_console_tui_capture_end(tui_cap, stream);
+        }
         if (tg_mtproto_chat_prompt_line("\nPeer index: ", peer_index,
                                         sizeof(peer_index), 1, stream,
                                         label) != 0) {
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
             tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 2;
@@ -8263,6 +8430,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                                              sizeof(peer_label)) != 0) {
             peer_label[0] = '\0';
         }
+        tg_mtproto_chat_tui_status(peer_label);
     } else {
         peer_index[0] = '\0';
         peer_label[0] = '\0';
@@ -8279,13 +8447,18 @@ int tg_mtproto_auth_chat_file(const char *host,
     line_length = 0UL;
     consecutive_failures = 0UL;
     chat_quiet = tg_mtproto_open_quiet_stream(stream);
-    tg_mtproto_chat_print_help(stream);
+    {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_mtproto_chat_print_help(tui_cap);
+            tg_console_tui_capture_end(tui_cap, stream);
+        }
     tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
     fprintf(stream, "Auto-read every %lu second(s).", watch_seconds);
     tg_console_ui_reset(stream);
     tg_console_ui_end_line(stream);
     if (peer_index[0] == '\0') {
-        tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+        tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
     }
     for (;;) {
         if (peer_index[0] != '\0' && !peer_history_ready) {
@@ -8294,7 +8467,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 stream, chat_quiet, host, port, api_id, auth_file, dc_id_text,
                 &chat_context, peer_cache_file, peer_index, peer_label,
                 own_label, &last_seen_message_id);
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
         }
         if (watch_seconds == 0UL) {
             rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
@@ -8356,10 +8530,14 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_replay_quiet_stream_length(
                         quiet, stream, chat_quiet_length);
                 }
-                tg_mtproto_chat_print_notify_lines(stream, peer_cache_file,
+                {
+                FILE *tui_cap = tg_console_tui_capture_begin(stream);
+                tg_mtproto_chat_print_notify_lines(tui_cap, peer_cache_file,
                                                    peer_index);
-                tg_mtproto_chat_redraw_input(stream, own_label, peer_label,
-                                             line, line_length, chat_raw);
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label,
+                                            line, line_length, chat_raw);
             }
             continue;
         }
@@ -8368,6 +8546,8 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
             tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 0;
@@ -8376,8 +8556,8 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (line[0] == '\0') {
             if (peer_index[0] == '\0') {
                 fprintf(stream, "Choose a chat first with /add name.\n");
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                 continue;
             }
             rc = tg_mtproto_auth_print_history_text_peer_on_context(
@@ -8390,9 +8570,14 @@ int tg_mtproto_auth_chat_file(const char *host,
             } else if (rc != 0) {
                 fprintf(stream, "Could not read messages now (error %d).\n", rc);
             }
-            tg_mtproto_chat_print_notify_lines(stream, peer_cache_file,
+            {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_mtproto_chat_print_notify_lines(tui_cap, peer_cache_file,
                                                peer_index);
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_console_tui_capture_end(tui_cap, stream);
+        }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         if (strcmp(line, "/quit") == 0 || strcmp(line, "quit") == 0) {
@@ -8400,13 +8585,20 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
             tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 0;
         }
         if (strcmp(line, "/help") == 0 || strcmp(line, "help") == 0) {
-            tg_mtproto_chat_print_help(stream);
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_mtproto_chat_print_help(tui_cap);
+            tg_console_tui_capture_end(tui_cap, stream);
+        }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         color_arg = 0;
@@ -8423,7 +8615,8 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_chat_print_system_line(
                 stream,
                 tg_console_ui_color_active() ? "Colors on." : "Colors off.");
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         color_arg = 0;
@@ -8438,15 +8631,16 @@ int tg_mtproto_auth_chat_file(const char *host,
             }
             tg_mtproto_chat_print_system_line(
                 stream, tg_chat_bell_enabled ? "Bell on." : "Bell off.");
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         if (strcmp(line, "/swap") == 0 || strcmp(line, "swap") == 0) {
             if (prev_peer_index[0] == '\0') {
                 tg_mtproto_chat_print_system_line(stream,
                                                   "No previous chat yet.");
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                 continue;
             }
             strcpy(swap_peer_index, peer_index);
@@ -8457,9 +8651,14 @@ int tg_mtproto_auth_chat_file(const char *host,
             strcpy(prev_peer_label, swap_peer_label);
             last_seen_message_id = 0UL;
             peer_history_ready = 0;
-            fprintf(stream, "Current chat: ");
-            tg_mtproto_print_cache_text(stream, peer_label);
-            fprintf(stream, "\n");
+            {
+                FILE *tui_cap = tg_console_tui_capture_begin(stream);
+                fprintf(tui_cap, "Current chat: ");
+                tg_mtproto_print_cache_text(tui_cap, peer_label);
+                fprintf(tui_cap, "\n");
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_tui_status(peer_label);
             continue;
         }
         if (strcmp(line, "/peers") == 0) {
@@ -8469,18 +8668,23 @@ int tg_mtproto_auth_chat_file(const char *host,
                                            own_label, sizeof(own_label),
                                            stream);
             fprintf(stream, "\nChoose a chat:\n\n");
-            tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
-                                           peer_index);
+            {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_mtproto_print_peer_cache_public(peer_cache_file, tui_cap,
+                                               peer_index);
+            tg_console_tui_capture_end(tui_cap, stream);
+        }
             fprintf(stream,
                     "Type a number, /search text, or /add name.\n");
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         if (strcmp(line, "/history") == 0) {
             if (peer_index[0] == '\0') {
                 fprintf(stream, "Choose a chat first with /peers or /add name.\n");
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                 continue;
             }
             rc = tg_mtproto_auth_print_history_text_peer_on_context(
@@ -8490,7 +8694,8 @@ int tg_mtproto_auth_chat_file(const char *host,
             if (rc != 0) {
                 fprintf(stream, "Could not read message history now.\n");
             }
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         search_arg = 0;
@@ -8505,15 +8710,22 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
             tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
                 search_arg = line;
             }
-            tg_mtproto_peer_cache_search_public(peer_cache_file, search_arg,
-                                                stream);
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            {
+                FILE *tui_cap = tg_console_tui_capture_begin(stream);
+                tg_mtproto_peer_cache_search_public(peer_cache_file,
+                                                    search_arg, tui_cap);
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         remove_arg = 0;
@@ -8528,6 +8740,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
             tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
@@ -8537,8 +8751,8 @@ int tg_mtproto_auth_chat_file(const char *host,
             if (tg_mtproto_peer_cache_remove_public_index(
                     peer_cache_file, remove_arg, removed_label,
                     sizeof(removed_label), stream) != 0) {
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                 continue;
             }
             fprintf(stream, "Removed ");
@@ -8553,13 +8767,17 @@ int tg_mtproto_auth_chat_file(const char *host,
                 peer_label[0] = '\0';
                 peer_history_ready = 0;
                 fprintf(stream, "No cached chats. Add one with /add name.\n");
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                 continue;
             }
             fprintf(stream, "\nChoose a chat:\n\n");
-            tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
-                                           peer_index);
+            {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_mtproto_print_peer_cache_public(peer_cache_file, tui_cap,
+                                               peer_index);
+            tg_console_tui_capture_end(tui_cap, stream);
+        }
             if (tg_mtproto_chat_prompt_line("Peer index: ",
                                             requested_peer_text,
                                             sizeof(requested_peer_text), 1,
@@ -8567,6 +8785,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 tg_mtproto_close_quiet_stream(chat_quiet, stream);
                 tg_mtproto_close_auth_context(&chat_context);
                 tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
             tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                 return 2;
@@ -8588,12 +8808,18 @@ int tg_mtproto_auth_chat_file(const char *host,
                 strcpy(peer_label, requested_peer_label);
                 last_seen_message_id = 0UL;
                 peer_history_ready = 0;
-                fprintf(stream, "Current chat: ");
-                tg_mtproto_print_cache_text(stream, peer_label);
-                fprintf(stream, "\n");
+                {
+                    FILE *tui_cap = tg_console_tui_capture_begin(stream);
+                    fprintf(tui_cap, "Current chat: ");
+                    tg_mtproto_print_cache_text(tui_cap, peer_label);
+                    fprintf(tui_cap, "\n");
+                    tg_console_tui_capture_end(tui_cap, stream);
+                }
+                tg_mtproto_chat_tui_status(peer_label);
                 continue;
             }
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         username_arg = 0;
@@ -8606,6 +8832,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
             tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
@@ -8621,11 +8849,20 @@ int tg_mtproto_auth_chat_file(const char *host,
                     peer_cache_file, quiet);
                 tg_mtproto_close_quiet_stream(quiet, stream);
             } else {
+                /* The global-search picker interleaves its result list with
+                   its own prompt: simplest correct behaviour in full-screen
+                   mode is to drop to the linear flow for its duration. */
+                if (tg_console_tui_active()) {
+                    tg_console_tui_leave(stream);
+                }
                 rc = tg_mtproto_auth_search_global_on_context(
                     host, port, api_id, auth_file, dc_id_text, &chat_context,
                     peer_cache_file, username_arg, requested_peer_index,
                     sizeof(requested_peer_index), requested_peer_label,
                     sizeof(requested_peer_label), stream);
+                if (tg_chat_tui_stream != 0 && tg_chat_input_raw) {
+                    (void)tg_console_tui_enter(stream, " Telegram Amiga ");
+                }
                 if (rc != 0 &&
                     tg_mtproto_peer_cache_text_looks_username(username_arg)) {
                     quiet = tg_mtproto_open_quiet_stream(stream);
@@ -8638,8 +8875,8 @@ int tg_mtproto_auth_chat_file(const char *host,
             if (rc != 0) {
                 fprintf(stream,
                         "Could not add that chat. Try @username or a t.me link.\n");
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                 continue;
             }
             if (requested_peer_index[0] == '\0' &&
@@ -8660,21 +8897,31 @@ int tg_mtproto_auth_chat_file(const char *host,
                 strcpy(peer_label, requested_peer_label);
                 last_seen_message_id = 0UL;
                 peer_history_ready = 0;
-                fprintf(stream, "Current chat: ");
-                if (peer_label[0] != '\0') {
-                    tg_mtproto_print_cache_text(stream, peer_label);
-                } else {
-                    fprintf(stream, "%s", peer_index);
+                {
+                    FILE *tui_cap = tg_console_tui_capture_begin(stream);
+                    fprintf(tui_cap, "Current chat: ");
+                    if (peer_label[0] != '\0') {
+                        tg_mtproto_print_cache_text(tui_cap, peer_label);
+                    } else {
+                        fprintf(tui_cap, "%s", peer_index);
+                    }
+                    fprintf(tui_cap, "\n");
+                    tg_console_tui_capture_end(tui_cap, stream);
                 }
-                fprintf(stream, "\n");
+                tg_mtproto_chat_tui_status(peer_label);
                 continue;
             } else {
                 fprintf(stream, "\nChat added. Cached chats:\n\n");
-                tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
-                                           peer_index);
+                {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_mtproto_print_peer_cache_public(peer_cache_file, tui_cap,
+                                               peer_index);
+            tg_console_tui_capture_end(tui_cap, stream);
+        }
                 fprintf(stream, "Type a number to switch.\n");
             }
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         peer_arg = 0;
@@ -8685,14 +8932,18 @@ int tg_mtproto_auth_chat_file(const char *host,
                         requested_peer_index,
                         sizeof(requested_peer_index), line) != 0) {
                     fprintf(stream, "%s: use /peer <number>\n", label);
-                    tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                       peer_label);
+                    tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                     continue;
                 }
             } else if (peer_arg[0] == '\0') {
                 fprintf(stream, "\nChoose a chat:\n\n");
-                tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
-                                           peer_index);
+                {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_mtproto_print_peer_cache_public(peer_cache_file, tui_cap,
+                                               peer_index);
+            tg_console_tui_capture_end(tui_cap, stream);
+        }
                 if (tg_mtproto_chat_prompt_line("Peer index: ",
                                                 requested_peer_text,
                                                 sizeof(requested_peer_text),
@@ -8700,6 +8951,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_tui_leave(stream);
+            tg_chat_tui_stream = 0;
             tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
@@ -8708,16 +8961,16 @@ int tg_mtproto_auth_chat_file(const char *host,
                         requested_peer_index, sizeof(requested_peer_index),
                         requested_peer_text) != 0) {
                     fprintf(stream, "%s: use /peer <number>\n", label);
-                    tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                       peer_label);
+                    tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                     continue;
                 }
             } else if (tg_mtproto_chat_copy_peer_index(
                            requested_peer_index,
                            sizeof(requested_peer_index), peer_arg) != 0) {
                 fprintf(stream, "%s: use /peer <number>\n", label);
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                 continue;
             }
             if (tg_mtproto_load_peer_cache_label(peer_cache_file,
@@ -8726,8 +8979,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                                                  sizeof(requested_peer_label))
                 != 0) {
                 fprintf(stream, "%s: peer-not-found\n", label);
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
                 continue;
             }
             if (peer_index[0] != '\0' &&
@@ -8739,9 +8992,14 @@ int tg_mtproto_auth_chat_file(const char *host,
             strcpy(peer_label, requested_peer_label);
             last_seen_message_id = 0UL;
             peer_history_ready = 0;
-            fprintf(stream, "Current chat: ");
-            tg_mtproto_print_cache_text(stream, peer_label);
-            fprintf(stream, "\n");
+            {
+                FILE *tui_cap = tg_console_tui_capture_begin(stream);
+                fprintf(tui_cap, "Current chat: ");
+                tg_mtproto_print_cache_text(tui_cap, peer_label);
+                fprintf(tui_cap, "\n");
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_tui_status(peer_label);
             continue;
         }
         if (strcmp(line, "/read") == 0) {
@@ -8755,7 +9013,8 @@ int tg_mtproto_auth_chat_file(const char *host,
             } else if (rc != 0) {
                 fprintf(stream, "Could not read messages now (error %d).\n", rc);
             }
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         if ((strncmp(line, "/watch", 6) == 0 &&
@@ -8775,12 +9034,14 @@ int tg_mtproto_auth_chat_file(const char *host,
                 fprintf(stream, "Auto-read every %lu second(s).\n",
                         watch_seconds);
             }
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         if (peer_index[0] == '\0') {
             fprintf(stream, "Choose a chat first with /peers or /add name.\n");
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         quiet = tg_mtproto_open_quiet_stream(stream);
@@ -8813,7 +9074,8 @@ int tg_mtproto_auth_chat_file(const char *host,
             } else {
                 fprintf(stream, "Could not send message.\n");
             }
-            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
             continue;
         }
         tg_mtproto_close_quiet_stream(quiet, stream);
@@ -8827,15 +9089,20 @@ int tg_mtproto_auth_chat_file(const char *host,
            echoed what was typed, so a small marker is enough. ISO-8859-1 has
            no real check glyph, so Latin-1 consoles get a "sent" guillemet;
            UTF-8 displays get the true checkmark. */
-        tg_console_ui_role(stream, TG_UI_ROLE_MARKER);
-        if (tg_mtproto_display_utf8()) {
-            fputs("[\xe2\x9c\x93]", stream); /* [(U+2713)] */
-        } else {
-            fputs("[ok]", stream); /* friendliest readable Latin-1 marker */
+        {
+            FILE *tui_cap = tg_console_tui_capture_begin(stream);
+            tg_console_ui_role(tui_cap, TG_UI_ROLE_MARKER);
+            if (tg_mtproto_display_utf8()) {
+                fputs("[\xe2\x9c\x93]", tui_cap); /* [(U+2713)] */
+            } else {
+                fputs("[ok]", tui_cap); /* friendliest Latin-1 marker */
+            }
+            tg_console_ui_reset(tui_cap);
+            fputc('\n', tui_cap);
+            tg_console_tui_capture_end(tui_cap, stream);
         }
-        tg_console_ui_reset(stream);
-        fputc('\n', stream);
-        tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+        tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
     }
 }
 

@@ -123,6 +123,14 @@ static const char *tg_console_ui_role_sequence(int role)
     }
 }
 
+const char *tg_console_ui_role_string(int role)
+{
+    if (!tg_console_ui_color_active()) {
+        return "";
+    }
+    return tg_console_ui_role_sequence(role);
+}
+
 void tg_console_ui_role(FILE *stream, int role)
 {
     if (stream == 0 || !tg_console_ui_color_active()) {

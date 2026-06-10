@@ -20,6 +20,10 @@
 
 #include <stdio.h>
 
+/* Master switch: when disabled, tg_console_tui_enter always declines and
+   the chat stays on the linear flow (--ui-tui off). */
+void tg_console_tui_set_enabled(int enabled);
+
 /* Queries the console window size in characters via CSI 0 SP q. Requires
    stdin in raw mode. Returns 1 and fills rows/columns on success. */
 int tg_console_tui_query_size(FILE *stream,
@@ -51,6 +55,19 @@ void tg_console_tui_input(FILE *stream,
 
 /* Leaves the layout: moves below the status area and restores attributes. */
 void tg_console_tui_leave(FILE *stream);
+
+/* Captures printer output for the transcript region: begin returns a
+   temporary stream to print into; end splits what was written into lines
+   and feeds each to tg_console_tui_line, then disposes the stream. When the
+   TUI is not active, begin returns the fallback stream itself and end is a
+   no-op -- so call sites work unchanged in linear mode. */
+FILE *tg_console_tui_capture_begin(FILE *fallback);
+void tg_console_tui_capture_end(FILE *capture, FILE *fallback);
+
+/* Remembers the prompt text the input row should show; the line editor
+   redraws the row with it after every keystroke while the TUI is active. */
+void tg_console_tui_set_prompt(const char *prompt);
+const char *tg_console_tui_prompt(void);
 
 /* Interactive diagnostic for --console-tui-test. */
 int tg_console_tui_self_test(FILE *stream);

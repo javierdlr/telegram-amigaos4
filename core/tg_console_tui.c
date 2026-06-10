@@ -13,6 +13,7 @@
 #include "tg_platform.h"
 
 static int tg_tui_active = 0;
+static int tg_tui_enabled = 1;
 static unsigned int tg_tui_rows = 0U;
 static unsigned int tg_tui_columns = 0U;
 
@@ -136,6 +137,17 @@ static void tg_tui_clipped_line(FILE *stream, const char *text)
         ++text;
         ++printed;
     }
+    if (tg_console_ui_color_active() &&
+        tg_console_ui_theme() == TG_UI_THEME_DARK) {
+        /* Paint the rest of the row with real spaces: consoles without
+           back-colour-erase (AmigaOS 3.x) ignore the SGR background on
+           CSI K, but spaces are characters and fill their cells. */
+        while (printed + 1U < tg_tui_columns) {
+            fputc(' ', stream);
+            ++printed;
+        }
+        return;
+    }
     fputs(TG_UI_CSI "K", stream);
 }
 
@@ -151,12 +163,17 @@ void tg_console_tui_status(FILE *stream, const char *status_text)
     fflush(stream);
 }
 
+void tg_console_tui_set_enabled(int enabled)
+{
+    tg_tui_enabled = enabled ? 1 : 0;
+}
+
 int tg_console_tui_enter(FILE *stream, const char *status_text)
 {
     unsigned int rows;
     unsigned int columns;
 
-    if (stream == 0 || tg_tui_active) {
+    if (stream == 0 || tg_tui_active || !tg_tui_enabled) {
         return tg_tui_active;
     }
     if (!tg_console_tui_query_size(stream, &rows, &columns)) {
@@ -211,13 +228,33 @@ void tg_console_tui_input(FILE *stream,
     fputs(TG_UI_CSI "K", stream);
     printed = 0U;
     if (prompt != 0) {
-        tg_console_ui_role(stream, TG_UI_ROLE_PROMPT);
+        /* The prompt may embed colour role sequences: pass them through
+           without counting columns, like the transcript clipper. */
         while (*prompt != '\0' && printed + 2U < tg_tui_columns) {
+            if (*prompt == (char)0x9b ||
+                (*prompt == (char)0x1b && prompt[1] == '[')) {
+                fputc(*prompt, stream);
+                if (*prompt == (char)0x1b) {
+                    fputc('[', stream);
+                    ++prompt;
+                }
+                ++prompt;
+                while (*prompt != '\0' &&
+                       !((unsigned char)*prompt >= 0x40U &&
+                         (unsigned char)*prompt <= 0x7eU)) {
+                    fputc(*prompt, stream);
+                    ++prompt;
+                }
+                if (*prompt != '\0') {
+                    fputc(*prompt, stream);
+                    ++prompt;
+                }
+                continue;
+            }
             fputc(*prompt, stream);
             ++prompt;
             ++printed;
         }
-        tg_console_ui_reset(stream);
     }
     if (pending != 0) {
         /* Show the tail when the pending text outgrows the window. */
@@ -244,6 +281,75 @@ void tg_console_tui_leave(FILE *stream)
     tg_tui_goto(stream, tg_tui_rows, 1U);
     fputs(TG_UI_CSI "0m\n", stream);
     fflush(stream);
+}
+
+static char tg_tui_prompt_text[96];
+
+void tg_console_tui_set_prompt(const char *prompt)
+{
+    unsigned long i;
+
+    tg_tui_prompt_text[0] = '\0';
+    if (prompt == 0) {
+        return;
+    }
+    i = 0UL;
+    while (prompt[i] != '\0' && i + 1UL < sizeof(tg_tui_prompt_text)) {
+        tg_tui_prompt_text[i] = prompt[i];
+        ++i;
+    }
+    tg_tui_prompt_text[i] = '\0';
+}
+
+const char *tg_console_tui_prompt(void)
+{
+    return tg_tui_prompt_text;
+}
+
+FILE *tg_console_tui_capture_begin(FILE *fallback)
+{
+    FILE *capture;
+
+    if (!tg_tui_active) {
+        return fallback;
+    }
+    capture = tmpfile();
+    return capture != 0 ? capture : fallback;
+}
+
+void tg_console_tui_capture_end(FILE *capture, FILE *fallback)
+{
+    char line[512];
+    unsigned long length;
+    int ch;
+
+    if (capture == 0 || capture == fallback || !tg_tui_active) {
+        if (capture != 0 && capture != fallback) {
+            fclose(capture);
+        }
+        return;
+    }
+    rewind(capture);
+    length = 0UL;
+    for (;;) {
+        ch = fgetc(capture);
+        if (ch == EOF || ch == '\n') {
+            line[length] = '\0';
+            if (length > 0UL || ch == '\n') {
+                tg_console_tui_line(fallback, line);
+            }
+            length = 0UL;
+            if (ch == EOF) {
+                break;
+            }
+            continue;
+        }
+        if (length + 1UL < sizeof(line)) {
+            line[length] = (char)ch;
+            ++length;
+        }
+    }
+    fclose(capture);
 }
 
 int tg_console_tui_self_test(FILE *stream)

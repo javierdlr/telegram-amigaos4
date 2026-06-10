@@ -67,6 +67,10 @@ int tg_console_ui_color_active(void);
 /* Emit the SGR sequence for a role (no-op when colours are inactive). */
 void tg_console_ui_role(FILE *stream, int role);
 
+/* The same sequence as a string ("" when colours are inactive), for callers
+   that assemble whole lines in buffers (the full-screen TUI). */
+const char *tg_console_ui_role_string(int role);
+
 /* Return to the theme's base attributes (dark: white on black; plain: SGR
    reset). Use after every role segment so the background stays uniform. */
 void tg_console_ui_reset(FILE *stream);

@@ -158,6 +158,7 @@ void tg_config_init(tg_config *config)
     config->ui_color_mode = 0;
     config->ui_charset = 0;
     config->ui_theme = 0;
+    config->ui_tui = 0;
     config->run_mtproto_self_test = 0;
     config->run_mtproto_self_test_fast = 0;
     config->run_mtproto_self_test_heavy = 0;
@@ -357,6 +358,12 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
                 return 1;
             }
             config->ui_theme = argv[i + 1];
+            i += 1;
+        } else if (strcmp(argv[i], "--ui-tui") == 0) {
+            if (i + 1 >= argc) {
+                return 1;
+            }
+            config->ui_tui = argv[i + 1];
             i += 1;
         } else if (strcmp(argv[i], "--mtproto-self-test") == 0) {
             config->run_mtproto_self_test = 1;
@@ -1174,6 +1181,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Console output charset (default latin1 on Amiga)\n");
     fprintf(stream, "      --ui-theme <dark|plain>\n");
     fprintf(stream, "                         Chat colour theme (default dark: black background)\n");
+    fprintf(stream, "      --ui-tui <on|off>\n");
+    fprintf(stream, "                         Full-screen chat layout (default on)\n");
     fprintf(stream, "      --mtproto-self-test\n");
     fprintf(stream, "                         Run offline MTProto bootstrap samples\n");
     fprintf(stream, "      --mtproto-self-test-fast\n");
