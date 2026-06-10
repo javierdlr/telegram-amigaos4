@@ -178,8 +178,11 @@ switches to it. `/peers` shows the list with the open chat marked `*`.
 drops an entry. `/watch <seconds>` changes the auto-read interval and
 `/watch off` disables it. Up/Down arrows recall typed lines.
 
-The chat opens on a black high-contrast screen: contact names bold in the
-accent colour, your own name bold white, system lines dim. Message lines are
+The chat runs in a full-screen console layout: status bar with the open
+chat's name, scrolling transcript, fixed input line (`--ui-tui off` returns
+to the classic linear flow; avoid resizing the window mid-chat). The screen
+is black high-contrast: contact names bold in the accent colour, your own
+name bold white, system lines dim. Message lines are
 prefixed with their [HH:MM] time and a separator marks day changes. Messages
 arriving in other chats (users, groups, channels) appear as highlighted
 `[n] Name: preview` lines: press Fn or type the number to jump there

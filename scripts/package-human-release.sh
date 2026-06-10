@@ -219,10 +219,17 @@ there. The console flashes too; /bell off disables that.
 How it looks
 ------------
 
-The chat uses a black high-contrast screen by default: sender names are bold
-(your contact in the accent colour, you in white), system messages are dim,
-every message line starts with its [HH:MM] time, a separator marks day
-changes, and multi-line messages keep their line breaks. Emoji are shown as classic
+The chat runs full screen: a status bar with the open chat's name at the
+top, the conversation scrolling in the middle, and your typing on a fixed
+input line at the bottom. Sender names are bold (your contact in the accent
+colour, you in white), every message line starts with its [HH:MM] time, a
+separator marks day changes, and multi-line messages keep their line breaks.
+Avoid resizing the window during a chat (the layout cannot follow yet);
+--ui-tui off returns to the classic line-by-line flow.
+
+On MorphOS the chat keeps a slower auto-read pace (its TCP stack streams
+large replies slowly) and cross-chat notifications are disabled for now;
+colours are off there too. Emoji are shown as classic
 text emoticons like :) :D <3 (y) because Amiga consoles cannot draw emoji
 glyphs; flags become their two country letters (IT, DE) and other symbols a
 small generic mark. A bold [ok] confirms every sent message.

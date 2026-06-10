@@ -60,7 +60,9 @@ MTProto account mode currently supports:
 - reading peer history text for users, basic groups and channels/supergroups;
 - sending text to cached users, basic groups and channels/supergroups when the
   account has permission;
-- interactive chat mode with peer-name transcript lines;
+- interactive chat mode with peer-name transcript lines, running in a
+  full-screen console layout (status bar, scrolling transcript, fixed input
+  line; `--ui-tui off` returns to the linear flow);
 - coloured high-contrast chat screen (dark theme) with emoji-to-emoticon
   rendering, [HH:MM] timestamps, day separators and real line breaks in
   messages;
@@ -189,12 +191,16 @@ Enter              read new messages now
 /quit              exit
 ```
 
-Up/Down arrows recall typed lines. The chat opens on a black high-contrast
-screen with bold sender names; multi-line messages keep their line breaks and
-emoji render as text emoticons (`:)` `<3` `(y)`) since Amiga consoles have no
-emoji glyphs. `--ui-theme plain` keeps the normal window colours instead;
+Up/Down arrows recall typed lines. The chat runs full screen -- status bar
+on top, transcript in the middle, fixed input line at the bottom -- on a
+black high-contrast screen with bold sender names; multi-line messages keep
+their line breaks and emoji render as text emoticons (`:)` `<3` `(y)`) since
+Amiga consoles have no emoji glyphs. `--ui-tui off` returns to the classic
+linear flow, `--ui-theme plain` keeps the normal window colours,
 `--ui-color off` disables colours entirely. Text size follows the system
-console font preferences.
+console font preferences. Platform notes: on MorphOS auto-read runs at a
+slower pace and cross-chat notifications/colours are currently disabled
+(slow TCP stack and console issues under investigation).
 
 If a command reports `auth-dc-mismatch`, inspect the saved auth file and run
 with the matching DC endpoint. The latest AmigaOS 3.x validation used:
