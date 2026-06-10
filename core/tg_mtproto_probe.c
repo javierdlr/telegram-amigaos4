@@ -56,7 +56,14 @@
  * early. We keep reading/ACKing past updates until the result OR this budget
  * elapses, with the per-call attempt count as a high safety ceiling.
  */
+/* MorphOS bsdsocket streams large replies at ~1KB/s on the field machine:
+   a 20s budget made nearly every chat poll soft-fail into a reconnect
+   storm. Give slow links room to finish instead. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+#define TG_MTPROTO_QUERY_BUDGET_SECONDS 45UL
+#else
 #define TG_MTPROTO_QUERY_BUDGET_SECONDS 20UL
+#endif
 
 /*
  * Consecutive failed reads/sends in the interactive chat loop before it drops
@@ -8457,7 +8464,13 @@ int tg_mtproto_auth_chat_file(const char *host,
                                           "Type /add name to find a chat.");
     }
     last_seen_message_id = 0UL;
+    /* Auto-read cadence: every poll costs a full slow-link round trip on
+       MorphOS, so pace it down there; /watch can still change it. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    watch_seconds = 12UL;
+#else
     watch_seconds = 2UL;
+#endif
     /* Heavy accounts must reach the prompt before any blocking history read. */
     peer_history_ready = 0;
     chat_last_poll = (time_t)0;
