@@ -14,6 +14,7 @@
 #include "tg_config.h"
 #include "tg_console.h"
 #include "tg_console_ui.h"
+#include "tg_console_tui.h"
 #include "tg_file.h"
 #include "tg_https.h"
 #include "tg_http.h"
@@ -3946,6 +3947,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_console_ui_test) {
         return tg_mtproto_console_ui_test(stdout);
+    }
+
+    if (config.run_console_tui_test) {
+        return tg_console_tui_self_test(stdout);
     }
 
     if (config.run_mtproto_self_test) {

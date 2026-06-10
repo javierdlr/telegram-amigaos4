@@ -154,6 +154,7 @@ void tg_config_init(tg_config *config)
     config->run_https_test = 0;
     config->run_platform_rng_test = 0;
     config->run_console_ui_test = 0;
+    config->run_console_tui_test = 0;
     config->ui_color_mode = 0;
     config->ui_charset = 0;
     config->ui_theme = 0;
@@ -337,6 +338,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_platform_rng_test = 1;
         } else if (strcmp(argv[i], "--console-ui-test") == 0) {
             config->run_console_ui_test = 1;
+        } else if (strcmp(argv[i], "--console-tui-test") == 0) {
+            config->run_console_tui_test = 1;
         } else if (strcmp(argv[i], "--ui-color") == 0) {
             if (i + 1 >= argc) {
                 return 1;
@@ -1163,6 +1166,8 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Check whether secure platform RNG is available\n");
     fprintf(stream, "      --console-ui-test\n");
     fprintf(stream, "                         Show colour roles, glyphs and emoji mapping\n");
+    fprintf(stream, "      --console-tui-test\n");
+    fprintf(stream, "                         Try the full-screen chat layout on this console\n");
     fprintf(stream, "      --ui-color <on|off|auto>\n");
     fprintf(stream, "                         Console colours (default auto: on in chat)\n");
     fprintf(stream, "      --ui-charset <latin1|utf8>\n");
