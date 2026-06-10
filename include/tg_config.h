@@ -163,6 +163,7 @@ typedef struct tg_config {
     int run_console_ui_test;
     const char *ui_color_mode;   /* 0 / "on" / "off" / "auto" */
     const char *ui_charset;      /* 0 / "latin1" / "utf8" */
+    const char *ui_theme;        /* 0 / "dark" / "plain" */
     int run_mtproto_self_test;
     int run_mtproto_self_test_fast;
     int run_mtproto_self_test_heavy;

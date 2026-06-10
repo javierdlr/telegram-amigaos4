@@ -33,6 +33,13 @@
 #define TG_UI_CHARSET_LATIN1 0
 #define TG_UI_CHARSET_UTF8 1
 
+/* Themes. DARK (default) paints the chat on a black background (console pen
+   1 on Amiga screens) with high-contrast foregrounds and never uses italics
+   (Amiga consoles shear the glyphs, which is barely readable). PLAIN leaves
+   the window background alone and only colours the foreground. */
+#define TG_UI_THEME_DARK 0
+#define TG_UI_THEME_PLAIN 1
+
 /* Colour mode: ON / OFF / AUTO (default). In AUTO colours activate only once
    the chat marks the session interactive (raw console mode engaged), so
    redirected output and smoke-test logs never contain escape bytes. */
@@ -48,8 +55,19 @@ int tg_console_ui_color_active(void);
 /* Emit the SGR sequence for a role (no-op when colours are inactive). */
 void tg_console_ui_role(FILE *stream, int role);
 
-/* Shorthand for tg_console_ui_role(stream, TG_UI_ROLE_RESET). */
+/* Return to the theme's base attributes (dark: white on black; plain: SGR
+   reset). Use after every role segment so the background stays uniform. */
 void tg_console_ui_reset(FILE *stream);
+
+void tg_console_ui_set_theme(int theme);
+int tg_console_ui_theme(void);
+
+/* Enter/leave the themed chat screen. In the dark theme (colours active)
+   enter paints the whole console window black by setting the base attributes
+   and erasing the display; leave restores plain attributes. No-ops in the
+   plain theme or when colours are off. */
+void tg_console_ui_enter_screen(FILE *stream);
+void tg_console_ui_leave_screen(FILE *stream);
 
 /* Output charset for targets whose display layer transcodes UTF-8 to
    ISO-8859-1 (the Amiga consoles). UTF8 passes message text through raw and

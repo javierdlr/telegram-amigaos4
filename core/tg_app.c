@@ -3882,6 +3882,16 @@ int tg_app_run(int argc, char **argv)
             return 2;
         }
     }
+    if (config.ui_theme != 0) {
+        if (strcmp(config.ui_theme, "dark") == 0) {
+            tg_console_ui_set_theme(TG_UI_THEME_DARK);
+        } else if (strcmp(config.ui_theme, "plain") == 0) {
+            tg_console_ui_set_theme(TG_UI_THEME_PLAIN);
+        } else {
+            fprintf(stderr, "ui-theme: use dark or plain\n");
+            return 2;
+        }
+    }
     if (config.ui_charset != 0) {
         if (strcmp(config.ui_charset, "latin1") == 0) {
             tg_console_ui_set_charset(TG_UI_CHARSET_LATIN1);

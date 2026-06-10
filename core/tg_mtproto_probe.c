@@ -7369,6 +7369,8 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_chat_input_raw = chat_raw;
     /* Colour AUTO mode keys off the same signal: a real interactive console. */
     tg_console_ui_set_interactive(chat_raw);
+    /* Dark theme: paint the window black before the first output. */
+    tg_console_ui_enter_screen(stream);
     tg_chat_history_reset();
     tg_mtproto_chat_print_system_line(stream, "Loading chats...");
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
@@ -7408,6 +7410,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         tg_mtproto_replay_quiet_stream(quiet, stream);
         tg_mtproto_close_quiet_stream(quiet, stream);
         tg_net_set_connect_timeout_seconds(saved_timeout);
+        tg_console_ui_leave_screen(stream);
         if (chat_raw) { tg_platform_stdin_set_raw(0); }
         return 2;
     }
@@ -7425,6 +7428,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         label) != 0) {
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 2;
         }
@@ -7532,6 +7536,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 0;
         }
@@ -7561,6 +7566,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
             tg_mtproto_close_auth_context(&chat_context);
             tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 0;
         }
@@ -7628,6 +7634,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
@@ -7650,6 +7657,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
@@ -7687,6 +7695,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                 tg_mtproto_close_quiet_stream(chat_quiet, stream);
                 tg_mtproto_close_auth_context(&chat_context);
                 tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                 return 2;
             }
@@ -7720,6 +7729,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
@@ -7806,6 +7816,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                     tg_mtproto_close_quiet_stream(chat_quiet, stream);
                     tg_mtproto_close_auth_context(&chat_context);
                     tg_net_set_connect_timeout_seconds(saved_timeout);
+            tg_console_ui_leave_screen(stream);
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
                     return 2;
                 }
@@ -7931,7 +7942,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (tg_mtproto_display_utf8()) {
             fputs("[\xe2\x9c\x93]", stream); /* [(U+2713)] */
         } else {
-            fputs("[\xbb]", stream); /* [>>] single-glyph guillemet */
+            fputs("[ok]", stream); /* friendliest readable Latin-1 marker */
         }
         tg_console_ui_reset(stream);
         fputc('\n', stream);
@@ -8769,38 +8780,51 @@ int tg_mtproto_console_ui_test(FILE *stream)
             TG_MTPROTO_DISPLAY_LATIN1 ? "latin1-transcode" : "raw",
             tg_mtproto_display_utf8() ? "utf8" : "latin1");
 
-    fputs("pens: ", stream);
+    fputs("fg pens: ", stream);
     for (pen = 0; pen < 8; ++pen) {
         fprintf(stream, "\033[3%dm%d\033[0m ", pen, pen);
     }
+    fputs("\nbg pens: ", stream);
+    for (pen = 0; pen < 8; ++pen) {
+        /* Each background pen with both white and black text on top, so the
+           tester can tell which pen is the solid black (expected: pen 1). */
+        fprintf(stream, "\033[32;4%dm%d\033[30;4%dm%d\033[0m ", pen, pen, pen,
+                pen);
+    }
     fputs("\nattrs: ", stream);
     fputs("\033[1mbold\033[0m ", stream);
-    fputs("\033[3mitalic\033[0m ", stream);
     fputs("\033[4munderline\033[0m ", stream);
     fputs("\033[7minverse\033[0m\n\n", stream);
 
-    fputs("roles:\n", stream);
+    fputs("dark theme preview (chat default):\n", stream);
+    tg_console_ui_role(stream, TG_UI_ROLE_RESET);
+    fputs("plain message text\033[K\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_PEER);
     fputs("Mario Rossi:", stream);
     tg_console_ui_reset(stream);
-    fputs(" ciao! (peer name)\n", stream);
+    fputs(" testo dal contatto\033[K\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_OWN);
     fputs("me:", stream);
     tg_console_ui_reset(stream);
-    fputs(" tutto bene (own name)\n", stream);
-    tg_mtproto_chat_print_system_line(stream, "Loading chats... (system)");
+    fputs(" testo mio\033[K\n", stream);
+    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
+    fputs("Loading chats... (system)", stream);
+    tg_console_ui_reset(stream);
+    fputs("\033[K\n", stream);
+    fputs("\033[0m\n", stream);
+
+    fputs("alerts:\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
     fputs("[2] Mario: nuovo messaggio (notify)", stream);
-    tg_console_ui_reset(stream);
-    fputc('\n', stream);
+    fputs("\033[0m\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_MARKER);
     if (tg_mtproto_display_utf8()) {
         fputs("[\xe2\x9c\x93]", stream);
     } else {
-        fputs("[\xbb]", stream);
+        fputs("[ok]", stream);
     }
     tg_console_ui_reset(stream);
-    fputs(" (send marker)\n\n", stream);
+    fputs("\033[0m (send marker)\n\n", stream);
 
     fputs("glyphs: ", stream);
     if (tg_mtproto_display_utf8()) {
