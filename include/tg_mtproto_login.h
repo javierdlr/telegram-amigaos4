@@ -416,6 +416,14 @@ tg_mtproto_tl_status tg_mtproto_parse_messages_summary(
     unsigned long body_length,
     tg_mtproto_messages_summary *out);
 
+/* Parses one TL Message from the reader (the same core the history list
+   parser uses); out_dest, when non-null, receives the message's peer_id --
+   the chat it belongs to. Used by the chat's update-push collector. */
+tg_mtproto_tl_status tg_mtproto_read_update_message_text(
+    tg_mtproto_tl_reader *reader,
+    tg_mtproto_message_text *out,
+    tg_mtproto_dialog_peer *out_dest);
+
 tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
     unsigned long constructor,
     const unsigned char *body,

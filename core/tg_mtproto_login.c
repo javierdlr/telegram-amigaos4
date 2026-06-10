@@ -2659,7 +2659,8 @@ static tg_mtproto_tl_status tg_skip_common_message(
 
 static tg_mtproto_tl_status tg_read_common_message_text(
     tg_mtproto_tl_reader *reader,
-    tg_mtproto_message_text *out)
+    tg_mtproto_message_text *out,
+    tg_mtproto_dialog_peer *out_dest)
 {
     unsigned long constructor;
     unsigned long flags;
@@ -2672,6 +2673,9 @@ static tg_mtproto_tl_status tg_read_common_message_text(
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
     }
     memset(out, 0, sizeof(*out));
+    if (out_dest != 0) {
+        memset(out_dest, 0, sizeof(*out_dest));
+    }
     if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
@@ -2711,6 +2715,10 @@ static tg_mtproto_tl_status tg_read_common_message_text(
     }
     if (tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (out_dest != 0) {
+        /* The message's peer_id: the chat this message belongs to. */
+        *out_dest = peer;
     }
     if ((flags2 & 4UL) != 0UL &&
         tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
@@ -3207,7 +3215,7 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
             (reader.offset + 4UL <= reader.length) ?
                 tg_read_u32_le(reader.buffer + reader.offset) : 0UL;
         message_start = reader.offset;
-        if (tg_read_common_message_text(&reader, &message) !=
+        if (tg_read_common_message_text(&reader, &message, 0) !=
             TG_MTPROTO_TL_OK) {
             /*
              * Older parser paths can stop on media tails such as
@@ -4206,4 +4214,15 @@ int tg_mtproto_login_self_test(void)
     }
 
     return 0;
+}
+
+tg_mtproto_tl_status tg_mtproto_read_update_message_text(
+    tg_mtproto_tl_reader *reader,
+    tg_mtproto_message_text *out,
+    tg_mtproto_dialog_peer *out_dest)
+{
+    if (reader == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    return tg_read_common_message_text(reader, out, out_dest);
 }

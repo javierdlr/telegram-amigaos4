@@ -116,6 +116,11 @@
 #define TG_MTPROTO_UPDATE_SHORT_MESSAGE_L214_CONSTRUCTOR 0x313bc7f8UL
 #define TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_L214_CONSTRUCTOR 0x4d6deea5UL
 #define TG_MTPROTO_UPDATE_SHORT_SENT_MESSAGE_CONSTRUCTOR 0x9015e101UL
+/* Items inside the rich updates#74ae4240 container (observed live, layer
+   214 still uses the classic ids). */
+#define TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR 0x1f2b0afdUL
+#define TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR 0x62ba04d9UL
+#define TG_MTPROTO_TL_VECTOR_CONSTRUCTOR 0x1cb5c415UL
 #define TG_MTPROTO_UPDATES_TOO_LONG_CONSTRUCTOR 0xe317af7eUL
 #define TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR 0x5e002502UL
 #define TG_MTPROTO_AUTH_SENT_CODE_SUCCESS_CONSTRUCTOR 0x2390fe44UL
@@ -2486,6 +2491,90 @@ static int tg_chat_notify_gunzip(const unsigned char *body,
 #endif
 }
 
+/* Extracts the first new-message update from a rich updates container
+   (updates#74ae4240 / updatesCombined#725b04c3): channel posts and bot
+   replies with entities arrive here instead of updateShortMessage. Update
+   items are not length-prefixed, so the walk stops at the first item it
+   cannot parse; in practice the new-message update leads the vector. The
+   message body is parsed by the same reader the /history transcript uses,
+   which also yields the destination peer (the chat the message belongs to). */
+static void tg_chat_notify_collect_updates(const unsigned char *body,
+                                           unsigned long body_length)
+{
+    tg_mtproto_tl_reader reader;
+    static tg_mtproto_message_text message;
+    tg_mtproto_dialog_peer dest;
+    tg_chat_notify_entry *entry;
+    unsigned long constructor;
+    unsigned long item_constructor;
+    unsigned long count;
+    unsigned long copy_length;
+    unsigned long i;
+
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &constructor) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &constructor) != TG_MTPROTO_TL_OK ||
+        constructor != TG_MTPROTO_TL_VECTOR_CONSTRUCTOR ||
+        tg_mtproto_tl_read_u32(&reader, &count) != TG_MTPROTO_TL_OK) {
+        return;
+    }
+    for (i = 0UL; i < count; ++i) {
+        if (tg_mtproto_tl_read_u32(&reader, &item_constructor) !=
+            TG_MTPROTO_TL_OK) {
+            return;
+        }
+        if (item_constructor != TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR) {
+            /* Unknown update items cannot be skipped (no length prefix). */
+            return;
+        }
+        if (tg_mtproto_read_update_message_text(&reader, &message, &dest) !=
+            TG_MTPROTO_TL_OK) {
+#ifdef TG_MTPROTO_DIAG
+            fprintf(stderr, "notify-diag rich parse-failed\n");
+#endif
+            return;
+        }
+#ifdef TG_MTPROTO_DIAG
+        fprintf(stderr,
+                "notify-diag rich msg id=%lu has_text=%d out=%d dest=0x%08lx\n",
+                message.id, message.has_text, message.is_out,
+                dest.peer_constructor);
+#endif
+        if (!message.has_text || message.is_out ||
+            tg_chat_notify_seen(message.id)) {
+            /* The rich message reader may leave unparsed tail bytes (reply
+               markup and friends), so do not trust the reader position for
+               further items either way. */
+            return;
+        }
+        if (tg_chat_notify_count >= TG_CHAT_NOTIFY_MAX) {
+            ++tg_chat_notify_dropped;
+            return;
+        }
+        entry = &tg_chat_notify_queue[tg_chat_notify_count];
+        if (dest.peer_constructor != 0UL) {
+            entry->is_chat =
+                dest.peer_constructor != TG_MTPROTO_PEER_USER_CONSTRUCTOR;
+            entry->peer_id_hi = dest.id_hi;
+            entry->peer_id_lo = dest.id_lo;
+        } else {
+            entry->is_chat = 0;
+            entry->peer_id_hi = message.from_id_hi;
+            entry->peer_id_lo = message.from_id_lo;
+        }
+        copy_length = (unsigned long)strlen(message.text);
+        if (copy_length >= TG_CHAT_NOTIFY_TEXT) {
+            copy_length = TG_CHAT_NOTIFY_TEXT - 1UL;
+        }
+        memcpy(entry->text, message.text, copy_length);
+        entry->text[copy_length] = '\0';
+        ++tg_chat_notify_count;
+        return;
+    }
+}
+
 /* Sees every decrypted MTProto payload once: collects bare new-message
    updates, walks msg_container parts and unwraps gzip-packed pushes. */
 static void tg_chat_notify_collect(const unsigned char *body,
@@ -2512,6 +2601,21 @@ static void tg_chat_notify_collect(const unsigned char *body,
                                   &unpacked_length)) {
             tg_chat_notify_collect(unpacked, unpacked_length);
         }
+        return;
+    }
+#ifdef TG_MTPROTO_DIAG
+    if ((constructor == TG_MTPROTO_UPDATES_CONSTRUCTOR ||
+         constructor == TG_MTPROTO_UPDATES_COMBINED_CONSTRUCTOR) &&
+        body_length >= 16UL) {
+        fprintf(stderr, "notify-diag updates vec 0x%08lx n=%lu item0=0x%08lx\n",
+                tg_mtproto_read_u32_le(body + 4UL),
+                tg_mtproto_read_u32_le(body + 8UL),
+                tg_mtproto_read_u32_le(body + 12UL));
+    }
+#endif
+    if (constructor == TG_MTPROTO_UPDATES_CONSTRUCTOR ||
+        constructor == TG_MTPROTO_UPDATES_COMBINED_CONSTRUCTOR) {
+        tg_chat_notify_collect_updates(body, body_length);
         return;
     }
     if (constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
