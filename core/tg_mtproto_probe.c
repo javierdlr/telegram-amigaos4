@@ -111,6 +111,10 @@
 #define TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR 0x78d4dec1UL
 #define TG_MTPROTO_UPDATE_SHORT_MESSAGE_CONSTRUCTOR 0x914fbf11UL
 #define TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_CONSTRUCTOR 0x16812688UL
+/* Layer-214 variants of the same updates (identical leading field layout:
+   flags, id:int, sender ids:long, message:string, ...). */
+#define TG_MTPROTO_UPDATE_SHORT_MESSAGE_L214_CONSTRUCTOR 0x313bc7f8UL
+#define TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_L214_CONSTRUCTOR 0x4d6deea5UL
 #define TG_MTPROTO_UPDATE_SHORT_SENT_MESSAGE_CONSTRUCTOR 0x9015e101UL
 #define TG_MTPROTO_UPDATES_TOO_LONG_CONSTRUCTOR 0xe317af7eUL
 #define TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR 0x5e002502UL
@@ -217,9 +221,159 @@ static int tg_mtproto_is_async_update_constructor(unsigned long constructor)
            constructor == TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR ||
            constructor == TG_MTPROTO_UPDATE_SHORT_MESSAGE_CONSTRUCTOR ||
            constructor == TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_CONSTRUCTOR ||
+           constructor == TG_MTPROTO_UPDATE_SHORT_MESSAGE_L214_CONSTRUCTOR ||
+           constructor ==
+               TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_L214_CONSTRUCTOR ||
            constructor == TG_MTPROTO_UPDATE_SHORT_SENT_MESSAGE_CONSTRUCTOR ||
            constructor == TG_MTPROTO_UPDATES_TOO_LONG_CONSTRUCTOR;
 }
+
+/*
+ * Cross-chat notifications. Telegram pushes updates for EVERY chat over the
+ * open session socket; the receive loop used to ack and discard them. The
+ * collector below extracts new-message updates (updateShortMessage for DMs,
+ * updateShortChatMessage for basic groups -- both the legacy and the
+ * layer-214 constructors, whose leading fields match) into a small queue;
+ * the interactive chat drains it and shows "who wrote where" lines for
+ * chats other than the open one. Channel posts ride the richer 'updates'
+ * container and are not collected yet.
+ *
+ * Collection is armed only while the interactive chat runs, so one-shot
+ * commands (list-peers, login) never accumulate entries. Zero extra network
+ * traffic: everything here was already on the wire.
+ */
+#define TG_CHAT_NOTIFY_MAX 8U
+#define TG_CHAT_NOTIFY_TEXT 96U
+#define TG_CHAT_NOTIFY_RECENT 16U
+
+static unsigned long tg_mtproto_read_u32_le(const unsigned char *data);
+
+typedef struct tg_chat_notify_entry {
+    int is_chat; /* 1 = basic group (peer ids are the chat), 0 = DM user */
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    char text[TG_CHAT_NOTIFY_TEXT];
+} tg_chat_notify_entry;
+
+static tg_chat_notify_entry tg_chat_notify_queue[TG_CHAT_NOTIFY_MAX];
+static unsigned long tg_chat_notify_count = 0UL;
+static unsigned long tg_chat_notify_dropped = 0UL;
+static unsigned long tg_chat_notify_recent_ids[TG_CHAT_NOTIFY_RECENT];
+static unsigned long tg_chat_notify_recent_pos = 0UL;
+static int tg_chat_notify_armed = 0;
+
+static void tg_chat_notify_reset(int armed)
+{
+    unsigned long i;
+
+    tg_chat_notify_count = 0UL;
+    tg_chat_notify_dropped = 0UL;
+    tg_chat_notify_recent_pos = 0UL;
+    for (i = 0UL; i < TG_CHAT_NOTIFY_RECENT; ++i) {
+        tg_chat_notify_recent_ids[i] = 0UL;
+    }
+    tg_chat_notify_armed = armed;
+}
+
+/* Updates are redelivered until acked; remember recent message ids so a
+   redelivery does not notify twice. */
+static int tg_chat_notify_seen(unsigned long message_id)
+{
+    unsigned long i;
+
+    if (message_id == 0UL) {
+        return 0;
+    }
+    for (i = 0UL; i < TG_CHAT_NOTIFY_RECENT; ++i) {
+        if (tg_chat_notify_recent_ids[i] == message_id) {
+            return 1;
+        }
+    }
+    tg_chat_notify_recent_ids[tg_chat_notify_recent_pos] = message_id;
+    tg_chat_notify_recent_pos =
+        (tg_chat_notify_recent_pos + 1UL) % TG_CHAT_NOTIFY_RECENT;
+    return 0;
+}
+
+/* Parses one bare updateShortMessage/updateShortChatMessage payload. */
+static void tg_chat_notify_collect_one(const unsigned char *body,
+                                       unsigned long body_length)
+{
+    tg_mtproto_tl_reader reader;
+    tg_chat_notify_entry *entry;
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long message_id;
+    unsigned long sender_hi;
+    unsigned long sender_lo;
+    unsigned long chat_hi;
+    unsigned long chat_lo;
+    const unsigned char *text;
+    unsigned long text_length;
+    unsigned long copy_length;
+    int is_chat;
+
+    if (body == 0 || body_length < 4UL) {
+        return;
+    }
+    constructor = tg_mtproto_read_u32_le(body);
+    if (constructor == TG_MTPROTO_UPDATE_SHORT_MESSAGE_CONSTRUCTOR ||
+        constructor == TG_MTPROTO_UPDATE_SHORT_MESSAGE_L214_CONSTRUCTOR) {
+        is_chat = 0;
+    } else if (constructor ==
+                   TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_CONSTRUCTOR ||
+               constructor ==
+                   TG_MTPROTO_UPDATE_SHORT_CHAT_MESSAGE_L214_CONSTRUCTOR) {
+        is_chat = 1;
+    } else {
+        return;
+    }
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &constructor) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &message_id) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(&reader, &sender_hi, &sender_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return;
+    }
+    chat_hi = sender_hi;
+    chat_lo = sender_lo;
+    if (is_chat &&
+        tg_mtproto_tl_read_u64(&reader, &chat_hi, &chat_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return;
+    }
+    if (tg_mtproto_tl_read_bytes(&reader, &text, &text_length) !=
+        TG_MTPROTO_TL_OK) {
+        return;
+    }
+    /* flags bit 1 = outgoing (sent from this account on another device):
+       still useful to see, but skip for now to keep the stream calm. */
+    if ((flags & 0x2UL) != 0UL) {
+        return;
+    }
+    if (tg_chat_notify_seen(message_id)) {
+        return;
+    }
+    if (tg_chat_notify_count >= TG_CHAT_NOTIFY_MAX) {
+        ++tg_chat_notify_dropped;
+        return;
+    }
+    entry = &tg_chat_notify_queue[tg_chat_notify_count];
+    entry->is_chat = is_chat;
+    entry->peer_id_hi = chat_hi;
+    entry->peer_id_lo = chat_lo;
+    copy_length = text_length;
+    if (copy_length >= TG_CHAT_NOTIFY_TEXT) {
+        copy_length = TG_CHAT_NOTIFY_TEXT - 1UL;
+    }
+    memcpy(entry->text, text, copy_length);
+    entry->text[copy_length] = '\0';
+    ++tg_chat_notify_count;
+}
+
+static void tg_chat_notify_collect(const unsigned char *body,
+                                   unsigned long body_length);
 
 static void tg_mtproto_probe_random(unsigned char *bytes, unsigned long length)
 {
@@ -536,6 +690,9 @@ static int tg_mtproto_parse_ulong_arg(const char *text, unsigned long *out)
 static void tg_mtproto_close_auth_context(tg_mtproto_auth_context *context)
 {
     if (context != 0 && context->connection_open) {
+#ifdef TG_MTPROTO_DIAG
+        fprintf(stderr, "notify-diag ctx-real-close\n");
+#endif
         tg_net_close(&context->connection);
         context->connection_open = 0;
     }
@@ -546,10 +703,9 @@ static void tg_mtproto_skip_auth_context_close(tg_mtproto_auth_context *context,
                                                const char *label)
 {
 #ifdef TG_MTPROTO_DIAG
-    if (stream != 0 && label != 0) {
-        fprintf(stream, "%s: phase close skipped.\n", label);
-        fflush(stream);
-    }
+    fprintf(stderr, "notify-diag ctx-skip-close label=%s\n",
+            label != 0 ? label : "?");
+    (void)stream;
 #else
     (void)stream;
     (void)label;
@@ -1093,6 +1249,9 @@ static int tg_mtproto_send_encrypted_query_limited(
             }
             tg_mtproto_ack_encrypted_message(context, &decrypted, stream,
                                              label);
+            /* Harvest cross-chat new-message updates that used to be
+               discarded right below (no-op unless the chat armed it). */
+            tg_chat_notify_collect(decrypted.body, decrypted.body_length);
             if (tg_mtproto_find_rpc_result(decrypted.body,
                                            decrypted.body_length,
                                            request_msg_id.hi,
@@ -1605,6 +1764,9 @@ static int tg_mtproto_load_auth_context(const char *host,
     }
 
     tg_mtproto_refresh_saved_session(context);
+#ifdef TG_MTPROTO_DIAG
+    fprintf(stderr, "notify-diag ctx-open label=%s\n", label);
+#endif
     error_buffer[0] = '\0';
     net_status = tg_net_connect(&context->connection, host, port, error_buffer,
                                 sizeof(error_buffer));
@@ -2259,6 +2421,153 @@ static int tg_mtproto_unpack_gzip_result(tg_mtproto_rpc_result *result,
 #endif
 }
 
+/* Best-effort, silent gunzip for update pushes (they arrive gzip-packed on
+   busy accounts). Returns 1 and points out/out_length at the static unpack
+   buffer on success. Failure (no inflater compiled in, oversize, corrupt)
+   just drops the update: notifications are opportunistic. */
+static int tg_chat_notify_gunzip(const unsigned char *body,
+                                 unsigned long body_length,
+                                 const unsigned char **out,
+                                 unsigned long *out_length)
+{
+    const unsigned char *packed_data;
+    unsigned long packed_length;
+    tg_mtproto_tl_reader reader;
+
+    tg_mtproto_tl_reader_init(&reader, body + 4UL, body_length - 4UL);
+    if (tg_mtproto_tl_read_bytes(&reader, &packed_data, &packed_length) !=
+        TG_MTPROTO_TL_OK) {
+        return 0;
+    }
+#if TG_ENABLE_GZIP
+    {
+        int zrc;
+        z_stream zs;
+
+        if (packed_length > (unsigned long)UINT_MAX) {
+            return 0;
+        }
+        memset(&zs, 0, sizeof(zs));
+        zs.next_in = (Bytef *)packed_data;
+        zs.avail_in = (uInt)packed_length;
+        zs.next_out = (Bytef *)tg_mtproto_gzip_unpacked;
+        zs.avail_out = (uInt)TG_MTPROTO_GZIP_UNPACKED_MAX;
+        zrc = inflateInit2(&zs, 16 + MAX_WBITS);
+        if (zrc == Z_OK) {
+            zrc = inflate(&zs, Z_FINISH);
+            (void)inflateEnd(&zs);
+        }
+        if (zrc != Z_STREAM_END || zs.total_out < 4UL) {
+            return 0;
+        }
+        *out = tg_mtproto_gzip_unpacked;
+        *out_length = (unsigned long)zs.total_out;
+        return 1;
+    }
+#elif TG_ENABLE_GZIP_PUFF
+    {
+        unsigned long unpacked_length;
+
+        if (tg_mtproto_gzip_unpack_puff(packed_data, packed_length,
+                                        &unpacked_length) != 0 ||
+            unpacked_length < 4UL) {
+            return 0;
+        }
+        *out = tg_mtproto_gzip_unpacked;
+        *out_length = unpacked_length;
+        return 1;
+    }
+#else
+    (void)packed_data;
+    (void)packed_length;
+    (void)out;
+    (void)out_length;
+    return 0;
+#endif
+}
+
+/* Sees every decrypted MTProto payload once: collects bare new-message
+   updates, walks msg_container parts and unwraps gzip-packed pushes. */
+static void tg_chat_notify_collect(const unsigned char *body,
+                                   unsigned long body_length)
+{
+    unsigned long constructor;
+    unsigned long count;
+    unsigned long part_length;
+    unsigned long offset;
+    unsigned long i;
+    const unsigned char *unpacked;
+    unsigned long unpacked_length;
+
+    if (!tg_chat_notify_armed || body == 0 || body_length < 4UL) {
+        return;
+    }
+    constructor = tg_mtproto_read_u32_le(body);
+#ifdef TG_MTPROTO_DIAG
+    fprintf(stderr, "notify-diag body ctor 0x%08lx len %lu\n", constructor,
+            body_length);
+#endif
+    if (constructor == TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+        if (tg_chat_notify_gunzip(body, body_length, &unpacked,
+                                  &unpacked_length)) {
+            tg_chat_notify_collect(unpacked, unpacked_length);
+        }
+        return;
+    }
+    if (constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
+        tg_chat_notify_collect_one(body, body_length);
+        return;
+    }
+    if (body_length < 8UL) {
+        return;
+    }
+    count = tg_mtproto_read_u32_le(body + 4UL);
+    offset = 8UL;
+    for (i = 0UL; i < count; ++i) {
+        /* part: msg_id(8) seqno(4) bytes(4) body[bytes] */
+        if (offset + 16UL > body_length) {
+            return;
+        }
+        part_length = tg_mtproto_read_u32_le(body + offset + 12UL);
+        offset += 16UL;
+        if (part_length > body_length - offset) {
+            return;
+        }
+#ifdef TG_MTPROTO_DIAG
+        if (part_length >= 4UL) {
+            fprintf(stderr, "notify-diag part ctor 0x%08lx len %lu\n",
+                    tg_mtproto_read_u32_le(body + offset), part_length);
+        }
+#endif
+        if (part_length >= 4UL &&
+            tg_mtproto_read_u32_le(body + offset) ==
+                TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+            if (tg_chat_notify_gunzip(body + offset, part_length, &unpacked,
+                                      &unpacked_length)) {
+                tg_chat_notify_collect(unpacked, unpacked_length);
+            }
+        } else {
+            tg_chat_notify_collect_one(body + offset, part_length);
+        }
+        offset += part_length;
+    }
+}
+
+/*
+ * One-shot commands wrap their connection bootstrap in invokeWithoutUpdates:
+ * a busy account's update stream is pure overhead for them, especially on
+ * slow links. The interactive chat flips this on so its persistent
+ * connection DOES receive the update pushes that feed the cross-chat
+ * notifications (the receive loop already drains and ACKs them within the
+ * query budget).
+ */
+static int tg_mtproto_session_updates_wanted = 0;
+
+static void tg_mtproto_set_session_updates(int enabled)
+{
+    tg_mtproto_session_updates_wanted = enabled ? 1 : 0;
+}
+
 static int tg_mtproto_build_initialized_query(tg_mtproto_tl_writer *writer,
                                               unsigned char *wrapped_query,
                                               unsigned long wrapped_capacity,
@@ -2292,8 +2601,14 @@ static int tg_mtproto_build_initialized_query(tg_mtproto_tl_writer *writer,
     layered_length = writer->length;
 
     tg_mtproto_tl_writer_init(writer, wrapped_query, wrapped_capacity);
-    status = tg_mtproto_build_invoke_without_updates(writer, layered_query,
-                                                     layered_length);
+    if (tg_mtproto_session_updates_wanted) {
+        status = tg_mtproto_tl_write_raw(writer, layered_query,
+                                         layered_length);
+    } else {
+        status = tg_mtproto_build_invoke_without_updates(writer,
+                                                         layered_query,
+                                                         layered_length);
+    }
     return status == TG_MTPROTO_TL_OK ? 0 : 1;
 }
 
@@ -2443,6 +2758,10 @@ static int tg_mtproto_send_saved_query_on_context(
             context, wrapped_query, writer.length, result, stream, label,
             max_receive_attempts, TG_MTPROTO_QUERY_BUDGET_SECONDS);
     if (qrc != 0) {
+#ifdef TG_MTPROTO_DIAG
+        fprintf(stderr, "notify-diag ctx-close qrc=%d label=%s\n", qrc,
+                label);
+#endif
         /* A soft failure means the matching rpc_result was not seen within the
            receive budget. Keep no stale stream around: the late reply may still
            arrive and be mistaken for the next command's response. */
@@ -7292,6 +7611,137 @@ static void tg_mtproto_chat_redraw_input(FILE *stream,
     }
 }
 
+/* Finds the public chat-list index (and label) of a cached peer id. */
+static int tg_mtproto_peer_cache_find_by_id(const char *path,
+                                            unsigned long id_hi,
+                                            unsigned long id_lo,
+                                            unsigned long *out_index,
+                                            char *label_buffer,
+                                            unsigned long label_buffer_size)
+{
+    FILE *file;
+    char line[512];
+    char type[24];
+    unsigned long index;
+    unsigned long hi;
+    unsigned long lo;
+    char *title;
+    char *username;
+
+    if (out_index != 0) {
+        *out_index = 0UL;
+    }
+    if (label_buffer != 0 && label_buffer_size > 0UL) {
+        label_buffer[0] = '\0';
+    }
+    if (path == 0 || out_index == 0 || label_buffer == 0 ||
+        label_buffer_size == 0UL) {
+        return 2;
+    }
+    file = fopen(path, "r");
+    if (file == 0) {
+        return 2;
+    }
+    while (fgets(line, sizeof(line), file) != 0) {
+        index = 0UL;
+        type[0] = '\0';
+        hi = 0UL;
+        lo = 0UL;
+        if (sscanf(line, "peer %lu type %23s id 0x%8lx%8lx", &index, type,
+                   &hi, &lo) < 4) {
+            continue;
+        }
+        if (hi != id_hi || lo != id_lo) {
+            continue;
+        }
+        title = strstr(line, " title ");
+        username = strstr(line, " username ");
+        if (title != 0) {
+            tg_mtproto_copy_cache_field(label_buffer, label_buffer_size,
+                                        title + 7, 0);
+        }
+        if (label_buffer[0] == '\0' && username != 0) {
+            tg_mtproto_copy_cache_field(label_buffer, label_buffer_size,
+                                        username + 10, title);
+        }
+        *out_index = index;
+        fclose(file);
+        return 0;
+    }
+    fclose(file);
+    return 2;
+}
+
+/* Drains the cross-chat notification queue: one inverse-video line per
+   message from a chat other than the open one, prefixed with the chat-list
+   number so an F-key or a bare number jumps straight there. */
+static void tg_mtproto_chat_print_notify_lines(FILE *stream,
+                                               const char *peer_cache_file,
+                                               const char *current_index_text)
+{
+    char label[128];
+    unsigned long current_index;
+    unsigned long index;
+    unsigned long i;
+    const char *digits;
+    const tg_chat_notify_entry *entry;
+
+    if (stream == 0 || tg_chat_notify_count == 0UL) {
+        tg_chat_notify_count = 0UL;
+        tg_chat_notify_dropped = 0UL;
+        return;
+    }
+    current_index = 0UL;
+    if (current_index_text != 0) {
+        digits = current_index_text;
+        while (*digits >= '0' && *digits <= '9') {
+            current_index = (current_index * 10UL) +
+                            (unsigned long)(*digits - '0');
+            ++digits;
+        }
+        if (*digits != '\0') {
+            current_index = 0UL;
+        }
+    }
+    for (i = 0UL; i < tg_chat_notify_count; ++i) {
+        entry = &tg_chat_notify_queue[i];
+        index = 0UL;
+        label[0] = '\0';
+        (void)tg_mtproto_peer_cache_find_by_id(peer_cache_file,
+                                               entry->peer_id_hi,
+                                               entry->peer_id_lo, &index,
+                                               label, sizeof(label));
+        if (current_index != 0UL && index == current_index) {
+            /* The open chat: the normal auto-read already shows it. */
+            continue;
+        }
+        tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
+        if (index != 0UL) {
+            fprintf(stream, "[%lu] ", index);
+        } else {
+            fputs("[+] ", stream);
+        }
+        if (label[0] != '\0') {
+            tg_mtproto_print_cache_text(stream, label);
+        } else {
+            fputs(entry->is_chat ? "group message" : "new message", stream);
+        }
+        fputs(": ", stream);
+        tg_mtproto_print_cache_text(stream, entry->text);
+        tg_console_ui_reset(stream);
+        tg_console_ui_end_line(stream);
+    }
+    if (tg_chat_notify_dropped > 0UL) {
+        tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
+        fprintf(stream, "(+%lu more)", tg_chat_notify_dropped);
+        tg_console_ui_reset(stream);
+        tg_console_ui_end_line(stream);
+    }
+    tg_chat_notify_count = 0UL;
+    tg_chat_notify_dropped = 0UL;
+    fflush(stream);
+}
+
 static void tg_mtproto_chat_print_help(FILE *stream)
 {
     static const char *help_lines[] = {
@@ -7469,6 +7919,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     int peer_command;
     int peer_history_ready;
     int chat_raw;
+    int have_replay;
     time_t chat_last_poll;
     static const char label[] = "chat";
     static const char peer_limit[] = "5";
@@ -7509,6 +7960,11 @@ int tg_mtproto_auth_chat_file(const char *host,
     /* Dark theme: paint the window black before the first output. */
     tg_console_ui_enter_screen(stream);
     tg_chat_history_reset();
+    /* Arm the cross-chat notification collector for this chat run, and ask
+       the server to actually push updates on the chat's connection (one-shot
+       commands keep them suppressed via invokeWithoutUpdates). */
+    tg_chat_notify_reset(1);
+    tg_mtproto_set_session_updates(1);
     tg_mtproto_chat_print_system_line(stream, "Loading chats...");
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         rc = 0;
@@ -7660,14 +8116,18 @@ int tg_mtproto_auth_chat_file(const char *host,
                 consecutive_failures = 0UL;
             }
             chat_quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
-            if (rc == 0 && printed_message_count > 0UL &&
-                (quiet == stream || chat_quiet_length > 0L)) {
+            have_replay = rc == 0 && printed_message_count > 0UL &&
+                          (quiet == stream || chat_quiet_length > 0L);
+            if (have_replay || tg_chat_notify_count > 0UL) {
                 tg_mtproto_chat_clear_input_line(stream, chat_raw);
-                tg_mtproto_replay_quiet_stream_length(
-                    quiet, stream, chat_quiet_length);
+                if (have_replay) {
+                    tg_mtproto_replay_quiet_stream_length(
+                        quiet, stream, chat_quiet_length);
+                }
+                tg_mtproto_chat_print_notify_lines(stream, peer_cache_file,
+                                                   peer_index);
                 tg_mtproto_chat_redraw_input(stream, own_label, peer_label,
                                              line, line_length, chat_raw);
-                continue;
             }
             continue;
         }
@@ -7698,6 +8158,8 @@ int tg_mtproto_auth_chat_file(const char *host,
             } else if (rc != 0) {
                 fprintf(stream, "Could not read messages now (error %d).\n", rc);
             }
+            tg_mtproto_chat_print_notify_lines(stream, peer_cache_file,
+                                               peer_index);
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
         }
