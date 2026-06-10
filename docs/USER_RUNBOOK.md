@@ -167,10 +167,26 @@ Execute RunMTProtoChat
 Pick a peer index, type normal text to send, and type `/quit` to exit. User
 peers, basic groups and channels/supergroups are handled through the same text
 mode when the peer cache contains the required access data. Chat mode auto-reads
-incoming peer messages every 2 seconds while waiting for input.
-Use `/read` to poll immediately, `/watch <seconds>` to change the interval,
-`/watch off` to disable auto-read, `/peer` to choose another peer and `/peers`
-to refresh the cached peer list.
+incoming peer messages every 2 seconds while waiting for input, even while a
+line is being typed.
+
+Quick chat switching: `F1..F10` jump straight to chat 1..10 from the list
+(Shift+F1..F10 reach chats 11..20), `Tab` jumps back to the previous chat
+(`/swap` does the same), and typing a bare chat number followed by Enter
+switches to it. `/peers` shows the list with the open chat marked `*`.
+`/search text` finds a cached chat, `/add name` searches Telegram, `/remove n`
+drops an entry. `/watch <seconds>` changes the auto-read interval and
+`/watch off` disables it. Up/Down arrows recall typed lines.
+
+The chat opens on a black high-contrast screen: contact names bold in the
+accent colour, your own name bold white, system lines dim. Multi-line messages
+keep their line breaks; emoji are rendered as text emoticons (`:)` `<3` `(y)`)
+because Amiga consoles cannot draw emoji glyphs. `/color` (or `/color off`)
+toggles colours at runtime; `--ui-theme plain` keeps the normal window
+colours; `--ui-charset utf8` passes emoji through unchanged for UTF-8
+terminals (ssh). Text size follows the system console font preferences
+(AmigaOS 4: Prefs -> Fonts; AmigaOS 3: Prefs -> Font; MorphOS/AROS: font
+preferences).
 
 If a command reports `auth-dc-mismatch`, run `Execute RunMTProtoInspectAuth`
 and use the `dc_id` shown there with the matching Telegram endpoint. The live

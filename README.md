@@ -61,8 +61,13 @@ MTProto account mode currently supports:
 - sending text to cached users, basic groups and channels/supergroups when the
   account has permission;
 - interactive chat mode with peer-name transcript lines;
-- auto-read while waiting for keyboard input;
-- `/read`, `/watch`, `/peer`, `/peers` and `/quit` chat commands;
+- coloured high-contrast chat screen (dark theme) with emoji-to-emoticon
+  rendering and real line breaks in messages;
+- quick chat switching: function keys F1..F10, Tab back to the previous
+  chat, bare chat numbers;
+- Up/Down command history and auto-read while waiting for keyboard input;
+- `/peers`, `/search`, `/add`, `/remove`, `/watch`, `/color`, `/help` and
+  `/quit` chat commands;
 - `gzip_packed` MTProto history responses without requiring zlib on targets
   that use the embedded `puff` fallback.
 
@@ -164,13 +169,27 @@ Execute RunMTProtoChat
 Inside chat mode:
 
 ```text
-/read              poll immediately
-/watch 2           auto-read every 2 seconds
-/watch off         disable auto-read
-/peer              choose another peer
-/peers             refresh the peer cache
+F1..F10            jump to chat 1..10 (Shift+F1..F10: chats 11..20)
+Tab                back to the previous chat (also /swap)
+3                  switch to chat number 3
+Enter              read new messages now
+/peers             show the chat list (current chat marked with *)
+/search text       find a cached chat by name
+/add name          search Telegram and add a chat
+/remove n          remove cached chat n
+/history           show recent messages again
+/watch 2           auto-read every 2 seconds (/watch off disables)
+/color             toggle colours (/color on|off)
+/help              show commands
 /quit              exit
 ```
+
+Up/Down arrows recall typed lines. The chat opens on a black high-contrast
+screen with bold sender names; multi-line messages keep their line breaks and
+emoji render as text emoticons (`:)` `<3` `(y)`) since Amiga consoles have no
+emoji glyphs. `--ui-theme plain` keeps the normal window colours instead;
+`--ui-color off` disables colours entirely. Text size follows the system
+console font preferences.
 
 If a command reports `auth-dc-mismatch`, inspect the saved auth file and run
 with the matching DC endpoint. The latest AmigaOS 3.x validation used:

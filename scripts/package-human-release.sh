@@ -182,18 +182,47 @@ format:
 Using chat
 ----------
 
-Type text and press Enter to send to the selected chat.
+Type text and press Enter to send to the selected chat. New messages from the
+open chat appear automatically every few seconds, even while you are typing.
 
-Useful commands:
+Switching chats is fast:
 
-  /read         read recent messages
-  /peer         choose another chat
-  /peer <n>     switch to chat number n
-  /peers        refresh chat list
-  /watch <sec>  change auto-read interval
-  /watch off    disable auto-read
+  F1..F10       jump straight to chat 1..10 from the list
+                (Shift+F1..F10 reaches chats 11..20)
+  Tab           jump back to the previous chat
+  <number>      type a chat number and press Enter
+  /swap         same as Tab
+
+Commands:
+
+  /peers        show the chat list (the open chat is marked with *)
+  /search text  find a cached chat by name
+  /add name     search Telegram and add a new chat
+  /remove n     remove chat n from the list
+  /history      show recent messages again
+  /watch sec    change the auto-read interval (/watch off disables it)
+  /color        toggle colours (also /color on or /color off)
   /help         show commands
   /quit         exit
+
+Up/Down arrows recall what you typed before.
+
+How it looks
+------------
+
+The chat uses a black high-contrast screen by default: sender names are bold
+(your contact in the accent colour, you in white), system messages are dim,
+and multi-line messages keep their line breaks. Emoji are shown as classic
+text emoticons like :) :D <3 (y) because Amiga consoles cannot draw emoji
+glyphs; flags become their two country letters (IT, DE) and other symbols a
+small generic mark. A bold [ok] confirms every sent message.
+
+Prefer the normal window colours? Start the client with --ui-theme plain, or
+type /color off inside the chat.
+
+The text size is the system console font: make it bigger in the OS font
+preferences (AmigaOS 4: Prefs -> Fonts; AmigaOS 3: Prefs -> Font; MorphOS and
+AROS: font preferences) and TelegramAmiga follows it.
 
 Notes
 -----
