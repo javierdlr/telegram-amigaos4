@@ -19,18 +19,22 @@
 
 #include "tg_console_ui.h"
 
-static int tg_ui_color_mode = TG_UI_COLOR_AUTO;
-static int tg_ui_interactive = 0;
-static int tg_ui_charset = TG_UI_CHARSET_LATIN1;
-/* MorphOS shells do not keep the stock Workbench palette (pen 1 showed up
-   red on real Ambient), so the black-background theme defaults off there
-   until the right pen is confirmed per console; --ui-theme dark re-enables
-   it explicitly. */
+/* MorphOS: SGR colour output to the console reproducibly froze the whole
+   machine (no ping) during the chat-list load on real hardware, while the
+   identical flow with --ui-color off ran clean -- bisected live, 2026-06-10.
+   Until the console interaction is understood, colours default OFF there
+   (and the black-background theme stays off too: pen 1 rendered red on
+   Ambient anyway). /color on or --ui-color on re-enable them explicitly for
+   the brave. */
 #if defined(__MORPHOS__) || defined(__MORPHOS)
+static int tg_ui_color_mode = TG_UI_COLOR_OFF;
 static int tg_ui_theme = TG_UI_THEME_PLAIN;
 #else
+static int tg_ui_color_mode = TG_UI_COLOR_AUTO;
 static int tg_ui_theme = TG_UI_THEME_DARK;
 #endif
+static int tg_ui_interactive = 0;
+static int tg_ui_charset = TG_UI_CHARSET_LATIN1;
 static int tg_ui_screen_entered = 0;
 
 void tg_console_ui_set_color_mode(int mode)
