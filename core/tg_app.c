@@ -13,6 +13,7 @@
 #include "tg_client_state.h"
 #include "tg_config.h"
 #include "tg_console.h"
+#include "tg_console_ui.h"
 #include "tg_file.h"
 #include "tg_https.h"
 #include "tg_http.h"
@@ -3869,6 +3870,29 @@ int tg_app_run(int argc, char **argv)
                                       config.tls_ca_file,
                                       config.tls_ca_path);
 
+    if (config.ui_color_mode != 0) {
+        if (strcmp(config.ui_color_mode, "on") == 0) {
+            tg_console_ui_set_color_mode(TG_UI_COLOR_ON);
+        } else if (strcmp(config.ui_color_mode, "off") == 0) {
+            tg_console_ui_set_color_mode(TG_UI_COLOR_OFF);
+        } else if (strcmp(config.ui_color_mode, "auto") == 0) {
+            tg_console_ui_set_color_mode(TG_UI_COLOR_AUTO);
+        } else {
+            fprintf(stderr, "ui-color: use on, off or auto\n");
+            return 2;
+        }
+    }
+    if (config.ui_charset != 0) {
+        if (strcmp(config.ui_charset, "latin1") == 0) {
+            tg_console_ui_set_charset(TG_UI_CHARSET_LATIN1);
+        } else if (strcmp(config.ui_charset, "utf8") == 0) {
+            tg_console_ui_set_charset(TG_UI_CHARSET_UTF8);
+        } else {
+            fprintf(stderr, "ui-charset: use latin1 or utf8\n");
+            return 2;
+        }
+    }
+
     if (!config.run_telegram_human_chat && !config.run_mtproto_chat_file &&
         !config.run_mtproto_start_file) {
         puts("telegram-amiga bootstrap");
@@ -3908,6 +3932,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_platform_rng_test) {
         return tg_run_platform_rng_test();
+    }
+
+    if (config.run_console_ui_test) {
+        return tg_mtproto_console_ui_test(stdout);
     }
 
     if (config.run_mtproto_self_test) {

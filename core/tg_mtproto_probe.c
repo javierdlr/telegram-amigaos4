@@ -32,6 +32,7 @@
 #include "tg_mtproto_srp.h"
 #include "tg_mtproto_transport.h"
 #include "tg_console.h"
+#include "tg_console_ui.h"
 #include "tg_file.h"
 #include "tg_net.h"
 #include "tg_platform.h"
@@ -4052,6 +4053,19 @@ static void tg_mtproto_write_cache_text(FILE *stream, const char *text)
 #define TG_MTPROTO_DISPLAY_LATIN1 0
 #endif
 
+/* 1 when message text/markers should be emitted as raw UTF-8: always on
+   targets without the Latin-1 display layer, and on Amiga targets when the
+   user picked --ui-charset utf8 (e.g. running over ssh from a modern
+   terminal). */
+static int tg_mtproto_display_utf8(void)
+{
+#if TG_MTPROTO_DISPLAY_LATIN1
+    return tg_console_ui_charset() == TG_UI_CHARSET_UTF8;
+#else
+    return 1;
+#endif
+}
+
 #if TG_MTPROTO_DISPLAY_LATIN1
 static unsigned long tg_mtproto_utf8_read_codepoint(const char *text,
                                                     unsigned long *index)
@@ -4099,39 +4113,159 @@ static unsigned long tg_mtproto_utf8_read_codepoint(const char *text,
     return bytes[i];
 }
 
+/* ASCII/Latin-1 emoticon for the emoji people actually send, or 0 when the
+   codepoint has no readable rendition. A retro text client drawing ":)" is
+   both honest and period-correct; everything else falls through to the '¤'
+   placeholder rather than a bare '?', which reads as lost text. */
+static const char *tg_mtproto_display_emoticon(unsigned long cp)
+{
+    switch (cp) {
+    case 0x263aUL: /* white smiling face */
+    case 0x1f600UL:
+    case 0x1f642UL:
+    case 0x1f60aUL:
+    case 0x1f60cUL:
+        return ":)";
+    case 0x1f601UL:
+    case 0x1f603UL:
+    case 0x1f604UL:
+    case 0x1f605UL:
+    case 0x1f606UL:
+        return ":D";
+    case 0x1f602UL: /* tears of joy */
+    case 0x1f923UL: /* rofl */
+        return ":'D";
+    case 0x1f609UL:
+        return ";)";
+    case 0x1f61bUL:
+    case 0x1f61cUL:
+    case 0x1f61dUL:
+        return ":P";
+    case 0x2639UL:
+    case 0x1f641UL:
+    case 0x1f61eUL:
+    case 0x1f622UL:
+        return ":(";
+    case 0x1f62dUL: /* loudly crying */
+        return ":'(";
+    case 0x1f62eUL:
+    case 0x1f632UL:
+        return ":O";
+    case 0x1f617UL:
+    case 0x1f618UL:
+    case 0x1f619UL:
+    case 0x1f61aUL:
+        return ":*";
+    case 0x2764UL: /* heavy black heart */
+    case 0x2665UL:
+    case 0x1f499UL:
+    case 0x1f49aUL:
+    case 0x1f49bUL:
+    case 0x1f49cUL:
+    case 0x1f5a4UL:
+    case 0x1f90dUL:
+    case 0x1f90eUL:
+    case 0x1f9e1UL:
+    case 0x1f60dUL: /* heart eyes */
+    case 0x1f970UL: /* smiling with hearts */
+        return "<3";
+    case 0x1f494UL:
+        return "</3";
+    case 0x1f44dUL:
+        return "(y)";
+    case 0x1f44eUL:
+        return "(n)";
+    case 0x2705UL:
+    case 0x2713UL:
+    case 0x2714UL:
+        return "v";
+    case 0x274cUL:
+    case 0x2716UL:
+        return "x";
+    case 0x2b50UL:
+    case 0x1f31fUL:
+        return "*";
+    case 0x2192UL:
+        return "->";
+    case 0x2190UL:
+        return "<-";
+    default:
+        return 0;
+    }
+}
+
+/* Codepoints that only modify a neighbouring emoji print as nothing at all.
+   Without this, "<heart><variation-selector>" rendered as two '?'. */
+static int tg_mtproto_display_is_invisible(unsigned long cp)
+{
+    return (cp >= 0xfe00UL && cp <= 0xfe0fUL) || /* variation selectors */
+           (cp >= 0x200bUL && cp <= 0x200fUL) || /* ZW space/joiner/marks */
+           (cp >= 0x1f3fbUL && cp <= 0x1f3ffUL) || /* skin tones */
+           cp == 0x2060UL || cp == 0xfeffUL;       /* word joiner / BOM */
+}
+
+/* Symbol/emoji blocks with no Latin-1 shape: one neutral placeholder. */
+static int tg_mtproto_display_is_symbol_block(unsigned long cp)
+{
+    return (cp >= 0x1f000UL && cp <= 0x1faffUL) ||
+           (cp >= 0x2600UL && cp <= 0x27bfUL) ||
+           (cp >= 0x2b00UL && cp <= 0x2bffUL) ||
+           (cp >= 0x2190UL && cp <= 0x21ffUL) ||
+           (cp >= 0x2300UL && cp <= 0x23ffUL);
+}
+
 static void tg_mtproto_print_display_codepoint(FILE *stream, unsigned long cp)
 {
+    const char *emoticon;
+
     if (cp == '\r' || cp == '\n' || cp == '\t') {
         fputc(' ', stream);
-    } else if (cp < 0x100UL) {
-        fputc((unsigned char)cp, stream);
-    } else {
-        switch (cp) {
-        case 0x2018UL:
-        case 0x2019UL:
-        case 0x02bcUL:
-            fputc('\'', stream);
-            break;
-        case 0x201cUL:
-        case 0x201dUL:
-            fputc('"', stream);
-            break;
-        case 0x2013UL:
-        case 0x2014UL:
-        case 0x2212UL:
-            fputc('-', stream);
-            break;
-        case 0x2026UL:
-            fputs("...", stream);
-            break;
-        case 0x00a0UL:
-            fputc(' ', stream);
-            break;
-        default:
-            fputc('?', stream);
-            break;
-        }
+        return;
     }
+    if (cp < 0x100UL) {
+        fputc((unsigned char)cp, stream);
+        return;
+    }
+    switch (cp) {
+    case 0x2018UL:
+    case 0x2019UL:
+    case 0x02bcUL:
+        fputc('\'', stream);
+        return;
+    case 0x201cUL:
+    case 0x201dUL:
+        fputc('"', stream);
+        return;
+    case 0x2013UL:
+    case 0x2014UL:
+    case 0x2212UL:
+        fputc('-', stream);
+        return;
+    case 0x2026UL:
+        fputs("...", stream);
+        return;
+    default:
+        break;
+    }
+    if (tg_mtproto_display_is_invisible(cp)) {
+        return;
+    }
+    /* Flag emoji are pairs of regional indicators: print them as the two
+       country letters ("IT", "DE"), which is exactly the information. */
+    if (cp >= 0x1f1e6UL && cp <= 0x1f1ffUL) {
+        fputc((int)('A' + (int)(cp - 0x1f1e6UL)), stream);
+        return;
+    }
+    emoticon = tg_mtproto_display_emoticon(cp);
+    if (emoticon != 0) {
+        fputs(emoticon, stream);
+        return;
+    }
+    if (tg_mtproto_display_is_symbol_block(cp)) {
+        fputc(0xa4, stream); /* generic-symbol placeholder ('¤') */
+        return;
+    }
+    fputc('?', stream);
 }
 
 /* Encode an ISO-8859-1 (Amiga console/keymap) line as UTF-8 for the MTProto
@@ -4181,6 +4315,11 @@ static void tg_mtproto_print_cache_text(FILE *stream, const char *text)
     unsigned long cp;
 
     if (stream == 0 || text == 0) {
+        return;
+    }
+    if (tg_mtproto_display_utf8()) {
+        /* --ui-charset utf8: the console understands UTF-8, skip transcoding. */
+        tg_mtproto_write_cache_text(stream, text);
         return;
     }
     i = 0UL;
@@ -6886,18 +7025,24 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
            so the user keeps both the group and the sender in view. 1:1 chats
            skip the prefix: there the peer already is the sender. */
         if (is_group && peer_label != 0 && peer_label[0] != '\0') {
+            tg_console_ui_role(stream, TG_UI_ROLE_GROUP);
             fputc('[', stream);
             tg_mtproto_print_label_truncated(stream, peer_label,
                                              TG_MTPROTO_GROUP_LABEL_MAX);
-            fprintf(stream, "] ");
+            fputc(']', stream);
+            tg_console_ui_reset(stream);
+            fputc(' ', stream);
         }
         if (texts.messages[i].is_out) {
+            tg_console_ui_role(stream, TG_UI_ROLE_OWN);
             if (own_label != 0 && own_label[0] != '\0') {
                 tg_mtproto_print_cache_text(stream, own_label);
-                fprintf(stream, ": ");
+                fprintf(stream, ":");
             } else {
-                fprintf(stream, "me: ");
+                fprintf(stream, "me:");
             }
+            tg_console_ui_reset(stream);
+            fputc(' ', stream);
         } else {
             const char *sender = 0;
             if (texts.messages[i].from_constructor != 0UL) {
@@ -6918,21 +7063,24 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                     }
                 }
             }
+            tg_console_ui_role(stream, TG_UI_ROLE_PEER);
             if (sender != 0) {
                 tg_mtproto_print_cache_text(stream, sender);
-                fprintf(stream, ": ");
+                fprintf(stream, ":");
             } else if (!is_group && peer_label != 0 &&
                        peer_label[0] != '\0') {
                 /* 1:1 chat: the peer is the sender. */
                 tg_mtproto_print_cache_text(stream, peer_label);
-                fprintf(stream, ": ");
+                fprintf(stream, ":");
             } else if (is_group) {
                 /* Group sender we could not resolve; the [group] prefix is
                    already shown, so just mark the unknown author. */
-                fprintf(stream, "?: ");
+                fprintf(stream, "?:");
             } else {
-                fprintf(stream, "them: ");
+                fprintf(stream, "them:");
             }
+            tg_console_ui_reset(stream);
+            fputc(' ', stream);
         }
         tg_mtproto_print_cache_text(stream, texts.messages[i].text);
         fprintf(stream, "\n");
@@ -6957,6 +7105,7 @@ static void tg_mtproto_chat_print_input_prompt(FILE *stream,
     if (stream == 0) {
         return;
     }
+    tg_console_ui_role(stream, TG_UI_ROLE_PROMPT);
     if (peer_label != 0 && peer_label[0] != '\0') {
         /* Truncate the bracketed chat name the same way the message lines do,
            so a long group title does not push the typing position far right. */
@@ -6970,8 +7119,57 @@ static void tg_mtproto_chat_print_input_prompt(FILE *stream,
     } else {
         fprintf(stream, "me");
     }
-    fprintf(stream, ": ");
+    fprintf(stream, ":");
+    tg_console_ui_reset(stream);
+    fputc(' ', stream);
     fflush(stream);
+}
+
+/* One status/info line in the system colour. */
+static void tg_mtproto_chat_print_system_line(FILE *stream, const char *text)
+{
+    if (stream == 0 || text == 0) {
+        return;
+    }
+    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
+    fputs(text, stream);
+    tg_console_ui_reset(stream);
+    fputc('\n', stream);
+    fflush(stream);
+}
+
+/* Clear the prompt line before printing asynchronous output (auto-read
+   results, later cross-chat notifications). In raw mode the cursor sits on
+   the prompt line, possibly mid-word: return to column 0 and erase to end of
+   line so the transcript prints where the prompt was, with no stale prompt
+   stacking up. Cooked consoles cannot redraw, so just move to a fresh line. */
+static void tg_mtproto_chat_clear_input_line(FILE *stream, int raw)
+{
+    if (stream == 0) {
+        return;
+    }
+    if (raw) {
+        fputs("\r\033[K", stream);
+    } else {
+        fputc('\n', stream);
+    }
+}
+
+/* Reprint the prompt plus whatever the user had already typed. Raw mode does
+   its own echo, so the half-typed line can be restored after async output;
+   in cooked mode the console owns the echo and only the prompt is printed. */
+static void tg_mtproto_chat_redraw_input(FILE *stream,
+                                         const char *own_label,
+                                         const char *peer_label,
+                                         const char *line,
+                                         unsigned long line_length,
+                                         int raw)
+{
+    tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+    if (raw && line != 0 && line_length > 0UL) {
+        fwrite(line, 1, (size_t)line_length, stream);
+        fflush(stream);
+    }
 }
 
 static void tg_mtproto_chat_print_help(FILE *stream)
@@ -6979,6 +7177,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
     if (stream == 0) {
         return;
     }
+    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
     fprintf(stream, "\nCommands:\n");
     fprintf(stream, "  text          send a message\n");
     fprintf(stream, "  Enter         read new messages now\n");
@@ -6990,8 +7189,11 @@ static void tg_mtproto_chat_print_help(FILE *stream)
     fprintf(stream, "  /history      show recent messages without new-message filtering\n");
     fprintf(stream, "  /watch sec    set auto-read interval\n");
     fprintf(stream, "  /watch off    disable auto-read\n");
+    fprintf(stream, "  /color        toggle colours (or /color on|off)\n");
     fprintf(stream, "  /help         show this help\n");
-    fprintf(stream, "  /quit         exit\n\n");
+    fprintf(stream, "  /quit         exit\n");
+    tg_console_ui_reset(stream);
+    fputc('\n', stream);
 }
 
 static int tg_mtproto_chat_open_history(FILE *stream,
@@ -7113,6 +7315,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     const char *username_arg;
     const char *search_arg;
     const char *remove_arg;
+    const char *color_arg;
     unsigned long line_length;
     unsigned long last_seen_message_id;
     unsigned long printed_message_count;
@@ -7129,6 +7332,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     int peer_command;
     int peer_history_ready;
     int chat_raw;
+    time_t chat_last_poll;
     static const char label[] = "chat";
     static const char peer_limit[] = "5";
 
@@ -7163,9 +7367,10 @@ int tg_mtproto_auth_chat_file(const char *host,
     /* Let tg_mtproto_chat_prompt_line (Peer index / Search / /add prompts) echo
        and line-edit in the same mode as the main loop. */
     tg_chat_input_raw = chat_raw;
+    /* Colour AUTO mode keys off the same signal: a real interactive console. */
+    tg_console_ui_set_interactive(chat_raw);
     tg_chat_history_reset();
-    fputs("Loading chats...\n", stream);
-    fflush(stream);
+    tg_mtproto_chat_print_system_line(stream, "Loading chats...");
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         rc = 0;
     } else {
@@ -7185,15 +7390,15 @@ int tg_mtproto_auth_chat_file(const char *host,
         tg_mtproto_close_quiet_stream(quiet, stream);
     }
     if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
-        fprintf(stream, "No cached chats yet.\n");
-        fprintf(stream, "Use /add name to search users or groups.\n");
+        tg_mtproto_chat_print_system_line(stream, "No cached chats yet.");
+        tg_mtproto_chat_print_system_line(
+            stream, "Use /add name to search users or groups.");
         rc = 0;
     }
     if (rc != 0) {
-        fprintf(stream, "Using cached chats.\n");
+        tg_mtproto_chat_print_system_line(stream, "Using cached chats.");
     }
-    fputs("Opening session...\n", stream);
-    fflush(stream);
+    tg_mtproto_chat_print_system_line(stream, "Opening session...");
     quiet = tg_mtproto_open_quiet_stream(stream);
     if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
                                     quiet, label) != 0 ||
@@ -7207,13 +7412,13 @@ int tg_mtproto_auth_chat_file(const char *host,
         return 2;
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
-    fputs("Loading profile...\n", stream);
-    fflush(stream);
+    tg_mtproto_chat_print_system_line(stream, "Loading profile...");
     tg_mtproto_chat_load_own_label(host, port, api_id, auth_file, dc_id_text,
                                    &chat_context, peer_cache_file,
                                    own_label, sizeof(own_label), stream);
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
-        fprintf(stream, "Choose a chat:\n\n");
+        tg_mtproto_chat_print_system_line(stream, "Choose a chat:");
+        fputc('\n', stream);
         tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
         if (tg_mtproto_chat_prompt_line("\nPeer index: ", peer_index,
                                         sizeof(peer_index), 1, stream,
@@ -7231,17 +7436,22 @@ int tg_mtproto_auth_chat_file(const char *host,
     } else {
         peer_index[0] = '\0';
         peer_label[0] = '\0';
-        fprintf(stream, "Type /add name to find a chat.\n");
+        tg_mtproto_chat_print_system_line(stream,
+                                          "Type /add name to find a chat.");
     }
     last_seen_message_id = 0UL;
     watch_seconds = 2UL;
     /* Heavy accounts must reach the prompt before any blocking history read. */
     peer_history_ready = 0;
+    chat_last_poll = (time_t)0;
     line_length = 0UL;
     consecutive_failures = 0UL;
     chat_quiet = tg_mtproto_open_quiet_stream(stream);
     tg_mtproto_chat_print_help(stream);
-    fprintf(stream, "Auto-read every %lu second(s).\n", watch_seconds);
+    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
+    fprintf(stream, "Auto-read every %lu second(s).", watch_seconds);
+    tg_console_ui_reset(stream);
+    fputc('\n', stream);
     if (peer_index[0] == '\0') {
         tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     }
@@ -7267,12 +7477,26 @@ int tg_mtproto_auth_chat_file(const char *host,
                                                 chat_raw, 1, stream);
         }
         if (rc == 0) {
-            if (line_length > 0UL) {
+            time_t poll_now;
+
+            if (line_length > 0UL && !chat_raw) {
+                /* Cooked console: the half-typed line cannot be redrawn after
+                   async output, so hold polling until Enter (old behavior). */
                 continue;
             }
             if (peer_index[0] == '\0') {
                 continue;
             }
+            /* In raw mode rc==0 also fires after every keystroke, not just on
+               the watch timeout. Throttle on wall-clock so fast typing does
+               not turn into a poll per keypress. */
+            poll_now = time(0);
+            if (poll_now != (time_t)-1 && chat_last_poll != (time_t)0 &&
+                poll_now >= chat_last_poll &&
+                (unsigned long)(poll_now - chat_last_poll) < watch_seconds) {
+                continue;
+            }
+            chat_last_poll = poll_now;
             quiet = chat_quiet;
             tg_mtproto_reset_quiet_stream(quiet, stream);
             printed_message_count = 0UL;
@@ -7294,11 +7518,11 @@ int tg_mtproto_auth_chat_file(const char *host,
             chat_quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
             if (rc == 0 && printed_message_count > 0UL &&
                 (quiet == stream || chat_quiet_length > 0L)) {
-                fprintf(stream, "\n");
+                tg_mtproto_chat_clear_input_line(stream, chat_raw);
                 tg_mtproto_replay_quiet_stream_length(
                     quiet, stream, chat_quiet_length);
-                tg_mtproto_chat_print_input_prompt(stream, own_label,
-                                                   peer_label);
+                tg_mtproto_chat_redraw_input(stream, own_label, peer_label,
+                                             line, line_length, chat_raw);
                 continue;
             }
             continue;
@@ -7342,6 +7566,23 @@ int tg_mtproto_auth_chat_file(const char *host,
         }
         if (strcmp(line, "/help") == 0 || strcmp(line, "help") == 0) {
             tg_mtproto_chat_print_help(stream);
+            tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
+            continue;
+        }
+        color_arg = 0;
+        if (tg_mtproto_chat_named_command_arg(line, "/color", &color_arg) ||
+            tg_mtproto_chat_named_command_arg(line, "color", &color_arg)) {
+            if (color_arg != 0 && strcmp(color_arg, "on") == 0) {
+                tg_console_ui_set_color_mode(TG_UI_COLOR_ON);
+            } else if (color_arg != 0 && strcmp(color_arg, "off") == 0) {
+                tg_console_ui_set_color_mode(TG_UI_COLOR_OFF);
+            } else {
+                tg_console_ui_set_color_mode(tg_console_ui_color_active() ?
+                                             TG_UI_COLOR_OFF : TG_UI_COLOR_ON);
+            }
+            tg_mtproto_chat_print_system_line(
+                stream,
+                tg_console_ui_color_active() ? "Colors on." : "Colors off.");
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
         }
@@ -7679,14 +7920,21 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (sent_message_id > last_seen_message_id) {
             last_seen_message_id = sent_message_id;
         }
-        /* Confirm delivery with a compact "[v]" check on its own line instead
+        /* Confirm delivery with a compact check marker on its own line instead
            of re-printing the whole message. Re-printing the text (plus the
            auto-read poll echoing our own outgoing message) made it look like
            the typed line was repeated several times. The console already
-           echoed what was typed, so a small marker is enough. Latin-1 display
-           targets cannot render a real check glyph (U+2713 -> '?'), so use an
-           ASCII checkmark. */
-        fprintf(stream, "[v]\n");
+           echoed what was typed, so a small marker is enough. ISO-8859-1 has
+           no real check glyph, so Latin-1 consoles get a "sent" guillemet;
+           UTF-8 displays get the true checkmark. */
+        tg_console_ui_role(stream, TG_UI_ROLE_MARKER);
+        if (tg_mtproto_display_utf8()) {
+            fputs("[\xe2\x9c\x93]", stream); /* [(U+2713)] */
+        } else {
+            fputs("[\xbb]", stream); /* [>>] single-glyph guillemet */
+        }
+        tg_console_ui_reset(stream);
+        fputc('\n', stream);
         tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
     }
 }
@@ -8494,5 +8742,81 @@ int tg_mtproto_probe_self_test(void)
     fclose(quiet);
     (void)remove(peer_path);
 
+    return 0;
+}
+
+int tg_mtproto_console_ui_test(FILE *stream)
+{
+    /* UTF-8 literals kept as escapes so the source stays pure ASCII:
+       heart+VS16, tears of joy, thumbs up, flag IT (two regional
+       indicators), check mark, right arrow, fire, ellipsis. */
+    static const char sample_emoji[] =
+        "\xe2\x9d\xa4\xef\xb8\x8f \xf0\x9f\x98\x82 \xf0\x9f\x91\x8d "
+        "\xf0\x9f\x87\xae\xf0\x9f\x87\xb9 \xe2\x9c\x93 \xe2\x86\x92 "
+        "\xf0\x9f\x94\xa5 \xe2\x80\xa6";
+    static const char sample_accents[] =
+        "perch\xc3\xa9 c'\xc3\xa8 gi\xc3\xa0 l\xc3\xac";
+    int pen;
+
+    if (stream == 0) {
+        return 2;
+    }
+    /* The whole point is to look at the output, so force colours on. */
+    tg_console_ui_set_interactive(1);
+
+    fprintf(stream, "console ui test\n");
+    fprintf(stream, "display layer: %s, charset: %s\n\n",
+            TG_MTPROTO_DISPLAY_LATIN1 ? "latin1-transcode" : "raw",
+            tg_mtproto_display_utf8() ? "utf8" : "latin1");
+
+    fputs("pens: ", stream);
+    for (pen = 0; pen < 8; ++pen) {
+        fprintf(stream, "\033[3%dm%d\033[0m ", pen, pen);
+    }
+    fputs("\nattrs: ", stream);
+    fputs("\033[1mbold\033[0m ", stream);
+    fputs("\033[3mitalic\033[0m ", stream);
+    fputs("\033[4munderline\033[0m ", stream);
+    fputs("\033[7minverse\033[0m\n\n", stream);
+
+    fputs("roles:\n", stream);
+    tg_console_ui_role(stream, TG_UI_ROLE_PEER);
+    fputs("Mario Rossi:", stream);
+    tg_console_ui_reset(stream);
+    fputs(" ciao! (peer name)\n", stream);
+    tg_console_ui_role(stream, TG_UI_ROLE_OWN);
+    fputs("me:", stream);
+    tg_console_ui_reset(stream);
+    fputs(" tutto bene (own name)\n", stream);
+    tg_mtproto_chat_print_system_line(stream, "Loading chats... (system)");
+    tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
+    fputs("[2] Mario: nuovo messaggio (notify)", stream);
+    tg_console_ui_reset(stream);
+    fputc('\n', stream);
+    tg_console_ui_role(stream, TG_UI_ROLE_MARKER);
+    if (tg_mtproto_display_utf8()) {
+        fputs("[\xe2\x9c\x93]", stream);
+    } else {
+        fputs("[\xbb]", stream);
+    }
+    tg_console_ui_reset(stream);
+    fputs(" (send marker)\n\n", stream);
+
+    fputs("glyphs: ", stream);
+    if (tg_mtproto_display_utf8()) {
+        /* Same glyphs, UTF-8 encoded for raw displays. */
+        fputs("\xc2\xbb \xc2\xab \xc2\xa4 \xc2\xb7 \xc2\xb1 \xc3\x97 "
+              "\xc3\xb7\n", stream);
+    } else {
+        fputs("\xbb \xab \xa4 \xb7 \xb1 \xd7 \xf7\n", stream);
+    }
+
+    fputs("emoji mapping: ", stream);
+    tg_mtproto_print_cache_text(stream, sample_emoji);
+    fputc('\n', stream);
+    fputs("accents: ", stream);
+    tg_mtproto_print_cache_text(stream, sample_accents);
+    fputc('\n', stream);
+    fflush(stream);
     return 0;
 }

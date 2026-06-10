@@ -215,4 +215,9 @@ int tg_mtproto_auth_forget(const char *auth_file,
                            FILE *stream);
 int tg_mtproto_probe_self_test(void);
 
+/* Interactive console diagnostic: prints the colour roles, the pen palette,
+   the Latin-1 marker glyphs and sample emoji mappings so a tester can verify
+   in seconds how the UI renders on a given console (--console-ui-test). */
+int tg_mtproto_console_ui_test(FILE *stream);
+
 #endif
