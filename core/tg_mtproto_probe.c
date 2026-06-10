@@ -257,6 +257,10 @@ typedef struct tg_chat_notify_entry {
     int is_chat; /* 1 = basic group (peer ids are the chat), 0 = DM user */
     unsigned long peer_id_hi;
     unsigned long peer_id_lo;
+    /* The sender, for groups whose chat is not in the peer cache yet: a
+       stale cache then still shows WHO wrote instead of a generic line. */
+    unsigned long from_id_hi;
+    unsigned long from_id_lo;
     char text[TG_CHAT_NOTIFY_TEXT];
 } tg_chat_notify_entry;
 
@@ -373,6 +377,8 @@ static void tg_chat_notify_collect_one(const unsigned char *body,
     entry->is_chat = is_chat;
     entry->peer_id_hi = chat_hi;
     entry->peer_id_lo = chat_lo;
+    entry->from_id_hi = sender_hi;
+    entry->from_id_lo = sender_lo;
     copy_length = text_length;
     if (copy_length >= TG_CHAT_NOTIFY_TEXT) {
         copy_length = TG_CHAT_NOTIFY_TEXT - 1UL;
@@ -2575,6 +2581,8 @@ static void tg_chat_notify_collect_updates(const unsigned char *body,
             entry->peer_id_hi = message.from_id_hi;
             entry->peer_id_lo = message.from_id_lo;
         }
+        entry->from_id_hi = message.from_id_hi;
+        entry->from_id_lo = message.from_id_lo;
         copy_length = (unsigned long)strlen(message.text);
         if (copy_length >= TG_CHAT_NOTIFY_TEXT) {
             copy_length = TG_CHAT_NOTIFY_TEXT - 1UL;
@@ -7916,6 +7924,20 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
             /* The open chat: the normal auto-read already shows it. */
             continue;
         }
+        if (label[0] == '\0' &&
+            (entry->from_id_hi != 0UL || entry->from_id_lo != 0UL) &&
+            (entry->from_id_hi != entry->peer_id_hi ||
+             entry->from_id_lo != entry->peer_id_lo)) {
+            /* Chat not cached yet (e.g. stale peer list): fall back to the
+               sender's name, which often is. */
+            unsigned long sender_index;
+
+            (void)tg_mtproto_peer_cache_find_by_id(peer_cache_file,
+                                                   entry->from_id_hi,
+                                                   entry->from_id_lo,
+                                                   &sender_index, label,
+                                                   sizeof(label));
+        }
         tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
         if (index != 0UL) {
             fprintf(stream, "[%lu] ", index);
@@ -7924,6 +7946,9 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
         }
         if (label[0] != '\0') {
             tg_mtproto_print_cache_text(stream, label);
+            if (entry->is_chat) {
+                fputs(" (group)", stream);
+            }
         } else {
             fputs(entry->is_chat ? "group message" : "new message", stream);
         }
