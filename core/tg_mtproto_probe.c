@@ -4332,6 +4332,56 @@ static void tg_mtproto_print_cache_text(FILE *stream, const char *text)
 #endif
 }
 
+/*
+ * Message bodies, unlike names/labels, keep their real line breaks: a
+ * multi-line message prints on multiple console lines, with continuation
+ * lines slightly indented so the message stays visually grouped under its
+ * sender. Names keep using tg_mtproto_print_cache_text, which flattens
+ * whitespace into spaces.
+ */
+static void tg_mtproto_print_message_text(FILE *stream, const char *text)
+{
+    unsigned long i;
+    unsigned long cp;
+
+    if (stream == 0 || text == 0) {
+        return;
+    }
+    i = 0UL;
+#if TG_MTPROTO_DISPLAY_LATIN1
+    if (!tg_mtproto_display_utf8()) {
+        while (text[i] != '\0') {
+            cp = tg_mtproto_utf8_read_codepoint(text, &i);
+            if (cp == '\r') {
+                continue;
+            }
+            if (cp == '\n') {
+                fputs("\n  ", stream);
+                continue;
+            }
+            tg_mtproto_print_display_codepoint(stream, cp);
+        }
+        return;
+    }
+#endif
+    while (text[i] != '\0') {
+        cp = (unsigned long)(unsigned char)text[i];
+        ++i;
+        if (cp == '\r') {
+            continue;
+        }
+        if (cp == '\n') {
+            fputs("\n  ", stream);
+            continue;
+        }
+        if (cp == '\t') {
+            fputc(' ', stream);
+            continue;
+        }
+        fputc((int)cp, stream);
+    }
+}
+
 /* Maximum number of UTF-8 characters of a group/channel title shown as the
    per-line "[group]" prefix before it is truncated with "..". */
 #define TG_MTPROTO_GROUP_LABEL_MAX 16UL
@@ -7082,7 +7132,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
             tg_console_ui_reset(stream);
             fputc(' ', stream);
         }
-        tg_mtproto_print_cache_text(stream, texts.messages[i].text);
+        tg_mtproto_print_message_text(stream, texts.messages[i].text);
         fprintf(stream, "\n");
         ++printed;
     }

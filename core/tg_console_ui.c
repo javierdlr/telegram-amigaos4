@@ -75,21 +75,21 @@ static const char *tg_console_ui_role_sequence(int role)
     if (tg_ui_theme == TG_UI_THEME_DARK) {
         switch (role) {
         case TG_UI_ROLE_PEER:
-            return "\033[0;41;1;33m"; /* bold accent on black */
+            return "\033[0;1;33;41m"; /* bold accent on black */
         case TG_UI_ROLE_OWN:
-            return "\033[0;41;1;32m"; /* bold white on black */
+            return "\033[0;1;32;41m"; /* bold white on black */
         case TG_UI_ROLE_SYSTEM:
-            return "\033[0;41;30m"; /* window-grey on black: quiet */
+            return "\033[0;30;41m"; /* window-grey on black: quiet */
         case TG_UI_ROLE_NOTIFY:
             return "\033[0;7m"; /* inverse block: pops */
         case TG_UI_ROLE_PROMPT:
-            return "\033[0;41;1;32m"; /* bold white on black */
+            return "\033[0;1;32;41m"; /* bold white on black */
         case TG_UI_ROLE_MARKER:
-            return "\033[0;41;1;33m"; /* bold accent on black */
+            return "\033[0;1;33;41m"; /* bold accent on black */
         case TG_UI_ROLE_GROUP:
-            return "\033[0;41;30m"; /* quiet context prefix */
+            return "\033[0;30;41m"; /* quiet context prefix */
         default:
-            return "\033[0;41;32m"; /* base: white on black */
+            return "\033[0;32;41m"; /* base: white on black */
         }
     }
     switch (role) {
