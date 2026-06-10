@@ -5500,20 +5500,39 @@ static int tg_mtproto_load_peer_cache_peer(const char *path,
     return 2;
 }
 
-static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream)
+/* Prints the cached chat list. When current_index_text names a chat index,
+   that entry is rendered in the prompt (bold) colour with a trailing marker
+   so the active chat is visible at a glance. */
+static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
+                                               const char *current_index_text)
 {
     FILE *file;
     char line[512];
     unsigned long index;
+    unsigned long current_index;
+    const char *digits;
     char type[24];
     char *title;
     char *username;
     int printed_single_header;
     int printed_group_header;
+    int is_current;
     int pass;
     int want_user;
     int is_user;
 
+    current_index = 0UL;
+    if (current_index_text != 0) {
+        digits = current_index_text;
+        while (*digits >= '0' && *digits <= '9') {
+            current_index = (current_index * 10UL) +
+                            (unsigned long)(*digits - '0');
+            ++digits;
+        }
+        if (*digits != '\0') {
+            current_index = 0UL;
+        }
+    }
     file = fopen(path, "r");
     if (file == 0) {
         fprintf(stream, "No cached chats yet.\n");
@@ -5548,6 +5567,10 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream)
                     printed_group_header = 1;
                 }
             }
+            is_current = current_index != 0UL && index == current_index;
+            if (is_current) {
+                tg_console_ui_role(stream, TG_UI_ROLE_PROMPT);
+            }
             fprintf(stream, "%lu. ", index);
             title = strstr(line, " title ");
             username = strstr(line, " username ");
@@ -5570,6 +5593,10 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream)
                 }
             } else {
                 tg_mtproto_print_cache_text(stream, type);
+            }
+            if (is_current) {
+                fputs(" *", stream);
+                tg_console_ui_reset(stream);
             }
             fprintf(stream, "\n");
         }
@@ -6705,6 +6732,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
     unsigned long i;
     long idx;
     int direction;
+    unsigned long fkey;
 
     if (line == 0 || line_size == 0UL || line_length == 0 || stream == 0) {
         return -1;
@@ -6712,6 +6740,17 @@ static int tg_mtproto_chat_read_line_edit(char *line,
     rc = tg_platform_stdin_read_char(timeout_seconds, &ch);
     if (rc <= 0) {
         return rc;
+    }
+    if (ch == '\t' && raw && use_history) {
+        /* Tab on an empty line jumps back to the previous chat; mid-line it
+           is ignored (a literal tab inside a message helps nobody). */
+        if (*line_length == 0UL && line_size > 6UL) {
+            strcpy(line, "/swap");
+            fputc('\n', stream);
+            fflush(stream);
+            return 1;
+        }
+        return 0;
     }
     if (ch == '\r' || ch == '\n') {
         if (*line_length >= line_size) {
@@ -6748,6 +6787,33 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             return 0;
         }
         direction = (int)(unsigned char)ch;
+        if (use_history && direction >= '0' && direction <= '9') {
+            /* Amiga console function keys arrive as CSI <n> '~' (F1..F10 =
+               0~..9~, shifted F1..F10 = 10~..19~). Map them to quick chat
+               switching: Fn jumps to cached chat n, shift+Fn to chat n+10,
+               by completing the line as a synthesized /peer command. Any
+               pending half-typed text is discarded (and its echo erased) --
+               pressing a function key is an explicit "go there now". */
+            fkey = 0UL;
+            while (direction >= '0' && direction <= '9') {
+                fkey = (fkey * 10UL) + (unsigned long)(direction - '0');
+                if (tg_platform_stdin_read_char(0UL, &ch) <= 0) {
+                    return 0;
+                }
+                direction = (int)(unsigned char)ch;
+            }
+            if (direction == '~' && fkey <= 19UL && line_size >= 16UL) {
+                for (i = 0UL; i < *line_length; ++i) {
+                    fputs("\b \b", stream);
+                }
+                sprintf(line, "/peer %lu", fkey + 1UL);
+                *line_length = 0UL;
+                fputc('\n', stream);
+                fflush(stream);
+                return 1;
+            }
+            /* Not a function key: fall through to the CSI consumption. */
+        }
         if (direction != 'A' && direction != 'B') {
             /* Not Up/Down. Consume the rest of an unrecognised CSI sequence
                (window close/resize events arrive as ESC [ <params> <final>) so
@@ -7232,6 +7298,9 @@ static void tg_mtproto_chat_print_help(FILE *stream)
     fprintf(stream, "  text          send a message\n");
     fprintf(stream, "  Enter         read new messages now\n");
     fprintf(stream, "  number        switch to chat number\n");
+    fprintf(stream, "  F1..F10       switch to chat 1..10 (shift: 11..20)\n");
+    fprintf(stream, "  Tab           back to the previous chat\n");
+    fprintf(stream, "  /swap         back to the previous chat\n");
     fprintf(stream, "  /peers        show cached chats\n");
     fprintf(stream, "  /search text  find cached chats by name or username\n");
     fprintf(stream, "  /add name     search Telegram and add a chat\n");
@@ -7351,6 +7420,10 @@ int tg_mtproto_auth_chat_file(const char *host,
 {
     char peer_index[32];
     char peer_label[128];
+    char prev_peer_index[32];
+    char prev_peer_label[128];
+    char swap_peer_index[32];
+    char swap_peer_label[128];
     char requested_peer_text[32];
     char requested_peer_index[32];
     char requested_peer_label[128];
@@ -7472,7 +7545,8 @@ int tg_mtproto_auth_chat_file(const char *host,
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         tg_mtproto_chat_print_system_line(stream, "Choose a chat:");
         fputc('\n', stream);
-        tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+        tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
+                                           peer_index);
         if (tg_mtproto_chat_prompt_line("\nPeer index: ", peer_index,
                                         sizeof(peer_index), 1, stream,
                                         label) != 0) {
@@ -7498,6 +7572,8 @@ int tg_mtproto_auth_chat_file(const char *host,
     /* Heavy accounts must reach the prompt before any blocking history read. */
     peer_history_ready = 0;
     chat_last_poll = (time_t)0;
+    prev_peer_index[0] = '\0';
+    prev_peer_label[0] = '\0';
     line_length = 0UL;
     consecutive_failures = 0UL;
     chat_quiet = tg_mtproto_open_quiet_stream(stream);
@@ -7642,6 +7718,27 @@ int tg_mtproto_auth_chat_file(const char *host,
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
             continue;
         }
+        if (strcmp(line, "/swap") == 0 || strcmp(line, "swap") == 0) {
+            if (prev_peer_index[0] == '\0') {
+                tg_mtproto_chat_print_system_line(stream,
+                                                  "No previous chat yet.");
+                tg_mtproto_chat_print_input_prompt(stream, own_label,
+                                                   peer_label);
+                continue;
+            }
+            strcpy(swap_peer_index, peer_index);
+            strcpy(swap_peer_label, peer_label);
+            strcpy(peer_index, prev_peer_index);
+            strcpy(peer_label, prev_peer_label);
+            strcpy(prev_peer_index, swap_peer_index);
+            strcpy(prev_peer_label, swap_peer_label);
+            last_seen_message_id = 0UL;
+            peer_history_ready = 0;
+            fprintf(stream, "Current chat: ");
+            tg_mtproto_print_cache_text(stream, peer_label);
+            fprintf(stream, "\n");
+            continue;
+        }
         if (strcmp(line, "/peers") == 0) {
             tg_mtproto_chat_load_own_label(host, port, api_id, auth_file,
                                            dc_id_text, &chat_context,
@@ -7649,7 +7746,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                                            own_label, sizeof(own_label),
                                            stream);
             fprintf(stream, "\nChoose a chat:\n\n");
-            tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+            tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
+                                           peer_index);
             fprintf(stream,
                     "Type a number, /search text, or /add name.\n");
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
@@ -7737,7 +7835,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 continue;
             }
             fprintf(stream, "\nChoose a chat:\n\n");
-            tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+            tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
+                                           peer_index);
             if (tg_mtproto_chat_prompt_line("Peer index: ",
                                             requested_peer_text,
                                             sizeof(requested_peer_text), 1,
@@ -7757,6 +7856,11 @@ int tg_mtproto_auth_chat_file(const char *host,
                                                  requested_peer_label,
                                                  sizeof(requested_peer_label)) ==
                     0) {
+                if (peer_index[0] != '\0' &&
+                    strcmp(peer_index, requested_peer_index) != 0) {
+                    strcpy(prev_peer_index, peer_index);
+                    strcpy(prev_peer_label, peer_label);
+                }
                 strcpy(peer_index, requested_peer_index);
                 strcpy(peer_label, requested_peer_label);
                 last_seen_message_id = 0UL;
@@ -7824,6 +7928,11 @@ int tg_mtproto_auth_chat_file(const char *host,
                 requested_peer_label[0] = '\0';
             }
             if (requested_peer_index[0] != '\0') {
+                if (peer_index[0] != '\0' &&
+                    strcmp(peer_index, requested_peer_index) != 0) {
+                    strcpy(prev_peer_index, peer_index);
+                    strcpy(prev_peer_label, peer_label);
+                }
                 strcpy(peer_index, requested_peer_index);
                 strcpy(peer_label, requested_peer_label);
                 last_seen_message_id = 0UL;
@@ -7838,7 +7947,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 continue;
             } else {
                 fprintf(stream, "\nChat added. Cached chats:\n\n");
-                tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+                tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
+                                           peer_index);
                 fprintf(stream, "Type a number to switch.\n");
             }
             tg_mtproto_chat_print_input_prompt(stream, own_label, peer_label);
@@ -7858,7 +7968,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 }
             } else if (peer_arg[0] == '\0') {
                 fprintf(stream, "\nChoose a chat:\n\n");
-                tg_mtproto_print_peer_cache_public(peer_cache_file, stream);
+                tg_mtproto_print_peer_cache_public(peer_cache_file, stream,
+                                           peer_index);
                 if (tg_mtproto_chat_prompt_line("Peer index: ",
                                                 requested_peer_text,
                                                 sizeof(requested_peer_text),
@@ -7895,6 +8006,11 @@ int tg_mtproto_auth_chat_file(const char *host,
                 tg_mtproto_chat_print_input_prompt(stream, own_label,
                                                    peer_label);
                 continue;
+            }
+            if (peer_index[0] != '\0' &&
+                strcmp(peer_index, requested_peer_index) != 0) {
+                strcpy(prev_peer_index, peer_index);
+                strcpy(prev_peer_label, peer_label);
             }
             strcpy(peer_index, requested_peer_index);
             strcpy(peer_label, requested_peer_label);
