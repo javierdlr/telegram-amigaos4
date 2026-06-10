@@ -14,6 +14,18 @@
 
 #include <stdio.h>
 
+/* CSI introducer for console control sequences. The AROS console does not
+   translate ESC '[' into CSI (it prints it literally on screen), so AROS
+   uses the native Amiga single-byte CSI 0x9B. Every other target keeps
+   ESC '[', which Amiga console.device descendants accept natively and ANSI
+   terminals over ssh/serial require. Adjacent string-literal concatenation
+   builds the full sequences at compile time. */
+#if defined(__AROS__)
+#define TG_UI_CSI "\x9b"
+#else
+#define TG_UI_CSI "\033["
+#endif
+
 /* Semantic output roles. The mapping to concrete SGR attributes lives in one
    place (tg_console_ui.c) so the colour scheme can be tuned per feedback from
    real consoles without touching call sites. */

@@ -7269,7 +7269,7 @@ static void tg_mtproto_chat_clear_input_line(FILE *stream, int raw)
         return;
     }
     if (raw) {
-        fputs("\r\033[K", stream);
+        fputs("\r" TG_UI_CSI "K", stream);
     } else {
         fputc('\n', stream);
     }
@@ -8962,41 +8962,41 @@ int tg_mtproto_console_ui_test(FILE *stream)
 
     fputs("fg pens: ", stream);
     for (pen = 0; pen < 8; ++pen) {
-        fprintf(stream, "\033[3%dm%d\033[0m ", pen, pen);
+        fprintf(stream, TG_UI_CSI "3%dm%d" TG_UI_CSI "0m ", pen, pen);
     }
     fputs("\nbg pens: ", stream);
     for (pen = 0; pen < 8; ++pen) {
         /* Each background pen with both white and black text on top, so the
            tester can tell which pen is the solid black (expected: pen 1). */
-        fprintf(stream, "\033[32;4%dm%d\033[30;4%dm%d\033[0m ", pen, pen, pen,
+        fprintf(stream, TG_UI_CSI "32;4%dm%d" TG_UI_CSI "30;4%dm%d" TG_UI_CSI "0m ", pen, pen, pen,
                 pen);
     }
     fputs("\nattrs: ", stream);
-    fputs("\033[1mbold\033[0m ", stream);
-    fputs("\033[4munderline\033[0m ", stream);
-    fputs("\033[7minverse\033[0m\n\n", stream);
+    fputs(TG_UI_CSI "1mbold" TG_UI_CSI "0m ", stream);
+    fputs(TG_UI_CSI "4munderline" TG_UI_CSI "0m ", stream);
+    fputs(TG_UI_CSI "7minverse" TG_UI_CSI "0m\n\n", stream);
 
     fputs("dark theme preview (chat default):\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_RESET);
-    fputs("plain message text\033[K\n", stream);
+    fputs("plain message text" TG_UI_CSI "K\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_PEER);
     fputs("Mario Rossi:", stream);
     tg_console_ui_reset(stream);
-    fputs(" testo dal contatto\033[K\n", stream);
+    fputs(" testo dal contatto" TG_UI_CSI "K\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_OWN);
     fputs("me:", stream);
     tg_console_ui_reset(stream);
-    fputs(" testo mio\033[K\n", stream);
+    fputs(" testo mio" TG_UI_CSI "K\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
     fputs("Loading chats... (system)", stream);
     tg_console_ui_reset(stream);
-    fputs("\033[K\n", stream);
-    fputs("\033[0m\n", stream);
+    fputs(TG_UI_CSI "K\n", stream);
+    fputs(TG_UI_CSI "0m\n", stream);
 
     fputs("alerts:\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
     fputs("[2] Mario: nuovo messaggio (notify)", stream);
-    fputs("\033[0m\n", stream);
+    fputs(TG_UI_CSI "0m\n", stream);
     tg_console_ui_role(stream, TG_UI_ROLE_MARKER);
     if (tg_mtproto_display_utf8()) {
         fputs("[\xe2\x9c\x93]", stream);
@@ -9004,7 +9004,7 @@ int tg_mtproto_console_ui_test(FILE *stream)
         fputs("[ok]", stream);
     }
     tg_console_ui_reset(stream);
-    fputs("\033[0m (send marker)\n\n", stream);
+    fputs(TG_UI_CSI "0m (send marker)\n\n", stream);
 
     fputs("glyphs: ", stream);
     if (tg_mtproto_display_utf8()) {
