@@ -8352,10 +8352,18 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_chat_history_reset();
     /* Arm the cross-chat notification collector for this chat run, and ask
        the server to actually push updates on the chat's connection (one-shot
-       commands keep them suppressed via invokeWithoutUpdates). */
+       commands keep them suppressed via invokeWithoutUpdates). MorphOS stays
+       suppressed: a busy account's pending-update backlog swamps its slow
+       bsdsocket link (the very scenario the wrapper exists for) and stalled
+       the chat at session open on real hardware -- so no cross-chat
+       notifications there until a backlog-draining strategy lands. */
     tg_chat_notify_reset(1);
     tg_chat_day_shown = 0UL;
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    tg_mtproto_set_session_updates(0);
+#else
     tg_mtproto_set_session_updates(1);
+#endif
     tg_mtproto_chat_print_system_line(stream, "Loading chats...");
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         rc = 0;
