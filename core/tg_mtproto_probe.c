@@ -257,7 +257,9 @@ static int tg_mtproto_is_async_update_constructor(unsigned long constructor)
  */
 #define TG_CHAT_NOTIFY_MAX 8U
 #define TG_CHAT_NOTIFY_TEXT 96U
-#define TG_CHAT_NOTIFY_RECENT 16U
+/* Dedupe ring: must absorb the overlap between live pushes and the
+   reconciliation sweep on a busy hour, not just push repeats. */
+#define TG_CHAT_NOTIFY_RECENT 64U
 
 static unsigned long tg_mtproto_read_u32_le(const unsigned char *data);
 
@@ -8845,27 +8847,35 @@ int tg_mtproto_auth_chat_file(const char *host,
                 consecutive_failures = 0UL;
             }
             chat_quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
-#if defined(__MORPHOS__) || defined(__MORPHOS)
-            /* MorphOS runs with update pushes suppressed (the full backlog
-               drowns its link): the paced getDifference drain is how
-               cross-chat notifications reach the queue here. Every tick is
-               affordable -- an idle pass is a differenceEmpty of a few
-               dozen bytes, and a busy one stays capped at a tiny batch --
-               while /diff off turns it off entirely (the bisection knob if
-               the fragile link acts up). Runs after the replay length is
-               fixed so its quiet noise never leaks into the transcript. */
+            /* The paced getDifference drain, after the replay length is
+               fixed so its quiet noise never leaks into the transcript.
+               On MorphOS pushes are suppressed (the full backlog drowns
+               its link) and the drain IS the notification path: every
+               tick (~12s). On push platforms it is a reconciliation sweep
+               (~60s) that catches whatever a dropped push missed; the
+               dedupe ring absorbs the overlap with live pushes. /diff off
+               turns it off everywhere. */
             if (rc == 0 && tg_chat_diff_enabled) {
-                if (tg_chat_updates_state.pts == 0UL) {
-                    (void)tg_mtproto_chat_get_updates_state_on_context(
-                        host, port, api_id, auth_file, dc_id_text,
-                        &chat_context, &tg_chat_updates_state, quiet);
-                } else {
-                    (void)tg_mtproto_chat_drain_difference_on_context(
-                        host, port, api_id, auth_file, dc_id_text,
-                        &chat_context, &tg_chat_updates_state, quiet);
+                static unsigned long diff_tick = 0UL;
+                unsigned long diff_cadence;
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+                diff_cadence = 1UL;
+#else
+                diff_cadence = 30UL;
+#endif
+                ++diff_tick;
+                if ((diff_tick % diff_cadence) == 0UL) {
+                    if (tg_chat_updates_state.pts == 0UL) {
+                        (void)tg_mtproto_chat_get_updates_state_on_context(
+                            host, port, api_id, auth_file, dc_id_text,
+                            &chat_context, &tg_chat_updates_state, quiet);
+                    } else {
+                        (void)tg_mtproto_chat_drain_difference_on_context(
+                            host, port, api_id, auth_file, dc_id_text,
+                            &chat_context, &tg_chat_updates_state, quiet);
+                    }
                 }
             }
-#endif
             have_replay = rc == 0 && printed_message_count > 0UL &&
                           (quiet == stream || chat_quiet_length > 0L);
             if (have_replay || tg_chat_notify_count > 0UL) {
