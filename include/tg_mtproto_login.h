@@ -424,6 +424,41 @@ tg_mtproto_tl_status tg_mtproto_read_update_message_text(
     tg_mtproto_message_text *out,
     tg_mtproto_dialog_peer *out_dest);
 
+/* Scans forward from fallback_offset for the next TL Message constructor
+   (the history walker's recovery step, exported for other Vector<Message>
+   walkers). Returns non-zero when the reader was repositioned. */
+int tg_mtproto_resync_message_text(tg_mtproto_tl_reader *reader,
+                                   unsigned long fallback_offset);
+
+/* updates.state / updates.getDifference (gap handling, layer 214). */
+typedef struct tg_mtproto_updates_state {
+    unsigned long pts;
+    unsigned long qts;
+    unsigned long date;
+    unsigned long seq;
+} tg_mtproto_updates_state;
+
+tg_mtproto_tl_status tg_mtproto_build_updates_get_state(
+    tg_mtproto_tl_writer *writer);
+
+tg_mtproto_tl_status tg_mtproto_build_updates_get_difference(
+    tg_mtproto_tl_writer *writer,
+    unsigned long pts,
+    unsigned long date,
+    unsigned long qts,
+    unsigned long pts_total_limit);
+
+tg_mtproto_tl_status tg_mtproto_parse_updates_state(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_updates_state *out);
+
+#define TG_MTPROTO_UPDATES_DIFFERENCE_EMPTY_CONSTRUCTOR 0x5d75a138UL
+#define TG_MTPROTO_UPDATES_DIFFERENCE_CONSTRUCTOR 0x00f49ca0UL
+#define TG_MTPROTO_UPDATES_DIFFERENCE_SLICE_CONSTRUCTOR 0xa8fb1981UL
+#define TG_MTPROTO_UPDATES_DIFFERENCE_TOO_LONG_CONSTRUCTOR 0x4afe8f6dUL
+
 tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
     unsigned long constructor,
     const unsigned char *body,

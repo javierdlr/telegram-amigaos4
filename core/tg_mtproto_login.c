@@ -48,6 +48,13 @@
 #define TG_NOTIFICATION_SOUND_RINGTONE_CONSTRUCTOR 0xff6c8049UL
 #define TG_DRAFT_MESSAGE_EMPTY_CONSTRUCTOR 0x1b0c841aUL
 #define TG_MSGS_ACK_CONSTRUCTOR 0x62d6b459UL
+#define TG_UPDATES_GET_STATE_CONSTRUCTOR 0xedd4882aUL
+#define TG_UPDATES_STATE_CONSTRUCTOR 0xa56c2a3eUL
+#define TG_UPDATES_GET_DIFFERENCE_CONSTRUCTOR 0x19c2f763UL
+#define TG_UPDATES_DIFFERENCE_EMPTY_CONSTRUCTOR 0x5d75a138UL
+#define TG_UPDATES_DIFFERENCE_CONSTRUCTOR 0x00f49ca0UL
+#define TG_UPDATES_DIFFERENCE_SLICE_CONSTRUCTOR 0xa8fb1981UL
+#define TG_UPDATES_DIFFERENCE_TOO_LONG_CONSTRUCTOR 0x4afe8f6dUL
 #define TG_VECTOR_CONSTRUCTOR 0x1cb5c415UL
 #define TG_RPC_RESULT_CONSTRUCTOR 0xf35c6d01UL
 #define TG_RPC_ERROR_CONSTRUCTOR 0x2144ca19UL
@@ -579,6 +586,83 @@ tg_mtproto_tl_status tg_mtproto_build_users_get_self(
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u32(writer, TG_INPUT_USER_SELF_CONSTRUCTOR);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_updates_get_state(
+    tg_mtproto_tl_writer *writer)
+{
+    return tg_mtproto_tl_write_u32(writer, TG_UPDATES_GET_STATE_CONSTRUCTOR);
+}
+
+/*
+ * updates.getDifference#19c2f763 flags:# pts:int pts_limit:flags.1?int
+ * pts_total_limit:flags.0?int date:int qts:int qts_limit:flags.2?int.
+ * pts_total_limit caps how much backlog the server returns in one reply --
+ * the knob that makes draining viable on a 1KB/s link.
+ */
+tg_mtproto_tl_status tg_mtproto_build_updates_get_difference(
+    tg_mtproto_tl_writer *writer,
+    unsigned long pts,
+    unsigned long date,
+    unsigned long qts,
+    unsigned long pts_total_limit)
+{
+    tg_mtproto_tl_status status;
+    unsigned long flags = pts_total_limit != 0UL ? 0x1UL : 0x0UL;
+
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_UPDATES_GET_DIFFERENCE_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, flags);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, pts);
+    }
+    if (status == TG_MTPROTO_TL_OK && pts_total_limit != 0UL) {
+        status = tg_mtproto_tl_write_u32(writer, pts_total_limit);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, date);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, qts);
+    }
+    return status;
+}
+
+/* Parses updates.state#a56c2a3e pts qts date seq unread_count from an
+   rpc-result body (constructor already consumed by the result parser). */
+tg_mtproto_tl_status tg_mtproto_parse_updates_state(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    tg_mtproto_updates_state *out)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long unread;
+    tg_mtproto_tl_status status;
+
+    if (body == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (constructor != TG_UPDATES_STATE_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    status = tg_mtproto_tl_read_u32(&reader, &out->pts);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_read_u32(&reader, &out->qts);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_read_u32(&reader, &out->date);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_read_u32(&reader, &out->seq);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_read_u32(&reader, &unread);
     }
     return status;
 }
@@ -4225,4 +4309,13 @@ tg_mtproto_tl_status tg_mtproto_read_update_message_text(
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
     }
     return tg_read_common_message_text(reader, out, out_dest);
+}
+
+int tg_mtproto_resync_message_text(tg_mtproto_tl_reader *reader,
+                                   unsigned long fallback_offset)
+{
+    if (reader == 0) {
+        return 0;
+    }
+    return tg_message_text_resync(reader, fallback_offset);
 }

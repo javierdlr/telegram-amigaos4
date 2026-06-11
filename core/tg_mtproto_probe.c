@@ -290,6 +290,9 @@ static void tg_mtproto_chat_show_prompt(FILE *stream,
                                         int raw);
 /* Console bell (BEL -> screen flash on Amiga consoles) on notifications. */
 static int tg_chat_bell_enabled = 1;
+/* Gap-handling cursor (updates.getState / getDifference); pts == 0 means
+   not primed, so the paced drain stays off. */
+static tg_mtproto_updates_state tg_chat_updates_state;
 /* Day (local-frame epoch/86400) of the last transcript line, for the
    "--- 10 Jun ---" separators; 0 = nothing printed yet this chat. */
 static unsigned long tg_chat_day_shown = 0UL;
@@ -2541,17 +2544,54 @@ static int tg_chat_notify_gunzip(const unsigned char *body,
    cannot parse; in practice the new-message update leads the vector. The
    message body is parsed by the same reader the /history transcript uses,
    which also yields the destination peer (the chat the message belongs to). */
+/* Filters one parsed Message and, when it is a fresh inbound text, fills a
+   notify-queue slot. Shared by the live-push collector and the
+   updates.getDifference drain. */
+static void tg_chat_notify_push_message(const tg_mtproto_message_text *message,
+                                        const tg_mtproto_dialog_peer *dest)
+{
+    tg_chat_notify_entry *entry;
+    unsigned long copy_length;
+
+    if (message == 0 || !message->has_text || message->is_out ||
+        tg_chat_notify_seen(message->id)) {
+        return;
+    }
+    if (tg_chat_notify_count >= TG_CHAT_NOTIFY_MAX) {
+        ++tg_chat_notify_dropped;
+        return;
+    }
+    entry = &tg_chat_notify_queue[tg_chat_notify_count];
+    if (dest != 0 && dest->peer_constructor != 0UL) {
+        entry->is_chat =
+            dest->peer_constructor != TG_MTPROTO_PEER_USER_CONSTRUCTOR;
+        entry->peer_id_hi = dest->id_hi;
+        entry->peer_id_lo = dest->id_lo;
+    } else {
+        entry->is_chat = 0;
+        entry->peer_id_hi = message->from_id_hi;
+        entry->peer_id_lo = message->from_id_lo;
+    }
+    entry->from_id_hi = message->from_id_hi;
+    entry->from_id_lo = message->from_id_lo;
+    copy_length = (unsigned long)strlen(message->text);
+    if (copy_length >= TG_CHAT_NOTIFY_TEXT) {
+        copy_length = TG_CHAT_NOTIFY_TEXT - 1UL;
+    }
+    memcpy(entry->text, message->text, copy_length);
+    entry->text[copy_length] = '\0';
+    ++tg_chat_notify_count;
+}
+
 static void tg_chat_notify_collect_updates(const unsigned char *body,
                                            unsigned long body_length)
 {
     tg_mtproto_tl_reader reader;
     static tg_mtproto_message_text message;
     tg_mtproto_dialog_peer dest;
-    tg_chat_notify_entry *entry;
     unsigned long constructor;
     unsigned long item_constructor;
     unsigned long count;
-    unsigned long copy_length;
     unsigned long i;
 
     tg_mtproto_tl_reader_init(&reader, body, body_length);
@@ -2585,37 +2625,10 @@ static void tg_chat_notify_collect_updates(const unsigned char *body,
                 message.id, message.has_text, message.is_out,
                 dest.peer_constructor);
 #endif
-        if (!message.has_text || message.is_out ||
-            tg_chat_notify_seen(message.id)) {
-            /* The rich message reader may leave unparsed tail bytes (reply
-               markup and friends), so do not trust the reader position for
-               further items either way. */
-            return;
-        }
-        if (tg_chat_notify_count >= TG_CHAT_NOTIFY_MAX) {
-            ++tg_chat_notify_dropped;
-            return;
-        }
-        entry = &tg_chat_notify_queue[tg_chat_notify_count];
-        if (dest.peer_constructor != 0UL) {
-            entry->is_chat =
-                dest.peer_constructor != TG_MTPROTO_PEER_USER_CONSTRUCTOR;
-            entry->peer_id_hi = dest.id_hi;
-            entry->peer_id_lo = dest.id_lo;
-        } else {
-            entry->is_chat = 0;
-            entry->peer_id_hi = message.from_id_hi;
-            entry->peer_id_lo = message.from_id_lo;
-        }
-        entry->from_id_hi = message.from_id_hi;
-        entry->from_id_lo = message.from_id_lo;
-        copy_length = (unsigned long)strlen(message.text);
-        if (copy_length >= TG_CHAT_NOTIFY_TEXT) {
-            copy_length = TG_CHAT_NOTIFY_TEXT - 1UL;
-        }
-        memcpy(entry->text, message.text, copy_length);
-        entry->text[copy_length] = '\0';
-        ++tg_chat_notify_count;
+        tg_chat_notify_push_message(&message, &dest);
+        /* The rich message reader may leave unparsed tail bytes (reply
+           markup and friends), so do not trust the reader position for
+           further items. */
         return;
     }
 }
@@ -5527,6 +5540,164 @@ static int tg_mtproto_auth_refresh_self_cache_on_context(
     }
     return tg_mtproto_save_peer_cache_file(peer_cache_file, &cache, stream,
                                            label);
+}
+
+/* updates.getState: primes (or refreshes) the gap-handling cursor. */
+static int tg_mtproto_chat_get_updates_state_on_context(
+    const char *host,
+    const char *port,
+    const char *api_id,
+    const char *auth_file,
+    const char *dc_id_text,
+    tg_mtproto_auth_context *context,
+    tg_mtproto_updates_state *state,
+    FILE *stream)
+{
+    unsigned char query[32];
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    static const char label[] = "mtproto updates.getState";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id == 0 ||
+        auth_file == 0 || dc_id_text == 0 || context == 0 || state == 0) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_updates_get_state(&writer) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    if (tg_mtproto_send_saved_query_on_context(
+            host, port, api_id, auth_file, dc_id_text, context, query,
+            writer.length, &result, stream, label, 4U) != 0) {
+        return 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
+        return 2;
+    }
+    if (tg_mtproto_parse_updates_state(result.result_constructor,
+                                       result.result_body,
+                                       result.result_body_length,
+                                       state) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: state-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    return 0;
+}
+
+/*
+ * One paced updates.getDifference call: harvests new inbound messages into
+ * the notify queue (printed by the usual cross-chat printer) and advances
+ * the cursor. pts_total_limit keeps each reply small enough for a slow
+ * link -- this is the MorphOS notification path, where live pushes stay
+ * suppressed because the full backlog drowns the connection.
+ * Returns 0 when the cursor advanced, 1 on soft trouble (cursor kept).
+ */
+static int tg_mtproto_chat_drain_difference_on_context(
+    const char *host,
+    const char *port,
+    const char *api_id,
+    const char *auth_file,
+    const char *dc_id_text,
+    tg_mtproto_auth_context *context,
+    tg_mtproto_updates_state *state,
+    FILE *stream)
+{
+    unsigned char query[64];
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_tl_reader reader;
+    static tg_mtproto_message_text message;
+    tg_mtproto_dialog_peer dest;
+    unsigned long vector_constructor;
+    unsigned long count;
+    unsigned long message_start;
+    unsigned long i;
+    static const char label[] = "mtproto updates.getDifference";
+
+    if (stream == 0 || host == 0 || port == 0 || api_id == 0 ||
+        auth_file == 0 || dc_id_text == 0 || context == 0 || state == 0 ||
+        state->pts == 0UL) {
+        return 1;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_updates_get_difference(&writer, state->pts,
+                                                state->date, state->qts,
+                                                24UL) != TG_MTPROTO_TL_OK) {
+        return 1;
+    }
+    if (tg_mtproto_send_saved_query_on_context(
+            host, port, api_id, auth_file, dc_id_text, context, query,
+            writer.length, &result, stream, label, 4U) != 0) {
+        return 1;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        (void)tg_mtproto_print_rpc_error(label, &result, stream);
+        return 1;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
+        return 1;
+    }
+    if (result.result_constructor ==
+        TG_MTPROTO_UPDATES_DIFFERENCE_EMPTY_CONSTRUCTOR) {
+        tg_mtproto_tl_reader_init(&reader, result.result_body,
+                                  result.result_body_length);
+        if (tg_mtproto_tl_read_u32(&reader, &state->date) ==
+                TG_MTPROTO_TL_OK) {
+            (void)tg_mtproto_tl_read_u32(&reader, &state->seq);
+        }
+        return 0;
+    }
+    if (result.result_constructor ==
+        TG_MTPROTO_UPDATES_DIFFERENCE_TOO_LONG_CONSTRUCTOR) {
+        tg_mtproto_tl_reader_init(&reader, result.result_body,
+                                  result.result_body_length);
+        (void)tg_mtproto_tl_read_u32(&reader, &state->pts);
+        return 0;
+    }
+    if (result.result_constructor !=
+            TG_MTPROTO_UPDATES_DIFFERENCE_CONSTRUCTOR &&
+        result.result_constructor !=
+            TG_MTPROTO_UPDATES_DIFFERENCE_SLICE_CONSTRUCTOR) {
+        fprintf(stream, "%s: unexpected constructor 0x%08lx\n", label,
+                result.result_constructor);
+        return 1;
+    }
+    /* difference / differenceSlice: new_messages:Vector<Message> first.
+       Walk it with the history parser's read+resync pattern; the trailing
+       vectors and state are not parsed -- the cursor is refreshed with a
+       cheap updates.getState instead (messages skipped in between are
+       caught on the next pass; the dedupe ring absorbs any overlap). */
+    tg_mtproto_tl_reader_init(&reader, result.result_body,
+                              result.result_body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &vector_constructor) !=
+            TG_MTPROTO_TL_OK ||
+        vector_constructor != TG_MTPROTO_TL_VECTOR_CONSTRUCTOR ||
+        tg_mtproto_tl_read_u32(&reader, &count) != TG_MTPROTO_TL_OK) {
+        return 1;
+    }
+    for (i = 0UL; i < count && reader.offset < reader.length; ++i) {
+        message_start = reader.offset;
+        if (tg_mtproto_read_update_message_text(&reader, &message, &dest) !=
+            TG_MTPROTO_TL_OK) {
+            if (!tg_mtproto_resync_message_text(&reader,
+                                                message_start + 4UL)) {
+                break;
+            }
+            continue;
+        }
+        tg_chat_notify_push_message(&message, &dest);
+    }
+    (void)tg_mtproto_chat_get_updates_state_on_context(
+        host, port, api_id, auth_file, dc_id_text, context, state, stream);
+    return 0;
 }
 
 int tg_mtproto_auth_list_peers_file(const char *host,
@@ -8532,6 +8703,16 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_mtproto_chat_load_own_label(host, port, api_id, auth_file, dc_id_text,
                                    &chat_context, peer_cache_file,
                                    own_label, sizeof(own_label), stream);
+    /* Prime the gap-handling cursor; on failure pts stays 0 and the paced
+       difference drain simply never runs this session. */
+    memset(&tg_chat_updates_state, 0, sizeof(tg_chat_updates_state));
+    {
+        FILE *state_quiet = tg_mtproto_open_quiet_stream(stream);
+        (void)tg_mtproto_chat_get_updates_state_on_context(
+            host, port, api_id, auth_file, dc_id_text, &chat_context,
+            &tg_chat_updates_state, state_quiet);
+        tg_mtproto_close_quiet_stream(state_quiet, stream);
+    }
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         tg_mtproto_chat_print_system_line(stream, "Choose a chat:");
         fputc('\n', stream);
@@ -8664,6 +8845,18 @@ int tg_mtproto_auth_chat_file(const char *host,
                 consecutive_failures = 0UL;
             }
             chat_quiet_length = tg_mtproto_quiet_stream_length(quiet, stream);
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+            /* MorphOS runs with update pushes suppressed (the full backlog
+               drowns its link): the paced getDifference drain is how
+               cross-chat notifications reach the queue here. Run it after
+               the replay length is fixed so its quiet noise never leaks
+               into the transcript. */
+            if (rc == 0 && tg_chat_updates_state.pts != 0UL) {
+                (void)tg_mtproto_chat_drain_difference_on_context(
+                    host, port, api_id, auth_file, dc_id_text, &chat_context,
+                    &tg_chat_updates_state, quiet);
+            }
+#endif
             have_replay = rc == 0 && printed_message_count > 0UL &&
                           (quiet == stream || chat_quiet_length > 0L);
             if (have_replay || tg_chat_notify_count > 0UL) {
@@ -8845,6 +9038,38 @@ int tg_mtproto_auth_chat_file(const char *host,
                 if (rc != 0) {
                     fprintf(tui_cap, "Could not read message history now.\n");
                 }
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (strcmp(line, "/difftest") == 0) {
+            /* Undocumented diagnostic: prime + one paced getDifference,
+               reporting the cursor and what got queued. */
+            char diff_note[96];
+            int diff_rc;
+            FILE *diff_quiet = tg_mtproto_open_quiet_stream(stream);
+            if (tg_chat_updates_state.pts == 0UL) {
+                (void)tg_mtproto_chat_get_updates_state_on_context(
+                    host, port, api_id, auth_file, dc_id_text, &chat_context,
+                    &tg_chat_updates_state, diff_quiet);
+            }
+            sprintf(diff_note, "diff: pts=%lu seq=%lu date=%lu",
+                    tg_chat_updates_state.pts, tg_chat_updates_state.seq,
+                    tg_chat_updates_state.date);
+            tg_mtproto_chat_print_system_line(stream, diff_note);
+            diff_rc = tg_mtproto_chat_drain_difference_on_context(
+                host, port, api_id, auth_file, dc_id_text, &chat_context,
+                &tg_chat_updates_state, diff_quiet);
+            tg_mtproto_close_quiet_stream(diff_quiet, stream);
+            sprintf(diff_note, "diff: rc=%d queued=%lu new-pts=%lu", diff_rc,
+                    tg_chat_notify_count, tg_chat_updates_state.pts);
+            tg_mtproto_chat_print_system_line(stream, diff_note);
+            {
+                FILE *tui_cap = tg_console_tui_capture_begin(stream);
+                tg_mtproto_chat_print_notify_lines(tui_cap, peer_cache_file,
+                                                   peer_index);
                 tg_console_tui_capture_end(tui_cap, stream);
             }
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
