@@ -29,6 +29,12 @@
 #if defined(__MORPHOS__) || defined(__MORPHOS)
 static int tg_ui_color_mode = TG_UI_COLOR_OFF;
 static int tg_ui_theme = TG_UI_THEME_PLAIN;
+#elif defined(__amigaos3__)
+/* AmigaOS 3: text colours yes, background pen no. Shells with a re-mapped
+   palette render bg pen 1 red (field report: unreadable), so the dark
+   theme is opt-in there via --ui-theme dark. */
+static int tg_ui_color_mode = TG_UI_COLOR_AUTO;
+static int tg_ui_theme = TG_UI_THEME_PLAIN;
 #else
 static int tg_ui_color_mode = TG_UI_COLOR_AUTO;
 static int tg_ui_theme = TG_UI_THEME_DARK;

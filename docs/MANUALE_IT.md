@@ -78,8 +78,9 @@ La finestra si può ridimensionare quando vuoi: il layout si riadatta.
 
 ## 7. Note per piattaforma
 
-- **AmigaOS 3.x**: tema scuro a riga piena. Testato su 68030+; serve uno
-  stack TCP (Roadshow, AmiTCP...).
+- **AmigaOS 3.x**: colori del testo senza sfondo (alcune shell hanno la
+  pen di sfondo rossa); chi vuole il look scuro: `--ui-theme dark`.
+  Testato su 68030+; serve uno stack TCP (Roadshow, AmiTCP...).
 - **AmigaOS 4.x**: tutto attivo di default.
 - **MorphOS**: i colori sono spenti di default e le notifiche tra chat
   sono temporaneamente disabilitate (limiti della console/rete del

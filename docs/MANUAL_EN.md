@@ -78,8 +78,10 @@ You can resize the window at any time: the layout re-fits itself.
 
 ## 7. Platform notes
 
-- **AmigaOS 3.x**: dark theme with full-row background. Tested on 68030+;
-  needs a TCP stack (Roadshow, AmiTCP...).
+- **AmigaOS 3.x**: text colours with no background by default (some shell
+  palettes render the background pen red); `--ui-theme dark` brings the
+  dark look back. Tested on 68030+; needs a TCP stack (Roadshow,
+  AmiTCP...).
 - **AmigaOS 4.x**: everything enabled by default.
 - **MorphOS**: colours are off by default and cross-chat notifications
   are temporarily disabled (console/network quirks of the platform);
