@@ -291,8 +291,10 @@ static void tg_mtproto_chat_show_prompt(FILE *stream,
 /* Console bell (BEL -> screen flash on Amiga consoles) on notifications. */
 static int tg_chat_bell_enabled = 1;
 /* Gap-handling cursor (updates.getState / getDifference); pts == 0 means
-   not primed, so the paced drain stays off. */
+   not primed, so the paced drain stays off. /diff toggles the background
+   drain (the bisection knob for the fragile MorphOS link). */
 static tg_mtproto_updates_state tg_chat_updates_state;
+static int tg_chat_diff_enabled = 1;
 /* Day (local-frame epoch/86400) of the last transcript line, for the
    "--- 10 Jun ---" separators; 0 = nothing printed yet this chat. */
 static unsigned long tg_chat_day_shown = 0UL;
@@ -5628,9 +5630,12 @@ static int tg_mtproto_chat_drain_difference_on_context(
         return 1;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    /* Tiny batch on purpose: full Message objects are heavy, and large
+       replies are the payload class that froze MorphOS machines. The
+       backlog drains a few messages per pass instead. */
     if (tg_mtproto_build_updates_get_difference(&writer, state->pts,
                                                 state->date, state->qts,
-                                                24UL) != TG_MTPROTO_TL_OK) {
+                                                6UL) != TG_MTPROTO_TL_OK) {
         return 1;
     }
     if (tg_mtproto_send_saved_query_on_context(
@@ -8402,6 +8407,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /watch sec    set auto-read interval",
         "  /watch off    disable auto-read",
         "  /resize       redraw the layout after a window resize",
+        "  /diff         toggle background catch-up (or /diff on|off)",
         "  /color        toggle colours (or /color on|off)",
         "  /bell         toggle the notification flash/bell",
         "  /help         show this help",
@@ -8703,16 +8709,10 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_mtproto_chat_load_own_label(host, port, api_id, auth_file, dc_id_text,
                                    &chat_context, peer_cache_file,
                                    own_label, sizeof(own_label), stream);
-    /* Prime the gap-handling cursor; on failure pts stays 0 and the paced
-       difference drain simply never runs this session. */
+    /* The gap-handling cursor starts unprimed; the drain tick primes it
+       lazily (one query) so the fragile session-open phase on slow links
+       stays as light as before. */
     memset(&tg_chat_updates_state, 0, sizeof(tg_chat_updates_state));
-    {
-        FILE *state_quiet = tg_mtproto_open_quiet_stream(stream);
-        (void)tg_mtproto_chat_get_updates_state_on_context(
-            host, port, api_id, auth_file, dc_id_text, &chat_context,
-            &tg_chat_updates_state, state_quiet);
-        tg_mtproto_close_quiet_stream(state_quiet, stream);
-    }
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         tg_mtproto_chat_print_system_line(stream, "Choose a chat:");
         fputc('\n', stream);
@@ -8848,13 +8848,25 @@ int tg_mtproto_auth_chat_file(const char *host,
 #if defined(__MORPHOS__) || defined(__MORPHOS)
             /* MorphOS runs with update pushes suppressed (the full backlog
                drowns its link): the paced getDifference drain is how
-               cross-chat notifications reach the queue here. Run it after
-               the replay length is fixed so its quiet noise never leaks
-               into the transcript. */
-            if (rc == 0 && tg_chat_updates_state.pts != 0UL) {
-                (void)tg_mtproto_chat_drain_difference_on_context(
-                    host, port, api_id, auth_file, dc_id_text, &chat_context,
-                    &tg_chat_updates_state, quiet);
+               cross-chat notifications reach the queue here. Gentle by
+               design -- every third tick, tiny batches, cursor primed
+               lazily -- and /diff off turns it off entirely (the bisection
+               knob if the fragile link acts up). Runs after the replay
+               length is fixed so its quiet noise never leaks into the
+               transcript. */
+            if (rc == 0 && tg_chat_diff_enabled) {
+                static unsigned long diff_tick = 0UL;
+                if ((++diff_tick % 3UL) == 0UL) {
+                    if (tg_chat_updates_state.pts == 0UL) {
+                        (void)tg_mtproto_chat_get_updates_state_on_context(
+                            host, port, api_id, auth_file, dc_id_text,
+                            &chat_context, &tg_chat_updates_state, quiet);
+                    } else {
+                        (void)tg_mtproto_chat_drain_difference_on_context(
+                            host, port, api_id, auth_file, dc_id_text,
+                            &chat_context, &tg_chat_updates_state, quiet);
+                    }
+                }
             }
 #endif
             have_replay = rc == 0 && printed_message_count > 0UL &&
@@ -9040,6 +9052,23 @@ int tg_mtproto_auth_chat_file(const char *host,
                 }
                 tg_console_tui_capture_end(tui_cap, stream);
             }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (strcmp(line, "/diff") == 0 || strcmp(line, "/diff on") == 0 ||
+            strcmp(line, "/diff off") == 0) {
+            if (strcmp(line, "/diff on") == 0) {
+                tg_chat_diff_enabled = 1;
+            } else if (strcmp(line, "/diff off") == 0) {
+                tg_chat_diff_enabled = 0;
+            } else {
+                tg_chat_diff_enabled = !tg_chat_diff_enabled;
+            }
+            tg_mtproto_chat_print_system_line(
+                stream, tg_chat_diff_enabled
+                            ? "Background catch-up on."
+                            : "Background catch-up off.");
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
                                         0UL, tg_chat_input_raw);
             continue;
