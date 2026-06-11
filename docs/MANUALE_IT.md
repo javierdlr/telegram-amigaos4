@@ -1,5 +1,7 @@
 # Telegram Amiga — Manuale rapido (italiano)
 
+*English version: [MANUAL_EN.md](MANUAL_EN.md)*
+
 Telegram vero, in finestra console, sul tuo Amiga. Niente browser, niente
 proxy esterni: il client parla MTProto direttamente con i server Telegram.
 Gira su AmigaOS 3.x (68k), AmigaOS 4.x, MorphOS e AROS i386. È software
