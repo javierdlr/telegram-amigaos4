@@ -7318,14 +7318,12 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             return 0;
         }
         direction = (int)(unsigned char)ch;
-        if (use_history && direction >= '0' && direction <= '9') {
-            /* Amiga console function keys arrive as CSI <n> '~' (F1..F10 =
-               0~..9~, shifted F1..F10 = 10~..19~). Map them to quick chat
-               switching: Fn jumps to cached chat n, shift+Fn to chat n+10,
-               by completing the line as a synthesized /peer command. Any
-               pending half-typed text is discarded (and its echo erased) --
-               pressing a function key is an explicit "go there now". */
-            fkey = 0UL;
+        fkey = 0UL;
+        if (direction >= '0' && direction <= '9') {
+            /* Leading digits: either a function key (CSI <n> '~': F1..F10 =
+               0~..9~, shifted = 10~..19~) or a raw input event report
+               (CSI <class>;...| -- class 12 is the window NEWSIZE event the
+               TUI subscribes to). Collect the number, then decide. */
             while (direction >= '0' && direction <= '9') {
                 fkey = (fkey * 10UL) + (unsigned long)(direction - '0');
                 if (tg_platform_stdin_read_char(0UL, &ch) <= 0) {
@@ -7333,7 +7331,11 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 }
                 direction = (int)(unsigned char)ch;
             }
-            if (direction == '~' && fkey <= 19UL && line_size >= 16UL) {
+            if (use_history && direction == '~' && fkey <= 19UL &&
+                line_size >= 16UL) {
+                /* Function key: jump straight to that chat by completing the
+                   line as a synthesized /peer command. Any half-typed text
+                   is discarded -- Fn is an explicit "go there now". */
                 if (!tg_console_tui_active()) {
                     for (i = 0UL; i < *line_length; ++i) {
                         fputs("\b \b", stream);
@@ -7351,14 +7353,19 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         }
         if (direction != 'A' && direction != 'B') {
             /* Not Up/Down. Consume the rest of an unrecognised CSI sequence
-               (window close/resize events arrive as ESC [ <params> <final>) so
-               its trailing bytes do not leak into the typed line. CSI param and
-               intermediate bytes are 0x20-0x3F; the final byte is 0x40-0x7E. */
+               so its trailing bytes do not leak into the typed line. CSI
+               param and intermediate bytes are 0x20-0x3F; the final byte is
+               0x40-0x7E. */
             while (direction >= 0x20 && direction < 0x40) {
                 if (tg_platform_stdin_read_char(0UL, &ch) <= 0) {
                     break;
                 }
                 direction = (int)(unsigned char)ch;
+            }
+            if (direction == '|' && fkey == 12UL) {
+                /* Window NEWSIZE raw event: let the chat loop repaint the
+                   full-screen layout with the new geometry. */
+                tg_console_tui_note_resize();
             }
             return 0;
         }
@@ -7450,6 +7457,14 @@ static int tg_mtproto_chat_prompt_line(const char *prompt,
     }
     line_length = 0UL;
     for (;;) {
+        if (tg_console_tui_resize_pending() && tg_chat_tui_stream != 0) {
+            if (tg_console_tui_resize(tg_chat_tui_stream,
+                                      " Telegram Amiga ")) {
+                tg_console_tui_input(tg_chat_tui_stream,
+                                     tg_console_tui_prompt(), out,
+                                     line_length);
+            }
+        }
         /* Drive the same editor as the main loop so the prompt echoes and
            line-edits in raw mode (use_history = 0: do not record/recall the
            message history for these one-shot answers). In cooked fallback mode
@@ -8503,6 +8518,14 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
     }
     for (;;) {
+        if (tg_console_tui_resize_pending()) {
+            if (tg_console_tui_resize(stream, " Telegram Amiga ")) {
+                tg_mtproto_chat_tui_status(peer_label);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label,
+                                            line, line_length,
+                                            tg_chat_input_raw);
+            }
+        }
         if (peer_index[0] != '\0' && !peer_history_ready) {
             peer_history_ready = 1;
             (void)tg_mtproto_chat_open_history(

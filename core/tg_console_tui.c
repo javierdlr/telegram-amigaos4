@@ -14,6 +14,7 @@
 
 static int tg_tui_active = 0;
 static int tg_tui_enabled = 1;
+static int tg_tui_resize_flag = 0;
 static unsigned int tg_tui_rows = 0U;
 static unsigned int tg_tui_columns = 0U;
 
@@ -174,6 +175,22 @@ void tg_console_tui_set_enabled(int enabled)
     tg_tui_enabled = enabled ? 1 : 0;
 }
 
+static void tg_tui_paint_chrome(FILE *stream, const char *status_text)
+{
+    /* Base attributes + full clear, then the fixed chrome. */
+    tg_console_ui_reset(stream);
+    fputs(TG_UI_CSI "H" TG_UI_CSI "J", stream);
+    tg_console_tui_status(stream, status_text);
+    tg_tui_goto(stream, tg_tui_rows - 1U, 1U);
+    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
+    tg_tui_clipped_line(stream, "------------------------------------------"
+                                "--------------------------------------");
+    tg_console_ui_reset(stream);
+    tg_tui_goto(stream, tg_tui_rows, 1U);
+    fputs(TG_UI_CSI "K", stream);
+    fflush(stream);
+}
+
 int tg_console_tui_enter(FILE *stream, const char *status_text)
 {
     unsigned int rows;
@@ -188,18 +205,43 @@ int tg_console_tui_enter(FILE *stream, const char *status_text)
     tg_tui_rows = rows;
     tg_tui_columns = columns;
     tg_tui_active = 1;
-    /* Base attributes + full clear, then the fixed chrome. */
-    tg_console_ui_reset(stream);
-    fputs(TG_UI_CSI "H" TG_UI_CSI "J", stream);
-    tg_console_tui_status(stream, status_text);
-    tg_tui_goto(stream, tg_tui_rows - 1U, 1U);
-    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
-    tg_tui_clipped_line(stream, "------------------------------------------"
-                                "--------------------------------------");
-    tg_console_ui_reset(stream);
-    tg_tui_goto(stream, tg_tui_rows, 1U);
-    fputs(TG_UI_CSI "K", stream);
-    fflush(stream);
+    tg_tui_resize_flag = 0;
+    /* Subscribe to the console's NEWSIZE raw event: resizes then arrive on
+       stdin as CSI 12;...| reports, which the line editor turns into a
+       pending-resize flag. */
+    fputs(TG_UI_CSI "12{", stream);
+    tg_tui_paint_chrome(stream, status_text);
+    return 1;
+}
+
+void tg_console_tui_note_resize(void)
+{
+    if (tg_tui_active) {
+        tg_tui_resize_flag = 1;
+    }
+}
+
+int tg_console_tui_resize_pending(void)
+{
+    return tg_tui_resize_flag;
+}
+
+int tg_console_tui_resize(FILE *stream, const char *status_text)
+{
+    unsigned int rows;
+    unsigned int columns;
+
+    tg_tui_resize_flag = 0;
+    if (stream == 0 || !tg_tui_active) {
+        return 0;
+    }
+    if (!tg_console_tui_query_size(stream, &rows, &columns)) {
+        /* Keep the old geometry rather than tearing the layout down. */
+        return 0;
+    }
+    tg_tui_rows = rows;
+    tg_tui_columns = columns;
+    tg_tui_paint_chrome(stream, status_text);
     return 1;
 }
 
@@ -284,6 +326,8 @@ void tg_console_tui_leave(FILE *stream)
         return;
     }
     tg_tui_active = 0;
+    tg_tui_resize_flag = 0;
+    fputs(TG_UI_CSI "12}", stream); /* unsubscribe the NEWSIZE raw event */
     tg_tui_goto(stream, tg_tui_rows, 1U);
     fputs(TG_UI_CSI "0m\n", stream);
     fflush(stream);
@@ -395,6 +439,7 @@ int tg_console_tui_self_test(FILE *stream)
         sprintf(line, "transcript line %u of 30", i);
         tg_console_tui_line(stream, line);
     }
+    tg_console_tui_line(stream, "resize the window to test NEWSIZE");
     tg_console_tui_input(stream, "you: ", "type q to quit", 14UL);
     for (;;) {
         if (tg_platform_stdin_read_char(60UL, &ch) <= 0) {
@@ -402,6 +447,48 @@ int tg_console_tui_self_test(FILE *stream)
         }
         if (ch == 'q' || ch == 'Q' || ch == 3) {
             break;
+        }
+        if (ch == (char)0x9b || ch == (char)0x1b) {
+            /* Swallow the CSI sequence; react to the NEWSIZE event. */
+            unsigned long event_class;
+            int byte_value;
+
+            if (ch == (char)0x1b) {
+                if (tg_platform_stdin_read_char(1UL, &ch) <= 0 ||
+                    ch != '[') {
+                    continue;
+                }
+            }
+            event_class = 0UL;
+            byte_value = 0;
+            for (;;) {
+                if (tg_platform_stdin_read_char(1UL, &ch) <= 0) {
+                    break;
+                }
+                byte_value = (int)(unsigned char)ch;
+                if (byte_value >= '0' && byte_value <= '9' &&
+                    event_class < 1000UL) {
+                    event_class = (event_class * 10UL) +
+                                  (unsigned long)(byte_value - '0');
+                    continue;
+                }
+                if (byte_value >= 0x40 && byte_value <= 0x7e) {
+                    break;
+                }
+                if (byte_value == ';') {
+                    /* Stop accumulating: only the class matters. */
+                    event_class += 1000UL;
+                }
+            }
+            if (byte_value == '|' && (event_class % 1000UL) == 12UL) {
+                if (tg_console_tui_resize(stream,
+                                          " TUI test -- resized ")) {
+                    sprintf(line, "resized: new layout drawn");
+                    tg_console_tui_line(stream, line);
+                }
+            }
+            tg_console_tui_input(stream, "you: ", "type q to quit", 14UL);
+            continue;
         }
         sprintf(line, "key 0x%02x", (unsigned char)ch);
         tg_console_tui_line(stream, line);
