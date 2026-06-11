@@ -8848,24 +8848,21 @@ int tg_mtproto_auth_chat_file(const char *host,
 #if defined(__MORPHOS__) || defined(__MORPHOS)
             /* MorphOS runs with update pushes suppressed (the full backlog
                drowns its link): the paced getDifference drain is how
-               cross-chat notifications reach the queue here. Gentle by
-               design -- every third tick, tiny batches, cursor primed
-               lazily -- and /diff off turns it off entirely (the bisection
-               knob if the fragile link acts up). Runs after the replay
-               length is fixed so its quiet noise never leaks into the
-               transcript. */
+               cross-chat notifications reach the queue here. Every tick is
+               affordable -- an idle pass is a differenceEmpty of a few
+               dozen bytes, and a busy one stays capped at a tiny batch --
+               while /diff off turns it off entirely (the bisection knob if
+               the fragile link acts up). Runs after the replay length is
+               fixed so its quiet noise never leaks into the transcript. */
             if (rc == 0 && tg_chat_diff_enabled) {
-                static unsigned long diff_tick = 0UL;
-                if ((++diff_tick % 3UL) == 0UL) {
-                    if (tg_chat_updates_state.pts == 0UL) {
-                        (void)tg_mtproto_chat_get_updates_state_on_context(
-                            host, port, api_id, auth_file, dc_id_text,
-                            &chat_context, &tg_chat_updates_state, quiet);
-                    } else {
-                        (void)tg_mtproto_chat_drain_difference_on_context(
-                            host, port, api_id, auth_file, dc_id_text,
-                            &chat_context, &tg_chat_updates_state, quiet);
-                    }
+                if (tg_chat_updates_state.pts == 0UL) {
+                    (void)tg_mtproto_chat_get_updates_state_on_context(
+                        host, port, api_id, auth_file, dc_id_text,
+                        &chat_context, &tg_chat_updates_state, quiet);
+                } else {
+                    (void)tg_mtproto_chat_drain_difference_on_context(
+                        host, port, api_id, auth_file, dc_id_text,
+                        &chat_context, &tg_chat_updates_state, quiet);
                 }
             }
 #endif
