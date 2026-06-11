@@ -1,0 +1,32 @@
+# Host CI for the portable layers (TL parser, crypto, session, JSON):
+# the AROS platform file carries complete POSIX fallbacks, so the same
+# sources build natively on Linux/macOS and the offline self-tests run
+# on every push -- the Amiga targets stay hand-tested on real hardware.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  host-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build host binary
+        run: make -f Makefile.host all
+      - name: MTProto self-test (TL / crypto / SRP / session)
+        run: ./build/host/telegram-test --mtproto-self-test
+      - name: Platform RNG self-test
+        run: |
+          ./build/host/telegram-test --platform-rng-test
+          rm -f telegram-seed.bin
+      - name: Build with warnings as errors
+        run: |
+          make -f Makefile.host clean
+          make -f Makefile.host all CFLAGS="-Wall -Wextra -Werror -O2"

@@ -156,6 +156,7 @@ int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
     if (got <= 0) {
         return -1;
     }
+    tg_aros_note_input_event((int)ch);
     *out_char = ch;
     return 1;
 #endif
