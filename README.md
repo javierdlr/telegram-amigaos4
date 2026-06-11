@@ -227,11 +227,36 @@ telegram-password.txt
 telegram-peers.txt
 telegram-phone.txt
 telegram-code.txt
+telegram-seed.bin
 ```
 
 If a Bot API token is exposed, revoke it with BotFather. If account login
 material is exposed, treat the Telegram account as compromised and rotate what
 can be rotated.
+
+## Randomness, Honestly
+
+On platforms without a kernel CSPRNG or a TLS library (AmigaOS 3, AROS,
+MorphOS without OpenSSL, AmigaOS 4 when AmiSSL is missing) the MTProto
+secrets come from an in-tree hash-DRBG seeded from local entropy: CPU
+timer jitter (TSC / E-Clock / PPC timebase), wall clock, run-varying
+addresses, plus two sources added after a community security review:
+
+- `telegram-seed.bin` (next to the binary) persists DRBG output across
+  runs, Linux random-seed style, so entropy accumulates over time instead
+  of restarting from a cold boot state. It is mixed into the pool at
+  startup and immediately overwritten with fresh output.
+- The timing of your keystrokes (the login wizard included) is folded
+  into the generator at every use.
+
+Honest limit: inside an emulator or VM the timer jitter is weaker and
+boot states are more reproducible than on real hardware. The first run in
+a fresh VM (no seed file yet, few keystrokes) is the weakest moment, and
+that is exactly when the auth-key DH secret is generated. If your threat
+model is more than hobbyist, do the first login on real hardware, or use
+a platform with AmiSSL/OpenSSL, or accept the risk consciously. After the
+first run the seed file makes every later state depend on accumulated
+history.
 
 ## Keyboard Layouts And Accented Characters
 

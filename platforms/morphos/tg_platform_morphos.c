@@ -75,6 +75,32 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
     return WaitForChar(Input(), (long)timeout_microseconds) != 0;
 }
 
+/*
+ * Keystroke-timing entropy: every byte read from the console folds its
+ * arrival time (PPC timebase register) into a small ring at O(1) cost;
+ * the fallback CSPRNG absorbs the ring on every call. Human typing right
+ * before the MTProto auth-key DH is entropy a quiet machine lacks.
+ */
+static unsigned long tg_morphos_key_ring[16];
+static unsigned long tg_morphos_key_ring_pos = 0;
+
+static unsigned long tg_morphos_input_tick(void)
+{
+    unsigned long tb;
+    __asm__ volatile("mftb %0" : "=r"(tb));
+    return tb;
+}
+
+static void tg_morphos_note_input_event(int ch)
+{
+    unsigned long v = tg_morphos_input_tick() ^
+                      ((unsigned long)(unsigned char)ch << 24) ^
+                      (tg_morphos_key_ring_pos * 2654435761UL);
+    tg_morphos_key_ring[tg_morphos_key_ring_pos & 15UL] ^=
+        (v << (tg_morphos_key_ring_pos & 7UL)) ^ (v >> 5);
+    ++tg_morphos_key_ring_pos;
+}
+
 int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
 {
     unsigned long long timeout_microseconds;
@@ -95,6 +121,7 @@ int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
     if (got <= 0) {
         return -1;
     }
+    tg_morphos_note_input_event((int)ch);
     *out_char = ch;
     return 1;
 }
@@ -117,6 +144,7 @@ int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size)
             SetMode(Input(), 0);
             return -1;
         }
+        tg_morphos_note_input_event((int)ch);
         if (ch == '\n' || ch == '\r') {
             break;
         }
@@ -249,14 +277,29 @@ static void tg_morphos_gather(unsigned char digest[TG_MTPROTO_SHA512_LENGTH])
     memset(pool, 0, sizeof(pool));
 }
 
+static FILE *tg_morphos_open_seed_file(const char *mode)
+{
+    /* PROGDIR: keeps the seed next to the binary; some C libraries do not
+       grok Amiga-style paths, so fall back to the current directory (the
+       icon launcher CDs into the drawer anyway). */
+    FILE *f = fopen("PROGDIR:telegram-seed.bin", mode);
+    if (f == 0) {
+        f = fopen("telegram-seed.bin", mode);
+    }
+    return f;
+}
+
 static int tg_morphos_random_fallback(unsigned char *bytes,
                                       unsigned long byte_count)
 {
     static unsigned char state[TG_MTPROTO_SHA512_LENGTH];
     static int seeded = 0;
+    static int seed_file_done = 0;
+    int seed_file_write = 0;
     unsigned char fresh[TG_MTPROTO_SHA512_LENGTH];
     unsigned char block[TG_MTPROTO_SHA512_LENGTH];
-    unsigned char mix[2 * TG_MTPROTO_SHA512_LENGTH];
+    unsigned char mix[2 * TG_MTPROTO_SHA512_LENGTH +
+                      sizeof(tg_morphos_key_ring) + sizeof(unsigned long)];
     unsigned long produced;
     unsigned long counter;
     unsigned long chunk;
@@ -271,7 +314,42 @@ static int tg_morphos_random_fallback(unsigned char *bytes,
     /* state := SHA512(state || fresh) -- absorb new entropy each call. */
     memcpy(mix, state, TG_MTPROTO_SHA512_LENGTH);
     memcpy(mix + TG_MTPROTO_SHA512_LENGTH, fresh, TG_MTPROTO_SHA512_LENGTH);
-    tg_mtproto_sha512(mix, sizeof(mix), state);
+    tg_mtproto_sha512(mix, 2UL * TG_MTPROTO_SHA512_LENGTH, state);
+
+    /* Persistent seed (PROGDIR:telegram-seed.bin, Linux random-seed
+       style): mixed in once per run, rewritten below with fresh output so
+       entropy accumulates across runs instead of restarting from a cold,
+       reproducible boot state. */
+    if (!seed_file_done) {
+        FILE *seed_file = tg_morphos_open_seed_file("rb");
+        seed_file_done = 1;
+        seed_file_write = 1;
+        if (seed_file != 0) {
+            unsigned char saved[TG_MTPROTO_SHA512_LENGTH];
+            unsigned long got = (unsigned long)fread(saved, 1U,
+                                                     sizeof(saved),
+                                                     seed_file);
+            fclose(seed_file);
+            if (got > 0UL) {
+                memcpy(mix, state, TG_MTPROTO_SHA512_LENGTH);
+                memcpy(mix + TG_MTPROTO_SHA512_LENGTH, saved, got);
+                tg_mtproto_sha512(mix,
+                                  TG_MTPROTO_SHA512_LENGTH + got, state);
+            }
+        }
+    }
+    /* Keystroke-timing ring: human input collected since the last call
+       (cheap on the input path, absorbed here). */
+    memcpy(mix, state, TG_MTPROTO_SHA512_LENGTH);
+    memcpy(mix + TG_MTPROTO_SHA512_LENGTH, tg_morphos_key_ring,
+           sizeof(tg_morphos_key_ring));
+    memcpy(mix + TG_MTPROTO_SHA512_LENGTH + sizeof(tg_morphos_key_ring),
+           &tg_morphos_key_ring_pos, sizeof(tg_morphos_key_ring_pos));
+    tg_mtproto_sha512(mix,
+                      TG_MTPROTO_SHA512_LENGTH +
+                          sizeof(tg_morphos_key_ring) +
+                          sizeof(tg_morphos_key_ring_pos),
+                      state);
 
     produced = 0;
     counter = 0;
@@ -301,6 +379,20 @@ static int tg_morphos_random_fallback(unsigned char *bytes,
     memset(fresh, 0, sizeof(fresh));
     memset(block, 0, sizeof(block));
     memset(mix, 0, sizeof(mix));
+
+    if (seed_file_write) {
+        /* One-level recursion (seed_file_done is already set): write fresh
+           output back so the next run starts from accumulated entropy. */
+        unsigned char fresh_seed[TG_MTPROTO_SHA512_LENGTH];
+        FILE *seed_file;
+        (void)tg_morphos_random_fallback(fresh_seed, sizeof(fresh_seed));
+        seed_file = tg_morphos_open_seed_file("wb");
+        if (seed_file != 0) {
+            fwrite(fresh_seed, 1U, sizeof(fresh_seed), seed_file);
+            fclose(seed_file);
+        }
+        memset(fresh_seed, 0, sizeof(fresh_seed));
+    }
     return 1;
 }
 

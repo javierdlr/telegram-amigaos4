@@ -134,6 +134,7 @@ These files are NOT included and must never be published:
 - telegram-password.txt
 - telegram-peers.txt
 - telegram-token.txt
+- telegram-seed.bin (random-number seed the program keeps between runs)
 
 telegram-auth.bin is especially sensitive. It contains the saved MTProto
 authorization for a Telegram account. Sharing it can give someone else access

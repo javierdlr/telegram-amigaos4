@@ -161,6 +161,30 @@ int tg_platform_stdin_readable(unsigned long timeout_seconds)
 #endif
 }
 
+/*
+ * Keystroke-timing entropy: every byte read from the console folds its
+ * arrival time into a small ring at O(1) cost (no hashing on the input
+ * path); the DRBG absorbs the ring on every generate. Human typing right
+ * before the MTProto auth-key DH is entropy the E-Clock jitter loop alone
+ * cannot provide on a quiet machine.
+ */
+#if defined(__amigaos3__)
+static unsigned long tg_os3_timebase(void);
+
+static unsigned long tg_os3_key_ring[16];
+static unsigned long tg_os3_key_ring_pos = 0;
+
+static void tg_os3_note_input_event(int ch)
+{
+    unsigned long v = tg_os3_timebase() ^
+                      ((unsigned long)(unsigned char)ch << 24) ^
+                      (tg_os3_key_ring_pos * 2654435761UL);
+    tg_os3_key_ring[tg_os3_key_ring_pos & 15UL] ^=
+        (v << (tg_os3_key_ring_pos & 7UL)) ^ (v >> 5);
+    ++tg_os3_key_ring_pos;
+}
+#endif
+
 int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
 {
 #if defined(__amigaos3__)
@@ -182,6 +206,7 @@ int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
     if (got <= 0) {
         return -1;
     }
+    tg_os3_note_input_event((int)ch);
     *out_char = ch;
     return 1;
 #else
@@ -210,6 +235,7 @@ int tg_platform_stdin_read_hidden_line(char *out, unsigned long out_size)
             SetMode(Input(), 0);
             return -1;
         }
+        tg_os3_note_input_event((int)ch);
         if (ch == '\n' || ch == '\r') {
             break;
         }
@@ -336,12 +362,58 @@ static unsigned long tg_os3_entropy_gather(unsigned char *buf, unsigned long cap
     return n;
 }
 
+static void tg_os3_drbg_generate(unsigned char *out, unsigned long n);
+
+static FILE *tg_os3_open_seed_file(const char *mode)
+{
+    /* PROGDIR: keeps the seed next to the binary; some C libraries do not
+       grok Amiga-style paths, so fall back to the current directory (the
+       icon launcher CDs into the drawer anyway). */
+    FILE *f = fopen("PROGDIR:telegram-seed.bin", mode);
+    if (f == 0) {
+        f = fopen("telegram-seed.bin", mode);
+    }
+    return f;
+}
+
+/*
+ * Persistent seed (PROGDIR:telegram-seed.bin, Linux random-seed style):
+ * entropy accumulates across runs instead of restarting from a cold,
+ * reproducible boot state. The file is mixed into the pool at seed time
+ * and immediately overwritten with fresh DRBG output, so yesterday's file
+ * never predicts today's state.
+ */
 static void tg_os3_drbg_seed(void)
 {
     unsigned char pool[1024];
     unsigned long len = tg_os3_entropy_gather(pool, sizeof(pool));
+    {
+        FILE *seed_file = tg_os3_open_seed_file("rb");
+        if (seed_file != 0) {
+            unsigned char saved[64];
+            unsigned long got = (unsigned long)fread(saved, 1U,
+                                                     sizeof(saved),
+                                                     seed_file);
+            fclose(seed_file);
+            if (got > 0UL && len + got <= sizeof(pool)) {
+                memcpy(pool + len, saved, got);
+                len += got;
+            }
+        }
+    }
     tg_mtproto_sha256(pool, len, tg_os3_drbg_state);
     tg_os3_drbg_ready = 1;
+    {
+        unsigned char fresh[64];
+        FILE *seed_file;
+        tg_os3_drbg_generate(fresh, sizeof(fresh));
+        seed_file = tg_os3_open_seed_file("wb");
+        if (seed_file != 0) {
+            fwrite(fresh, 1U, sizeof(fresh), seed_file);
+            fclose(seed_file);
+        }
+        memset(fresh, 0, sizeof(fresh));
+    }
 }
 
 static void tg_os3_drbg_generate(unsigned char *out, unsigned long n)
@@ -349,7 +421,8 @@ static void tg_os3_drbg_generate(unsigned char *out, unsigned long n)
     static unsigned long calls = 0;
     unsigned char key[TG_MTPROTO_SHA256_LENGTH];
     unsigned char block[TG_MTPROTO_SHA256_LENGTH];
-    unsigned char work[TG_MTPROTO_SHA256_LENGTH + 16];
+    unsigned char work[TG_MTPROTO_SHA256_LENGTH + 16 +
+                       sizeof(tg_os3_key_ring) + sizeof(unsigned long)];
     unsigned long off;
     unsigned long ctr;
     unsigned long wn;
@@ -367,6 +440,12 @@ static void tg_os3_drbg_generate(unsigned char *out, unsigned long n)
     wn += sizeof(tb);
     memcpy(work + wn, &calls, sizeof(calls));
     wn += sizeof(calls);
+    /* Keystroke-timing ring: human input collected since the last
+       generate (cheap on the input path, absorbed here). */
+    memcpy(work + wn, tg_os3_key_ring, sizeof(tg_os3_key_ring));
+    wn += sizeof(tg_os3_key_ring);
+    memcpy(work + wn, &tg_os3_key_ring_pos, sizeof(tg_os3_key_ring_pos));
+    wn += sizeof(tg_os3_key_ring_pos);
     tg_mtproto_sha256(work, wn, key);
 
     off = 0;
