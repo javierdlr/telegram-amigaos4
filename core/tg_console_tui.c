@@ -260,6 +260,12 @@ int tg_console_tui_resize(FILE *stream, const char *status_text)
         /* Keep the old geometry rather than tearing the layout down. */
         return 0;
     }
+    if (rows == tg_tui_rows && columns == tg_tui_columns) {
+        /* Same geometry (a duplicate end-of-drag report, or a console that
+           confirms the subscription with an immediate report): repainting
+           would wipe the transcript for nothing. */
+        return 0;
+    }
     tg_tui_rows = rows;
     tg_tui_columns = columns;
     tg_tui_paint_chrome(stream, status_text);
@@ -320,6 +326,12 @@ void tg_console_tui_input(FILE *stream,
                 }
                 continue;
             }
+            if ((unsigned char)*prompt < 0x20U) {
+                /* Control bytes (a legacy leading \n in a linear-mode prompt,
+                   BEL, ...) would scroll or garble the pinned input row. */
+                ++prompt;
+                continue;
+            }
             fputc(*prompt, stream);
             ++prompt;
             ++printed;
@@ -334,6 +346,9 @@ void tg_console_tui_input(FILE *stream,
                 (unsigned long)tg_tui_columns;
         }
         for (; i < pending_length && printed + 2U < tg_tui_columns; ++i) {
+            if ((unsigned char)pending[i] < 0x20U) {
+                continue;
+            }
             fputc(pending[i], stream);
             ++printed;
         }
