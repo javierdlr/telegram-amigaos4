@@ -44,61 +44,73 @@ int tg_console_tui_query_size(FILE *stream,
         return 0;
     }
     /* WINDOW STATUS REQUEST: the console answers on the input stream with
-       CSI 1;1;<rows>;<cols> SP r. */
+       CSI 1;1;<rows>;<cols> SP r. The input may also hold queued NEWSIZE
+       event reports (CSI 12;...|), especially mid-drag: skip those and keep
+       parsing CSI sequences until the 'r' answer shows up. */
     fputs(TG_UI_CSI "0 q", stream);
     fflush(stream);
 
-    /* Wait for a CSI introducer (tolerate pending unrelated bytes). */
-    guard = 0;
-    for (;;) {
-        if (tg_platform_stdin_read_char(2UL, &ch) <= 0) {
-            return 0;
-        }
-        if (ch == (char)0x9b || ch == (char)0x1b) {
-            if (ch == (char)0x1b) {
-                if (tg_platform_stdin_read_char(1UL, &ch) <= 0 || ch != '[') {
-                    continue;
-                }
+    for (guard = 0; guard < 16; ++guard) {
+        int introducer_tries;
+        int byte_tries;
+
+        /* Wait for a CSI introducer (tolerate pending unrelated bytes). */
+        introducer_tries = 0;
+        for (;;) {
+            if (tg_platform_stdin_read_char(2UL, &ch) <= 0) {
+                return 0;
             }
-            break;
+            if (ch == (char)0x9b || ch == (char)0x1b) {
+                if (ch == (char)0x1b) {
+                    if (tg_platform_stdin_read_char(1UL, &ch) <= 0 ||
+                        ch != '[') {
+                        continue;
+                    }
+                }
+                break;
+            }
+            if (++introducer_tries > 64) {
+                return 0;
+            }
         }
-        if (++guard > 64) {
-            return 0;
-        }
-    }
-    value_count = 0UL;
-    current = 0UL;
-    have_digit = 0;
-    for (guard = 0; guard < 32; ++guard) {
-        if (tg_platform_stdin_read_char(1UL, &ch) <= 0) {
-            return 0;
-        }
-        if (ch >= '0' && ch <= '9') {
-            current = (current * 10UL) + (unsigned long)(ch - '0');
-            have_digit = 1;
-            continue;
-        }
-        if (have_digit && value_count < 8UL) {
-            values[value_count] = current;
-            ++value_count;
-        }
+        value_count = 0UL;
         current = 0UL;
         have_digit = 0;
-        if (ch == ';' || ch == ' ') {
+        for (byte_tries = 0; byte_tries < 32; ++byte_tries) {
+            if (tg_platform_stdin_read_char(1UL, &ch) <= 0) {
+                return 0;
+            }
+            if (ch >= '0' && ch <= '9') {
+                current = (current * 10UL) + (unsigned long)(ch - '0');
+                have_digit = 1;
+                continue;
+            }
+            if (have_digit && value_count < 8UL) {
+                values[value_count] = current;
+                ++value_count;
+            }
+            current = 0UL;
+            have_digit = 0;
+            if (ch == ';' || ch == ' ') {
+                continue;
+            }
+            break; /* final byte */
+        }
+        if (ch != 'r') {
+            /* Another report (e.g. a queued NEWSIZE event, final '|'):
+               ignore it and wait for the real answer. */
             continue;
         }
-        break; /* final byte (expected 'r') */
+        if (value_count < 4UL || values[2] < TG_TUI_MIN_ROWS ||
+            values[3] < TG_TUI_MIN_COLUMNS || values[2] > 300UL ||
+            values[3] > 1000UL) {
+            return 0;
+        }
+        *rows = (unsigned int)values[2];
+        *columns = (unsigned int)values[3];
+        return 1;
     }
-    if (ch != 'r' || value_count < 4UL) {
-        return 0;
-    }
-    if (values[2] < TG_TUI_MIN_ROWS || values[3] < TG_TUI_MIN_COLUMNS ||
-        values[2] > 200UL || values[3] > 500UL) {
-        return 0;
-    }
-    *rows = (unsigned int)values[2];
-    *columns = (unsigned int)values[3];
-    return 1;
+    return 0;
 }
 
 int tg_console_tui_active(void)
@@ -230,10 +242,19 @@ int tg_console_tui_resize(FILE *stream, const char *status_text)
 {
     unsigned int rows;
     unsigned int columns;
+    char drain;
+    int drained;
 
     tg_tui_resize_flag = 0;
     if (stream == 0 || !tg_tui_active) {
         return 0;
+    }
+    /* A window drag floods stdin with queued NEWSIZE reports; flush them
+       before asking for the final geometry. */
+    for (drained = 0; drained < 512; ++drained) {
+        if (tg_platform_stdin_read_char(0UL, &drain) <= 0) {
+            break;
+        }
     }
     if (!tg_console_tui_query_size(stream, &rows, &columns)) {
         /* Keep the old geometry rather than tearing the layout down. */
