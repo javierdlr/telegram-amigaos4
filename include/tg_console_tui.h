@@ -73,8 +73,8 @@ const char *tg_console_tui_prompt(void);
    event (CSI 12 {); the line editor calls note_resize() when the event
    report (CSI 12;...|) shows up in the input stream; the chat loop polls
    resize_pending() and calls resize(), which re-queries the window size and
-   repaints the chrome (the transcript region restarts blank: there is no
-   backbuffer). leave() unsubscribes. */
+   repaints the chrome and replays the recent transcript lines from the
+   in-memory backlog. leave() unsubscribes. */
 void tg_console_tui_note_resize(void);
 int tg_console_tui_resize_pending(void);
 int tg_console_tui_resize(FILE *stream, const char *status_text);

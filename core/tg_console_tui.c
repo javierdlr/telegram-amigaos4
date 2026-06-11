@@ -187,6 +187,69 @@ void tg_console_tui_set_enabled(int enabled)
     tg_tui_enabled = enabled ? 1 : 0;
 }
 
+/*
+ * Transcript backlog: the most recent lines, kept so a repaint (resize,
+ * /add round-trip) can replay them into the fresh region instead of
+ * starting blank. Lines are stored as handed to tg_console_tui_line --
+ * colour sequences included, pre-clip, so a wider window after a resize
+ * shows more of each line, not less.
+ */
+#define TG_TUI_BACKLOG_LINES 64U
+#define TG_TUI_BACKLOG_WIDTH 160U
+
+static char tg_tui_backlog[TG_TUI_BACKLOG_LINES][TG_TUI_BACKLOG_WIDTH];
+static unsigned long tg_tui_backlog_total = 0UL;
+
+static void tg_tui_backlog_record(const char *text)
+{
+    char *slot = tg_tui_backlog[tg_tui_backlog_total % TG_TUI_BACKLOG_LINES];
+    unsigned long n = 0UL;
+
+    if (text != 0) {
+        while (text[n] != '\0' && n + 1UL < TG_TUI_BACKLOG_WIDTH) {
+            slot[n] = text[n];
+            ++n;
+        }
+    }
+    slot[n] = '\0';
+    ++tg_tui_backlog_total;
+}
+
+/* The drawing half of tg_console_tui_line (no recording). */
+static void tg_tui_draw_transcript_line(FILE *stream, const char *text)
+{
+    tg_tui_goto(stream, TG_TUI_REGION_TOP, 1U);
+    fputs(TG_UI_CSI "M", stream);
+    tg_tui_goto(stream, TG_TUI_REGION_BOTTOM, 1U);
+    fputs(TG_UI_CSI "L", stream);
+    tg_tui_clipped_line(stream, text != 0 ? text : "");
+}
+
+static void tg_tui_replay_backlog(FILE *stream)
+{
+    unsigned long region_rows;
+    unsigned long count;
+    unsigned long start;
+    unsigned long i;
+
+    if (tg_tui_rows < 4U) {
+        return;
+    }
+    region_rows = (unsigned long)tg_tui_rows - 3UL;
+    count = tg_tui_backlog_total;
+    if (count > TG_TUI_BACKLOG_LINES) {
+        count = TG_TUI_BACKLOG_LINES;
+    }
+    if (count > region_rows) {
+        count = region_rows;
+    }
+    start = tg_tui_backlog_total - count;
+    for (i = 0UL; i < count; ++i) {
+        tg_tui_draw_transcript_line(
+            stream, tg_tui_backlog[(start + i) % TG_TUI_BACKLOG_LINES]);
+    }
+}
+
 static void tg_tui_paint_chrome(FILE *stream, const char *status_text)
 {
     /* Base attributes + full clear, then the fixed chrome. */
@@ -198,6 +261,9 @@ static void tg_tui_paint_chrome(FILE *stream, const char *status_text)
     tg_tui_clipped_line(stream, "------------------------------------------"
                                 "--------------------------------------");
     tg_console_ui_reset(stream);
+    /* What was on screen, back on screen: the repaint should cost the user
+       nothing but a blink. */
+    tg_tui_replay_backlog(stream);
     tg_tui_goto(stream, tg_tui_rows, 1U);
     fputs(TG_UI_CSI "K", stream);
     fflush(stream);
@@ -279,12 +345,10 @@ void tg_console_tui_line(FILE *stream, const char *text)
     }
     /* Scroll the transcript region: drop its top row (everything below
        shifts up, input row included), then re-open a blank row just above
-       the separator so the chrome returns to its place. */
-    tg_tui_goto(stream, TG_TUI_REGION_TOP, 1U);
-    fputs(TG_UI_CSI "M", stream);
-    tg_tui_goto(stream, TG_TUI_REGION_BOTTOM, 1U);
-    fputs(TG_UI_CSI "L", stream);
-    tg_tui_clipped_line(stream, text != 0 ? text : "");
+       the separator so the chrome returns to its place. The line is also
+       recorded so resize/re-enter repaints can replay it. */
+    tg_tui_backlog_record(text);
+    tg_tui_draw_transcript_line(stream, text);
     fflush(stream);
 }
 
