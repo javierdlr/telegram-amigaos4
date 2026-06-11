@@ -991,3 +991,30 @@ int tg_platform_break_pending(void)
     return 0;
 #endif
 }
+
+#if defined(__amigaos4__)
+#include <proto/intuition.h>
+
+struct Library *IntuitionBase = 0;
+struct IntuitionIFace *IIntuition = 0;
+#endif
+
+void tg_platform_display_beep(void)
+{
+#if defined(__amigaos4__)
+    /* The screen flash is the Amiga-native notification; a BEL byte lets
+       console handlers improvise (AmiKit's console clears the window). */
+    IntuitionBase = OpenLibrary("intuition.library", 0L);
+    if (IntuitionBase != 0) {
+        IIntuition = (struct IntuitionIFace *)GetInterface(IntuitionBase,
+                                                           "main", 1L, 0);
+        if (IIntuition != 0) {
+            DisplayBeep(0);
+            DropInterface((struct Interface *)IIntuition);
+            IIntuition = 0;
+        }
+        CloseLibrary(IntuitionBase);
+        IntuitionBase = 0;
+    }
+#endif
+}

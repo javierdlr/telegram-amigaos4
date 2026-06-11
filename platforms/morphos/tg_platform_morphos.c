@@ -838,3 +838,20 @@ int tg_platform_break_pending(void)
     /* Peek without clearing: the break stays pending for outer loops. */
     return (SetSignal(0L, 0L) & SIGBREAKF_CTRL_C) != 0L;
 }
+
+#include <proto/intuition.h>
+
+struct IntuitionBase *IntuitionBase = 0;
+
+void tg_platform_display_beep(void)
+{
+    /* The screen flash is the Amiga-native notification; a BEL byte lets
+       console handlers improvise (AmiKit's console clears the window). */
+    IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library",
+                                                        0L);
+    if (IntuitionBase != 0) {
+        DisplayBeep(0L);
+        CloseLibrary((struct Library *)IntuitionBase);
+        IntuitionBase = 0;
+    }
+}

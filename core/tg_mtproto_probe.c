@@ -8001,15 +8001,56 @@ static void tg_mtproto_chat_show_prompt(FILE *stream,
 }
 
 /* Updates the TUI status bar with the open chat's name. */
+/* Renders cached UTF-8 text into the display charset (same mapping as
+   tg_mtproto_print_cache_text) for callers that need a string, not a
+   stream -- e.g. the status bar, which printed accents as mojibake. */
+static void tg_mtproto_cache_text_to_display(const char *text,
+                                             char *out,
+                                             unsigned long out_size)
+{
+    FILE *tmp;
+    unsigned long n;
+    int ch;
+
+    if (out == 0 || out_size == 0UL) {
+        return;
+    }
+    out[0] = '\0';
+    if (text == 0) {
+        return;
+    }
+    tmp = tmpfile();
+    if (tmp == 0) {
+        /* Best effort: the raw text (worst case shows mojibake again). */
+        n = 0UL;
+        while (text[n] != '\0' && n + 1UL < out_size) {
+            out[n] = text[n];
+            ++n;
+        }
+        out[n] = '\0';
+        return;
+    }
+    tg_mtproto_print_cache_text(tmp, text);
+    rewind(tmp);
+    n = 0UL;
+    while (n + 1UL < out_size && (ch = fgetc(tmp)) != EOF) {
+        out[n++] = (char)ch;
+    }
+    out[n] = '\0';
+    fclose(tmp);
+}
+
 static void tg_mtproto_chat_tui_status(const char *peer_label)
 {
+    char shown[64];
     char status[96];
 
     if (!tg_console_tui_active() || tg_chat_tui_stream == 0) {
         return;
     }
     if (peer_label != 0 && peer_label[0] != '\0') {
-        sprintf(status, " Telegram Amiga - %.60s ", peer_label);
+        tg_mtproto_cache_text_to_display(peer_label, shown, sizeof(shown));
+        sprintf(status, " Telegram Amiga - %.60s ", shown);
     } else {
         sprintf(status, " Telegram Amiga ");
     }
@@ -8160,11 +8201,11 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
         tg_console_ui_end_line(stream);
     }
     if (tg_chat_bell_enabled) {
-        /* BEL: Amiga consoles render it as the system DisplayBeep flash.
-           Send it to the real console, outside any captured line: inside
-           TUI transcript content some consoles (AROS) draw the control byte
-           as a stray glyph instead of beeping. */
-        fputc('\a', tg_chat_tui_stream != 0 ? tg_chat_tui_stream : stream);
+        /* Intuition DisplayBeep, not a BEL byte: console handlers improvise
+           on BEL (AmiKit's replacement console clears the window, one AROS
+           icon console draws a stray glyph). The flash never touches the
+           console stream. */
+        tg_platform_display_beep();
     }
     tg_chat_notify_count = 0UL;
     tg_chat_notify_dropped = 0UL;
@@ -8189,6 +8230,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /history      show recent messages without new-message filtering",
         "  /watch sec    set auto-read interval",
         "  /watch off    disable auto-read",
+        "  /resize       redraw the layout after a window resize",
         "  /color        toggle colours (or /color on|off)",
         "  /bell         toggle the notification flash/bell",
         "  /help         show this help",
@@ -8787,6 +8829,26 @@ int tg_mtproto_auth_chat_file(const char *host,
                     fprintf(tui_cap, "Could not read message history now.\n");
                 }
                 tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (strcmp(line, "/resize") == 0) {
+            /* Manual re-fit for consoles that do not deliver NEWSIZE raw
+               events (the MorphOS tabbed terminal): re-query the window and
+               repaint. The same-geometry guard makes it a clean no-op when
+               nothing changed. */
+            if (tg_console_tui_active()) {
+                if (tg_console_tui_resize(stream, " Telegram Amiga ")) {
+                    tg_mtproto_chat_tui_status(peer_label);
+                } else {
+                    tg_mtproto_chat_print_system_line(
+                        stream, "Window size unchanged.");
+                }
+            } else {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Full-screen mode is not active.");
             }
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
                                         0UL, tg_chat_input_raw);

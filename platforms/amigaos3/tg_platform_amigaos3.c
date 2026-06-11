@@ -1082,3 +1082,25 @@ int tg_platform_break_pending(void)
     return 0;
 #endif
 }
+
+#if defined(__amigaos3__)
+#include <proto/intuition.h>
+
+struct IntuitionBase *IntuitionBase = 0;
+#endif
+
+void tg_platform_display_beep(void)
+{
+#if defined(__amigaos3__)
+    /* Open per call: intuition is resident, the open is a refcount bump.
+       The screen flash is the Amiga-native notification; sending a BEL byte
+       instead lets console handlers improvise (AmiKit's clears the window). */
+    IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library",
+                                                        0L);
+    if (IntuitionBase != 0) {
+        DisplayBeep(0L);
+        CloseLibrary((struct Library *)IntuitionBase);
+        IntuitionBase = 0;
+    }
+#endif
+}

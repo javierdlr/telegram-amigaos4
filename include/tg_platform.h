@@ -93,6 +93,14 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count);
  */
 int tg_platform_break_pending(void);
 
+/*
+ * Flashes the display (Intuition DisplayBeep): the user-visible "bell" that
+ * never touches the console byte stream. Console handlers disagree wildly
+ * about the BEL byte -- AmiKit's replacement console reacts by clearing the
+ * window, which tore the full-screen chat apart on a notification.
+ */
+void tg_platform_display_beep(void);
+
 /**
  * Platform TCP connect implementation used by tg_net_connect().
  *
