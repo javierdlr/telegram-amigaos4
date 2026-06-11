@@ -9015,6 +9015,10 @@ int tg_mtproto_auth_chat_file(const char *host,
                    mode is to drop to the linear flow for its duration. */
                 if (tg_console_tui_active()) {
                     tg_console_tui_leave(stream);
+                    /* leave() resets attributes: repaint the dark theme so
+                       the picker list does not sit on the bare window
+                       colour until the full-screen layout returns. */
+                    tg_console_ui_enter_screen(stream);
                 }
                 rc = tg_mtproto_auth_search_global_on_context(
                     host, port, api_id, auth_file, dc_id_text, &chat_context,
