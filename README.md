@@ -117,10 +117,10 @@ auth files, phone-code files, passwords or peer caches.
 
 Latest human releases:
 
-- [AmigaOS 3.x 20260610 (native — no ixemul / no AmiSSL; notifications + chat UI)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-20260610)
-- [MorphOS 20260610 (notifications + chat UI)](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-20260610)
-- [AmigaOS 4.x 20260610 (notifications + chat UI)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-20260610)
-- [AROS i386 ABIv0 20260610 (notifications + chat UI)](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-20260610)
+- [AmigaOS 3.x 20260611 (native — no ixemul / no AmiSSL; full-screen chat, solid)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos3-20260611)
+- [MorphOS 20260611 (full-screen chat, solid)](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-20260611)
+- [AmigaOS 4.x 20260611 (full-screen chat, solid)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-20260611)
+- [AROS i386 ABIv0 20260611 (full-screen chat, solid)](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-20260611)
 
 AROS x86_64 is not part of the current user release set. It remains a
 diagnostic/porting target until the runtime path is stable.
