@@ -8496,11 +8496,28 @@ int tg_mtproto_auth_chat_file(const char *host,
     }
     tg_mtproto_chat_print_system_line(stream, "Opening session...");
     quiet = tg_mtproto_open_quiet_stream(stream);
-    if (tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
-                                    quiet, label) != 0 ||
-        tg_mtproto_ensure_saved_auth_context(host, port, auth_file,
-                                             dc_id_text, &chat_context,
-                                             quiet, "chat session") != 0) {
+    rc = tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
+                                     quiet, label);
+    if (rc == 0) {
+        rc = tg_mtproto_ensure_saved_auth_context(host, port, auth_file,
+                                                  dc_id_text, &chat_context,
+                                                  quiet, "chat session");
+        if (rc != 0) {
+            /* The first session open on a slow link often stalls (field
+               MorphOS report: stuck on "Opening session...", relaunch went
+               straight through). A fresh connection usually succeeds:
+               retry once ourselves instead of making the user relaunch. */
+            tg_mtproto_close_auth_context(&chat_context);
+            tg_mtproto_reset_quiet_stream(quiet, stream);
+            tg_mtproto_chat_print_system_line(stream,
+                                              "Slow start, retrying once...");
+            rc = tg_mtproto_ensure_saved_auth_context(host, port, auth_file,
+                                                      dc_id_text,
+                                                      &chat_context, quiet,
+                                                      "chat session");
+        }
+    }
+    if (rc != 0) {
         tg_mtproto_replay_quiet_stream(quiet, stream);
         tg_mtproto_close_quiet_stream(quiet, stream);
         tg_net_set_connect_timeout_seconds(saved_timeout);
