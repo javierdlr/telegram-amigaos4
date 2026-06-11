@@ -199,8 +199,10 @@ Amiga consoles have no emoji glyphs. `--ui-tui off` returns to the classic
 linear flow, `--ui-theme plain` keeps the normal window colours,
 `--ui-color off` disables colours entirely. Text size follows the system
 console font preferences. Platform notes: on MorphOS auto-read runs at a
-slower pace and cross-chat notifications/colours are currently disabled
-(slow TCP stack and console issues under investigation).
+slower pace, cross-chat notifications arrive at a paced rhythm (within
+~12 seconds via a small updates.getDifference drain that protects the
+slow TCP stack; `/diff off` disables it) and colours stay off (console
+issue under investigation).
 
 If a command reports `auth-dc-mismatch`, inspect the saved auth file and run
 with the matching DC endpoint. The latest AmigaOS 3.x validation used:

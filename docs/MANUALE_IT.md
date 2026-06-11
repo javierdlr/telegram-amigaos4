@@ -82,11 +82,11 @@ La finestra si può ridimensionare quando vuoi: il layout si riadatta.
   pen di sfondo rossa); chi vuole il look scuro: `--ui-theme dark`.
   Testato su 68030+; serve uno stack TCP (Roadshow, AmiTCP...).
 - **AmigaOS 4.x**: tutto attivo di default.
-- **MorphOS**: i colori sono spenti di default e le notifiche tra chat
-  sono temporaneamente disabilitate (limiti della console/rete del
-  sistema); lettura auto ogni 12s — regolabile con `/watch`. Dopo aver
-  allargato la finestra dai `/resize`. Avvia da disco (es. `Work:`), non
-  da RAM:.
+- **MorphOS**: i colori sono spenti di default (limite console del
+  sistema). Le notifiche tra chat funzionano "a rate": arrivano entro
+  ~12 secondi invece che all'istante, per proteggere la rete lenta
+  della piattaforma (`/diff off` le spegne). Lettura auto ogni 12s —
+  regolabile con `/watch`. Avvia da disco (es. `Work:`), non da RAM:.
 - **AROS**: se avvii da icona e la console non supporta il full-screen,
   il client lo capisce da solo e passa al flusso classico riga-per-riga.
 

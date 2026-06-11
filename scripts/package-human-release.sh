@@ -202,6 +202,8 @@ Commands:
   /remove n     remove chat n from the list
   /history      show recent messages again
   /watch sec    change the auto-read interval (/watch off disables it)
+  /resize       redraw the layout after a window resize
+  /diff         toggle the background catch-up (MorphOS notifications)
   /color        toggle colours (also /color on or /color off)
   /bell         toggle the notification flash/bell
   /help         show commands
@@ -225,11 +227,13 @@ top, the conversation scrolling in the middle, and your typing on a fixed
 input line at the bottom. Sender names are bold (your contact in the accent
 colour, you in white), every message line starts with its [HH:MM] time, a
 separator marks day changes, and multi-line messages keep their line breaks.
-Avoid resizing the window during a chat (the layout cannot follow yet);
---ui-tui off returns to the classic line-by-line flow.
+Resize the window whenever you like: the layout re-fits itself and keeps
+the recent conversation (type /resize if your console does not announce
+resizes). --ui-tui off returns to the classic line-by-line flow.
 
 On MorphOS the chat keeps a slower auto-read pace (its TCP stack streams
-large replies slowly) and cross-chat notifications are disabled for now;
+large replies slowly) and cross-chat notifications arrive within ~12
+seconds, drained gently to protect that link (/diff off disables them);
 colours are off there too. Emoji are shown as classic
 text emoticons like :) :D <3 (y) because Amiga consoles cannot draw emoji
 glyphs; flags become their two country letters (IT, DE) and other symbols a

@@ -83,10 +83,12 @@ You can resize the window at any time: the layout re-fits itself.
   dark look back. Tested on 68030+; needs a TCP stack (Roadshow,
   AmiTCP...).
 - **AmigaOS 4.x**: everything enabled by default.
-- **MorphOS**: colours are off by default and cross-chat notifications
-  are temporarily disabled (console/network quirks of the platform);
-  auto-read every 12s — tune with `/watch`. After enlarging the window,
-  type `/resize`. Run it from disk (e.g. `Work:`), not from RAM:.
+- **MorphOS**: colours are off by default (a console quirk of the
+  platform). Cross-chat notifications work at a paced rhythm: they
+  arrive within ~12 seconds instead of instantly, protecting the
+  platform's slow network path (`/diff off` turns them off). Auto-read
+  every 12s — tune with `/watch`. Run it from disk (e.g. `Work:`), not
+  from RAM:.
 - **AROS**: if the icon-launched console cannot do full-screen, the
   client detects it and falls back to the classic line-by-line flow.
 
