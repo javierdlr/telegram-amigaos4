@@ -4258,6 +4258,37 @@ int tg_app_run(int argc, char **argv)
     }
 
     if (config.run_mtproto_chat_file) {
+        /* No saved login yet: run the wizard against the SAME host/port
+           this command was given, so redirected endpoints (e.g. a bridge
+           in front of the real DC on a hosted setup) serve the login too.
+           The start-file flow cannot do this: its endpoints come from the
+           DC table. */
+        {
+            unsigned char chat_probe_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+            tg_mtproto_session chat_probe_session;
+            tg_mtproto_session_status chat_probe_status;
+
+            chat_probe_status = tg_mtproto_session_load_authorization(
+                config.mtproto_auth_file, &chat_probe_session,
+                chat_probe_key);
+            memset(chat_probe_key, 0, sizeof(chat_probe_key));
+            if (chat_probe_status == TG_MTPROTO_SESSION_FILE_ERROR) {
+                int wizard_rc;
+
+                puts("No saved login found. Starting login wizard.");
+                wizard_rc = tg_mtproto_auth_login_wizard_file(
+                    config.mtproto_auth_host, config.mtproto_auth_port,
+                    config.mtproto_auth_dc_id, config.mtproto_auth_api_file,
+                    config.mtproto_auth_file,
+                    config.mtproto_auth_code_hash_file != 0
+                        ? config.mtproto_auth_code_hash_file
+                        : "phone-code-hash.txt",
+                    stdout);
+                if (wizard_rc != 0) {
+                    return wizard_rc;
+                }
+            }
+        }
         return tg_mtproto_auth_chat_file(config.mtproto_auth_host,
                                          config.mtproto_auth_port,
                                          config.mtproto_auth_api_file,
