@@ -26,22 +26,58 @@
    (and the black-background theme stays off too: pen 1 rendered red on
    Ambient anyway). /color on or --ui-color on re-enable them explicitly for
    the brave. */
+/*
+ * Platform capability defaults (the compile-time half of the mini-termcap).
+ * sgr_safe=0 on MorphOS: SGR colour output reproducibly froze the machine.
+ * dark_theme_ok=0 on MorphOS (Ambient pen 1 is red) and AmigaOS 3 (field
+ * report: some shell palettes render the background pen red, unreadable).
+ * The runtime half (csi_output / answers_size_query) starts UNKNOWN and is
+ * refined by the TUI window-size probe.
+ */
+static tg_console_caps tg_ui_caps = {
+    TG_UI_CSI_OUTPUT_UNKNOWN,
+    0,
 #if defined(__MORPHOS__) || defined(__MORPHOS)
-static int tg_ui_color_mode = TG_UI_COLOR_OFF;
-static int tg_ui_theme = TG_UI_THEME_PLAIN;
+    0, /* sgr_safe */
+    0  /* dark_theme_ok */
 #elif defined(__amigaos3__)
-/* AmigaOS 3: text colours yes, background pen no. Shells with a re-mapped
-   palette render bg pen 1 red (field report: unreadable), so the dark
-   theme is opt-in there via --ui-theme dark. */
-static int tg_ui_color_mode = TG_UI_COLOR_AUTO;
-static int tg_ui_theme = TG_UI_THEME_PLAIN;
+    1,
+    0
 #else
-static int tg_ui_color_mode = TG_UI_COLOR_AUTO;
-static int tg_ui_theme = TG_UI_THEME_DARK;
+    1,
+    1
+#endif
+};
+
+static int tg_ui_color_mode =
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    TG_UI_COLOR_OFF;
+#else
+    TG_UI_COLOR_AUTO;
+#endif
+/* Theme default mirrors caps.dark_theme_ok (kept in sync by hand: C89
+   static initialisers cannot read the struct). */
+static int tg_ui_theme =
+#if defined(__MORPHOS__) || defined(__MORPHOS) || defined(__amigaos3__)
+    TG_UI_THEME_PLAIN;
+#else
+    TG_UI_THEME_DARK;
 #endif
 static int tg_ui_interactive = 0;
 static int tg_ui_charset = TG_UI_CHARSET_LATIN1;
 static int tg_ui_screen_entered = 0;
+
+const tg_console_caps *tg_console_caps_get(void)
+{
+    return &tg_ui_caps;
+}
+
+void tg_console_caps_note_size_query(int answered)
+{
+    tg_ui_caps.answers_size_query = answered ? 1 : 0;
+    tg_ui_caps.csi_output =
+        answered ? TG_UI_CSI_OUTPUT_OK : TG_UI_CSI_OUTPUT_DEAF;
+}
 
 void tg_console_ui_set_color_mode(int mode)
 {

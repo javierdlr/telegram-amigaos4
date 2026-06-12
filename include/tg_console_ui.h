@@ -52,6 +52,36 @@
 #define TG_UI_THEME_DARK 0
 #define TG_UI_THEME_PLAIN 1
 
+/*
+ * Console capabilities (the mini-termcap). Two days of escape-code
+ * whack-a-mole across 4 platforms x N console handlers taught us that the
+ * "what can this console actually do" answers must live in ONE place:
+ * compile-time platform defaults refined by runtime probes, read by every
+ * call site that would otherwise guess.
+ *
+ * csi_output: does the console interpret our CSI introducer at all? One
+ * AROS icon-console type prints 0x9B as a glyph; until the TUI size probe
+ * has run the answer is UNKNOWN and writers should assume OK.
+ */
+#define TG_UI_CSI_OUTPUT_UNKNOWN 0
+#define TG_UI_CSI_OUTPUT_OK 1
+#define TG_UI_CSI_OUTPUT_DEAF 2
+
+typedef struct tg_console_caps {
+    int csi_output;          /* TG_UI_CSI_OUTPUT_*: refined by the TUI probe */
+    int answers_size_query;  /* CSI 0 SP q answered (1) or timed out (0) */
+    int sgr_safe;            /* SGR colour output known safe (MorphOS: no) */
+    int dark_theme_ok;       /* black-background theme is a sane default */
+} tg_console_caps;
+
+/* Read-only view of the current capabilities. */
+const tg_console_caps *tg_console_caps_get(void);
+
+/* The TUI window-size probe feeds its outcome here: answered==1 marks the
+   console CSI-capable; answered==0 with raw stdin active marks it deaf
+   (the probe sequence went to the screen instead of being interpreted). */
+void tg_console_caps_note_size_query(int answered);
+
 /* Colour mode: ON / OFF / AUTO (default). In AUTO colours activate only once
    the chat marks the session interactive (raw console mode engaged), so
    redirected output and smoke-test logs never contain escape bytes. */

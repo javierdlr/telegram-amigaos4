@@ -274,10 +274,19 @@ int tg_console_tui_enter(FILE *stream, const char *status_text)
     unsigned int rows;
     unsigned int columns;
 
-    if (stream == 0 || tg_tui_active || !tg_tui_enabled) {
+    if (stream == 0 || tg_tui_active) {
         return tg_tui_active;
     }
+    /* The size probe runs even with the full-screen layout disabled: its
+       outcome feeds the mini-termcap (an unanswered probe on a raw console
+       marks it CSI-deaf, so other writers stop sending sequences it would
+       draw as glyphs). */
     if (!tg_console_tui_query_size(stream, &rows, &columns)) {
+        tg_console_caps_note_size_query(0);
+        return 0;
+    }
+    tg_console_caps_note_size_query(1);
+    if (!tg_tui_enabled) {
         return 0;
     }
     tg_tui_rows = rows;

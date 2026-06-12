@@ -8106,11 +8106,11 @@ static void tg_mtproto_chat_clear_input_line(FILE *stream, int raw)
     if (stream == 0 || tg_console_tui_active()) {
         return;
     }
-    /* The CSI-deaf console (the AROS icon console where the TUI probe
-       failed and AUTO colours turned interactive off) would print the
-       erase sequence as stray glyphs before every async line. */
-    if (raw && (tg_console_ui_color_mode() != TG_UI_COLOR_AUTO ||
-                tg_console_ui_color_active())) {
+    /* The CSI-deaf console (one AROS icon-console type) would print the
+       erase sequence as stray glyphs before every async line; ask the
+       mini-termcap instead of guessing from colour state. */
+    if (raw &&
+        tg_console_caps_get()->csi_output != TG_UI_CSI_OUTPUT_DEAF) {
         fputs("\r" TG_UI_CSI "K", stream);
     } else {
         fputc('\n', stream);
@@ -8623,12 +8623,13 @@ int tg_mtproto_auth_chat_file(const char *host,
        window-size report); falls back to the linear flow otherwise. */
     tg_chat_tui_stream = stream;
     if (!chat_raw || !tg_console_tui_enter(stream, " Telegram Amiga ")) {
-        /* No full-screen layout: if the console did not even answer the
-           size query it may not interpret CSI at all (seen on an AROS
-           console type that prints 0x9B as a glyph), so AUTO colours stay
-           off in the linear flow; --ui-color on still forces them. */
+        /* No full-screen layout: when the mini-termcap marks the console
+           CSI-deaf (the probe sequence went to the screen as glyphs),
+           AUTO colours stay off in the linear flow too -- their SGR bytes
+           would be drawn as garbage. --ui-color on still forces them. */
         if (chat_raw &&
-            tg_console_ui_color_mode() == TG_UI_COLOR_AUTO) {
+            tg_console_ui_color_mode() == TG_UI_COLOR_AUTO &&
+            tg_console_caps_get()->csi_output == TG_UI_CSI_OUTPUT_DEAF) {
             tg_console_ui_set_interactive(0);
         }
         /* Dark theme: paint the window black before the first output. */
