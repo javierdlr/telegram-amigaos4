@@ -8106,7 +8106,11 @@ static void tg_mtproto_chat_clear_input_line(FILE *stream, int raw)
     if (stream == 0 || tg_console_tui_active()) {
         return;
     }
-    if (raw) {
+    /* The CSI-deaf console (the AROS icon console where the TUI probe
+       failed and AUTO colours turned interactive off) would print the
+       erase sequence as stray glyphs before every async line. */
+    if (raw && (tg_console_ui_color_mode() != TG_UI_COLOR_AUTO ||
+                tg_console_ui_color_active())) {
         fputs("\r" TG_UI_CSI "K", stream);
     } else {
         fputc('\n', stream);
