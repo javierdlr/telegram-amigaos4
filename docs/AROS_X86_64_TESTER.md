@@ -41,7 +41,24 @@ v0.38 under QEMU:
   client leans on stdio/tmpfile heavily; (3) wait for upstream x86_64
   ABI stabilisation.
 
-Verdict: stays frozen. The i386 build remains the supported AROS lane.
+### Hosted re-test, same day: the client is x86_64-clean
+
+Rebuilt on the Linux build server against the SDK of its own hosted
+AROS x86_64 (deadwood2/AROS, matching toolchain/kickstart pair) and run
+inside that hosted runtime via the BebboSSH lane:
+
+- `--platform-rng-test`: full startup, `secure rng: available`.
+- `--mtproto-self-test-fast`: encrypted, transport, login, probe,
+  crypto and session self-tests all pass.
+
+This pins the native failure precisely: the client and every portable
+layer are x86_64-ready today; the crash on AROS One x64 v0.38 is the
+SDK/kickstart ABI mismatch of that pairing alone.
+
+Verdict: frozen only as a *public package* until a One-image-matching
+SDK exists (check the image's own Development drawer first). The i386
+build remains the supported AROS lane; hosted x86_64 is a validated
+second oracle for 64-bit correctness.
 
 
 - Build file present: `Makefile.aros-x86_64`
