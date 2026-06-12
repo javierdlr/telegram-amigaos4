@@ -79,6 +79,11 @@ void tg_console_tui_note_resize(void);
 int tg_console_tui_resize_pending(void);
 int tg_console_tui_resize(FILE *stream, const char *status_text);
 
+/* Scrollback: pages the transcript view through the in-memory backlog.
+   direction > 0 goes back in time, < 0 toward live; the separator row
+   doubles as the indicator and any chrome repaint returns to live. */
+void tg_console_tui_scroll(FILE *stream, int direction);
+
 /* Interactive diagnostic for --console-tui-test. */
 int tg_console_tui_self_test(FILE *stream);
 

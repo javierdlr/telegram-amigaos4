@@ -225,6 +225,92 @@ static void tg_tui_draw_transcript_line(FILE *stream, const char *text)
     tg_tui_clipped_line(stream, text != 0 ? text : "");
 }
 
+/* Scrollback: how many lines back from "live" the transcript view sits.
+   0 = live; while scrolled, new lines only enter the backlog and the view
+   stays anchored to its content. */
+static unsigned long tg_tui_view_offset = 0UL;
+
+static unsigned long tg_tui_backlog_available(void)
+{
+    return tg_tui_backlog_total > TG_TUI_BACKLOG_LINES
+               ? (unsigned long)TG_TUI_BACKLOG_LINES
+               : tg_tui_backlog_total;
+}
+
+static unsigned long tg_tui_view_offset_max(void)
+{
+    unsigned long region;
+    unsigned long avail = tg_tui_backlog_available();
+
+    if (tg_tui_rows < 4U) {
+        return 0UL;
+    }
+    region = (unsigned long)tg_tui_rows - 3UL;
+    return avail > region ? avail - region : 0UL;
+}
+
+/* Redraws the whole transcript region from the backlog at the current view
+   offset; the separator doubles as the scrollback indicator. */
+static void tg_tui_redraw_region(FILE *stream)
+{
+    unsigned long region;
+    unsigned long avail = tg_tui_backlog_available();
+    unsigned long r;
+
+    if (tg_tui_rows < 4U) {
+        return;
+    }
+    region = (unsigned long)tg_tui_rows - 3UL;
+    for (r = 0UL; r < region; ++r) {
+        unsigned long back = tg_tui_view_offset + (region - 1UL - r);
+
+        tg_tui_goto(stream, TG_TUI_REGION_TOP + (unsigned int)r, 1U);
+        fputs(TG_UI_CSI "K", stream);
+        if (back < avail) {
+            unsigned long index = tg_tui_backlog_total - 1UL - back;
+            tg_tui_clipped_line(
+                stream, tg_tui_backlog[index % TG_TUI_BACKLOG_LINES]);
+        } else {
+            tg_tui_clipped_line(stream, "");
+        }
+    }
+    tg_tui_goto(stream, tg_tui_rows - 1U, 1U);
+    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
+    tg_tui_clipped_line(stream,
+                        tg_tui_view_offset > 0UL
+                            ? "---- older messages -- Shift+Down: back to "
+                              "live ----------------------------------"
+                            : "----------------------------------------------"
+                              "----------------------------------");
+    tg_console_ui_reset(stream);
+    fflush(stream);
+}
+
+void tg_console_tui_scroll(FILE *stream, int direction)
+{
+    unsigned long step;
+    unsigned long max_offset;
+
+    if (stream == 0 || !tg_tui_active || tg_tui_rows < 4U) {
+        return;
+    }
+    step = ((unsigned long)tg_tui_rows - 3UL) / 2UL;
+    if (step == 0UL) {
+        step = 1UL;
+    }
+    max_offset = tg_tui_view_offset_max();
+    if (direction > 0) {
+        tg_tui_view_offset += step;
+        if (tg_tui_view_offset > max_offset) {
+            tg_tui_view_offset = max_offset;
+        }
+    } else {
+        tg_tui_view_offset =
+            tg_tui_view_offset > step ? tg_tui_view_offset - step : 0UL;
+    }
+    tg_tui_redraw_region(stream);
+}
+
 static void tg_tui_replay_backlog(FILE *stream)
 {
     unsigned long region_rows;
@@ -252,6 +338,8 @@ static void tg_tui_replay_backlog(FILE *stream)
 
 static void tg_tui_paint_chrome(FILE *stream, const char *status_text)
 {
+    /* A chrome repaint (enter, resize, /add round-trip) returns to live. */
+    tg_tui_view_offset = 0UL;
     /* Base attributes + full clear, then the fixed chrome. */
     tg_console_ui_reset(stream);
     fputs(TG_UI_CSI "H" TG_UI_CSI "J", stream);
@@ -357,6 +445,15 @@ void tg_console_tui_line(FILE *stream, const char *text)
        the separator so the chrome returns to its place. The line is also
        recorded so resize/re-enter repaints can replay it. */
     tg_tui_backlog_record(text);
+    if (tg_tui_view_offset > 0UL) {
+        /* Scrolled back: the new line enters the backlog only and the view
+           stays anchored to its content (the offset grows with the ring). */
+        unsigned long max_offset = tg_tui_view_offset_max();
+        if (tg_tui_view_offset < max_offset) {
+            ++tg_tui_view_offset;
+        }
+        return;
+    }
     tg_tui_draw_transcript_line(stream, text);
     fflush(stream);
 }

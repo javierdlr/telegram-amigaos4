@@ -7554,6 +7554,13 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 /* Window NEWSIZE raw event: let the chat loop repaint the
                    full-screen layout with the new geometry. */
                 tg_console_tui_note_resize();
+            } else if (direction == 'T') {
+                /* Shift+Up (CSI T on every Amiga console; PgUp on most
+                   modern keymaps): page back through the transcript. */
+                tg_console_tui_scroll(stream, 1);
+            } else if (direction == 'S') {
+                /* Shift+Down: toward live. */
+                tg_console_tui_scroll(stream, -1);
             }
             return 0;
         }
@@ -8404,6 +8411,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  number        switch to chat number",
         "  F1..F10       switch to chat 1..10 (shift: 11..20)",
         "  Tab           back to the previous chat",
+        "  Shift+Up/Down page through older messages (and back to live)",
         "  /swap         back to the previous chat",
         "  /peers        show cached chats",
         "  /search text  find cached chats by name or username",
