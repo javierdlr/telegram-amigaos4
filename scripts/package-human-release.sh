@@ -92,6 +92,19 @@ first login does some heavy big-number math and may take a minute on slower
 normal chatting stays fast.
 "
         ;;
+    "AROS x86_64")
+        readme_requirements="System requirements
+-------------------
+
+- AROS x86_64 with a working TCP/IP stack (bsdsocket) and a working
+  internet connection.
+- A kickstart/SDK pairing from the current trunk line. The validated
+  reference is hosted AROS x86_64 (Linux-hosted). AROS One v0.38 pairs a
+  different kickstart and does NOT run this binary (it stops before the
+  program starts; that is the system pairing, not a client crash).
+- A few MB of free RAM; the launcher requests Stack 262144.
+"
+        ;;
     *)
         readme_requirements="System requirements
 -------------------

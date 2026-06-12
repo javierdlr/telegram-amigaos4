@@ -3,9 +3,10 @@
 # Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
 # SPDX-License-Identifier: MIT
 #
-# Package helper for the frozen AROS x86_64 diagnostic artifact. TLS is not
-# available yet on this target because the validated SDK lacks OpenSSL headers
-# and libraries, and the standard-CRT runtime lane is not user-valid.
+# Package helper for the AROS x86_64 diagnostic artifact (self-tests, ABI
+# probing). The human-facing x86_64 package comes from
+# package-human-release.sh; this one stays useful for validating new
+# SDK/runtime pairings before pointing users at them.
 
 set -eu
 
@@ -84,16 +85,15 @@ Telegram Amiga - AROS x86_64 diagnostic artifact
 Build: $COMMIT_ID
 TLS enabled: $ENABLE_TLS
 
-This package is frozen as a diagnostic/porting artifact. Main AROS development
-continues on AROS i386 until the shell client is usable end to end. AROS
-x86_64 will be revisited later with a minimal-runtime port.
+This is the diagnostic flavour of the AROS x86_64 build, meant for
+validating an SDK/runtime pairing. The user-facing package is the
+Telegram-aros-x86_64-<date>.zip release.
 
-"Hosted" AROS is only a validation environment; release packages are split by
-CPU/ABI, not by hosted/native mode.
-
-The current standard-CRT x86_64 binary is not runtime-valid: the latest VM
-console test crashed before --help with an illegal address access. Do not
-present this package as a working user build.
+Release packages are split by CPU/ABI, not by hosted/native mode. The
+kickstart and the SDK must come from the same line: on mismatched systems
+(for example AROS One v0.38) the binary faults before --help in the
+standard-CRT autoinit. That crash identifies the pairing as unsupported,
+not a client bug.
 
 Minimum offline test:
 
@@ -119,9 +119,9 @@ For this package, TLS is expected to be disabled. Commands that need HTTPS or
 Telegram live API access are expected to report unsupported until the x86_64
 OpenSSL SDK path is available.
 
-MTProto account login and text chat use Telegram's MTProto TCP transport rather
-than the Bot API HTTPS path, but this target is frozen. Prefer AROS i386 for
-current AROS testing.
+MTProto account login and text chat use Telegram's MTProto TCP transport
+rather than the Bot API HTTPS path, and work without TLS: on an SDK-matched
+system this diagnostic build can run the full client too.
 
 Create telegram-api.txt next to telegram-test:
 

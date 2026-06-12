@@ -4,8 +4,8 @@
 
 Telegram vero, in finestra console, sul tuo Amiga. Niente browser, niente
 proxy esterni: il client parla MTProto direttamente con i server Telegram.
-Gira su AmigaOS 3.x (68k), AmigaOS 4.x, MorphOS e AROS i386. È software
-sperimentale (pre-alpha): usalo con la testa.
+Gira su AmigaOS 3.x (68k), AmigaOS 4.x, MorphOS, AROS i386 e AROS x86_64.
+È software sperimentale (pre-alpha): usalo con la testa.
 
 ## 1. Scarica
 
@@ -16,6 +16,8 @@ https://github.com/kaffeine1/telegram-amiga/releases
 - `Telegram-amigaos4-<data>.zip` — AmigaOS 4.x PPC
 - `Telegram-morphos-<data>.zip` — MorphOS PPC
 - `Telegram-aros-i386-<data>.zip` — AROS x86 ABIv0
+- `Telegram-aros-x86_64-<data>.zip` — AROS x86_64 (hosted o sistemi con
+  kickstart/SDK di linea trunk; NON gira su AROS One v0.38)
 
 ## 2. Installa
 

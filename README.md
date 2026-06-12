@@ -35,15 +35,17 @@ The goal is a usable text-first Telegram client for:
 - MorphOS
 - AmigaOS 4.x
 - AROS i386
+- AROS x86_64
 
 The Bot API support remains in the tree because it is useful for diagnostics,
 TLS/HTTP validation, simple bot-based chat tests and fallback experiments. It
 is no longer the main product direction.
 
-AROS x86_64 is frozen as a diagnostic/porting lane. The current x86_64
-standard-CRT build crashes before even `--help` on the AROS x86_64 VM. Main
-development continues on AROS i386 until the client is usable end to end; x86_64
-will be revisited later with a minimal-runtime approach.
+AROS x86_64 is a released platform: the client logs in and chats live on
+hosted AROS x86_64, built against a matching trunk SDK, and the release
+binary follows that ABI. AROS One v0.38 pairs a different kickstart with its
+SDK and does not run it (it faults before `main`); that distribution is out
+of scope for this lane. AROS i386 ABIv0 remains the broadest AROS build.
 
 ## What Works Today
 
@@ -121,9 +123,10 @@ Latest human releases:
 - [MorphOS 20260611 (full-screen chat, solid)](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-20260611)
 - [AmigaOS 4.x 20260611 (full-screen chat, solid)](https://github.com/kaffeine1/telegram-amiga/releases/tag/amigaos4-20260611)
 - [AROS i386 ABIv0 20260611 (full-screen chat, solid)](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-20260611)
+- [AROS x86_64 20260612 (first public build)](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-20260612)
 
-AROS x86_64 is not part of the current user release set. It remains a
-diagnostic/porting target until the runtime path is stable.
+The AROS x86_64 package targets trunk-SDK-matched systems (hosted AROS
+x86_64 is the validated reference). It does not run on AROS One v0.38.
 
 ## Quick Start: MTProto Account Chat
 
@@ -340,7 +343,9 @@ AROS i386 ABIv0 TLS package:
 ENABLE_TLS=1 scripts/package-aros-tester.sh
 ```
 
-AROS x86_64 offline package:
+AROS x86_64 diagnostic package (build against the SDK of the runtime you
+target — kickstart and SDK must come from the same line, see
+`docs/AROS_X86_64_TESTER.md`):
 
 ```sh
 AROS_TOOLCHAIN=/path/to/aros-x86_64-toolchain \
@@ -348,9 +353,8 @@ AROS_SDK_ROOT=/path/to/AROS/Development \
 scripts/package-aros-x86_64-tester.sh
 ```
 
-This x86_64 package path is frozen for diagnostics only. Do not treat it as a
-working user target until a minimal-runtime x86_64 port replaces the current
-standard-CRT runtime path.
+The human-facing x86_64 package comes from `scripts/package-human-release.sh`
+with `AROS_X86_64_BINARY` pointing at the SDK-matched build.
 
 Offline smoke test on a local/native-style build:
 

@@ -1,19 +1,23 @@
 # AROS x86_64 Tester Notes
 
-This target is frozen as a diagnostic/porting lane for AROS x86_64.
+AROS x86_64 is a released platform. The client logs in and chats live on
+hosted AROS x86_64 built against a matching trunk SDK; that pairing is the
+validated reference and the one the public package follows.
 
-Main AROS development continues on AROS i386 until the shell client is usable
-end to end. AROS x86_64 will be revisited later with a minimal-runtime port.
+The one rule of this lane: the kickstart and the SDK must come from the same
+line. A binary linked against one SDK does not run on a system whose
+kickstart follows another ABI revision — it faults in the standard-CRT
+autoinit before `main`. AROS One v0.38 is the known example of such a
+mismatched pairing and is out of scope for this lane.
 
 Release packages are split by CPU/ABI, not by hosted/native mode. A binary that
 matches the AROS x86_64 CPU/ABI should be the same release artifact for hosted,
 VM and native AROS x86_64 when the required runtime libraries are present.
-Hosted AROS is useful as an extra validation environment, not as a separate
-public package category.
 
-The AROS x86_64 path uses a real AROS SDK/toolchain. TLS should follow the
-OpenSSL path, not AmiSSL, but HTTPS/live Telegram still requires OpenSSL
-development files and runtime libraries that match the SDK/runtime being tested.
+The AROS x86_64 path uses a real AROS SDK/toolchain. Live Telegram (MTProto)
+needs no TLS library: all crypto is in-tree. Only the legacy Bot API HTTPS
+lane would need OpenSSL, and then strictly from the same SDK/runtime set
+being tested.
 
 ## Current Status
 
@@ -55,43 +59,41 @@ This pins the native failure precisely: the client and every portable
 layer are x86_64-ready today; the crash on AROS One x64 v0.38 is the
 SDK/kickstart ABI mismatch of that pairing alone.
 
-Verdict: frozen only as a *public package* until a One-image-matching
-SDK exists (check the image's own Development drawer first). The i386
-build remains the supported AROS lane; hosted x86_64 is a validated
-second oracle for 64-bit correctness.
+### Live validation 2026-06-12, evening: released
+
+Same day, the hosted lane went all the way: the login wizard (phone, code)
+and the full-screen live chat ran end to end on hosted AROS x86_64 over a
+TCP bridge to the production Telegram DC, operated by the author over VNC.
+That promoted the lane from evaluation to release: the public x86_64
+package ships the SDK-matched build (first release tag:
+`aros-x86_64-20260612`). The i386 build remains the broadest AROS lane;
+hosted x86_64 doubles as the daily 64-bit correctness oracle.
 
 
 - Build file present: `Makefile.aros-x86_64`
-- TLS backend planned: OpenSSL
-- Offline cross-build status: the package helper can now produce a real AROS
-  x86_64 ELF and refuses host binaries.
-- Runtime status: frozen. The current standard-CRT `telegram-test` crashes
-  before `--help` on the AROS x86_64 VM with an illegal address access.
-  This points at the standard startup/CRT path, not at Telegram or MTProto
-  logic.
-- Hosted AROS x86_64 SSH may still be useful for short system commands while
-  the hosted runtime is running on the Linux server. It is not a validation
-  oracle for this client binary.
-- Minimal-runtime diagnostic status: an external BebboSSH-style mincrt probe
-  using direct `Write(Output(), ...)` starts on the same AROS x86_64 QEMU target
-  and prints output. This confirms that the next x86_64 work should focus on a
-  mincrt-compatible client lane instead of further standard-CRT packaging
-  tweaks.
-- TLS build status: blocked for the validated hosted SDK/runtime pair. OpenSSL
-  headers and libraries must come from the same SDK/runtime set being tested;
-  a successful cross-link is not enough.
-- Live Telegram status: not validated and not planned until the frozen x86_64
-  runtime lane is replaced.
-- Public package status: diagnostic artifact only:
-  `https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-offline-prealpha-20260522-22bbd57`
+- Runtime status: released on SDK-matched systems. Hosted AROS x86_64
+  (trunk SDK + its own kickstart) runs the full client: self-tests,
+  platform RNG, login wizard and live chat all pass. The historical
+  pre-`--help` crash reproduces only on mismatched pairings (AROS One
+  v0.38) and lives in the standard-CRT autoinit, not in client code.
+- LP64 correctness: proven daily; the host CI runs the full MTProto
+  self-test on x86_64 Linux on every push.
+- TLS backend: the released build uses in-tree crypto (`TG_ENABLE_TLS=0`),
+  like every other platform since the AmiSSL-free direction. OpenSSL
+  remains a future option and would have to come from the same SDK/runtime
+  set being tested.
+- Minimal-runtime (mincrt) lane: no longer needed for release; kept in the
+  notes below as a diagnostic for mismatched-ABI systems.
+- Live Telegram status: validated 2026-06-12 (login wizard + live chat on
+  hosted AROS x86_64 through a TCP bridge to the production DC).
+- Public package status: released, `Telegram-aros-x86_64-<date>.zip` from
+  `scripts/package-human-release.sh`. The 20260522 `offline-prealpha` tag
+  was the old diagnostic artifact and is superseded.
 - `--connect-timeout` is accepted by the common CLI, but native AROS currently
   keeps the platform blocking connect path. Do not use unreachable-IP timeout
   tests as an AROS runtime health check yet.
 
-## Frozen Build Sketch
-
-These commands are kept for future porting work only. Do not use this path as a
-release gate while x86_64 is frozen.
+## Build Sketch
 
 On an AROS x86_64 system with GCC and OpenSSL development files:
 

@@ -129,11 +129,14 @@ AROS i386:
 
 AROS x86_64:
 
-- Frozen as a diagnostic/porting lane.
-- Do not require it for normal MTProto development, release qualification or
-  user-facing shell-client work.
-- The current standard-CRT binary crashes before `--help` on the AROS x86_64
-  VM. Resume this lane only when working on a minimal-runtime x86_64 port.
+- Released lane. Validate on hosted AROS x86_64 built against a matching
+  trunk SDK (the reference environment); release binaries must come from
+  that SDK-matched build.
+- The kickstart/SDK pairing rule is strict: mismatched systems (AROS One
+  v0.38) fault in the standard-CRT autoinit before `main` and are out of
+  scope.
+- Hosted runtime doubles as the 64-bit correctness oracle alongside the
+  host CI.
 
 ## Reporting
 

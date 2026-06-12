@@ -23,10 +23,10 @@ other targets: offline parser/state tests, TCP/HTTP diagnostics, HTTPS,
   `--tls-verify`.
 - AROS One 32-bit has AmiSSL available according to community feedback.
 - AROS One 64-bit currently does not have AmiSSL available.
-- AROS x86_64 is frozen as a diagnostic/porting lane. The current
-  standard-CRT x86_64 binary crashes before `--help` on the AROS x86_64 VM.
-  Continue main client work on AROS i386; revisit x86_64 later through a
-  minimal-runtime port.
+- AROS x86_64 is a released lane: built against a matching trunk SDK it
+  logs in and chats live (validated on hosted AROS x86_64). The kickstart
+  and the SDK must come from the same line; AROS One v0.38 pairs them
+  differently and does not run these binaries.
 - Live Telegram Bot API `getMe`, read-only polling and controlled
   `sendMessage` have passed on the TLS-enabled AROS One i386 alt-abiv0 build.
 - TLS certificate validation with an explicit CA bundle has passed against
@@ -91,8 +91,8 @@ With BebboSSHd AROS commit `eae8a99` or newer, the hosted i386 runtime has
 passed the full offline self-test list below over short non-interactive SSH
 commands.
 
-The AROS x86_64 build path is currently diagnostic only. Use it only when
-working on the frozen x86_64 porting lane:
+The AROS x86_64 build follows the same pattern; point it at a toolchain/SDK
+pair that matches the target runtime:
 
 ```text
 make -f Makefile.aros-x86_64 all ENABLE_TLS=0 \
@@ -100,9 +100,9 @@ make -f Makefile.aros-x86_64 all ENABLE_TLS=0 \
   AROS_SDK_ROOT=/path/to/AROS/Development
 ```
 
-The resulting file must be an AROS x86_64 ELF, not a host executable, but the
-current standard-CRT output is not runtime-valid. See
-`docs/AROS_X86_64_TESTER.md`.
+The resulting file must be an AROS x86_64 ELF, not a host executable. See
+`docs/AROS_X86_64_TESTER.md` for the ABI-matching rules and the validated
+reference environment.
 
 If `make` reports `Clock skew detected`, check the AROS system date/time or
 refresh the source timestamps after unpacking the archive.
