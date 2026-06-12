@@ -8834,6 +8834,15 @@ int tg_mtproto_auth_chat_file(const char *host,
             /* In raw mode rc==0 also fires after every keystroke, not just on
                the watch timeout. Throttle on wall-clock so fast typing does
                not turn into a poll per keypress. */
+            if (line_length > 0UL) {
+                /* A draft is being composed: skip background polls entirely.
+                   Since updates ride the session, every poll grew heavy
+                   (update parsing, gunzip) and on a 68030/25 the round
+                   trips wedged themselves between keystrokes -- the field
+                   report read "characters take too long to appear". Polls
+                   resume the moment the line is sent or cleared. */
+                continue;
+            }
             poll_now = time(0);
             if (poll_now != (time_t)-1 && chat_last_poll != (time_t)0 &&
                 poll_now >= chat_last_poll &&
