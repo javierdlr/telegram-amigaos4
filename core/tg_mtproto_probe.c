@@ -1992,6 +1992,28 @@ static int tg_mtproto_prompt_hidden_line(const char *prompt,
     return 0;
 }
 
+/* Phone numbers arrive through console keymaps and VNC bridges that can
+   inject formatting or stray glyphs; Telegram wants the international
+   number as bare digits. Keep digits, drop everything else ('+' included:
+   the API accepts the prefix-less form). */
+static void tg_mtproto_sanitize_phone(char *phone)
+{
+    unsigned long read_index;
+    unsigned long write_index;
+
+    if (phone == 0) {
+        return;
+    }
+    write_index = 0UL;
+    for (read_index = 0UL; phone[read_index] != '\0'; ++read_index) {
+        if (phone[read_index] >= '0' && phone[read_index] <= '9') {
+            phone[write_index] = phone[read_index];
+            ++write_index;
+        }
+    }
+    phone[write_index] = '\0';
+}
+
 static void tg_mtproto_copy_trimmed_field(const char *source,
                                           unsigned long source_length,
                                           char *out,
@@ -3962,13 +3984,7 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
     }
     fprintf(stream, "Connecting to Telegram.\n");
     fflush(stream);
-    if (tg_mtproto_prompt_line("Phone number: ", phone, sizeof(phone), 1,
-                               stream, label) != 0) {
-        return 2;
-    }
 
-    current_host = host;
-    current_dc_id_text = dc_id_text;
     saved_timeout = tg_net_connect_timeout_seconds();
     restore_timeout = 0;
     if (saved_timeout == 0UL ||
@@ -3977,32 +3993,76 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
             TG_MTPROTO_LOGIN_NETWORK_TIMEOUT_SECONDS);
         restore_timeout = 1;
     }
-    fprintf(stream, "Sending login code request.\n");
-    fflush(stream);
-    rc = tg_mtproto_auth_send_code_file(current_host, port,
-                                        current_dc_id_text, api_file, phone,
-                                        auth_file, code_hash_file, stream);
-    if (rc > TG_MTPROTO_PHONE_MIGRATE_RC_BASE) {
-        unsigned long migrate_dc;
-        const char *migrate_host;
-        const char *migrate_dc_text;
+    /* Telegram rejecting the number (format slip, stray glyph from an odd
+       console path) re-prompts like a wrong code does, instead of dumping
+       the user back to the shell to start over. */
+    {
+        int phone_attempt;
 
-        migrate_dc = (unsigned long)(rc - TG_MTPROTO_PHONE_MIGRATE_RC_BASE);
-        if (tg_mtproto_production_endpoint_for_dc(migrate_dc, &migrate_host,
-                                                 &migrate_dc_text) == 0) {
-            /* Show the DC switch and re-announce sendCode so the user has a
-               visible midway marker during the long DH handshake. (We tried
-               making this silent but the resulting one-long-gap-before-dots
-               looked like a freeze on slow CPUs / flaky links.) */
-            fprintf(stream, "Using Telegram DC %s.\n", migrate_dc_text);
-            current_host = migrate_host;
-            current_dc_id_text = migrate_dc_text;
+        rc = 2;
+        for (phone_attempt = 0; phone_attempt < 3; ++phone_attempt) {
+            current_host = host;
+            current_dc_id_text = dc_id_text;
+            if (tg_mtproto_prompt_line("Phone number: ", phone, sizeof(phone),
+                                       1, stream, label) != 0) {
+                if (restore_timeout) {
+                    tg_net_set_connect_timeout_seconds(saved_timeout);
+                }
+                return 2;
+            }
+            tg_mtproto_sanitize_phone(phone);
+            if (phone[0] == '\0') {
+                fprintf(stream, "%s: input-empty\n", label);
+                if (restore_timeout) {
+                    tg_net_set_connect_timeout_seconds(saved_timeout);
+                }
+                return 2;
+            }
+            /* Echo the digits actually sent: the one honest way to spot a
+               console keymap mangling the input. */
+            fprintf(stream, "Using phone number %s.\n", phone);
             fprintf(stream, "Sending login code request.\n");
             fflush(stream);
             rc = tg_mtproto_auth_send_code_file(current_host, port,
                                                 current_dc_id_text, api_file,
                                                 phone, auth_file,
                                                 code_hash_file, stream);
+            if (rc > TG_MTPROTO_PHONE_MIGRATE_RC_BASE) {
+                unsigned long migrate_dc;
+                const char *migrate_host;
+                const char *migrate_dc_text;
+
+                migrate_dc =
+                    (unsigned long)(rc - TG_MTPROTO_PHONE_MIGRATE_RC_BASE);
+                if (tg_mtproto_production_endpoint_for_dc(
+                        migrate_dc, &migrate_host, &migrate_dc_text) == 0) {
+                    /* Show the DC switch and re-announce sendCode so the user
+                       has a visible midway marker during the long DH
+                       handshake. (We tried making this silent but the
+                       resulting one-long-gap-before-dots looked like a freeze
+                       on slow CPUs / flaky links.) */
+                    fprintf(stream, "Using Telegram DC %s.\n", migrate_dc_text);
+                    current_host = migrate_host;
+                    current_dc_id_text = migrate_dc_text;
+                    fprintf(stream, "Sending login code request.\n");
+                    fflush(stream);
+                    rc = tg_mtproto_auth_send_code_file(current_host, port,
+                                                        current_dc_id_text,
+                                                        api_file, phone,
+                                                        auth_file,
+                                                        code_hash_file,
+                                                        stream);
+                }
+            }
+            if (rc == 0) {
+                break;
+            }
+            if (phone_attempt < 2) {
+                fprintf(stream,
+                        "Telegram did not accept that number. International "
+                        "format, digits only, country code first (Italy: "
+                        "39 then the mobile number). Empty input aborts.\n");
+            }
         }
     }
     if (restore_timeout) {

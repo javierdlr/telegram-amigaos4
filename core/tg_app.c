@@ -4285,6 +4285,11 @@ int tg_app_run(int argc, char **argv)
                         : "phone-code-hash.txt",
                     stdout);
                 if (wizard_rc != 0) {
+                    /* A wizard aborted after sendCode leaves a transport-only
+                       key behind; the next start would then skip the wizard
+                       and open an unauthorized chat session. The file did
+                       not exist when we started, so removing it is safe. */
+                    remove(config.mtproto_auth_file);
                     return wizard_rc;
                 }
             }
