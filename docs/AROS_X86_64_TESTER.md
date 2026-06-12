@@ -17,6 +17,33 @@ development files and runtime libraries that match the SDK/runtime being tested.
 
 ## Current Status
 
+### Re-evaluation 2026-06-12
+
+The freeze was re-tested with the current tree (TLS=0, in-tree crypto --
+the OpenSSL blocker from May no longer applies) on AROS One x86_64
+v0.38 under QEMU:
+
+- Build: clean. `Makefile.aros-x86_64` with `AROS_TOOLCHAIN`
+  (`~/amiga-dev/toolchains/aros-x86_64`, gcc 10.5.0) and `AROS_SDK_ROOT`
+  (`~/amiga-dev/sdks/aros-one-x86_64/Development`) produces a real
+  x86_64 AROS ELF.
+- LP64 correctness of the portable layers is proven daily: the host CI
+  runs the full MTProto self-test on x86_64 Linux (LP64) on every push.
+- Runtime: still down. `--platform-rng-test` dies before reaching the
+  program: Software Failure, Error 0x80000003 (illegal address access),
+  PC inside `LIBdemon_0_OpenLibrary`, Kickstart ELF Segment -- the
+  standard-CRT autoinit's first library open faults. Same wall as May,
+  now pinned to an SDK/kickstart ABI mismatch.
+- Cheapest future paths, in order: (1) re-link against the Development
+  SDK shipped with the *exact* AROS One x64 image being tested, if one
+  exists on that disk; (2) the mincrt lane (BebboSSH-style: no autoinit,
+  manual opens, minimal stdio shim) -- a real porting project, since the
+  client leans on stdio/tmpfile heavily; (3) wait for upstream x86_64
+  ABI stabilisation.
+
+Verdict: stays frozen. The i386 build remains the supported AROS lane.
+
+
 - Build file present: `Makefile.aros-x86_64`
 - TLS backend planned: OpenSSL
 - Offline cross-build status: the package helper can now produce a real AROS
