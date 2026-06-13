@@ -59,7 +59,9 @@ classic AmIRC skin are themes over the same pen roles — no renderer changes.
 
 - [x] branch `gui-intuition`; portable model + renderer skeleton + host
   self-test (`--gui-self-test`)
-- [ ] Intuition backend + real window (`--gui-test`), per platform — hosted
-  AROS x86_64 (headless VNC) first, then the Vampire (68k gate)
+- [x] milestone 0: Intuition backend + real window (`--gui-test`) — builds on
+  all five targets, validated end to end on hosted AROS x86_64 (headless
+  Xvfb), redraw-time + footprint measurement included; passed a 12-finding
+  adversarial review. Still to run on the Vampire (68k gate, Michele's HW).
 - [ ] chat engine extraction (TUI as oracle)
 - [ ] reader → input/send → notifications → parity with the TUI
