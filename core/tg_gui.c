@@ -313,6 +313,8 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     int fill_pen;
     int text_pen;
     int time_pen;
+    int has_time;
+    int time_w;
 
     pad = 8;
     max_bubble_w = (area_w * 78) / 100;
@@ -337,13 +339,22 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
             widest = w;
         }
     }
+    has_time = (message->time[0] != '\0');
+    time_w = has_time ? backend->text_width(backend, message->time,
+                                            (unsigned long)strlen(message->time))
+                      : 0;
+    if (time_w > widest) {
+        widest = time_w; /* the bubble must hold the timestamp line too */
+    }
     bubble_w = widest + (2 * pad);
     if (bubble_w > max_bubble_w) {
         bubble_w = max_bubble_w;
     }
 
     header_h = message->is_own ? 0 : (lh + 2);
-    bubble_h = header_h + (line_count * lh) + pad;
+    /* Reserve a line inside the bubble for the timestamp so it stays on the
+       coloured background instead of spilling out below it. */
+    bubble_h = header_h + (line_count * lh) + (has_time ? lh : 0) + 6;
 
     if (message->is_own) {
         bubble_x = area_x + area_w - bubble_w;
@@ -398,10 +409,21 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                message->text + starts[k], lengths[k]);
         }
     }
-    if (message->time[0] != '\0' && (y + bubble_h) <= bottom) {
-        backend->draw_text(backend, time_pen, bubble_x + pad,
-                           y + bubble_h, message->time,
-                           (unsigned long)strlen(message->time));
+    if (has_time) {
+        int time_baseline;
+        int time_x;
+
+        /* One line below the last text line, right-aligned, inside the fill. */
+        time_baseline = y + header_h + (line_count * lh) + lh;
+        time_x = bubble_x + bubble_w - pad - time_w;
+        if (time_x < bubble_x + pad) {
+            time_x = bubble_x + pad;
+        }
+        if (time_baseline <= bottom) {
+            backend->draw_text(backend, time_pen, time_x, time_baseline,
+                               message->time,
+                               (unsigned long)strlen(message->time));
+        }
     }
     return bubble_h + 6;
 }
