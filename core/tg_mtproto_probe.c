@@ -256,31 +256,14 @@ static int tg_mtproto_is_async_update_constructor(unsigned long constructor)
  * commands (list-peers, login) never accumulate entries. Zero extra network
  * traffic: everything here was already on the wire.
  */
-#define TG_CHAT_NOTIFY_MAX 8U
-#define TG_CHAT_NOTIFY_TEXT 96U
-/* Dedupe ring: must absorb the overlap between live pushes and the
-   reconciliation sweep on a busy hour, not just push repeats. */
-#define TG_CHAT_NOTIFY_RECENT 64U
-
 static unsigned long tg_mtproto_read_u32_le(const unsigned char *data);
 
-typedef struct tg_chat_notify_entry {
-    int is_chat; /* 1 = basic group (peer ids are the chat), 0 = DM user */
-    unsigned long peer_id_hi;
-    unsigned long peer_id_lo;
-    /* The sender, for groups whose chat is not in the peer cache yet: a
-       stale cache then still shows WHO wrote instead of a generic line. */
-    unsigned long from_id_hi;
-    unsigned long from_id_lo;
-    char text[TG_CHAT_NOTIFY_TEXT];
-} tg_chat_notify_entry;
-
-static tg_chat_notify_entry tg_chat_notify_queue[TG_CHAT_NOTIFY_MAX];
-static unsigned long tg_chat_notify_count = 0UL;
-static unsigned long tg_chat_notify_dropped = 0UL;
-static unsigned long tg_chat_notify_recent_ids[TG_CHAT_NOTIFY_RECENT];
-static unsigned long tg_chat_notify_recent_pos = 0UL;
-static int tg_chat_notify_armed = 0;
+/* The cross-chat notification queue, dedupe ring and constants now live in the
+   chat engine (tg_chat_engine.notify, see tg_chat_engine.h). The MTProto
+   parsers below reach the active chat session's queue through this back-pointer,
+   bound at session start; it is NULL outside a chat and the notify ops are
+   NULL-safe, so collection simply no-ops there. */
+static tg_chat_notify *tg_chat_nq = 0;
 /* The real console stream while the chat runs, for TUI components that must
    bypass capture streams (input-row redraws from the editor and the
    sub-prompts). 0 outside the chat. */
@@ -300,38 +283,8 @@ static int tg_chat_bell_enabled = 1;
    "--- 10 Jun ---" separators; 0 = nothing printed yet this chat. */
 static unsigned long tg_chat_day_shown = 0UL;
 
-static void tg_chat_notify_reset(int armed)
-{
-    unsigned long i;
-
-    tg_chat_notify_count = 0UL;
-    tg_chat_notify_dropped = 0UL;
-    tg_chat_notify_recent_pos = 0UL;
-    for (i = 0UL; i < TG_CHAT_NOTIFY_RECENT; ++i) {
-        tg_chat_notify_recent_ids[i] = 0UL;
-    }
-    tg_chat_notify_armed = armed;
-}
-
-/* Updates are redelivered until acked; remember recent message ids so a
-   redelivery does not notify twice. */
-static int tg_chat_notify_seen(unsigned long message_id)
-{
-    unsigned long i;
-
-    if (message_id == 0UL) {
-        return 0;
-    }
-    for (i = 0UL; i < TG_CHAT_NOTIFY_RECENT; ++i) {
-        if (tg_chat_notify_recent_ids[i] == message_id) {
-            return 1;
-        }
-    }
-    tg_chat_notify_recent_ids[tg_chat_notify_recent_pos] = message_id;
-    tg_chat_notify_recent_pos =
-        (tg_chat_notify_recent_pos + 1UL) % TG_CHAT_NOTIFY_RECENT;
-    return 0;
-}
+/* tg_chat_notify_reset / tg_chat_notify_seen now live in tg_chat_engine.c and
+   operate on the engine's notify queue (reached here via tg_chat_nq). */
 
 /* Parses one bare updateShortMessage/updateShortChatMessage payload. */
 static void tg_chat_notify_collect_one(const unsigned char *body,
@@ -390,14 +343,13 @@ static void tg_chat_notify_collect_one(const unsigned char *body,
     if ((flags & 0x2UL) != 0UL) {
         return;
     }
-    if (tg_chat_notify_seen(message_id)) {
+    if (tg_chat_notify_seen(tg_chat_nq, message_id)) {
         return;
     }
-    if (tg_chat_notify_count >= TG_CHAT_NOTIFY_MAX) {
-        ++tg_chat_notify_dropped;
+    entry = tg_chat_notify_claim(tg_chat_nq);
+    if (entry == 0) {
         return;
     }
-    entry = &tg_chat_notify_queue[tg_chat_notify_count];
     entry->is_chat = is_chat;
     entry->peer_id_hi = chat_hi;
     entry->peer_id_lo = chat_lo;
@@ -409,7 +361,6 @@ static void tg_chat_notify_collect_one(const unsigned char *body,
     }
     memcpy(entry->text, text, copy_length);
     entry->text[copy_length] = '\0';
-    ++tg_chat_notify_count;
 }
 
 static void tg_chat_notify_collect(const unsigned char *body,
@@ -2579,14 +2530,13 @@ static void tg_chat_notify_push_message(const tg_mtproto_message_text *message,
     unsigned long copy_length;
 
     if (message == 0 || !message->has_text || message->is_out ||
-        tg_chat_notify_seen(message->id)) {
+        tg_chat_notify_seen(tg_chat_nq, message->id)) {
         return;
     }
-    if (tg_chat_notify_count >= TG_CHAT_NOTIFY_MAX) {
-        ++tg_chat_notify_dropped;
+    entry = tg_chat_notify_claim(tg_chat_nq);
+    if (entry == 0) {
         return;
     }
-    entry = &tg_chat_notify_queue[tg_chat_notify_count];
     if (dest != 0 && dest->peer_constructor != 0UL) {
         entry->is_chat =
             dest->peer_constructor != TG_MTPROTO_PEER_USER_CONSTRUCTOR;
@@ -2605,7 +2555,6 @@ static void tg_chat_notify_push_message(const tg_mtproto_message_text *message,
     }
     memcpy(entry->text, message->text, copy_length);
     entry->text[copy_length] = '\0';
-    ++tg_chat_notify_count;
 }
 
 static void tg_chat_notify_collect_updates(const unsigned char *body,
@@ -2671,7 +2620,8 @@ static void tg_chat_notify_collect(const unsigned char *body,
     const unsigned char *unpacked;
     unsigned long unpacked_length;
 
-    if (!tg_chat_notify_armed || body == 0 || body_length < 4UL) {
+    if (tg_chat_nq == 0 || !tg_chat_nq->armed || body == 0 ||
+        body_length < 4UL) {
         return;
     }
     constructor = tg_mtproto_read_u32_le(body);
@@ -8380,9 +8330,12 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
     const char *digits;
     const tg_chat_notify_entry *entry;
 
-    if (stream == 0 || tg_chat_notify_count == 0UL) {
-        tg_chat_notify_count = 0UL;
-        tg_chat_notify_dropped = 0UL;
+    if (tg_chat_nq == 0) {
+        return;
+    }
+    if (stream == 0 || tg_chat_nq->count == 0UL) {
+        tg_chat_nq->count = 0UL;
+        tg_chat_nq->dropped = 0UL;
         return;
     }
     current_index = 0UL;
@@ -8397,8 +8350,8 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
             current_index = 0UL;
         }
     }
-    for (i = 0UL; i < tg_chat_notify_count; ++i) {
-        entry = &tg_chat_notify_queue[i];
+    for (i = 0UL; i < tg_chat_nq->count; ++i) {
+        entry = &tg_chat_nq->queue[i];
         index = 0UL;
         label[0] = '\0';
         (void)tg_mtproto_peer_cache_find_by_id(peer_cache_file,
@@ -8442,9 +8395,9 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
         tg_console_ui_reset(stream);
         tg_console_ui_end_line(stream);
     }
-    if (tg_chat_notify_dropped > 0UL) {
+    if (tg_chat_nq->dropped > 0UL) {
         tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
-        fprintf(stream, "(+%lu more)", tg_chat_notify_dropped);
+        fprintf(stream, "(+%lu more)", tg_chat_nq->dropped);
         tg_console_ui_reset(stream);
         tg_console_ui_end_line(stream);
     }
@@ -8455,8 +8408,8 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
            console stream. */
         tg_platform_display_beep();
     }
-    tg_chat_notify_count = 0UL;
-    tg_chat_notify_dropped = 0UL;
+    tg_chat_nq->count = 0UL;
+    tg_chat_nq->dropped = 0UL;
     fflush(stream);
 }
 
@@ -8662,6 +8615,11 @@ int tg_mtproto_auth_chat_file(const char *host,
         return 2;
     }
     memset(&chat_context, 0, sizeof(chat_context));
+    /* Bring up the chat engine and bind the notification back-pointer before
+       anything can collect (the recv path arms only after the reset below).
+       init zeroes the updates cursor + notify queue and enables /diff. */
+    tg_chat_engine_init(&chat_engine);
+    tg_chat_nq = &chat_engine.notify;
     chat_quiet = 0;
     api_id[0] = '\0';
     saved_timeout = tg_net_connect_timeout_seconds();
@@ -8711,7 +8669,7 @@ int tg_mtproto_auth_chat_file(const char *host,
        bsdsocket link (the very scenario the wrapper exists for) and stalled
        the chat at session open on real hardware -- so no cross-chat
        notifications there until a backlog-draining strategy lands. */
-    tg_chat_notify_reset(1);
+    tg_chat_notify_reset(&chat_engine.notify, 1);
     tg_chat_day_shown = 0UL;
 #if defined(__MORPHOS__) || defined(__MORPHOS)
     tg_mtproto_set_session_updates(0);
@@ -8784,10 +8742,9 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_mtproto_chat_load_own_label(host, port, api_id, auth_file, dc_id_text,
                                    &chat_context, peer_cache_file,
                                    own_label, sizeof(own_label), stream);
-    /* The gap-handling cursor starts unprimed; the drain tick primes it
-       lazily (one query) so the fragile session-open phase on slow links
-       stays as light as before. */
-    tg_chat_engine_init(&chat_engine);
+    /* The gap-handling cursor starts unprimed (zeroed by tg_chat_engine_init
+       at session start); the drain tick primes it lazily (one query) so the
+       fragile session-open phase on slow links stays as light as before. */
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         tg_mtproto_chat_print_system_line(stream, "Choose a chat:");
         fputc('\n', stream);
@@ -8960,7 +8917,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             }
             have_replay = rc == 0 && printed_message_count > 0UL &&
                           (quiet == stream || chat_quiet_length > 0L);
-            if (have_replay || tg_chat_notify_count > 0UL) {
+            if (have_replay || chat_engine.notify.count > 0UL) {
                 tg_mtproto_chat_clear_input_line(stream, chat_raw);
                 if (have_replay) {
                     tg_mtproto_replay_quiet_stream_length(
@@ -9182,7 +9139,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                 &chat_engine.updates_state, diff_quiet);
             tg_mtproto_close_quiet_stream(diff_quiet, stream);
             sprintf(diff_note, "diff: rc=%d queued=%lu new-pts=%lu", diff_rc,
-                    tg_chat_notify_count, chat_engine.updates_state.pts);
+                    chat_engine.notify.count, chat_engine.updates_state.pts);
             tg_mtproto_chat_print_system_line(stream, diff_note);
             {
                 FILE *tui_cap = tg_console_tui_capture_begin(stream);
