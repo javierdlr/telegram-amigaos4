@@ -6259,6 +6259,19 @@ int tg_mtproto_chat_list_parse(const char *path, unsigned long current_index,
         }
         row->unread = unread;
         row->is_current = (current_index != 0UL && index == current_index);
+        /* The peer id (id 0x<hi8><lo8>) lets a driver match a notification to
+           this row; written by the cache, ignored by the console renderer. */
+        row->peer_id_hi = 0UL;
+        row->peer_id_lo = 0UL;
+        {
+            char *id_text;
+
+            id_text = strstr(line, " id 0x");
+            if (id_text != 0) {
+                (void)sscanf(id_text + 6, "%8lx%8lx", &row->peer_id_hi,
+                             &row->peer_id_lo);
+            }
+        }
         row->name[0] = '\0';
         row->name_is_username = 0;
         /* Name resolution, byte-for-byte as the old inline printer: title
@@ -8148,6 +8161,7 @@ int tg_mtproto_chat_render_self_test(void)
     driver.ctx = &console_drv;
     driver.on_message = tg_chat_console_on_message;
     driver.on_chat_list_changed = 0;
+    driver.on_notification = 0;
 
     tg_chat_render_emit(&driver, 1700000000UL, 0, 0, "Mario", "Io", 0, "Ciao");
     tg_chat_render_emit(&driver, 1700000300UL, 1, 0, "Mario", "Io", 0,
@@ -8314,6 +8328,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         driver.ctx = &console_drv;
         driver.on_message = tg_chat_console_on_message;
         driver.on_chat_list_changed = 0; /* console list goes via render_console */
+        driver.on_notification = 0;
         while (i > 0UL) {
             --i;
             if (texts.messages[i].id > max_seen_message_id) {

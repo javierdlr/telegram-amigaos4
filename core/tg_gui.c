@@ -308,7 +308,12 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                    the count sits inside the fill instead of spilling below. */
                 badge_h = lh + 4;
                 badge_top = (y + 8 + (2 * lh)) - lh;
-                backend->fill_rect(backend, TG_GUI_PEN_BADGE,
+                /* A chat that just got a notification draws its badge in the
+                   accent pen to stand out; the live event loop toggles
+                   chat->flash for a true blink. */
+                backend->fill_rect(backend,
+                                   chat->flash ? TG_GUI_PEN_ACCENT
+                                               : TG_GUI_PEN_BADGE,
                                    tg_gui_make_rect(badge_x, badge_top, badge_w,
                                                     badge_h));
                 num_x = badge_x +

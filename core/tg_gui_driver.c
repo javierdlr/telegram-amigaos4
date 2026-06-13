@@ -189,10 +189,45 @@ static void tg_gui_driver_on_chat_list_changed(void *ctx,
         tg_gui_driver_initials(chat->initials, sizeof(chat->initials), display);
         chat->avatar_color = tg_gui_driver_color_for(display);
         chat->unread = (rows[i].unread > 0UL) ? (int)rows[i].unread : 0;
+        chat->peer_id_hi = rows[i].peer_id_hi;
+        chat->peer_id_lo = rows[i].peer_id_lo;
+        chat->flash = 0;
         if (rows[i].is_current) {
             state->selected_chat = state->chat_count;
         }
         state->chat_count += 1;
+    }
+}
+
+/* A cross-chat notification: find the sidebar row whose peer id matches and
+   bump its unread badge + flag it to blink. Peer ids in one cache are unique
+   per chat, so the id alone disambiguates. The currently open chat does not
+   flash (you are already reading it). Unmatched peers (not in the sidebar) are
+   ignored -- there is no row to badge. */
+static void tg_gui_driver_on_notification(void *ctx,
+                                          const tg_chat_notify_entry *entry)
+{
+    tg_gui_chat_driver *gui;
+    tg_gui_state *state;
+    int i;
+
+    gui = (tg_gui_chat_driver *)ctx;
+    if (gui == 0 || gui->state == 0 || entry == 0) {
+        return;
+    }
+    state = gui->state;
+    for (i = 0; i < state->chat_count; ++i) {
+        tg_gui_chat *chat;
+
+        chat = &state->chats[i];
+        if (chat->peer_id_hi == entry->peer_id_hi &&
+            chat->peer_id_lo == entry->peer_id_lo) {
+            chat->unread += 1;
+            if (i != state->selected_chat) {
+                chat->flash = 1;
+            }
+            return;
+        }
     }
 }
 
@@ -206,6 +241,7 @@ void tg_gui_chat_driver_bind(tg_gui_chat_driver *gui, tg_gui_state *state,
     chat_driver->ctx = gui;
     chat_driver->on_message = tg_gui_driver_on_message;
     chat_driver->on_chat_list_changed = tg_gui_driver_on_chat_list_changed;
+    chat_driver->on_notification = tg_gui_driver_on_notification;
 }
 
 /* --- self-test ---------------------------------------------------------- */
@@ -315,17 +351,21 @@ int tg_gui_driver_self_test(void)
         strcpy(list[0].name, "Sviluppo AmigaIta");
         list[0].is_user = 0;
         list[0].is_current = 1;
+        list[0].peer_id_lo = 0x100UL;
         list[1].index = 2UL;
         strcpy(list[1].name, "Mario Rossi");
         list[1].is_user = 1;
         list[1].unread = 2UL;
+        list[1].peer_id_lo = 0x200UL;
         list[2].index = 3UL;
         strcpy(list[2].name, "Anna");
         list[2].is_user = 1;
+        list[2].peer_id_lo = 0x300UL;
         list[3].index = 4UL;
         strcpy(list[3].name, "carla");
         list[3].name_is_username = 1;
         list[3].is_user = 1;
+        list[3].peer_id_lo = 0x400UL;
 
         driver.on_chat_list_changed(driver.ctx, list, 4);
 
@@ -359,8 +399,35 @@ int tg_gui_driver_self_test(void)
             puts("gui driver self-test: chat avatar colour out of range");
             return 2;
         }
+
+        /* Notifications bump the matching row's badge and flash it (unless it
+           is the open chat); unknown peers are ignored. */
+        {
+            tg_chat_notify_entry note;
+
+            memset(&note, 0, sizeof(note));
+            note.peer_id_lo = 0x200UL; /* Mario Rossi, not selected */
+            driver.on_notification(driver.ctx, &note);
+            if (state.chats[1].unread != 3 || state.chats[1].flash != 1) {
+                puts("gui driver self-test: notification did not flash row");
+                return 2;
+            }
+            note.peer_id_lo = 0x100UL; /* the selected/open chat: bump, no flash */
+            driver.on_notification(driver.ctx, &note);
+            if (state.chats[0].unread != 1 || state.chats[0].flash != 0) {
+                puts("gui driver self-test: open chat should not flash");
+                return 2;
+            }
+            note.peer_id_lo = 0x999UL; /* not in the sidebar: ignored */
+            driver.on_notification(driver.ctx, &note);
+            if (state.chats[2].unread != 0 || state.chats[2].flash != 0 ||
+                state.chats[3].unread != 0 || state.chats[3].flash != 0) {
+                puts("gui driver self-test: unknown peer must not touch rows");
+                return 2;
+            }
+        }
     }
 
-    puts("gui driver self-test: ok (messages + chat list projected)");
+    puts("gui driver self-test: ok (messages + chat list + notifications)");
     return 0;
 }

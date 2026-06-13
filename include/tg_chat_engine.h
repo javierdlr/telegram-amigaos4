@@ -96,18 +96,22 @@ typedef struct tg_chat_list_row {
     int is_user;                        /* user (single chat) vs group/channel */
     unsigned long unread;
     int is_current;                     /* the currently open chat */
+    unsigned long peer_id_hi;           /* peer id, to match notifications to a row */
+    unsigned long peer_id_lo;
 } tg_chat_list_row;
 
 /* The driver callback surface. on_message renders one transcript row;
-   on_chat_list_changed hands the whole resolved chat list. Later slices add
-   on_notification / on_status. ctx is the driver's own state. A driver may
-   leave a callback NULL when it does not use that surface; callers invoke only
-   the one they set. */
+   on_chat_list_changed hands the whole resolved chat list; on_notification
+   hands one cross-chat notification entry (the GUI driver bumps the matching
+   sidebar row's unread badge; the console renders its own notify lines). ctx is
+   the driver's own state. A driver may leave a callback NULL when it does not
+   use that surface; callers invoke only the one they set. */
 typedef struct tg_chat_driver {
     void *ctx;
     void (*on_message)(void *ctx, const tg_chat_message_row *row);
     void (*on_chat_list_changed)(void *ctx, const tg_chat_list_row *rows,
                                  int count);
+    void (*on_notification)(void *ctx, const tg_chat_notify_entry *entry);
 } tg_chat_driver;
 
 /* Resets the engine for a fresh chat session: zero cursor, catch-up enabled.
