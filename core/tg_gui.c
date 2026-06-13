@@ -274,22 +274,52 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
         backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM,
                            sidebar_w - 34, y + 4 + lh, chat->time,
                            (unsigned long)strlen(chat->time));
-        tg_gui_draw_clipped(backend, preview_pen, text_x, y + 8 + (2 * lh),
-                            chat->preview,
-                            ((chat->unread > 0) ? (sidebar_w - 32)
-                                                : (sidebar_w - 10)) -
-                                text_x);
-        if (chat->unread > 0) {
+        {
             char badge[8];
+            int badge_w;
+            int badge_x;
+            int preview_limit;
 
-            sprintf(badge, "%d", chat->unread > 999 ? 999 : chat->unread);
-            backend->fill_rect(backend, TG_GUI_PEN_BADGE,
-                               tg_gui_make_rect(sidebar_w - 28,
-                                                y + 6 + (2 * lh) - lh, 20,
-                                                lh + 2));
-            backend->draw_text(backend, TG_GUI_PEN_BADGE_TEXT, sidebar_w - 22,
-                               y + 8 + (2 * lh), badge,
-                               (unsigned long)strlen(badge));
+            badge[0] = '\0';
+            badge_w = 0;
+            badge_x = sidebar_w - 10;
+            if (chat->unread > 0) {
+                int num_w;
+
+                sprintf(badge, "%d", chat->unread > 999 ? 999 : chat->unread);
+                num_w = backend->text_width(backend, badge,
+                                            (unsigned long)strlen(badge));
+                badge_w = num_w + 10; /* horizontal padding inside the pill */
+                if (badge_w < lh + 6) {
+                    badge_w = lh + 6; /* keep it pill-shaped for one digit */
+                }
+                badge_x = sidebar_w - 8 - badge_w;
+            }
+            /* Preview clips before the badge (or the row edge). */
+            preview_limit = (chat->unread > 0) ? (badge_x - 4) : (sidebar_w - 10);
+            tg_gui_draw_clipped(backend, preview_pen, text_x, y + 8 + (2 * lh),
+                                chat->preview, preview_limit - text_x);
+            if (chat->unread > 0) {
+                int badge_top;
+                int badge_h;
+                int num_x;
+
+                /* Pill sized to the number and centred on the preview line, so
+                   the count sits inside the fill instead of spilling below. */
+                badge_h = lh + 4;
+                badge_top = (y + 8 + (2 * lh)) - lh;
+                backend->fill_rect(backend, TG_GUI_PEN_BADGE,
+                                   tg_gui_make_rect(badge_x, badge_top, badge_w,
+                                                    badge_h));
+                num_x = badge_x +
+                        (badge_w - backend->text_width(
+                                       backend, badge,
+                                       (unsigned long)strlen(badge))) /
+                            2;
+                backend->draw_text(backend, TG_GUI_PEN_BADGE_TEXT, num_x,
+                                   y + 8 + (2 * lh), badge,
+                                   (unsigned long)strlen(badge));
+            }
         }
         y += row_h;
     }
