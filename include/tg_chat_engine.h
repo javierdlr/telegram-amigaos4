@@ -65,6 +65,30 @@ int tg_chat_notify_seen(tg_chat_notify *notify, unsigned long message_id);
    returned entry's fields. */
 tg_chat_notify_entry *tg_chat_notify_claim(tg_chat_notify *notify);
 
+/* One resolved transcript row handed to a driver. The engine builds it from a
+   parsed message (resolving the sender, the local-frame timestamp and the
+   group/peer context); a driver renders it however it likes -- the console
+   driver prints today's transcript line, the GUI driver will project it into a
+   tg_gui_message. Decouples "what to show" (engine) from "how to show it". */
+typedef struct tg_chat_message_row {
+    const char *text;          /* message body */
+    unsigned long local_epoch; /* local-frame epoch; used only when has_time */
+    int has_time;              /* the message carried a date */
+    int is_out;                /* sent by this account */
+    int is_group;              /* group/channel: emit the [title] prefix */
+    const char *peer_label;    /* chat title (group prefix + 1:1 sender fallback) */
+    const char *own_label;     /* this account's name, for is_out */
+    const char *sender;        /* resolved incoming sender, NULL if unknown */
+} tg_chat_message_row;
+
+/* The driver callback surface. Step 3 introduces on_message; later slices add
+   on_chat_list_changed / on_notification / on_status. ctx is the driver's own
+   state (e.g. the console stream + day-separator cursor). */
+typedef struct tg_chat_driver {
+    void *ctx;
+    void (*on_message)(void *ctx, const tg_chat_message_row *row);
+} tg_chat_driver;
+
 /* Resets the engine for a fresh chat session: zero cursor, catch-up enabled.
    Mirrors the previous per-session reset of the probe.c file-statics. */
 void tg_chat_engine_init(tg_chat_engine *engine);

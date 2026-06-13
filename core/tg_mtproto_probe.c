@@ -7783,50 +7783,42 @@ static int tg_mtproto_chat_is_number_line(const char *line)
     return 1;
 }
 
-/* Renders one transcript line for a single message: the day separator (when the
+/* Console rendering of one resolved transcript row: the day separator (when the
    day changes) + [HH:MM] time, the optional [group] prefix, the sender prefix
    (own / resolved sender / 1:1 peer / unknown group author / "them:") and the
-   message text. The caller resolves `sender` (NULL when unknown); `day_shown`
-   carries the last printed day across calls. This is the model/view seam the
-   GUI driver will replace with an on_message callback -- and the unit the
-   --chat-render-self-test golden pins byte-for-byte. */
+   message text. `day_shown` carries the last printed day across calls. This is
+   the console driver's realisation of a tg_chat_message_row; the GUI driver
+   projects the same row into a tg_gui_message instead. Pinned byte-for-byte by
+   the --chat-render-self-test golden. */
 static void tg_mtproto_chat_render_message(FILE *stream,
-                                           const tg_mtproto_message_text *message,
-                                           int is_group, const char *peer_label,
-                                           const char *own_label,
-                                           const char *sender,
-                                           long server_time_delta,
+                                           const tg_chat_message_row *row,
                                            unsigned long *day_shown)
 {
-    if (stream == 0 || message == 0 || day_shown == 0) {
+    if (stream == 0 || row == 0 || day_shown == 0) {
         return;
     }
-    if (message->date != 0UL) {
-        unsigned long local_epoch;
-
-        local_epoch =
-            tg_mtproto_chat_local_epoch(message->date, server_time_delta);
-        if (*day_shown != local_epoch / 86400UL) {
+    if (row->has_time) {
+        if (*day_shown != row->local_epoch / 86400UL) {
             if (*day_shown != 0UL) {
-                tg_mtproto_chat_print_day_separator(stream, local_epoch);
+                tg_mtproto_chat_print_day_separator(stream, row->local_epoch);
             }
-            *day_shown = local_epoch / 86400UL;
+            *day_shown = row->local_epoch / 86400UL;
         }
-        tg_mtproto_chat_print_message_time(stream, local_epoch);
+        tg_mtproto_chat_print_message_time(stream, row->local_epoch);
     }
-    if (is_group && peer_label != 0 && peer_label[0] != '\0') {
+    if (row->is_group && row->peer_label != 0 && row->peer_label[0] != '\0') {
         tg_console_ui_role(stream, TG_UI_ROLE_GROUP);
         fputc('[', stream);
-        tg_mtproto_print_label_truncated(stream, peer_label,
+        tg_mtproto_print_label_truncated(stream, row->peer_label,
                                          TG_MTPROTO_GROUP_LABEL_MAX);
         fputc(']', stream);
         tg_console_ui_reset(stream);
         fputc(' ', stream);
     }
-    if (message->is_out) {
+    if (row->is_out) {
         tg_console_ui_role(stream, TG_UI_ROLE_OWN);
-        if (own_label != 0 && own_label[0] != '\0') {
-            tg_mtproto_print_cache_text(stream, own_label);
+        if (row->own_label != 0 && row->own_label[0] != '\0') {
+            tg_mtproto_print_cache_text(stream, row->own_label);
             fprintf(stream, ":");
         } else {
             fprintf(stream, "me:");
@@ -7835,14 +7827,15 @@ static void tg_mtproto_chat_render_message(FILE *stream,
         fputc(' ', stream);
     } else {
         tg_console_ui_role(stream, TG_UI_ROLE_PEER);
-        if (sender != 0) {
-            tg_mtproto_print_cache_text(stream, sender);
+        if (row->sender != 0) {
+            tg_mtproto_print_cache_text(stream, row->sender);
             fprintf(stream, ":");
-        } else if (!is_group && peer_label != 0 && peer_label[0] != '\0') {
+        } else if (!row->is_group && row->peer_label != 0 &&
+                   row->peer_label[0] != '\0') {
             /* 1:1 chat: the peer is the sender. */
-            tg_mtproto_print_cache_text(stream, peer_label);
+            tg_mtproto_print_cache_text(stream, row->peer_label);
             fprintf(stream, ":");
-        } else if (is_group) {
+        } else if (row->is_group) {
             /* Group sender we could not resolve; the [group] prefix is already
                shown, so just mark the unknown author. */
             fprintf(stream, "?:");
@@ -7852,8 +7845,24 @@ static void tg_mtproto_chat_render_message(FILE *stream,
         tg_console_ui_reset(stream);
         fputc(' ', stream);
     }
-    tg_mtproto_print_message_text(stream, message->text);
+    tg_mtproto_print_message_text(stream, row->text);
     tg_console_ui_end_line(stream);
+}
+
+/* The console driver: realises tg_chat_driver.on_message by printing the row
+   with tg_mtproto_chat_render_message. Its ctx carries the output stream and
+   the persistent day-separator cursor. */
+typedef struct tg_chat_console_driver {
+    FILE *stream;
+    unsigned long *day_shown;
+} tg_chat_console_driver;
+
+static void tg_chat_console_on_message(void *ctx,
+                                       const tg_chat_message_row *row)
+{
+    tg_chat_console_driver *console = (tg_chat_console_driver *)ctx;
+
+    tg_mtproto_chat_render_message(console->stream, row, console->day_shown);
 }
 
 /* Golden parity harness for the transcript renderer. Drives
@@ -7877,22 +7886,29 @@ static const char tg_chat_render_golden[] =
     "Mario: riga1\n"
     "  riga2\n";
 
-static void tg_chat_render_set_message(tg_mtproto_message_text *m,
-                                       unsigned long date, int is_out,
-                                       const char *text)
+static void tg_chat_render_emit(tg_chat_driver *driver, unsigned long date,
+                                int is_out, int is_group, const char *peer_label,
+                                const char *own_label, const char *sender,
+                                const char *text)
 {
-    memset(m, 0, sizeof(*m));
-    m->date = date;
-    m->is_out = is_out;
-    m->has_text = 1;
-    strncpy(m->text, text, sizeof(m->text) - 1U);
-    m->text[sizeof(m->text) - 1U] = '\0';
+    tg_chat_message_row row;
+
+    row.text = text;
+    row.has_time = (date != 0UL);
+    row.local_epoch = date; /* the test uses delta 0, so local_epoch == date */
+    row.is_out = is_out;
+    row.is_group = is_group;
+    row.peer_label = peer_label;
+    row.own_label = own_label;
+    row.sender = sender;
+    driver->on_message(driver->ctx, &row);
 }
 
 int tg_mtproto_chat_render_self_test(void)
 {
-    tg_mtproto_message_text m;
     unsigned long day_shown;
+    tg_chat_console_driver console_drv;
+    tg_chat_driver driver;
     FILE *cap;
     char buf[1024];
     size_t n;
@@ -7913,38 +7929,30 @@ int tg_mtproto_chat_render_self_test(void)
         return 2;
     }
     day_shown = 0UL;
+    /* Route every row through the console driver's on_message so the test pins
+       the whole step-3 path (driver vtable -> render_message), not just the
+       renderer in isolation. */
+    console_drv.stream = cap;
+    console_drv.day_shown = &day_shown;
+    driver.ctx = &console_drv;
+    driver.on_message = tg_chat_console_on_message;
 
-    tg_chat_render_set_message(&m, 1700000000UL, 0, "Ciao");
-    tg_mtproto_chat_render_message(cap, &m, 0, "Mario", "Io", 0, 0L,
-                                   &day_shown);
-    tg_chat_render_set_message(&m, 1700000300UL, 1, "Tutto bene?");
-    tg_mtproto_chat_render_message(cap, &m, 0, "Mario", "Io", 0, 0L,
-                                   &day_shown);
-    tg_chat_render_set_message(&m, 1700003600UL, 0, "Salve a tutti");
-    tg_mtproto_chat_render_message(cap, &m, 1, "Sviluppo", "Io", "Alice", 0L,
-                                   &day_shown);
-    tg_chat_render_set_message(&m, 1700003900UL, 0, "boh");
-    tg_mtproto_chat_render_message(cap, &m, 1, "Sviluppo", "Io", 0, 0L,
-                                   &day_shown);
-    tg_chat_render_set_message(&m, 1700090000UL, 0, "Nuovo giorno");
-    tg_mtproto_chat_render_message(cap, &m, 0, "Mario", "Io", 0, 0L,
-                                   &day_shown);
+    tg_chat_render_emit(&driver, 1700000000UL, 0, 0, "Mario", "Io", 0, "Ciao");
+    tg_chat_render_emit(&driver, 1700000300UL, 1, 0, "Mario", "Io", 0,
+                        "Tutto bene?");
+    tg_chat_render_emit(&driver, 1700003600UL, 0, 1, "Sviluppo", "Io", "Alice",
+                        "Salve a tutti");
+    tg_chat_render_emit(&driver, 1700003900UL, 0, 1, "Sviluppo", "Io", 0, "boh");
+    tg_chat_render_emit(&driver, 1700090000UL, 0, 0, "Mario", "Io", 0,
+                        "Nuovo giorno");
     /* Long group label: exercises tg_mtproto_print_label_truncated (>=16 chars
-       -> trailing-space trim + ".." ellipsis). Same day as above, so no extra
-       separator. */
-    tg_chat_render_set_message(&m, 1700093600UL, 0, "ok");
-    tg_mtproto_chat_render_message(cap, &m, 1, "Sviluppo Server Group", "Io",
-                                   "Bob", 0L, &day_shown);
-    tg_chat_render_set_message(&m, 0UL, 0, "senza data");
-    tg_mtproto_chat_render_message(cap, &m, 0, "Mario", "Io", 0, 0L,
-                                   &day_shown);
-    tg_chat_render_set_message(&m, 0UL, 0, "anon");
-    tg_mtproto_chat_render_message(cap, &m, 0, "", "Io", 0, 0L, &day_shown);
-    tg_chat_render_set_message(&m, 0UL, 1, "io anon");
-    tg_mtproto_chat_render_message(cap, &m, 0, "", "", 0, 0L, &day_shown);
-    tg_chat_render_set_message(&m, 0UL, 0, "riga1\nriga2");
-    tg_mtproto_chat_render_message(cap, &m, 0, "Mario", "Io", 0, 0L,
-                                   &day_shown);
+       -> trailing-space trim + ".." ellipsis). */
+    tg_chat_render_emit(&driver, 1700093600UL, 0, 1, "Sviluppo Server Group",
+                        "Io", "Bob", "ok");
+    tg_chat_render_emit(&driver, 0UL, 0, 0, "Mario", "Io", 0, "senza data");
+    tg_chat_render_emit(&driver, 0UL, 0, 0, "", "Io", 0, "anon");
+    tg_chat_render_emit(&driver, 0UL, 1, 0, "", "", 0, "io anon");
+    tg_chat_render_emit(&driver, 0UL, 0, 0, "Mario", "Io", 0, "riga1\nriga2");
 
     rewind(cap);
     n = fread(buf, 1, sizeof(buf) - 1U, cap);
@@ -8082,50 +8090,74 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         return 0;
     }
     i = texts.count;
-    while (i > 0UL) {
-        --i;
-        if (texts.messages[i].id > max_seen_message_id) {
-            max_seen_message_id = texts.messages[i].id;
-        }
-        if (last_seen_message_id != 0 && only_new &&
-            texts.messages[i].id <= *last_seen_message_id) {
-            continue;
-        }
-        if (!include_outgoing && texts.messages[i].is_out) {
-            continue;
-        }
-        /* In a group/channel prefix every line with the (truncated) chat title
-           so the user keeps both the group and the sender in view. 1:1 chats
-           skip the prefix: there the peer already is the sender. The sender
-           name is resolved here (fetch/parse stays in the loop); the line
-           itself is rendered by the driver-agnostic seam below. */
-        {
-            const char *sender = 0;
+    {
+        tg_chat_console_driver console_drv;
+        tg_chat_driver driver;
 
-            if (!texts.messages[i].is_out &&
-                texts.messages[i].from_constructor != 0UL) {
-                for (k = 0UL; k < sender_cache.count; ++k) {
-                    if (sender_cache.entries[k].peer_constructor ==
-                            texts.messages[i].from_constructor &&
-                        sender_cache.entries[k].id_hi ==
-                            texts.messages[i].from_id_hi &&
-                        sender_cache.entries[k].id_lo ==
-                            texts.messages[i].from_id_lo) {
-                        if (sender_cache.entries[k].title[0] != '\0') {
-                            sender = sender_cache.entries[k].title;
-                        } else if (sender_cache.entries[k].username[0] !=
-                                   '\0') {
-                            sender = sender_cache.entries[k].username;
+        /* The history renderer hands each resolved row to a driver. Today the
+           only driver is the console one (wrapping this stream + the persistent
+           day-separator cursor); the GUI will plug its own driver here. */
+        console_drv.stream = stream;
+        console_drv.day_shown = &tg_chat_day_shown;
+        driver.ctx = &console_drv;
+        driver.on_message = tg_chat_console_on_message;
+        while (i > 0UL) {
+            --i;
+            if (texts.messages[i].id > max_seen_message_id) {
+                max_seen_message_id = texts.messages[i].id;
+            }
+            if (last_seen_message_id != 0 && only_new &&
+                texts.messages[i].id <= *last_seen_message_id) {
+                continue;
+            }
+            if (!include_outgoing && texts.messages[i].is_out) {
+                continue;
+            }
+            /* In a group/channel prefix every line with the (truncated) chat
+               title so the user keeps both the group and the sender in view.
+               1:1 chats skip the prefix: there the peer already is the sender.
+               The sender name is resolved here (fetch/parse stays in the loop);
+               the resolved row is then handed to the driver. */
+            {
+                const char *sender = 0;
+                tg_chat_message_row row;
+
+                if (!texts.messages[i].is_out &&
+                    texts.messages[i].from_constructor != 0UL) {
+                    for (k = 0UL; k < sender_cache.count; ++k) {
+                        if (sender_cache.entries[k].peer_constructor ==
+                                texts.messages[i].from_constructor &&
+                            sender_cache.entries[k].id_hi ==
+                                texts.messages[i].from_id_hi &&
+                            sender_cache.entries[k].id_lo ==
+                                texts.messages[i].from_id_lo) {
+                            if (sender_cache.entries[k].title[0] != '\0') {
+                                sender = sender_cache.entries[k].title;
+                            } else if (sender_cache.entries[k].username[0] !=
+                                       '\0') {
+                                sender = sender_cache.entries[k].username;
+                            }
+                            break;
                         }
-                        break;
                     }
                 }
+                row.text = texts.messages[i].text;
+                row.has_time = (texts.messages[i].date != 0UL);
+                row.local_epoch =
+                    row.has_time
+                        ? tg_mtproto_chat_local_epoch(
+                              texts.messages[i].date,
+                              context->server_time_delta_seconds)
+                        : 0UL;
+                row.is_out = texts.messages[i].is_out;
+                row.is_group = is_group;
+                row.peer_label = peer_label;
+                row.own_label = own_label;
+                row.sender = sender;
+                driver.on_message(driver.ctx, &row);
             }
-            tg_mtproto_chat_render_message(
-                stream, &texts.messages[i], is_group, peer_label, own_label,
-                sender, context->server_time_delta_seconds, &tg_chat_day_shown);
+            ++printed;
         }
-        ++printed;
     }
     if (last_seen_message_id != 0) {
         *last_seen_message_id = max_seen_message_id;
