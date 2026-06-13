@@ -155,6 +155,7 @@ void tg_config_init(tg_config *config)
     config->run_platform_rng_test = 0;
     config->run_gui_self_test = 0;
     config->run_gui_window = 0;
+    config->run_chat_engine_self_test = 0;
     config->run_console_ui_test = 0;
     config->run_console_tui_test = 0;
     config->ui_color_mode = 0;
@@ -343,6 +344,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_gui_self_test = 1;
         } else if (strcmp(argv[i], "--gui-test") == 0) {
             config->run_gui_window = 1;
+        } else if (strcmp(argv[i], "--chat-engine-self-test") == 0) {
+            config->run_chat_engine_self_test = 1;
         } else if (strcmp(argv[i], "--console-ui-test") == 0) {
             config->run_console_ui_test = 1;
         } else if (strcmp(argv[i], "--console-tui-test") == 0) {

@@ -25,6 +25,7 @@
 #include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_envelope.h"
 #include "tg_mtproto_login.h"
+#include "tg_chat_engine.h"
 #include "tg_mtproto_message_id.h"
 #include "tg_mtproto_probe.h"
 #include "tg_mtproto_rsa.h"
@@ -292,11 +293,9 @@ static void tg_mtproto_chat_show_prompt(FILE *stream,
                                         int raw);
 /* Console bell (BEL -> screen flash on Amiga consoles) on notifications. */
 static int tg_chat_bell_enabled = 1;
-/* Gap-handling cursor (updates.getState / getDifference); pts == 0 means
-   not primed, so the paced drain stays off. /diff toggles the background
-   drain (the bisection knob for the fragile MorphOS link). */
-static tg_mtproto_updates_state tg_chat_updates_state;
-static int tg_chat_diff_enabled = 1;
+/* Gap-handling cursor (updates.getState / getDifference) and the /diff toggle
+   now live in the chat engine (tg_chat_engine), a stack-local of
+   tg_mtproto_auth_chat_file -- the first slice of the engine extraction. */
 /* Day (local-frame epoch/86400) of the last transcript line, for the
    "--- 10 Jun ---" separators; 0 = nothing printed yet this chat. */
 static unsigned long tg_chat_day_shown = 0UL;
@@ -8645,6 +8644,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     FILE *chat_quiet;
     long chat_quiet_length;
     tg_mtproto_auth_context chat_context;
+    tg_chat_engine chat_engine;
     int rc;
     int peer_command;
     int peer_history_ready;
@@ -8787,7 +8787,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     /* The gap-handling cursor starts unprimed; the drain tick primes it
        lazily (one query) so the fragile session-open phase on slow links
        stays as light as before. */
-    memset(&tg_chat_updates_state, 0, sizeof(tg_chat_updates_state));
+    tg_chat_engine_init(&chat_engine);
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         tg_mtproto_chat_print_system_line(stream, "Choose a chat:");
         fputc('\n', stream);
@@ -8937,7 +8937,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                (~60s) that catches whatever a dropped push missed; the
                dedupe ring absorbs the overlap with live pushes. /diff off
                turns it off everywhere. */
-            if (rc == 0 && tg_chat_diff_enabled) {
+            if (rc == 0 && chat_engine.diff_enabled) {
                 static unsigned long diff_tick = 0UL;
                 unsigned long diff_cadence;
 #if defined(__MORPHOS__) || defined(__MORPHOS)
@@ -8947,14 +8947,14 @@ int tg_mtproto_auth_chat_file(const char *host,
 #endif
                 ++diff_tick;
                 if ((diff_tick % diff_cadence) == 0UL) {
-                    if (tg_chat_updates_state.pts == 0UL) {
+                    if (chat_engine.updates_state.pts == 0UL) {
                         (void)tg_mtproto_chat_get_updates_state_on_context(
                             host, port, api_id, auth_file, dc_id_text,
-                            &chat_context, &tg_chat_updates_state, quiet);
+                            &chat_context, &chat_engine.updates_state, quiet);
                     } else {
                         (void)tg_mtproto_chat_drain_difference_on_context(
                             host, port, api_id, auth_file, dc_id_text,
-                            &chat_context, &tg_chat_updates_state, quiet);
+                            &chat_context, &chat_engine.updates_state, quiet);
                     }
                 }
             }
@@ -9148,14 +9148,14 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (strcmp(line, "/diff") == 0 || strcmp(line, "/diff on") == 0 ||
             strcmp(line, "/diff off") == 0) {
             if (strcmp(line, "/diff on") == 0) {
-                tg_chat_diff_enabled = 1;
+                chat_engine.diff_enabled = 1;
             } else if (strcmp(line, "/diff off") == 0) {
-                tg_chat_diff_enabled = 0;
+                chat_engine.diff_enabled = 0;
             } else {
-                tg_chat_diff_enabled = !tg_chat_diff_enabled;
+                chat_engine.diff_enabled = !chat_engine.diff_enabled;
             }
             tg_mtproto_chat_print_system_line(
-                stream, tg_chat_diff_enabled
+                stream, chat_engine.diff_enabled
                             ? "Background catch-up on."
                             : "Background catch-up off.");
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
@@ -9168,21 +9168,21 @@ int tg_mtproto_auth_chat_file(const char *host,
             char diff_note[96];
             int diff_rc;
             FILE *diff_quiet = tg_mtproto_open_quiet_stream(stream);
-            if (tg_chat_updates_state.pts == 0UL) {
+            if (chat_engine.updates_state.pts == 0UL) {
                 (void)tg_mtproto_chat_get_updates_state_on_context(
                     host, port, api_id, auth_file, dc_id_text, &chat_context,
-                    &tg_chat_updates_state, diff_quiet);
+                    &chat_engine.updates_state, diff_quiet);
             }
             sprintf(diff_note, "diff: pts=%lu seq=%lu date=%lu",
-                    tg_chat_updates_state.pts, tg_chat_updates_state.seq,
-                    tg_chat_updates_state.date);
+                    chat_engine.updates_state.pts, chat_engine.updates_state.seq,
+                    chat_engine.updates_state.date);
             tg_mtproto_chat_print_system_line(stream, diff_note);
             diff_rc = tg_mtproto_chat_drain_difference_on_context(
                 host, port, api_id, auth_file, dc_id_text, &chat_context,
-                &tg_chat_updates_state, diff_quiet);
+                &chat_engine.updates_state, diff_quiet);
             tg_mtproto_close_quiet_stream(diff_quiet, stream);
             sprintf(diff_note, "diff: rc=%d queued=%lu new-pts=%lu", diff_rc,
-                    tg_chat_notify_count, tg_chat_updates_state.pts);
+                    tg_chat_notify_count, chat_engine.updates_state.pts);
             tg_mtproto_chat_print_system_line(stream, diff_note);
             {
                 FILE *tui_cap = tg_console_tui_capture_begin(stream);

@@ -14,6 +14,7 @@
 #include "tg_config.h"
 #include "tg_console.h"
 #include "tg_console_ui.h"
+#include "tg_chat_engine.h"
 #include "tg_console_tui.h"
 #include "tg_file.h"
 #include "tg_gui.h"
@@ -3958,6 +3959,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_gui_self_test) {
         return tg_gui_self_test();
+    }
+
+    if (config.run_chat_engine_self_test) {
+        return tg_chat_engine_self_test();
     }
 
     if (config.run_gui_window) {

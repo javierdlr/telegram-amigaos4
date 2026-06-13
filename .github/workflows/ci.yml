@@ -24,6 +24,8 @@ jobs:
         run: ./build/host/telegram-test --mtproto-self-test
       - name: GUI layout self-test
         run: ./build/host/telegram-test --gui-self-test
+      - name: Chat engine self-test
+        run: ./build/host/telegram-test --chat-engine-self-test
       - name: Platform RNG self-test
         run: |
           ./build/host/telegram-test --platform-rng-test
