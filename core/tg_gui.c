@@ -485,9 +485,11 @@ static void tg_gui_paint_main(const tg_gui_state *state,
 
     input_h = lh + 14;
     /* Vertically centre the text line inside the input/Send box (height
-       input_h - 4) instead of baseline-at-box-top, which left the label
-       riding high in the taller Send button. */
-    input_baseline = content_h - input_h + ((input_h - 4) + lh) / 2;
+       input_h - 4 = lh + 10). The old baseline (box_top + lh) rode high; a
+       full geometric centre sat too low once the Amiga bitmap-font descent
+       (~2px below the baseline) is accounted for. The optical centre is a
+       couple of pixels below box_top + lh. */
+    input_baseline = content_h - input_h + lh + 2;
     transcript_bottom = content_h - input_h - 4;
 
     /* One full line below the subtitle baseline so the first incoming bubble's
