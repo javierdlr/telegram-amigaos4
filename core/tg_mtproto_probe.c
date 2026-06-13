@@ -6166,6 +6166,54 @@ static void tg_chat_list_copy_name(char *dest, const char *src)
     dest[TG_CHAT_LIST_NAME_MAX - 1U] = '\0';
 }
 
+/* One-shot live refresh of the peer cache for the GUI sidebar: load the saved
+   session to learn its DC, resolve the production endpoint, and run the same
+   list-peers fetch the console chat session uses (limit 5, then a minimal
+   retry for heavy dialogsSlice accounts). No interactive prompt, no held
+   context -- it opens and closes its own connection inside list_peers_file.
+   The caller then re-parses the cache through tg_mtproto_chat_list_parse.
+   Returns 0 when the cache was (re)written or already usable, non-zero when no
+   chats could be obtained (the caller falls back to whatever cache exists). */
+int tg_mtproto_gui_refresh_peer_cache(const char *api_file,
+                                      const char *auth_file,
+                                      const char *peer_cache_file, FILE *stream)
+{
+    tg_mtproto_session session;
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    tg_mtproto_session_status status;
+    const char *host;
+    const char *dc_id_text;
+    FILE *quiet;
+    int rc;
+
+    if (api_file == 0 || auth_file == 0 || peer_cache_file == 0) {
+        return 2;
+    }
+    status = tg_mtproto_session_load_authorization(auth_file, &session,
+                                                   auth_key);
+    tg_mtproto_secure_zero(auth_key, sizeof(auth_key));
+    if (status != TG_MTPROTO_SESSION_OK) {
+        return 2;
+    }
+    if (tg_mtproto_production_endpoint_for_dc(session.dc_id, &host,
+                                              &dc_id_text) != 0) {
+        return 2;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
+                                         dc_id_text, "5", peer_cache_file,
+                                         quiet);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
+        quiet = tg_mtproto_open_quiet_stream(stream);
+        rc = tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
+                                             dc_id_text, "1", peer_cache_file,
+                                             quiet);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+    }
+    return rc;
+}
+
 int tg_mtproto_chat_list_parse(const char *path, unsigned long current_index,
                                tg_chat_list_row *rows, int max, int *file_missing)
 {

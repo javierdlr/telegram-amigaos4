@@ -3997,8 +3997,17 @@ int tg_app_run(int argc, char **argv)
         memset(&driver, 0, sizeof(driver));
         gui.theme = TG_GUI_THEME_DARK;
         missing = 0;
-        /* Project the real peer cache into the sidebar through the same GUI
-           driver the live client will use; no network, read-only. */
+        /* --gui-chats-live: pull a fresh chat list from the network into the
+           cache first (best-effort -- on failure we still open the window over
+           whatever cache exists). --gui-chats stays cache-only. */
+        if (config.run_gui_chats_live) {
+            tg_mtproto_gui_refresh_peer_cache(config.mtproto_auth_api_file,
+                                              config.mtproto_auth_file,
+                                              config.gui_chats_cache_file,
+                                              stdout);
+        }
+        /* Project the peer cache into the sidebar through the same GUI driver
+           the live client will use. */
         tg_gui_chat_driver_bind(&gui_driver, &gui, &driver);
         count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file, 0UL,
                                            rows, TG_CHAT_LIST_MAX, &missing);
