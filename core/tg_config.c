@@ -155,6 +155,8 @@ void tg_config_init(tg_config *config)
     config->run_platform_rng_test = 0;
     config->run_gui_self_test = 0;
     config->run_gui_window = 0;
+    config->run_gui_chats = 0;
+    config->gui_chats_cache_file = 0;
     config->run_chat_engine_self_test = 0;
     config->run_chat_render_self_test = 0;
     config->run_chat_list_self_test = 0;
@@ -347,6 +349,14 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_gui_self_test = 1;
         } else if (strcmp(argv[i], "--gui-test") == 0) {
             config->run_gui_window = 1;
+        } else if (strcmp(argv[i], "--gui-chats") == 0) {
+            config->run_gui_chats = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->gui_chats_cache_file = argv[i + 1];
+                i += 1;
+            } else {
+                config->gui_chats_cache_file = "telegram-peers.txt";
+            }
         } else if (strcmp(argv[i], "--chat-engine-self-test") == 0) {
             config->run_chat_engine_self_test = 1;
         } else if (strcmp(argv[i], "--chat-render-self-test") == 0) {
@@ -1197,6 +1207,9 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Run the portable GUI layout self-test (host-runnable)\n");
     fprintf(stream, "      --gui-test\n");
     fprintf(stream, "                         Open the native demo GUI window (Amiga; host prints a notice)\n");
+    fprintf(stream, "      --gui-chats [peer-cache-file]\n");
+    fprintf(stream, "                         Open the GUI window over a real peer cache (default telegram-peers.txt);\n");
+    fprintf(stream, "                         the sidebar shows your chats. Keys 1-9/n/p select, Q quits\n");
     fprintf(stream, "      --ui-color <on|off|auto>\n");
     fprintf(stream, "                         Console colours (default auto: on in chat)\n");
     fprintf(stream, "      --ui-charset <latin1|utf8>\n");

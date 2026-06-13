@@ -306,7 +306,60 @@ static unsigned long tg_gui_amiga_ticks(void)
            (unsigned long)now.ds_Tick;
 }
 
-int tg_gui_run_window(const tg_gui_state *state)
+/* Mirrors the selected chat's name into the header title so the title line
+   tracks the highlighted sidebar row as the user navigates. */
+static void tg_gui_window_apply_selection(tg_gui_state *state)
+{
+    const char *name;
+    unsigned long i;
+
+    if (state == 0 || state->chat_count <= 0) {
+        return;
+    }
+    if (state->selected_chat < 0) {
+        state->selected_chat = 0;
+    }
+    if (state->selected_chat >= state->chat_count) {
+        state->selected_chat = state->chat_count - 1;
+    }
+    name = state->chats[state->selected_chat].name;
+    for (i = 0UL; i + 1UL < (unsigned long)sizeof(state->title) &&
+                  name[i] != '\0'; ++i) {
+        state->title[i] = name[i];
+    }
+    state->title[i] = '\0';
+}
+
+/* Maps a VANILLAKEY to a new chat selection: 1-9 jump to that row (ignored
+   past the list), n/p step next/previous. Returns the clamped target index, or
+   the current selection when the key does not navigate. */
+static int tg_gui_window_select_key(const tg_gui_state *state, UWORD code)
+{
+    int sel;
+
+    sel = state->selected_chat;
+    if (code >= '1' && code <= '9') {
+        int d;
+
+        d = (int)(code - '1');
+        if (d < state->chat_count) {
+            sel = d;
+        }
+    } else if (code == 'n' || code == 'N') {
+        sel = state->selected_chat + 1;
+    } else if (code == 'p' || code == 'P') {
+        sel = state->selected_chat - 1;
+    }
+    if (sel < 0) {
+        sel = 0;
+    }
+    if (sel >= state->chat_count) {
+        sel = state->chat_count - 1;
+    }
+    return sel;
+}
+
+int tg_gui_run_window(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
     tg_gui_backend backend;
@@ -506,6 +559,15 @@ int tg_gui_run_window(const tg_gui_state *state)
             } else if (msg_class == IDCMP_VANILLAKEY) {
                 if (msg_code == 'q' || msg_code == 'Q' || msg_code == 27) {
                     done = 1;
+                } else if (state->chat_count > 0) {
+                    int sel;
+
+                    sel = tg_gui_window_select_key(state, msg_code);
+                    if (sel != state->selected_chat) {
+                        state->selected_chat = sel;
+                        tg_gui_window_apply_selection(state);
+                        tg_gui_paint(state, &backend);
+                    }
                 }
             } else if (msg_class == IDCMP_NEWSIZE) {
                 tg_gui_amiga_measure_geometry(&ctx);
@@ -540,7 +602,7 @@ int tg_gui_run_window(const tg_gui_state *state)
 
 #else /* !TG_GUI_AMIGA: host build */
 
-int tg_gui_run_window(const tg_gui_state *state)
+int tg_gui_run_window(tg_gui_state *state)
 {
     (void)state;
     puts("gui window: native window not available on this build; "

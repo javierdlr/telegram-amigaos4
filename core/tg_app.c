@@ -3985,6 +3985,45 @@ int tg_app_run(int argc, char **argv)
         return tg_gui_run_window(&gui_demo);
     }
 
+    if (config.run_gui_chats) {
+        tg_gui_state gui;
+        tg_gui_chat_driver gui_driver;
+        tg_chat_driver driver;
+        tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+        int count;
+        int missing;
+
+        memset(&gui, 0, sizeof(gui));
+        memset(&driver, 0, sizeof(driver));
+        gui.theme = TG_GUI_THEME_DARK;
+        missing = 0;
+        /* Project the real peer cache into the sidebar through the same GUI
+           driver the live client will use; no network, read-only. */
+        tg_gui_chat_driver_bind(&gui_driver, &gui, &driver);
+        count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file, 0UL,
+                                           rows, TG_CHAT_LIST_MAX, &missing);
+        if (driver.on_chat_list_changed != 0 && count > 0) {
+            driver.on_chat_list_changed(driver.ctx, rows, count);
+        }
+        if (gui.chat_count > 0) {
+            const char *name;
+            unsigned long k;
+
+            name = gui.chats[0].name;
+            for (k = 0UL; k + 1UL < (unsigned long)sizeof(gui.title) &&
+                          name[k] != '\0'; ++k) {
+                gui.title[k] = name[k];
+            }
+            gui.title[k] = '\0';
+            strcpy(gui.status, "Sola lettura - 1-9/n/p, Q esce");
+        } else {
+            strcpy(gui.title, "Telegram Amiga");
+            strcpy(gui.status, missing ? "Cache chat non trovata"
+                                       : "Nessuna chat in cache");
+        }
+        return tg_gui_run_window(&gui);
+    }
+
     if (config.run_console_ui_test) {
         return tg_mtproto_console_ui_test(stdout);
     }

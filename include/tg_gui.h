@@ -118,7 +118,9 @@ int tg_gui_self_test(void);
    close gadget / Q to quit, live resize, and a redraw-time + footprint
    measurement printed to stdout. The Amiga backends implement it over
    Intuition/RastPort; the host build prints a notice (use --gui-self-test).
-   Returns 0 on a clean exit, non-zero when the window could not open. */
-int tg_gui_run_window(const tg_gui_state *state);
+   Returns 0 on a clean exit, non-zero when the window could not open.
+   The state is mutable: number keys 1-9 and n/p move the chat selection in
+   place (updating the highlighted row and the header title). */
+int tg_gui_run_window(tg_gui_state *state);
 
 #endif
