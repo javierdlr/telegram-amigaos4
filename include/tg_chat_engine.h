@@ -81,6 +81,23 @@ typedef struct tg_chat_message_row {
     const char *sender;        /* resolved incoming sender, NULL if unknown */
 } tg_chat_message_row;
 
+/* One resolved chat-list row. The engine parses the peer cache into these
+   (resolving the display name + whether it is a @username, the user-vs-group
+   kind for grouping, unread and the open-chat marker); a driver renders them --
+   the console driver prints the grouped list, the GUI driver fills
+   tg_gui_state.chats. */
+#define TG_CHAT_LIST_MAX 64
+#define TG_CHAT_LIST_NAME_MAX 128
+
+typedef struct tg_chat_list_row {
+    unsigned long index;                /* 1-based public chat number */
+    char name[TG_CHAT_LIST_NAME_MAX];   /* resolved display name; "" = none */
+    int name_is_username;               /* prefix "@" when rendering the name */
+    int is_user;                        /* user (single chat) vs group/channel */
+    unsigned long unread;
+    int is_current;                     /* the currently open chat */
+} tg_chat_list_row;
+
 /* The driver callback surface. Step 3 introduces on_message; later slices add
    on_chat_list_changed / on_notification / on_status. ctx is the driver's own
    state (e.g. the console stream + day-separator cursor). */

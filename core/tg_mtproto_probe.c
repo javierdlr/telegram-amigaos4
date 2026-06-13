@@ -6160,25 +6160,175 @@ static int tg_mtproto_load_peer_cache_peer(const char *path,
 /* Prints the cached chat list. When current_index_text names a chat index,
    that entry is rendered in the prompt (bold) colour with a trailing marker
    so the active chat is visible at a glance. */
-static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
-                                               const char *current_index_text)
+static void tg_chat_list_copy_name(char *dest, const char *src)
+{
+    strncpy(dest, src, TG_CHAT_LIST_NAME_MAX - 1U);
+    dest[TG_CHAT_LIST_NAME_MAX - 1U] = '\0';
+}
+
+int tg_mtproto_chat_list_parse(const char *path, unsigned long current_index,
+                               tg_chat_list_row *rows, int max, int *file_missing)
 {
     FILE *file;
     char line[512];
-    unsigned long index;
+    char type[24];
+    int count;
+
+    if (file_missing != 0) {
+        *file_missing = 0;
+    }
+    if (path == 0 || rows == 0 || max <= 0) {
+        return 0;
+    }
+    file = fopen(path, "r");
+    if (file == 0) {
+        if (file_missing != 0) {
+            *file_missing = 1;
+        }
+        return 0;
+    }
+    count = 0;
+    while (count < max && fgets(line, sizeof(line), file) != 0) {
+        tg_chat_list_row *row;
+        unsigned long index;
+        unsigned long unread;
+        char *title;
+        char *username;
+        char *unread_text;
+
+        index = 0UL;
+        type[0] = '\0';
+        if (sscanf(line, "peer %lu type %23s", &index, type) < 2) {
+            continue;
+        }
+        row = &rows[count];
+        row->index = index;
+        row->is_user = strcmp(type, "user") == 0;
+        unread = 0UL;
+        unread_text = strstr(line, " unread ");
+        if (unread_text != 0) {
+            (void)sscanf(unread_text + 8, "%lu", &unread);
+        }
+        row->unread = unread;
+        row->is_current = (current_index != 0UL && index == current_index);
+        row->name[0] = '\0';
+        row->name_is_username = 0;
+        /* Name resolution, byte-for-byte as the old inline printer: title
+           (unless "-"), else @username (unless "-"), else the type string. The
+           file always writes a title field, so the @username fallback only
+           fires for malformed lines; a present-but-"-" title yields a blank
+           name (preserved quirk). */
+        title = strstr(line, " title ");
+        username = strstr(line, " username ");
+        if (title != 0) {
+            title += 7;
+            tg_mtproto_trim_line(title);
+            if (title[0] != '-' || title[1] != '\0') {
+                tg_chat_list_copy_name(row->name, title);
+            }
+        } else if (username != 0) {
+            char *cut;
+
+            username += 10;
+            cut = strstr(username, " title ");
+            if (cut != 0) {
+                *cut = '\0';
+            }
+            tg_mtproto_trim_line(username);
+            if (username[0] != '-' || username[1] != '\0') {
+                tg_chat_list_copy_name(row->name, username);
+                row->name_is_username = 1;
+            }
+        } else {
+            tg_chat_list_copy_name(row->name, type);
+        }
+        ++count;
+    }
+    fclose(file);
+    return count;
+}
+
+/* Console rendering of the chat list: two passes (single chats, then groups and
+   channels), each with its header, the per-row "N. name[ U new][ *]". The
+   driver-agnostic rows come from tg_mtproto_chat_list_parse; the GUI driver
+   fills tg_gui_state.chats from the same rows instead. */
+static void tg_mtproto_chat_list_render_console(FILE *stream,
+                                                const tg_chat_list_row *rows,
+                                                int count)
+{
+    int printed_single;
+    int printed_group;
+    int pass;
+
+    if (stream == 0) {
+        return;
+    }
+    if (count <= 0) {
+        fprintf(stream, "No chats available.\n");
+        return;
+    }
+    printed_single = 0;
+    printed_group = 0;
+    for (pass = 0; pass < 2; ++pass) {
+        int want_user;
+        int i;
+
+        want_user = pass == 0;
+        for (i = 0; i < count; ++i) {
+            const tg_chat_list_row *row;
+
+            row = &rows[i];
+            if ((row->is_user != 0) != (want_user != 0)) {
+                continue;
+            }
+            if (row->is_user) {
+                if (!printed_single) {
+                    fputs("Single chats:", stream);
+                    tg_console_ui_end_line(stream);
+                    printed_single = 1;
+                }
+            } else {
+                if (!printed_group) {
+                    if (printed_single) {
+                        tg_console_ui_end_line(stream);
+                    }
+                    fputs("Groups and channels:", stream);
+                    tg_console_ui_end_line(stream);
+                    printed_group = 1;
+                }
+            }
+            if (row->is_current) {
+                tg_console_ui_role(stream, TG_UI_ROLE_PROMPT);
+            }
+            fprintf(stream, "%lu. ", row->index);
+            if (row->name[0] != '\0') {
+                if (row->name_is_username) {
+                    fprintf(stream, "@");
+                }
+                tg_mtproto_print_cache_text(stream, row->name);
+            }
+            if (row->unread > 0UL) {
+                tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
+                fprintf(stream, " %lu new", row->unread);
+                tg_console_ui_reset(stream);
+            }
+            if (row->is_current) {
+                fputs(" *", stream);
+                tg_console_ui_reset(stream);
+            }
+            tg_console_ui_end_line(stream);
+        }
+    }
+}
+
+static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
+                                               const char *current_index_text)
+{
+    tg_chat_list_row rows[TG_CHAT_LIST_MAX];
     unsigned long current_index;
     const char *digits;
-    char type[24];
-    char *title;
-    char *username;
-    char *unread_text;
-    unsigned long unread_count;
-    int printed_single_header;
-    int printed_group_header;
-    int is_current;
-    int pass;
-    int want_user;
-    int is_user;
+    int count;
+    int file_missing;
 
     current_index = 0UL;
     if (current_index_text != 0) {
@@ -6192,90 +6342,103 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
             current_index = 0UL;
         }
     }
-    file = fopen(path, "r");
-    if (file == 0) {
+    count = tg_mtproto_chat_list_parse(path, current_index, rows,
+                                       TG_CHAT_LIST_MAX, &file_missing);
+    if (file_missing) {
         fprintf(stream, "No cached chats yet.\n");
         return;
     }
-    printed_single_header = 0;
-    printed_group_header = 0;
-    for (pass = 0; pass < 2; ++pass) {
-        want_user = pass == 0;
-        rewind(file);
-        while (fgets(line, sizeof(line), file) != 0) {
-            index = 0UL;
-            type[0] = '\0';
-            if (sscanf(line, "peer %lu type %23s", &index, type) < 2) {
-                continue;
-            }
-            is_user = strcmp(type, "user") == 0;
-            if (is_user != want_user) {
-                continue;
-            }
-            if (is_user) {
-                if (!printed_single_header) {
-                    fputs("Single chats:", stream);
-                    tg_console_ui_end_line(stream);
-                    printed_single_header = 1;
-                }
-            } else {
-                if (!printed_group_header) {
-                    if (printed_single_header) {
-                        tg_console_ui_end_line(stream);
-                    }
-                    fputs("Groups and channels:", stream);
-                    tg_console_ui_end_line(stream);
-                    printed_group_header = 1;
-                }
-            }
-            is_current = current_index != 0UL && index == current_index;
-            unread_count = 0UL;
-            unread_text = strstr(line, " unread ");
-            if (unread_text != 0) {
-                (void)sscanf(unread_text + 8, "%lu", &unread_count);
-            }
-            if (is_current) {
-                tg_console_ui_role(stream, TG_UI_ROLE_PROMPT);
-            }
-            fprintf(stream, "%lu. ", index);
-            title = strstr(line, " title ");
-            username = strstr(line, " username ");
-            if (title != 0) {
-                title += 7;
-                tg_mtproto_trim_line(title);
-                if (title[0] != '-' || title[1] != '\0') {
-                    tg_mtproto_print_cache_text(stream, title);
-                }
-            } else if (username != 0) {
-                username += 10;
-                title = strstr(username, " title ");
-                if (title != 0) {
-                    *title = '\0';
-                }
-                tg_mtproto_trim_line(username);
-                if (username[0] != '-' || username[1] != '\0') {
-                    fprintf(stream, "@");
-                    tg_mtproto_print_cache_text(stream, username);
-                }
-            } else {
-                tg_mtproto_print_cache_text(stream, type);
-            }
-            if (unread_count > 0UL) {
-                tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
-                fprintf(stream, " %lu new", unread_count);
-                tg_console_ui_reset(stream);
-            }
-            if (is_current) {
-                fputs(" *", stream);
-                tg_console_ui_reset(stream);
-            }
-            tg_console_ui_end_line(stream);
-        }
+    tg_mtproto_chat_list_render_console(stream, rows, count);
+}
+
+static const char tg_chat_list_golden[] =
+    "Single chats:\n"
+    "1. Mario Rossi\n"
+    "2. \n"
+    "3. @carla\n"
+    "\n"
+    "Groups and channels:\n"
+    "4. Dev Group 9 new\n"
+    "5. News 11 new *\n";
+
+int tg_mtproto_chat_list_self_test(void)
+{
+    static const char path[] = "tg-chatlist-selftest.tmp";
+    tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+    FILE *file;
+    FILE *cap;
+    char buf[1024];
+    size_t n;
+    int count;
+    int file_missing;
+    int saved_color;
+    int saved_charset;
+    int saved_theme;
+
+    file = fopen(path, "w");
+    if (file == 0) {
+        puts("chat list self-test: cannot write temp cache");
+        return 2;
     }
-    if (!printed_single_header && !printed_group_header) {
-        fprintf(stream, "No chats available.\n");
-    }
+    /* user w/ title; user w/ title "-" (blank name quirk); user w/o title
+       (@username fallback); group w/ unread; channel w/ unread + current. */
+    fputs("peer 1 type user id 0x0 access_hash - top 0 unread 0 self no bot no "
+          "username mario title Mario Rossi\n",
+          file);
+    fputs("peer 2 type user id 0x0 access_hash - top 0 unread 0 self no bot no "
+          "username pippo title -\n",
+          file);
+    fputs("peer 3 type user id 0x0 access_hash - top 0 unread 0 self no bot no "
+          "username carla\n",
+          file);
+    fputs("peer 4 type group id 0x0 access_hash - top 0 unread 9 self no bot no "
+          "username - title Dev Group\n",
+          file);
+    fputs("peer 5 type channel id 0x0 access_hash - top 0 unread 11 self no bot "
+          "no username news title News\n",
+          file);
     fclose(file);
+
+    saved_color = tg_console_ui_color_mode();
+    saved_charset = tg_console_ui_charset();
+    saved_theme = tg_console_ui_theme();
+    tg_console_ui_set_color_mode(TG_UI_COLOR_OFF);
+    tg_console_ui_set_charset(TG_UI_CHARSET_LATIN1);
+    tg_console_ui_set_theme(TG_UI_THEME_PLAIN);
+
+    count = tg_mtproto_chat_list_parse(path, 5UL, rows, TG_CHAT_LIST_MAX,
+                                       &file_missing);
+    remove(path);
+
+    cap = tmpfile();
+    if (cap == 0) {
+        tg_console_ui_set_color_mode(saved_color);
+        tg_console_ui_set_charset(saved_charset);
+        tg_console_ui_set_theme(saved_theme);
+        puts("chat list self-test: cannot open temp file");
+        return 2;
+    }
+    tg_mtproto_chat_list_render_console(cap, rows, count);
+    rewind(cap);
+    n = fread(buf, 1, sizeof(buf) - 1U, cap);
+    buf[n] = '\0';
+    fclose(cap);
+
+    tg_console_ui_set_color_mode(saved_color);
+    tg_console_ui_set_charset(saved_charset);
+    tg_console_ui_set_theme(saved_theme);
+
+    if (file_missing) {
+        puts("chat list self-test: temp cache reported missing");
+        return 2;
+    }
+    if (strcmp(buf, tg_chat_list_golden) != 0) {
+        printf("chat list self-test: MISMATCH\n---actual(%lu)---\n%s---end---\n",
+               (unsigned long)n, buf);
+        return 2;
+    }
+    puts("chat list self-test: ok (grouped chat-list golden)");
+    return 0;
 }
 
 static int tg_mtproto_load_self_cache_label(const char *path,

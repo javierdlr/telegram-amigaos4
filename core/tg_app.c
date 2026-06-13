@@ -3970,6 +3970,10 @@ int tg_app_run(int argc, char **argv)
         return tg_mtproto_chat_render_self_test();
     }
 
+    if (config.run_chat_list_self_test) {
+        return tg_mtproto_chat_list_self_test();
+    }
+
     if (config.run_gui_driver_self_test) {
         return tg_gui_driver_self_test();
     }

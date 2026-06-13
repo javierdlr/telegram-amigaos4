@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 
+#include "tg_chat_engine.h"
 #include "tg_mtproto_tl.h"
 
 tg_mtproto_tl_status tg_mtproto_build_req_pq_multi(
@@ -220,6 +221,18 @@ int tg_mtproto_probe_self_test(void);
    against a recorded golden. Host/CI runnable; pins output across the
    chat-engine extraction. */
 int tg_mtproto_chat_render_self_test(void);
+
+/* Parses the peer-cache file into chat-list rows (resolving display name +
+   @username flag, user/group kind, unread, current-chat marker). Returns the
+   row count (<= max); sets *file_missing non-zero when the cache file is absent.
+   The file format is probe.c's, hence this lives here. */
+int tg_mtproto_chat_list_parse(const char *path, unsigned long current_index,
+                               tg_chat_list_row *rows, int max,
+                               int *file_missing);
+
+/* Golden parity check for the chat-list renderer: parses a fixed peer cache and
+   asserts the grouped console output byte-for-byte. Host/CI runnable. */
+int tg_mtproto_chat_list_self_test(void);
 
 /* Interactive console diagnostic: prints the colour roles, the pen palette,
    the Latin-1 marker glyphs and sample emoji mappings so a tester can verify

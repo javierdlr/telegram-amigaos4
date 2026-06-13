@@ -164,6 +164,7 @@ typedef struct tg_config {
     int run_gui_window;
     int run_chat_engine_self_test;
     int run_chat_render_self_test;
+    int run_chat_list_self_test;
     int run_gui_driver_self_test;
     int run_console_ui_test;
     int run_console_tui_test;
