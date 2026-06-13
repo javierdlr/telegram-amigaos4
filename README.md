@@ -15,6 +15,13 @@ console.
 
 Current status: **working pre-alpha MTProto text-chat prototype**.
 
+> **This is the `gui-intuition` development branch.** On top of the released
+> console/TUI client it adds a second, native Intuition GUI front-end (Phase
+> 5b). The GUI is at milestone 0 — a real window that renders the chat layout
+> on real hardware — and is not yet wired to live Telegram data. The stable
+> client lives on `main`. See
+> [docs/GUI_ARCHITECTURE.md](docs/GUI_ARCHITECTURE.md).
+
 License: MIT
 
 Telegram Amiga is a non-commercial community project, created as a gift to the
@@ -46,6 +53,12 @@ hosted AROS x86_64, built against a matching trunk SDK, and the release
 binary follows that ABI. AROS One v0.38 pairs a different kickstart with its
 SDK and does not run it (it faults before `main`); that distribution is out
 of scope for this lane. AROS i386 ABIv0 remains the broadest AROS build.
+
+Two front-ends, one core: a **console/TUI** client (works everywhere — the
+low-end and universal-fallback choice) and a **native Intuition GUI** (a
+modern desktop experience, offered on every platform including fast 68k, with
+the user picking at launch). Both share the same MTProto core; neither needs
+ixemul, AmiSSL or MUI. The GUI is in development on this branch — see below.
 
 ## What Works Today
 
@@ -92,6 +105,30 @@ Bot API mode currently supports:
 TLS support exists through OpenSSL or AmiSSL depending on the target. Certificate
 validation is opt-in with `--tls-verify`, `--tls-ca-file` and `--tls-ca-path`.
 See [TLS_CERTIFICATES.md](docs/TLS_CERTIFICATES.md).
+
+## Native GUI (Phase 5b, in development)
+
+A second front-end is taking shape on this branch: a real Intuition window
+instead of the console. The design is "modern AmIRC" with cues from current
+Telegram — a chat list on the left (initials avatars, last-message preview,
+unread badges), a conversation pane with per-sender colours and message
+bubbles, an input line with a Send button, all in a dark theme — drawn by the
+client itself on a RastPort, with **zero external dependencies** (Intuition
+raw + GadTools, no MUI).
+
+Milestone 0 is done: `--gui-test` opens the window, renders the full layout
+with demo data, measures its own redraw time and runs an IDCMP event loop
+(close gadget / Q / live resize). It is validated end to end on AROS x86_64
+and on real AmigaOS 3.x hardware (a 68080/Vampire: ~9 ms for a full-window
+repaint, ~235 KB footprint). It builds on all five targets; the AmigaOS 4
+branch uses the interface model, the others the classic shared-library bases.
+
+What the GUI does **not** do yet: show live Telegram data. That arrives once
+the shared chat engine is extracted from the console path (in progress) so
+both front-ends sit on the same model. The portable layout maths run headless
+with `--gui-self-test`, and the engine extraction is checked by
+`--chat-engine-self-test` (both in CI). Full plan and status:
+[docs/GUI_ARCHITECTURE.md](docs/GUI_ARCHITECTURE.md).
 
 ## What It Is Not Yet
 
@@ -313,6 +350,7 @@ For the shared user guide, see [USER_RUNBOOK.md](docs/USER_RUNBOOK.md).
 - [AmigaOS 4.x tester notes](docs/AMIGAOS4_TESTER.md)
 - [AROS tester notes](docs/AROS_TESTER.md)
 - [AROS x86_64 tester notes](docs/AROS_X86_64_TESTER.md)
+- [Native GUI architecture (Phase 5b)](docs/GUI_ARCHITECTURE.md)
 - [Common test checklist](docs/HOW_TO_TEST.md)
 - [Current test matrix](docs/TEST_MATRIX.md)
 
@@ -363,6 +401,14 @@ make -f Makefile.aros clean all ENABLE_GZIP=0 ENABLE_GZIP_PUFF=1
 ./build/telegram-test --mtproto-self-test-fast
 ```
 
+Native GUI and portable self-tests:
+
+```sh
+telegram-test --gui-test            # native demo window (Amiga; host prints a notice)
+telegram-test --gui-self-test       # portable GUI layout check (host/CI)
+telegram-test --chat-engine-self-test  # chat-engine invariants (host/CI)
+```
+
 ## Repository Structure
 
 - `core/`: portable client, Bot API and MTProto logic
@@ -378,6 +424,11 @@ Important modules:
 
 - `tg_mtproto_*`: MTProto transport, auth, TL, crypto, session, login and probe
   code
+- `tg_chat_engine`: driver-agnostic chat-session model shared by the console
+  and GUI front-ends (Phase 5b, under extraction from `tg_mtproto_probe`)
+- `tg_console*`: console/TUI front-end (full-screen chat, colours, layout)
+- `tg_gui`, `tg_gui_window`: native Intuition GUI front-end (portable renderer
+  + per-platform window/RastPort backend)
 - `tg_text_client`: Bot API manual text console
 - `tg_bot`, `tg_telegram`: Bot API helpers
 - `tg_tls`, `tg_https`, `tg_net`: portable networking/TLS layer
