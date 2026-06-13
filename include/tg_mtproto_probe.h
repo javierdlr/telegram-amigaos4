@@ -215,6 +215,12 @@ int tg_mtproto_auth_forget(const char *auth_file,
                            FILE *stream);
 int tg_mtproto_probe_self_test(void);
 
+/* Golden parity check for the transcript renderer (the chat model/view seam):
+   renders a fixed message script with colours off and asserts byte-equality
+   against a recorded golden. Host/CI runnable; pins output across the
+   chat-engine extraction. */
+int tg_mtproto_chat_render_self_test(void);
+
 /* Interactive console diagnostic: prints the colour roles, the pen palette,
    the Latin-1 marker glyphs and sample emoji mappings so a tester can verify
    in seconds how the UI renders on a given console (--console-ui-test). */

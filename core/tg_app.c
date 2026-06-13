@@ -3965,6 +3965,10 @@ int tg_app_run(int argc, char **argv)
         return tg_chat_engine_self_test();
     }
 
+    if (config.run_chat_render_self_test) {
+        return tg_mtproto_chat_render_self_test();
+    }
+
     if (config.run_gui_window) {
         tg_gui_state gui_demo;
 

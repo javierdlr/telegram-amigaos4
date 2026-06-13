@@ -163,6 +163,7 @@ typedef struct tg_config {
     int run_gui_self_test;
     int run_gui_window;
     int run_chat_engine_self_test;
+    int run_chat_render_self_test;
     int run_console_ui_test;
     int run_console_tui_test;
     const char *ui_color_mode;   /* 0 / "on" / "off" / "auto" */

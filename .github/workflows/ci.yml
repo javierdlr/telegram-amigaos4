@@ -26,6 +26,8 @@ jobs:
         run: ./build/host/telegram-test --gui-self-test
       - name: Chat engine self-test
         run: ./build/host/telegram-test --chat-engine-self-test
+      - name: Chat transcript renderer golden
+        run: ./build/host/telegram-test --chat-render-self-test
       - name: Platform RNG self-test
         run: |
           ./build/host/telegram-test --platform-rng-test
