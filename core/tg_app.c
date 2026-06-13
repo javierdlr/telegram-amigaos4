@@ -18,6 +18,7 @@
 #include "tg_console_tui.h"
 #include "tg_file.h"
 #include "tg_gui.h"
+#include "tg_gui_driver.h"
 #include "tg_https.h"
 #include "tg_http.h"
 #include "tg_json.h"
@@ -3967,6 +3968,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_chat_render_self_test) {
         return tg_mtproto_chat_render_self_test();
+    }
+
+    if (config.run_gui_driver_self_test) {
+        return tg_gui_driver_self_test();
     }
 
     if (config.run_gui_window) {
