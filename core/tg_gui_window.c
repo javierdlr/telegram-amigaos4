@@ -455,14 +455,17 @@ int tg_gui_run_window(const tg_gui_state *state)
     tg_gui_paint(state, &backend);
 
     /* Milestone 0 measurement: time a batch of full repaints so a slow 68k
-       reports a real number. The window is already visible; this just redraws
-       over itself. */
+       reports a real number. The first paint above cleared the background;
+       these redraw the same opaque content in place with the clear suppressed,
+       so the window does not flash during the timing burst. */
     repaints = 60;
+    tg_gui_set_background_clear(0);
     t0 = tg_gui_amiga_ticks();
     for (i = 0; i < repaints; ++i) {
         tg_gui_paint(state, &backend);
     }
     t1 = tg_gui_amiga_ticks();
+    tg_gui_set_background_clear(1);
     {
         unsigned long ticks;
         unsigned long ms_total;

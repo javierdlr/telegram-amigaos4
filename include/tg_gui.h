@@ -103,6 +103,12 @@ void tg_gui_demo_state(tg_gui_state *state);
    host backend records the calls for the self-test. */
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend);
 
+/* Toggles the leading full-window background clear in tg_gui_paint (default
+   on). Turn it off for an in-place repaint of unchanged, opaque content -- the
+   redraw-time measurement uses this so its repeated repaints do not flash the
+   window. */
+void tg_gui_set_background_clear(int enabled);
+
 /* Portable layout self-test: paints the demo state into a recording backend and
    checks the invariants (something drawn, nothing outside the window). Prints a
    one-line result and returns 0 on success. Host-CI runnable. */

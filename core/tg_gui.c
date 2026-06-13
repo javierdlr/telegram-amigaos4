@@ -16,6 +16,16 @@
 
 #define TG_GUI_WRAP_MAX_LINES 16
 
+/* When 0, tg_gui_paint skips the leading full-window clear so a repeated repaint
+   of unchanged opaque content does not flash the window (used by the redraw-time
+   measurement). Default on. */
+static int tg_gui_clear_background = 1;
+
+void tg_gui_set_background_clear(int enabled)
+{
+    tg_gui_clear_background = enabled ? 1 : 0;
+}
+
 static void tg_gui_copy(char *dest, unsigned long size, const char *src)
 {
     unsigned long i;
@@ -506,8 +516,10 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
         sidebar_w = 1;
     }
 
-    backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
-                       tg_gui_make_rect(0, 0, width, height));
+    if (tg_gui_clear_background) {
+        backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
+                           tg_gui_make_rect(0, 0, width, height));
+    }
     tg_gui_paint_sidebar(state, backend, sidebar_w, content_h, lh);
     tg_gui_paint_main(state, backend, sidebar_w, width, content_h, lh);
 
