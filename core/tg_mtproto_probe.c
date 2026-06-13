@@ -8099,6 +8099,7 @@ int tg_mtproto_chat_render_self_test(void)
     console_drv.day_shown = &day_shown;
     driver.ctx = &console_drv;
     driver.on_message = tg_chat_console_on_message;
+    driver.on_chat_list_changed = 0;
 
     tg_chat_render_emit(&driver, 1700000000UL, 0, 0, "Mario", "Io", 0, "Ciao");
     tg_chat_render_emit(&driver, 1700000300UL, 1, 0, "Mario", "Io", 0,
@@ -8264,6 +8265,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         console_drv.day_shown = &tg_chat_day_shown;
         driver.ctx = &console_drv;
         driver.on_message = tg_chat_console_on_message;
+        driver.on_chat_list_changed = 0; /* console list goes via render_console */
         while (i > 0UL) {
             --i;
             if (texts.messages[i].id > max_seen_message_id) {

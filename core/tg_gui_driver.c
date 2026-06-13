@@ -105,6 +105,97 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
     state->message_count += 1;
 }
 
+/* Derives 1-2 uppercase initials from a display name (skipping a leading '@'):
+   first letter of the first word, plus the first letter of the second word if
+   present. "Mario Rossi" -> "MR", "Anna" -> "A", "" -> "?". */
+static void tg_gui_driver_initials(char *dest, unsigned long size,
+                                   const char *name)
+{
+    unsigned long out;
+    unsigned long i;
+    int in_word;
+    int words;
+
+    if (dest == 0 || size == 0UL) {
+        return;
+    }
+    if (name != 0 && name[0] == '@') {
+        ++name;
+    }
+    out = 0UL;
+    in_word = 0;
+    words = 0;
+    for (i = 0UL; name != 0 && name[i] != '\0' && out + 1UL < size; ++i) {
+        char c;
+
+        c = name[i];
+        if (c == ' ' || c == '\t') {
+            in_word = 0;
+            continue;
+        }
+        if (!in_word) {
+            in_word = 1;
+            ++words;
+            if (words > 2) {
+                break;
+            }
+            if (c >= 'a' && c <= 'z') {
+                c = (char)(c - 'a' + 'A');
+            }
+            dest[out++] = c;
+        }
+    }
+    if (out == 0UL && size > 1UL) {
+        dest[out++] = '?';
+    }
+    dest[out] = '\0';
+}
+
+static void tg_gui_driver_on_chat_list_changed(void *ctx,
+                                               const tg_chat_list_row *rows,
+                                               int count)
+{
+    tg_gui_chat_driver *gui;
+    tg_gui_state *state;
+    int i;
+    int n;
+
+    gui = (tg_gui_chat_driver *)ctx;
+    if (gui == 0 || gui->state == 0 || rows == 0) {
+        return;
+    }
+    state = gui->state;
+    n = count;
+    if (n > TG_GUI_MAX_CHATS) {
+        n = TG_GUI_MAX_CHATS;
+    }
+    state->chat_count = 0;
+    state->selected_chat = 0;
+    for (i = 0; i < n; ++i) {
+        tg_gui_chat *chat;
+        char display[TG_GUI_NAME_MAX];
+
+        chat = &state->chats[state->chat_count];
+        memset(chat, 0, sizeof(*chat));
+        /* The display name keeps the "@" for username-only chats; the peer
+           cache has no last-message preview, so preview/time stay empty. */
+        if (rows[i].name_is_username && rows[i].name[0] != '\0') {
+            display[0] = '@';
+            tg_gui_driver_copy(display + 1, sizeof(display) - 1U, rows[i].name);
+        } else {
+            tg_gui_driver_copy(display, sizeof(display), rows[i].name);
+        }
+        tg_gui_driver_copy(chat->name, sizeof(chat->name), display);
+        tg_gui_driver_initials(chat->initials, sizeof(chat->initials), display);
+        chat->avatar_color = tg_gui_driver_color_for(display);
+        chat->unread = (rows[i].unread > 0UL) ? (int)rows[i].unread : 0;
+        if (rows[i].is_current) {
+            state->selected_chat = state->chat_count;
+        }
+        state->chat_count += 1;
+    }
+}
+
 void tg_gui_chat_driver_bind(tg_gui_chat_driver *gui, tg_gui_state *state,
                              tg_chat_driver *chat_driver)
 {
@@ -114,6 +205,7 @@ void tg_gui_chat_driver_bind(tg_gui_chat_driver *gui, tg_gui_state *state,
     gui->state = state;
     chat_driver->ctx = gui;
     chat_driver->on_message = tg_gui_driver_on_message;
+    chat_driver->on_chat_list_changed = tg_gui_driver_on_chat_list_changed;
 }
 
 /* --- self-test ---------------------------------------------------------- */
@@ -214,6 +306,61 @@ int tg_gui_driver_self_test(void)
         return 2;
     }
 
-    puts("gui driver self-test: ok (rows projected to tg_gui_state)");
+    /* Chat-list projection: rows -> tg_gui_state.chats (the sidebar). */
+    {
+        tg_chat_list_row list[4];
+
+        memset(list, 0, sizeof(list));
+        list[0].index = 1UL;
+        strcpy(list[0].name, "Sviluppo AmigaIta");
+        list[0].is_user = 0;
+        list[0].is_current = 1;
+        list[1].index = 2UL;
+        strcpy(list[1].name, "Mario Rossi");
+        list[1].is_user = 1;
+        list[1].unread = 2UL;
+        list[2].index = 3UL;
+        strcpy(list[2].name, "Anna");
+        list[2].is_user = 1;
+        list[3].index = 4UL;
+        strcpy(list[3].name, "carla");
+        list[3].name_is_username = 1;
+        list[3].is_user = 1;
+
+        driver.on_chat_list_changed(driver.ctx, list, 4);
+
+        if (state.chat_count != 4) {
+            printf("gui driver self-test: chat_count %d != 4\n",
+                   state.chat_count);
+            return 2;
+        }
+        if (strcmp(state.chats[0].name, "Sviluppo AmigaIta") != 0 ||
+            strcmp(state.chats[0].initials, "SA") != 0 ||
+            state.selected_chat != 0) {
+            puts("gui driver self-test: chat[0] (group/current) wrong");
+            return 2;
+        }
+        if (state.chats[1].unread != 2 ||
+            strcmp(state.chats[1].initials, "MR") != 0) {
+            puts("gui driver self-test: chat[1] (unread/initials) wrong");
+            return 2;
+        }
+        if (strcmp(state.chats[2].initials, "A") != 0) {
+            puts("gui driver self-test: chat[2] single-word initials wrong");
+            return 2;
+        }
+        if (strcmp(state.chats[3].name, "@carla") != 0 ||
+            strcmp(state.chats[3].initials, "C") != 0) {
+            puts("gui driver self-test: chat[3] @username projection wrong");
+            return 2;
+        }
+        if (state.chats[0].avatar_color < 0 ||
+            state.chats[0].avatar_color >= TG_GUI_AVATAR_COLORS) {
+            puts("gui driver self-test: chat avatar colour out of range");
+            return 2;
+        }
+    }
+
+    puts("gui driver self-test: ok (messages + chat list projected)");
     return 0;
 }

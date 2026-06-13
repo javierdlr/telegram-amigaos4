@@ -98,12 +98,16 @@ typedef struct tg_chat_list_row {
     int is_current;                     /* the currently open chat */
 } tg_chat_list_row;
 
-/* The driver callback surface. Step 3 introduces on_message; later slices add
-   on_chat_list_changed / on_notification / on_status. ctx is the driver's own
-   state (e.g. the console stream + day-separator cursor). */
+/* The driver callback surface. on_message renders one transcript row;
+   on_chat_list_changed hands the whole resolved chat list. Later slices add
+   on_notification / on_status. ctx is the driver's own state. A driver may
+   leave a callback NULL when it does not use that surface; callers invoke only
+   the one they set. */
 typedef struct tg_chat_driver {
     void *ctx;
     void (*on_message)(void *ctx, const tg_chat_message_row *row);
+    void (*on_chat_list_changed)(void *ctx, const tg_chat_list_row *rows,
+                                 int count);
 } tg_chat_driver;
 
 /* Resets the engine for a fresh chat session: zero cursor, catch-up enabled.
