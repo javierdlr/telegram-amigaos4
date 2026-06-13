@@ -466,6 +466,7 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     int area_w;
     int header_h;
     int input_h;
+    int input_baseline;
     int y;
     int i;
     int transcript_bottom;
@@ -483,6 +484,10 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                         state->subtitle, area_w);
 
     input_h = lh + 14;
+    /* Vertically centre the text line inside the input/Send box (height
+       input_h - 4) instead of baseline-at-box-top, which left the label
+       riding high in the taller Send button. */
+    input_baseline = content_h - input_h + ((input_h - 4) + lh) / 2;
     transcript_bottom = content_h - input_h - 4;
 
     /* One full line below the subtitle baseline so the first incoming bubble's
@@ -515,18 +520,18 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                                         width - sidebar_w - 16, input_h - 4));
     if (state->input[0] != '\0') {
         backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x,
-                           content_h - input_h + lh, state->input,
+                           input_baseline, state->input,
                            (unsigned long)strlen(state->input));
     } else {
         backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, area_x,
-                           content_h - input_h + lh, "Scrivi un messaggio...",
+                           input_baseline, "Scrivi un messaggio...",
                            22UL);
     }
     backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
                        tg_gui_make_rect(width - 64, content_h - input_h, 56,
                                         input_h - 4));
     backend->draw_text(backend, TG_GUI_PEN_ACCENT_TEXT, width - 56,
-                       content_h - input_h + lh, "Invia", 5UL);
+                       input_baseline, "Invia", 5UL);
 }
 
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
