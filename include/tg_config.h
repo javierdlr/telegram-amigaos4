@@ -161,6 +161,7 @@ typedef struct tg_config {
     int run_https_test;
     int run_platform_rng_test;
     int run_gui_self_test;
+    int run_gui_window;
     int run_console_ui_test;
     int run_console_tui_test;
     const char *ui_color_mode;   /* 0 / "on" / "off" / "auto" */

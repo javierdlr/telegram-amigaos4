@@ -3960,6 +3960,13 @@ int tg_app_run(int argc, char **argv)
         return tg_gui_self_test();
     }
 
+    if (config.run_gui_window) {
+        tg_gui_state gui_demo;
+
+        tg_gui_demo_state(&gui_demo);
+        return tg_gui_run_window(&gui_demo);
+    }
+
     if (config.run_console_ui_test) {
         return tg_mtproto_console_ui_test(stdout);
     }

@@ -108,4 +108,11 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend);
    one-line result and returns 0 on success. Host-CI runnable. */
 int tg_gui_self_test(void);
 
+/* Milestone 0: opens a real native window painted by tg_gui_paint, with a
+   close gadget / Q to quit, live resize, and a redraw-time + footprint
+   measurement printed to stdout. The Amiga backends implement it over
+   Intuition/RastPort; the host build prints a notice (use --gui-self-test).
+   Returns 0 on a clean exit, non-zero when the window could not open. */
+int tg_gui_run_window(const tg_gui_state *state);
+
 #endif

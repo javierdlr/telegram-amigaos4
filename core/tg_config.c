@@ -154,6 +154,7 @@ void tg_config_init(tg_config *config)
     config->run_https_test = 0;
     config->run_platform_rng_test = 0;
     config->run_gui_self_test = 0;
+    config->run_gui_window = 0;
     config->run_console_ui_test = 0;
     config->run_console_tui_test = 0;
     config->ui_color_mode = 0;
@@ -340,6 +341,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_platform_rng_test = 1;
         } else if (strcmp(argv[i], "--gui-self-test") == 0) {
             config->run_gui_self_test = 1;
+        } else if (strcmp(argv[i], "--gui-test") == 0) {
+            config->run_gui_window = 1;
         } else if (strcmp(argv[i], "--console-ui-test") == 0) {
             config->run_console_ui_test = 1;
         } else if (strcmp(argv[i], "--console-tui-test") == 0) {
@@ -1178,6 +1181,10 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "                         Show colour roles, glyphs and emoji mapping\n");
     fprintf(stream, "      --console-tui-test\n");
     fprintf(stream, "                         Try the full-screen chat layout on this console\n");
+    fprintf(stream, "      --gui-self-test\n");
+    fprintf(stream, "                         Run the portable GUI layout self-test (host-runnable)\n");
+    fprintf(stream, "      --gui-test\n");
+    fprintf(stream, "                         Open the native demo GUI window (Amiga; host prints a notice)\n");
     fprintf(stream, "      --ui-color <on|off|auto>\n");
     fprintf(stream, "                         Console colours (default auto: on in chat)\n");
     fprintf(stream, "      --ui-charset <latin1|utf8>\n");

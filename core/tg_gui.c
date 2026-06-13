@@ -171,6 +171,48 @@ static tg_gui_rect tg_gui_make_rect(int x, int y, int w, int h)
     return rect;
 }
 
+/* Draws text but never wider than max_w, appending ".." when it has to cut.
+   Columns (the chat list especially) must clip horizontally: the backends
+   draw to a single RastPort with no per-column clip, so an unclipped long
+   preview would bleed straight across the sidebar boundary into the
+   conversation pane. */
+static void tg_gui_draw_clipped(tg_gui_backend *backend, int pen, int x,
+                                int baseline, const char *text, int max_w)
+{
+    unsigned long n;
+    int dots_w;
+    int budget;
+    unsigned long fit;
+
+    if (text == 0 || max_w <= 0) {
+        return;
+    }
+    n = (unsigned long)strlen(text);
+    if (n == 0UL) {
+        return;
+    }
+    if (backend->text_width(backend, text, n) <= max_w) {
+        backend->draw_text(backend, pen, x, baseline, text, n);
+        return;
+    }
+    dots_w = backend->text_width(backend, "..", 2UL);
+    budget = max_w - dots_w;
+    if (budget <= 0) {
+        return; /* not even room for the ellipsis */
+    }
+    fit = n;
+    while (fit > 0UL &&
+           backend->text_width(backend, text, fit) > budget) {
+        --fit;
+    }
+    if (fit > 0UL) {
+        backend->draw_text(backend, pen, x, baseline, text, fit);
+        backend->draw_text(backend, pen,
+                           x + backend->text_width(backend, text, fit), baseline,
+                           "..", 2UL);
+    }
+}
+
 static void tg_gui_paint_sidebar(const tg_gui_state *state,
                                  tg_gui_backend *backend, int sidebar_w,
                                  int content_h, int lh)
@@ -197,16 +239,15 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
         int preview_pen;
 
         chat = &state->chats[i];
+        /* The selected row is set apart by its tint and accent bar; the text
+           pens are the same as an unselected row. */
+        name_pen = TG_GUI_PEN_TEXT;
+        preview_pen = TG_GUI_PEN_TEXT_DIM;
         if (i == state->selected_chat) {
             backend->fill_rect(backend, TG_GUI_PEN_SELECT,
                                tg_gui_make_rect(0, y, sidebar_w, row_h));
             backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
                                tg_gui_make_rect(0, y, 3, row_h));
-            name_pen = TG_GUI_PEN_TEXT;
-            preview_pen = TG_GUI_PEN_TEXT_DIM;
-        } else {
-            name_pen = TG_GUI_PEN_TEXT;
-            preview_pen = TG_GUI_PEN_TEXT_DIM;
         }
 
         avatar = (2 * lh);
@@ -216,13 +257,18 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                            chat->initials, (unsigned long)strlen(chat->initials));
 
         text_x = 8 + avatar + 8;
-        backend->draw_text(backend, name_pen, text_x, y + 4 + lh, chat->name,
-                           (unsigned long)strlen(chat->name));
+        /* Name stops before the time column; preview stops before the badge
+           (or the row edge when there is none). */
+        tg_gui_draw_clipped(backend, name_pen, text_x, y + 4 + lh, chat->name,
+                            (sidebar_w - 38) - text_x);
         backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM,
                            sidebar_w - 34, y + 4 + lh, chat->time,
                            (unsigned long)strlen(chat->time));
-        backend->draw_text(backend, preview_pen, text_x, y + 8 + (2 * lh),
-                           chat->preview, (unsigned long)strlen(chat->preview));
+        tg_gui_draw_clipped(backend, preview_pen, text_x, y + 8 + (2 * lh),
+                            chat->preview,
+                            ((chat->unread > 0) ? (sidebar_w - 32)
+                                                : (sidebar_w - 10)) -
+                                text_x);
         if (chat->unread > 0) {
             char badge[8];
 
@@ -241,7 +287,7 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
 
 static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                const tg_gui_message *message, int area_x,
-                               int area_w, int y, int lh)
+                               int area_w, int y, int lh, int bottom)
 {
     unsigned long starts[TG_GUI_WRAP_MAX_LINES];
     unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
@@ -261,7 +307,8 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     pad = 8;
     max_bubble_w = (area_w * 78) / 100;
     if (max_bubble_w < 40) {
-        max_bubble_w = area_w;
+        /* Narrow window: keep a right gutter rather than touching the edge. */
+        max_bubble_w = (area_w > 2 * pad) ? (area_w - 2 * pad) : area_w;
     }
     line_count = tg_gui_wrap(backend, message->text, max_bubble_w - (2 * pad),
                              starts, lengths, TG_GUI_WRAP_MAX_LINES);
@@ -298,20 +345,50 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
         fill_pen = TG_GUI_PEN_SURFACE;
         text_pen = TG_GUI_PEN_TEXT;
         time_pen = TG_GUI_PEN_TEXT_DIM;
-        backend->draw_text(backend, message->sender_color + TG_GUI_PEN_COUNT,
-                           bubble_x + 2, y + lh, message->sender,
-                           (unsigned long)strlen(message->sender));
+        {
+            int sender_pen;
+
+            /* Enforce the avatar-tint band here rather than leaning on the
+               backend to clamp an out-of-range sender_color. */
+            sender_pen = message->sender_color;
+            if (sender_pen < 0 || sender_pen >= TG_GUI_AVATAR_COLORS) {
+                sender_pen = 0;
+            }
+            if ((y + lh) <= bottom) {
+                backend->draw_text(backend, sender_pen + TG_GUI_PEN_COUNT,
+                                   bubble_x + 2, y + lh, message->sender,
+                                   (unsigned long)strlen(message->sender));
+            }
+        }
     }
 
-    backend->fill_rect(backend, fill_pen,
-                       tg_gui_make_rect(bubble_x, y + header_h, bubble_w,
-                                        bubble_h - header_h));
-    for (k = 0; k < line_count; ++k) {
-        backend->draw_text(backend, text_pen, bubble_x + pad,
-                           y + header_h + (k * lh) + lh,
-                           message->text + starts[k], lengths[k]);
+    /* Clip every drawn part to the transcript bottom so a tall bubble near the
+       edge cannot bleed into the input row / status bar on a resized window. */
+    {
+        int fill_top;
+        int fill_bottom;
+
+        fill_top = y + header_h;
+        fill_bottom = y + bubble_h;
+        if (fill_bottom > bottom) {
+            fill_bottom = bottom;
+        }
+        if (fill_bottom > fill_top) {
+            backend->fill_rect(backend, fill_pen,
+                               tg_gui_make_rect(bubble_x, fill_top, bubble_w,
+                                                fill_bottom - fill_top));
+        }
     }
-    if (message->time[0] != '\0') {
+    for (k = 0; k < line_count; ++k) {
+        int baseline;
+
+        baseline = y + header_h + (k * lh) + lh;
+        if (baseline <= bottom) {
+            backend->draw_text(backend, text_pen, bubble_x + pad, baseline,
+                               message->text + starts[k], lengths[k]);
+        }
+    }
+    if (message->time[0] != '\0' && (y + bubble_h) <= bottom) {
         backend->draw_text(backend, time_pen, bubble_x + pad,
                            y + bubble_h, message->time,
                            (unsigned long)strlen(message->time));
@@ -338,30 +415,37 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     }
 
     header_h = lh + 10;
-    backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x, lh + 2, state->title,
-                       (unsigned long)strlen(state->title));
-    backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, area_x, header_h + lh - 2,
-                       state->subtitle, (unsigned long)strlen(state->subtitle));
+    tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, area_x, lh + 2, state->title,
+                        area_w);
+    tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT_DIM, area_x, header_h + lh - 2,
+                        state->subtitle, area_w);
 
     input_h = lh + 14;
     transcript_bottom = content_h - input_h - 4;
 
-    y = header_h + lh + 6;
+    /* One full line below the subtitle baseline so the first incoming bubble's
+       sender name clears the header at any font size. */
+    y = header_h + (2 * lh) + 4;
     for (i = 0; i < state->message_count; ++i) {
         const tg_gui_message *message;
 
-        message = &state->messages[i];
-        if (message->is_system) {
-            backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, area_x + (area_w / 4),
-                               y + lh, message->text,
-                               (unsigned long)strlen(message->text));
-            y += lh + 6;
-            continue;
-        }
+        /* Guard every message type, system lines included, against running
+           into the input row. */
         if (y >= transcript_bottom) {
             break;
         }
-        y += tg_gui_paint_bubble(backend, message, area_x, area_w, y, lh);
+        message = &state->messages[i];
+        if (message->is_system) {
+            if (y + lh <= transcript_bottom) {
+                backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM,
+                                   area_x + (area_w / 4), y + lh, message->text,
+                                   (unsigned long)strlen(message->text));
+            }
+            y += lh + 6;
+            continue;
+        }
+        y += tg_gui_paint_bubble(backend, message, area_x, area_w, y, lh,
+                                 transcript_bottom);
     }
 
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
@@ -404,15 +488,22 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
 
     status_h = lh + 6;
     content_h = height - status_h;
-    sidebar_w = (width * 36) / 100;
-    if (sidebar_w < 120) {
-        sidebar_w = 120;
-    }
-    if (sidebar_w > width - 160) {
-        sidebar_w = width - 160;
-    }
-    if (sidebar_w < 0) {
+    /* Below ~280px there is no room for both a 120px list and a usable
+       conversation, so just split a third; above it, 36% clamped to [120,
+       width-160]. Single precedence, no self-cancelling clamps. */
+    if (width < 280) {
         sidebar_w = width / 3;
+    } else {
+        sidebar_w = (width * 36) / 100;
+        if (sidebar_w < 120) {
+            sidebar_w = 120;
+        }
+        if (sidebar_w > width - 160) {
+            sidebar_w = width - 160;
+        }
+    }
+    if (sidebar_w < 1) {
+        sidebar_w = 1;
     }
 
     backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
