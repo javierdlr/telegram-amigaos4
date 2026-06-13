@@ -153,6 +153,7 @@ void tg_config_init(tg_config *config)
     config->run_http_post_self_test = 0;
     config->run_https_test = 0;
     config->run_platform_rng_test = 0;
+    config->run_gui_self_test = 0;
     config->run_console_ui_test = 0;
     config->run_console_tui_test = 0;
     config->ui_color_mode = 0;
@@ -337,6 +338,8 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             i += 3;
         } else if (strcmp(argv[i], "--platform-rng-test") == 0) {
             config->run_platform_rng_test = 1;
+        } else if (strcmp(argv[i], "--gui-self-test") == 0) {
+            config->run_gui_self_test = 1;
         } else if (strcmp(argv[i], "--console-ui-test") == 0) {
             config->run_console_ui_test = 1;
         } else if (strcmp(argv[i], "--console-tui-test") == 0) {

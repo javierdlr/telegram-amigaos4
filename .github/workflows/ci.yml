@@ -22,6 +22,8 @@ jobs:
         run: make -f Makefile.host all
       - name: MTProto self-test (TL / crypto / SRP / session)
         run: ./build/host/telegram-test --mtproto-self-test
+      - name: GUI layout self-test
+        run: ./build/host/telegram-test --gui-self-test
       - name: Platform RNG self-test
         run: |
           ./build/host/telegram-test --platform-rng-test

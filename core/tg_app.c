@@ -16,6 +16,7 @@
 #include "tg_console_ui.h"
 #include "tg_console_tui.h"
 #include "tg_file.h"
+#include "tg_gui.h"
 #include "tg_https.h"
 #include "tg_http.h"
 #include "tg_json.h"
@@ -3953,6 +3954,10 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_platform_rng_test) {
         return tg_run_platform_rng_test();
+    }
+
+    if (config.run_gui_self_test) {
+        return tg_gui_self_test();
     }
 
     if (config.run_console_ui_test) {
