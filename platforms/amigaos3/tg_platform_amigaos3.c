@@ -125,6 +125,11 @@ void tg_platform_log(const char *level, const char *message)
     printf("[amigaos3:%s] %s\n", level, message);
 }
 
+void tg_platform_debug(const char *message)
+{
+    (void)message; /* no dedicated kernel-debug channel used here */
+}
+
 void tg_platform_sleep_seconds(unsigned long seconds)
 {
 #if defined(__amigaos3__)

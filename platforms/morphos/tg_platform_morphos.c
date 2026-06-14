@@ -22,6 +22,7 @@
 #include <devices/timer.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
+#include <clib/debug_protos.h>
 #include <dos/dos.h>
 #include <proto/timer.h>
 
@@ -55,6 +56,17 @@ const char *tg_platform_default_data_dir(void)
 void tg_platform_log(const char *level, const char *message)
 {
     printf("[morphos:%s] %s\n", level, message);
+}
+
+void tg_platform_debug(const char *message)
+{
+    /* KPutStr (debug.lib) writes straight to the kernel debug output, so it
+       survives a hard freeze and is captured live by Sashimi -- unlike a disk
+       log, which the write-back filesystem may never commit before the crash. */
+    if (message != 0) {
+        KPutStr((CONST_STRPTR)message);
+        KPutStr((CONST_STRPTR)"\n");
+    }
 }
 
 void tg_platform_sleep_seconds(unsigned long seconds)

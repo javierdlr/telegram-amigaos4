@@ -10968,6 +10968,9 @@ void tg_gui_log(const char *msg)
     if (!tg_gui_log_on || msg == 0) {
         return;
     }
+    /* First the unbuffered kernel-debug channel (survives a hard freeze, read
+       live by a logtool); then a disk copy for the cases that do not crash. */
+    tg_platform_debug(msg);
     /* Absolute path via PROGDIR: (the binary's dir, e.g. Work:TGh) so the log
        lands next to the program regardless of the launcher's current dir -- a
        relative name followed the CWD, which IconX/Ambient does not set to the

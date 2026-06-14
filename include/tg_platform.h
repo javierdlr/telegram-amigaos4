@@ -31,6 +31,14 @@ const char *tg_platform_default_data_dir(void);
 void tg_platform_log(const char *level, const char *message);
 
 /**
+ * Emits one line to the platform's low-level debug output (the serial / kernel
+ * debug channel a tool like Sashimi captures on MorphOS). Unlike a file or
+ * stdout it is unbuffered and survives a hard freeze, so it is used for the
+ * crash-safe GUI lifecycle log. A no-op where there is no such channel.
+ */
+void tg_platform_debug(const char *message);
+
+/**
  * Suspends execution for approximately the requested number of seconds.
  *
  * A value of zero returns immediately. This is used only by bounded polling
