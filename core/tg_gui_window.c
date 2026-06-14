@@ -376,6 +376,7 @@ int tg_gui_run_window(tg_gui_state *state)
     int repaints;
     int i;
     int done;
+    int compose;
     unsigned long watch_seconds;
     time_t last_session_poll;
 
@@ -556,6 +557,7 @@ int tg_gui_run_window(tg_gui_state *state)
 #endif
     last_session_poll = time(0);
     done = 0;
+    compose = 0;
     while (!done) {
         struct IntuiMessage *msg;
         int session_dirty;
@@ -573,9 +575,49 @@ int tg_gui_run_window(tg_gui_state *state)
 
             if (msg_class == IDCMP_CLOSEWINDOW) {
                 done = 1;
+            } else if (msg_class == IDCMP_VANILLAKEY && compose) {
+                /* Composing: keys edit the input line; RETURN sends, ESC
+                   cancels, BACKSPACE deletes. */
+                if (msg_code == 13 || msg_code == 10) {
+                    if (state->input[0] != '\0') {
+                        (void)tg_gui_session_send(state->input, stdout);
+                        state->input[0] = '\0';
+                    }
+                    compose = 0;
+                    strcpy(state->status, "Live - 1-9/n/p, Q esce");
+                    tg_gui_paint(state, &backend);
+                } else if (msg_code == 27) {
+                    state->input[0] = '\0';
+                    compose = 0;
+                    strcpy(state->status, "Live - 1-9/n/p, Q esce");
+                    tg_gui_paint(state, &backend);
+                } else if (msg_code == 8 || msg_code == 127) {
+                    unsigned long n;
+
+                    n = (unsigned long)strlen(state->input);
+                    if (n > 0UL) {
+                        state->input[n - 1UL] = '\0';
+                        tg_gui_paint(state, &backend);
+                    }
+                } else if (msg_code >= 32 && msg_code < 256) {
+                    unsigned long n;
+
+                    n = (unsigned long)strlen(state->input);
+                    if (n + 1UL < (unsigned long)sizeof(state->input)) {
+                        state->input[n] = (char)msg_code;
+                        state->input[n + 1UL] = '\0';
+                        tg_gui_paint(state, &backend);
+                    }
+                }
             } else if (msg_class == IDCMP_VANILLAKEY) {
                 if (msg_code == 'q' || msg_code == 'Q' || msg_code == 27) {
                     done = 1;
+                } else if ((msg_code == 13 || msg_code == 10) &&
+                           tg_gui_session_is_open()) {
+                    /* RETURN starts composing a message for the open chat. */
+                    compose = 1;
+                    strcpy(state->status, "Scrivi - INVIO invia, ESC annulla");
+                    tg_gui_paint(state, &backend);
                 } else if (state->chat_count > 0) {
                     int sel;
 
@@ -602,7 +644,7 @@ int tg_gui_run_window(tg_gui_state *state)
                 time_t now;
 
                 now = time(0);
-                if (now != (time_t)-1 &&
+                if (!compose && now != (time_t)-1 &&
                     (unsigned long)(now - last_session_poll) >= watch_seconds) {
                     last_session_poll = now;
                     if (tg_gui_session_tick(stdout)) {
