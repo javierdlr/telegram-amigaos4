@@ -493,6 +493,40 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     return bubble_h + 6;
 }
 
+/* The vertical space a message occupies (matching what tg_gui_paint_bubble
+   advances y by) without drawing -- used to anchor the newest messages to the
+   bottom of the transcript so a fresh send/receive is always visible. */
+static int tg_gui_message_height(tg_gui_backend *backend,
+                                 const tg_gui_message *message, int area_w,
+                                 int lh)
+{
+    unsigned long starts[TG_GUI_WRAP_MAX_LINES];
+    unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
+    int max_bubble_w;
+    int pad;
+    int line_count;
+    int header_h;
+    int has_time;
+
+    if (message->is_system) {
+        return lh + 6;
+    }
+    pad = 8;
+    max_bubble_w = (area_w * 78) / 100;
+    if (max_bubble_w < 40) {
+        max_bubble_w = (area_w > 2 * pad) ? (area_w - 2 * pad) : area_w;
+    }
+    line_count = tg_gui_wrap(backend, message->text, max_bubble_w - (2 * pad),
+                             starts, lengths, TG_GUI_WRAP_MAX_LINES);
+    if (line_count <= 0) {
+        line_count = 1;
+    }
+    header_h = message->is_own ? 0 : (lh + 2);
+    has_time = (message->time[0] != '\0');
+    /* bubble_h + 6, mirroring tg_gui_paint_bubble's return. */
+    return header_h + (line_count * lh) + (has_time ? lh : 0) + 6 + 6;
+}
+
 static void tg_gui_paint_main(const tg_gui_state *state,
                               tg_gui_backend *backend, int sidebar_w,
                               int width, int content_h, int lh)
@@ -530,7 +564,32 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     /* One full line below the subtitle baseline so the first incoming bubble's
        sender name clears the header at any font size. */
     y = header_h + (2 * lh) + 4;
-    for (i = 0; i < state->message_count; ++i) {
+    /* Auto-scroll to the bottom: walk back from the newest message, summing
+       heights until the visible set fills the transcript, then anchor that set
+       to the bottom so the latest send/receive is always on screen. */
+    i = state->message_count;
+    {
+        int avail;
+        int used;
+
+        avail = transcript_bottom - y;
+        used = 0;
+        while (i > 0) {
+            int h;
+
+            h = tg_gui_message_height(backend, &state->messages[i - 1], area_w,
+                                      lh);
+            if (used > 0 && used + h > avail) {
+                break;
+            }
+            used += h;
+            --i;
+        }
+        if (used < avail) {
+            y = transcript_bottom - used;
+        }
+    }
+    for (; i < state->message_count; ++i) {
         const tg_gui_message *message;
 
         /* Guard every message type, system lines included, against running
