@@ -463,7 +463,8 @@ int tg_gui_run_window(tg_gui_state *state)
     tags[i++].ti_Data = 0xffff;
     tags[i].ti_Tag = WA_IDCMP;
     tags[i++].ti_Data = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_NEWSIZE |
-                        IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS;
+                        IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS |
+                        IDCMP_MOUSEBUTTONS;
     tags[i].ti_Tag = TAG_END;
     tags[i++].ti_Data = 0;
 
@@ -568,9 +569,13 @@ int tg_gui_run_window(tg_gui_state *state)
                0) {
             ULONG msg_class;
             UWORD msg_code;
+            WORD mouse_x;
+            WORD mouse_y;
 
             msg_class = msg->Class;
             msg_code = msg->Code;
+            mouse_x = msg->MouseX;
+            mouse_y = msg->MouseY;
             ReplyMsg((struct Message *)msg);
 
             if (msg_class == IDCMP_CLOSEWINDOW) {
@@ -649,6 +654,48 @@ int tg_gui_run_window(tg_gui_state *state)
                     last_session_poll = now;
                     if (tg_gui_session_tick(stdout)) {
                         session_dirty = 1;
+                    }
+                }
+            } else if (msg_class == IDCMP_MOUSEBUTTONS) {
+                if (msg_code == SELECTDOWN) {
+                    int hx;
+                    int hy;
+                    int hit;
+
+                    hx = (int)mouse_x - ctx.origin_x;
+                    hy = (int)mouse_y - ctx.origin_y;
+                    hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
+                                          ctx.line_h, hx, hy);
+                    if (hit >= 0) {
+                        /* Click a chat row: select + open it (drop any draft). */
+                        if (compose) {
+                            compose = 0;
+                            state->input[0] = '\0';
+                            strcpy(state->status, "Live - 1-9/n/p, Q esce");
+                        }
+                        if (hit != state->selected_chat) {
+                            state->selected_chat = hit;
+                            tg_gui_window_apply_selection(state);
+                            (void)tg_gui_session_open_chat(
+                                state->chats[hit].index, stdout);
+                        }
+                        tg_gui_paint(state, &backend);
+                    } else if (hit == TG_GUI_HIT_SEND && compose) {
+                        if (state->input[0] != '\0') {
+                            (void)tg_gui_session_send(state->input, stdout);
+                            state->input[0] = '\0';
+                        }
+                        compose = 0;
+                        strcpy(state->status, "Live - 1-9/n/p, Q esce");
+                        tg_gui_paint(state, &backend);
+                    } else if ((hit == TG_GUI_HIT_INPUT ||
+                                hit == TG_GUI_HIT_SEND) &&
+                               !compose && tg_gui_session_is_open()) {
+                        /* Click the input field (or Send) to start composing. */
+                        compose = 1;
+                        strcpy(state->status,
+                               "Scrivi - INVIO invia, ESC annulla");
+                        tg_gui_paint(state, &backend);
                     }
                 }
             }

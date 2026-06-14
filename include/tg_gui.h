@@ -107,6 +107,15 @@ void tg_gui_demo_state(tg_gui_state *state);
    host backend records the calls for the self-test. */
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend);
 
+/* Maps a click at renderer-space (x, y) to an actionable region, so a mouse
+   can drive the same things the keyboard does. Returns a chat-row index
+   (0..chat_count-1) to open that chat, or one of the negative codes below. */
+#define TG_GUI_HIT_NONE (-1)
+#define TG_GUI_HIT_INPUT (-2) /* the message input field: start composing */
+#define TG_GUI_HIT_SEND (-3)  /* the Send button */
+int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
+                    int x, int y);
+
 /* Toggles the leading full-window background clear in tg_gui_paint (default
    on). Turn it off for an in-place repaint of unchanged, opaque content -- the
    redraw-time measurement uses this so its repeated repaints do not flash the

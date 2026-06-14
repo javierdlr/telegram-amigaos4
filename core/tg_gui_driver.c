@@ -30,6 +30,67 @@ static void tg_gui_driver_copy(char *dest, unsigned long size, const char *src)
     dest[i] = '\0';
 }
 
+/* Engine rows carry raw UTF-8 (the console transcodes at print time). The GUI
+   draws with the Amiga font (Latin-1), so copy text with a UTF-8 -> Latin-1
+   transcode: codepoints < 256 map 1:1 (Italian accents render correctly),
+   control bytes flatten to a space, and anything higher (emoji, CJK, ...) has
+   no glyph so it becomes '?' instead of a run of boxes. */
+static void tg_gui_driver_copy_latin1(char *dest, unsigned long size,
+                                      const char *src)
+{
+    unsigned long i;
+    unsigned long o;
+
+    if (dest == 0 || size == 0UL) {
+        return;
+    }
+    i = 0UL;
+    o = 0UL;
+    while (src != 0 && src[i] != '\0' && o + 1UL < size) {
+        unsigned char c;
+        unsigned long cp;
+        int extra;
+
+        c = (unsigned char)src[i++];
+        if (c < 0x80U) {
+            cp = c;
+            extra = 0;
+        } else if ((c & 0xE0U) == 0xC0U) {
+            cp = (unsigned long)(c & 0x1FU);
+            extra = 1;
+        } else if ((c & 0xF0U) == 0xE0U) {
+            cp = (unsigned long)(c & 0x0FU);
+            extra = 2;
+        } else if ((c & 0xF8U) == 0xF0U) {
+            cp = (unsigned long)(c & 0x07U);
+            extra = 3;
+        } else {
+            cp = (unsigned long)'?'; /* stray continuation / invalid lead byte */
+            extra = 0;
+        }
+        while (extra > 0) {
+            unsigned char cc;
+
+            cc = (unsigned char)src[i];
+            if ((cc & 0xC0U) != 0x80U) {
+                cp = (unsigned long)'?';
+                break;
+            }
+            cp = (cp << 6) | (unsigned long)(cc & 0x3FU);
+            ++i;
+            --extra;
+        }
+        if (cp < 0x20UL) {
+            dest[o++] = ' ';
+        } else if (cp < 0x100UL) {
+            dest[o++] = (char)cp;
+        } else {
+            dest[o++] = '?';
+        }
+    }
+    dest[o] = '\0';
+}
+
 int tg_gui_driver_color_for(const char *name)
 {
     unsigned long hash;
@@ -87,9 +148,9 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
     } else {
         who = "";
     }
-    tg_gui_driver_copy(message->sender, sizeof(message->sender), who);
+    tg_gui_driver_copy_latin1(message->sender, sizeof(message->sender), who);
     message->sender_color = tg_gui_driver_color_for(who);
-    tg_gui_driver_copy(message->text, sizeof(message->text), row->text);
+    tg_gui_driver_copy_latin1(message->text, sizeof(message->text), row->text);
 
     if (row->has_time) {
         time_t when;
@@ -185,9 +246,10 @@ static void tg_gui_driver_on_chat_list_changed(void *ctx,
         } else {
             tg_gui_driver_copy(display, sizeof(display), rows[i].name);
         }
-        tg_gui_driver_copy(chat->name, sizeof(chat->name), display);
-        tg_gui_driver_initials(chat->initials, sizeof(chat->initials), display);
-        chat->avatar_color = tg_gui_driver_color_for(display);
+        tg_gui_driver_copy_latin1(chat->name, sizeof(chat->name), display);
+        tg_gui_driver_initials(chat->initials, sizeof(chat->initials),
+                               chat->name);
+        chat->avatar_color = tg_gui_driver_color_for(chat->name);
         chat->unread = (rows[i].unread > 0UL) ? (int)rows[i].unread : 0;
         chat->index = rows[i].index;
         chat->peer_id_hi = rows[i].peer_id_hi;
@@ -325,6 +387,17 @@ int tg_gui_driver_self_test(void)
     }
     if (tg_gui_driver_color_for("Alice") != tg_gui_driver_color_for("Alice")) {
         puts("gui driver self-test: colour mapping not stable");
+        return 2;
+    }
+
+    /* UTF-8 -> Latin-1 transcode: Italian accents map 1:1, emoji collapse to
+       '?'. "cia\xC3\xB2 \xF0\x9F\x99\x82" = "ciao'(o-grave) (slight-smile)". */
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "Mario", "Io", 0,
+                       "cia\xC3\xB2 \xF0\x9F\x99\x82");
+    if (strcmp(state.messages[state.message_count - 1].text,
+               "cia\xF2 ?") != 0) {
+        printf("gui driver self-test: utf8->latin1 wrong (%s)\n",
+               state.messages[state.message_count - 1].text);
         return 2;
     }
 

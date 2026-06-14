@@ -571,6 +571,70 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                        input_baseline, "Invia", 5UL);
 }
 
+/* Sidebar width for a given window width -- shared by the painter and the
+   hit-test so a click maps to exactly what was drawn. */
+static int tg_gui_sidebar_w(int width)
+{
+    int sidebar_w;
+
+    if (width < 280) {
+        sidebar_w = width / 3;
+    } else {
+        sidebar_w = (width * 36) / 100;
+        if (sidebar_w < 120) {
+            sidebar_w = 120;
+        }
+        if (sidebar_w > width - 160) {
+            sidebar_w = width - 160;
+        }
+    }
+    if (sidebar_w < 1) {
+        sidebar_w = 1;
+    }
+    return sidebar_w;
+}
+
+int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
+                    int x, int y)
+{
+    int sidebar_w;
+    int status_h;
+    int content_h;
+    int input_h;
+
+    if (state == 0 || lh <= 0 || width <= 0 || height <= 0) {
+        return TG_GUI_HIT_NONE;
+    }
+    status_h = lh + 6;
+    content_h = height - status_h;
+    sidebar_w = tg_gui_sidebar_w(width);
+    input_h = lh + 14;
+    /* The input row / Send button live along the bottom of the right pane. */
+    if (y >= content_h - input_h && y < content_h - 4 && x >= sidebar_w) {
+        if (x >= width - 64) {
+            return TG_GUI_HIT_SEND;
+        }
+        return TG_GUI_HIT_INPUT;
+    }
+    /* Sidebar chat rows (search box on top, then fixed-height rows). */
+    if (x >= 0 && x < sidebar_w && y >= 0 && y < content_h) {
+        int search_h;
+        int row_h;
+
+        search_h = lh + 10;
+        row_h = (2 * lh) + 12;
+        if (y >= search_h) {
+            int row;
+
+            row = (y - search_h) / row_h;
+            if (row >= 0 && row < state->chat_count) {
+                return row;
+            }
+        }
+    }
+    return TG_GUI_HIT_NONE;
+}
+
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
 {
     int width;
@@ -594,21 +658,8 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
     content_h = height - status_h;
     /* Below ~280px there is no room for both a 120px list and a usable
        conversation, so just split a third; above it, 36% clamped to [120,
-       width-160]. Single precedence, no self-cancelling clamps. */
-    if (width < 280) {
-        sidebar_w = width / 3;
-    } else {
-        sidebar_w = (width * 36) / 100;
-        if (sidebar_w < 120) {
-            sidebar_w = 120;
-        }
-        if (sidebar_w > width - 160) {
-            sidebar_w = width - 160;
-        }
-    }
-    if (sidebar_w < 1) {
-        sidebar_w = 1;
-    }
+       width-160]. */
+    sidebar_w = tg_gui_sidebar_w(width);
 
     if (tg_gui_clear_background) {
         backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
