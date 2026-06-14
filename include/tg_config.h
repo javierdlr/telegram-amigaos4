@@ -164,6 +164,7 @@ typedef struct tg_config {
     int run_gui_window;
     int run_gui_chats;                   /* GUI window over a real peer cache */
     int run_gui_chats_live;              /* refresh the cache from the network first */
+    int run_gui_session_tick_self;       /* smoke: open a live session + a few ticks */
     const char *gui_chats_cache_file;    /* peer cache to project into the sidebar */
     int run_chat_engine_self_test;
     int run_chat_render_self_test;

@@ -157,6 +157,7 @@ void tg_config_init(tg_config *config)
     config->run_gui_window = 0;
     config->run_gui_chats = 0;
     config->run_gui_chats_live = 0;
+    config->run_gui_session_tick_self = 0;
     config->gui_chats_cache_file = 0;
     config->run_chat_engine_self_test = 0;
     config->run_chat_render_self_test = 0;
@@ -358,6 +359,11 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             } else {
                 config->gui_chats_cache_file = "telegram-peers.txt";
             }
+        } else if (strcmp(argv[i], "--gui-session-tick-self") == 0) {
+            config->run_gui_session_tick_self = 1;
+            config->mtproto_auth_api_file = "telegram-api.txt";
+            config->mtproto_auth_file = "telegram-auth.bin";
+            config->gui_chats_cache_file = "telegram-peers.txt";
         } else if (strcmp(argv[i], "--gui-chats-live") == 0) {
             config->run_gui_chats = 1;
             config->run_gui_chats_live = 1;
@@ -1225,6 +1231,9 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "      --gui-chats-live [peer-cache-file]\n");
     fprintf(stream, "                         Like --gui-chats but first refreshes the cache from the network\n");
     fprintf(stream, "                         (telegram-api.txt + telegram-auth.bin), so the sidebar is live\n");
+    fprintf(stream, "      --gui-session-tick-self\n");
+    fprintf(stream, "                         Smoke-test the live GUI session: open, run a few notification\n");
+    fprintf(stream, "                         drains, close (needs telegram-api.txt + telegram-auth.bin)\n");
     fprintf(stream, "      --ui-color <on|off|auto>\n");
     fprintf(stream, "                         Console colours (default auto: on in chat)\n");
     fprintf(stream, "      --ui-charset <latin1|utf8>\n");

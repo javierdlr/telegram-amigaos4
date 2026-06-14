@@ -36,6 +36,9 @@
 #include "tg_console_ui.h"
 #include "tg_console_tui.h"
 #include "tg_file.h"
+#include "tg_gui.h"
+#include "tg_gui_driver.h"
+#include "tg_gui_session.h"
 #include "tg_net.h"
 #include "tg_platform.h"
 
@@ -10905,4 +10908,199 @@ int tg_mtproto_console_ui_test(FILE *stream)
     fputc('\n', stream);
     fflush(stream);
     return 0;
+}
+
+/* --- Live GUI session bridge (slice 3) --------------------------------------
+ *
+ * A non-interactive front-end over the same chat core the console uses, kept in
+ * this translation unit so it reaches the static network helpers directly. It
+ * holds an authenticated connection for the window's lifetime and drains
+ * getDifference on demand, dispatching harvested notifications to the GUI
+ * driver (which bumps + flashes the matching sidebar badge). The console chat
+ * path is untouched; this is all new, additive code. Per-chat live history and
+ * sending land in later slices. One session per process (the window owns it),
+ * so the state is a file-static singleton.
+ */
+static struct {
+    tg_mtproto_auth_context context;
+    tg_chat_engine engine;
+    tg_gui_chat_driver gui_driver;
+    tg_chat_driver driver;
+    const char *host;
+    const char *port;
+    const char *dc_id_text;
+    const char *auth_file;
+    const char *peer_cache_file;
+    char api_id[32];
+    unsigned long saved_timeout;
+    unsigned long diff_tick;
+    int open;
+} tg_gui_session_state;
+
+int tg_gui_session_open(const char *api_file, const char *auth_file,
+                        const char *peer_cache_file, tg_gui_state *state,
+                        FILE *stream)
+{
+    tg_mtproto_session session;
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    const char *host;
+    const char *dc_id_text;
+    FILE *quiet;
+    int rc;
+    static const char label[] = "gui session";
+
+    if (api_file == 0 || auth_file == 0 || peer_cache_file == 0 || state == 0 ||
+        stream == 0) {
+        return 2;
+    }
+    memset(&tg_gui_session_state, 0, sizeof(tg_gui_session_state));
+    /* Derive the production endpoint from the saved session's DC. */
+    if (tg_mtproto_session_load_authorization(auth_file, &session, auth_key) !=
+        TG_MTPROTO_SESSION_OK) {
+        return 2;
+    }
+    tg_mtproto_secure_zero(auth_key, sizeof(auth_key));
+    if (tg_mtproto_production_endpoint_for_dc(session.dc_id, &host,
+                                              &dc_id_text) != 0) {
+        return 2;
+    }
+    tg_gui_session_state.host = host;
+    tg_gui_session_state.port = "443";
+    tg_gui_session_state.dc_id_text = dc_id_text;
+    tg_gui_session_state.auth_file = auth_file;
+    tg_gui_session_state.peer_cache_file = peer_cache_file;
+
+    /* Engine + notify queue + GUI driver, mirroring the console prelude: bind
+       the notify back-pointer and arm collection before anything can recv. */
+    tg_chat_engine_init(&tg_gui_session_state.engine);
+    tg_chat_nq = &tg_gui_session_state.engine.notify;
+    tg_chat_notify_reset(&tg_gui_session_state.engine.notify, 1);
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    tg_mtproto_set_session_updates(0);
+#else
+    tg_mtproto_set_session_updates(1);
+#endif
+    tg_gui_chat_driver_bind(&tg_gui_session_state.gui_driver, state,
+                            &tg_gui_session_state.driver);
+
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_load_api_id_file(api_file, tg_gui_session_state.api_id,
+                                     sizeof(tg_gui_session_state.api_id), quiet,
+                                     label);
+    if (rc == 0) {
+        rc = tg_mtproto_ensure_saved_auth_context(host, "443", auth_file,
+                                                  dc_id_text,
+                                                  &tg_gui_session_state.context,
+                                                  quiet, label);
+        if (rc != 0) {
+            /* Slow links often stall the very first open; one fresh retry, as
+               the console session does. */
+            tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+            rc = tg_mtproto_ensure_saved_auth_context(
+                host, "443", auth_file, dc_id_text,
+                &tg_gui_session_state.context, quiet, label);
+        }
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    if (rc != 0) {
+        tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+        tg_chat_nq = 0;
+        return 2;
+    }
+    tg_gui_session_state.saved_timeout = tg_net_connect_timeout_seconds();
+
+    /* Project the current cache into the sidebar (the caller may have just
+       refreshed it from the network). */
+    {
+        tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+        int count;
+        int missing;
+
+        missing = 0;
+        count = tg_mtproto_chat_list_parse(peer_cache_file, 0UL, rows,
+                                           TG_CHAT_LIST_MAX, &missing);
+        if (tg_gui_session_state.driver.on_chat_list_changed != 0 &&
+            count > 0) {
+            tg_gui_session_state.driver.on_chat_list_changed(
+                tg_gui_session_state.driver.ctx, rows, count);
+        }
+    }
+    tg_gui_session_state.open = 1;
+    return 0;
+}
+
+int tg_gui_session_tick(FILE *stream)
+{
+    FILE *quiet;
+    int dirty;
+
+    if (!tg_gui_session_state.open || stream == 0) {
+        return 0;
+    }
+    dirty = 0;
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    /* The cadence-gated getDifference drain harvests inbound messages into the
+       notify queue. As on the console: every tick on MorphOS (where pushes are
+       suppressed and the drain IS the path), a slower reconciliation sweep
+       elsewhere. The cursor is primed lazily on the first eligible tick. */
+    if (tg_gui_session_state.engine.diff_enabled) {
+        unsigned long diff_cadence;
+
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+        diff_cadence = 1UL;
+#else
+        diff_cadence = 30UL;
+#endif
+        ++tg_gui_session_state.diff_tick;
+        if ((tg_gui_session_state.diff_tick % diff_cadence) == 0UL) {
+            if (tg_gui_session_state.engine.updates_state.pts == 0UL) {
+                (void)tg_mtproto_chat_get_updates_state_on_context(
+                    tg_gui_session_state.host, tg_gui_session_state.port,
+                    tg_gui_session_state.api_id,
+                    tg_gui_session_state.auth_file,
+                    tg_gui_session_state.dc_id_text,
+                    &tg_gui_session_state.context,
+                    &tg_gui_session_state.engine.updates_state, quiet);
+            } else {
+                (void)tg_mtproto_chat_drain_difference_on_context(
+                    tg_gui_session_state.host, tg_gui_session_state.port,
+                    tg_gui_session_state.api_id,
+                    tg_gui_session_state.auth_file,
+                    tg_gui_session_state.dc_id_text,
+                    &tg_gui_session_state.context,
+                    &tg_gui_session_state.engine.updates_state, quiet);
+            }
+        }
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+
+    /* Dispatch every harvested notification to the GUI driver, then clear the
+       queue (same consume semantics as the console's print_notify_lines). */
+    if (tg_gui_session_state.engine.notify.count > 0UL) {
+        unsigned long i;
+
+        for (i = 0UL; i < tg_gui_session_state.engine.notify.count; ++i) {
+            if (tg_gui_session_state.driver.on_notification != 0) {
+                tg_gui_session_state.driver.on_notification(
+                    tg_gui_session_state.driver.ctx,
+                    &tg_gui_session_state.engine.notify.queue[i]);
+            }
+        }
+        tg_gui_session_state.engine.notify.count = 0UL;
+        tg_gui_session_state.engine.notify.dropped = 0UL;
+        dirty = 1;
+    }
+    return dirty;
+}
+
+void tg_gui_session_close(void)
+{
+    if (!tg_gui_session_state.open) {
+        tg_chat_nq = 0;
+        return;
+    }
+    tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+    tg_net_set_connect_timeout_seconds(tg_gui_session_state.saved_timeout);
+    tg_chat_nq = 0;
+    tg_gui_session_state.open = 0;
 }

@@ -19,6 +19,7 @@
 #include "tg_file.h"
 #include "tg_gui.h"
 #include "tg_gui_driver.h"
+#include "tg_gui_session.h"
 #include "tg_https.h"
 #include "tg_http.h"
 #include "tg_json.h"
@@ -3983,6 +3984,31 @@ int tg_app_run(int argc, char **argv)
 
         tg_gui_demo_state(&gui_demo);
         return tg_gui_run_window(&gui_demo);
+    }
+
+    if (config.run_gui_session_tick_self) {
+        tg_gui_state gui;
+        int i;
+        int rc;
+
+        memset(&gui, 0, sizeof(gui));
+        gui.theme = TG_GUI_THEME_DARK;
+        rc = tg_gui_session_open(config.mtproto_auth_api_file,
+                                 config.mtproto_auth_file,
+                                 config.gui_chats_cache_file, &gui, stdout);
+        if (rc != 0) {
+            puts("gui session tick self-test: open failed (needs a live "
+                 "telegram-api.txt + telegram-auth.bin)");
+            return rc;
+        }
+        printf("gui session tick self-test: open ok, %d chats; ticking...\n",
+               gui.chat_count);
+        for (i = 0; i < 35; ++i) {
+            (void)tg_gui_session_tick(stdout);
+        }
+        tg_gui_session_close();
+        puts("gui session tick self-test: done");
+        return 0;
     }
 
     if (config.run_gui_chats) {
