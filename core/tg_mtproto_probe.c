@@ -11144,24 +11144,15 @@ int tg_gui_session_send(const char *text, FILE *stream)
         tg_gui_session_state.peer_cache_file,
         tg_gui_session_state.current_peer_index, text, &sent_id, quiet);
     if (rc == 0) {
-        /* Echo the just-sent message into the transcript at once (only_new +
-           include_outgoing picks up the new outgoing id), so it appears without
-           waiting for the next poll. */
-        unsigned long printed;
-
-        printed = 0UL;
-        tg_chat_message_driver_override = &tg_gui_session_state.driver;
-        (void)tg_mtproto_auth_print_history_text_peer_on_context(
-            tg_gui_session_state.host, tg_gui_session_state.port,
-            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
-            tg_gui_session_state.peer_cache_file,
-            tg_gui_session_state.current_peer_index, "5", quiet,
-            &tg_gui_session_state.last_seen_message_id, &printed, 1, 1, 0,
-            tg_gui_session_state.current_peer_label,
-            tg_gui_session_state.own_label);
-        tg_chat_message_driver_override = 0;
+        /* Show the sent message at once, optimistically, with no extra network
+           round-trip -- a confirm-poll is slow and unreliable on MorphOS (it
+           was the "sent but not shown" symptom). The text is already Latin-1
+           (typed), and the open-chat poll uses include_outgoing=0, so it is
+           never re-fetched into a duplicate. */
+        tg_gui_driver_append_own(&tg_gui_session_state.gui_driver, text,
+                                 tg_gui_session_state.own_label);
     }
+    (void)sent_id;
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     return rc;
@@ -11201,7 +11192,7 @@ int tg_gui_session_tick(FILE *stream)
             tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
             tg_gui_session_state.peer_cache_file,
             tg_gui_session_state.current_peer_index, "5", quiet,
-            &tg_gui_session_state.last_seen_message_id, &printed, 1, 1, 0,
+            &tg_gui_session_state.last_seen_message_id, &printed, 1, 0, 0,
             tg_gui_session_state.current_peer_label,
             tg_gui_session_state.own_label);
         tg_chat_message_driver_override = 0;

@@ -166,6 +166,38 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
     state->message_count += 1;
 }
 
+void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
+                              const char *own_label)
+{
+    tg_gui_state *state;
+    tg_gui_message *message;
+
+    if (gui == 0 || gui->state == 0 || text == 0) {
+        return;
+    }
+    state = gui->state;
+    if (state->message_count >= TG_GUI_MAX_MESSAGES) {
+        int i;
+
+        for (i = 1; i < TG_GUI_MAX_MESSAGES; ++i) {
+            state->messages[i - 1] = state->messages[i];
+        }
+        state->message_count = TG_GUI_MAX_MESSAGES - 1;
+    }
+    message = &state->messages[state->message_count];
+    memset(message, 0, sizeof(*message));
+    message->is_own = 1;
+    /* The composed text was typed via VANILLAKEY -- already Latin-1, so copy it
+       verbatim (no UTF-8 transcode). The own label comes from the cache. */
+    tg_gui_driver_copy(message->text, sizeof(message->text), text);
+    tg_gui_driver_copy_latin1(message->sender, sizeof(message->sender),
+                              (own_label != 0) ? own_label : "");
+    message->sender_color =
+        tg_gui_driver_color_for((own_label != 0) ? own_label : "");
+    /* No server timestamp on the optimistic echo (memset left time empty). */
+    state->message_count += 1;
+}
+
 /* Derives 1-2 uppercase initials from a display name (skipping a leading '@'):
    first letter of the first word, plus the first letter of the second word if
    present. "Mario Rossi" -> "MR", "Anna" -> "A", "" -> "?". */

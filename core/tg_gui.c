@@ -614,7 +614,24 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                        tg_gui_make_rect(sidebar_w + 8, content_h - input_h,
                                         width - sidebar_w - 16, input_h - 4));
-    if (state->input[0] != '\0') {
+    if (state->composing) {
+        int caret_x;
+
+        caret_x = area_x;
+        if (state->input[0] != '\0') {
+            backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x, input_baseline,
+                               state->input,
+                               (unsigned long)strlen(state->input));
+            caret_x = area_x + backend->text_width(
+                                   backend, state->input,
+                                   (unsigned long)strlen(state->input)) +
+                      1;
+        }
+        /* A caret bar at the cursor position marks the active input field. */
+        backend->fill_rect(backend, TG_GUI_PEN_TEXT,
+                           tg_gui_make_rect(caret_x, input_baseline - lh + 1, 2,
+                                            lh));
+    } else if (state->input[0] != '\0') {
         backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x,
                            input_baseline, state->input,
                            (unsigned long)strlen(state->input));

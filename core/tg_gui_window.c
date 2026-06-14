@@ -393,7 +393,6 @@ int tg_gui_run_window(tg_gui_state *state)
     int repaints;
     int i;
     int done;
-    int compose;
     unsigned long watch_seconds;
     time_t last_session_poll;
 
@@ -575,7 +574,7 @@ int tg_gui_run_window(tg_gui_state *state)
 #endif
     last_session_poll = time(0);
     done = 0;
-    compose = 0;
+    state->composing = 0;
     while (!done) {
         struct IntuiMessage *msg;
         int session_dirty;
@@ -597,7 +596,7 @@ int tg_gui_run_window(tg_gui_state *state)
 
             if (msg_class == IDCMP_CLOSEWINDOW) {
                 done = 1;
-            } else if (msg_class == IDCMP_VANILLAKEY && compose) {
+            } else if (msg_class == IDCMP_VANILLAKEY && state->composing) {
                 /* Composing: keys edit the input line; RETURN sends, ESC
                    cancels, BACKSPACE deletes. */
                 if (msg_code == 13 || msg_code == 10) {
@@ -605,12 +604,12 @@ int tg_gui_run_window(tg_gui_state *state)
                         (void)tg_gui_session_send(state->input, stdout);
                         state->input[0] = '\0';
                     }
-                    compose = 0;
+                    state->composing = 0;
                     strcpy(state->status, "Live - 1-9/n/p, Q esce");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 27) {
                     state->input[0] = '\0';
-                    compose = 0;
+                    state->composing = 0;
                     strcpy(state->status, "Live - 1-9/n/p, Q esce");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 8 || msg_code == 127) {
@@ -637,7 +636,7 @@ int tg_gui_run_window(tg_gui_state *state)
                 } else if ((msg_code == 13 || msg_code == 10) &&
                            tg_gui_session_is_open()) {
                     /* RETURN starts composing a message for the open chat. */
-                    compose = 1;
+                    state->composing = 1;
                     strcpy(state->status, "Scrivi - INVIO invia, ESC annulla");
                     tg_gui_paint(state, &backend);
                 } else if (state->chat_count > 0) {
@@ -660,7 +659,7 @@ int tg_gui_run_window(tg_gui_state *state)
                 time_t now;
 
                 now = time(0);
-                if (!compose && now != (time_t)-1 &&
+                if (!state->composing && now != (time_t)-1 &&
                     (unsigned long)(now - last_session_poll) >= watch_seconds) {
                     last_session_poll = now;
                     if (tg_gui_session_tick(stdout)) {
@@ -679,8 +678,8 @@ int tg_gui_run_window(tg_gui_state *state)
                                           ctx.line_h, hx, hy);
                     if (hit >= 0) {
                         /* Click a chat row: select + open it (drop any draft). */
-                        if (compose) {
-                            compose = 0;
+                        if (state->composing) {
+                            state->composing = 0;
                             state->input[0] = '\0';
                             strcpy(state->status, "Live - 1-9/n/p, Q esce");
                         }
@@ -689,19 +688,19 @@ int tg_gui_run_window(tg_gui_state *state)
                         } else {
                             tg_gui_paint(state, &backend);
                         }
-                    } else if (hit == TG_GUI_HIT_SEND && compose) {
+                    } else if (hit == TG_GUI_HIT_SEND && state->composing) {
                         if (state->input[0] != '\0') {
                             (void)tg_gui_session_send(state->input, stdout);
                             state->input[0] = '\0';
                         }
-                        compose = 0;
+                        state->composing = 0;
                         strcpy(state->status, "Live - 1-9/n/p, Q esce");
                         tg_gui_paint(state, &backend);
                     } else if ((hit == TG_GUI_HIT_INPUT ||
                                 hit == TG_GUI_HIT_SEND) &&
-                               !compose && tg_gui_session_is_open()) {
+                               !state->composing && tg_gui_session_is_open()) {
                         /* Click the input field (or Send) to start composing. */
-                        compose = 1;
+                        state->composing = 1;
                         strcpy(state->status,
                                "Scrivi - INVIO invia, ESC annulla");
                         tg_gui_paint(state, &backend);

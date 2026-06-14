@@ -33,6 +33,13 @@ void tg_gui_chat_driver_bind(tg_gui_chat_driver *gui, tg_gui_state *state,
    Exposed so the chat-list projection can colour the same name identically. */
 int tg_gui_driver_color_for(const char *name);
 
+/* Appends a just-sent outgoing message to the transcript optimistically (no
+   network), so it shows at once even when a confirm-poll would be slow to come
+   back (notably MorphOS). `text` is already Latin-1 (typed) and copied
+   verbatim; `own_label` is the sender label. */
+void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
+                              const char *own_label);
+
 /* Host-CI self-test: feeds synthetic rows through the driver and asserts the
    resulting tg_gui_state (sender, text, time, is_own, colour, ring overflow).
    Returns 0 on success. */

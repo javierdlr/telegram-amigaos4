@@ -639,7 +639,10 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
-        (void)shutdown((int)connection->platform_handle, SHUT_RDWR);
+        /* No graceful shutdown(SHUT_RDWR) here: on this bsdsocket stack it can
+           block waiting on the peer over a slow/flaky link, which froze the GUI
+           window when it tore the held connection down on close. close() sends
+           the FIN and returns immediately. */
         close((int)connection->platform_handle);
     }
 }
