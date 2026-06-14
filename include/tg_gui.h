@@ -96,7 +96,8 @@ typedef struct tg_gui_state {
     char input[TG_GUI_TEXT_MAX];
     char status[TG_GUI_NAME_MAX];
     int theme;
-    int composing;  /* the input field is focused: show the caret */
+    int composing;  /* the input field is focused */
+    int cursor_on;  /* caret blink phase, toggled by the window's tick */
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used

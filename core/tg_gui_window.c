@@ -393,6 +393,7 @@ int tg_gui_run_window(tg_gui_state *state)
     int repaints;
     int i;
     int done;
+    int caret_ticks;
     unsigned long watch_seconds;
     time_t last_session_poll;
 
@@ -575,6 +576,8 @@ int tg_gui_run_window(tg_gui_state *state)
     last_session_poll = time(0);
     done = 0;
     state->composing = 0;
+    state->cursor_on = 0;
+    caret_ticks = 0;
     while (!done) {
         struct IntuiMessage *msg;
         int session_dirty;
@@ -637,6 +640,8 @@ int tg_gui_run_window(tg_gui_state *state)
                            tg_gui_session_is_open()) {
                     /* RETURN starts composing a message for the open chat. */
                     state->composing = 1;
+                    state->cursor_on = 1;
+                    caret_ticks = 0;
                     strcpy(state->status, "Scrivi - INVIO invia, ESC annulla");
                     tg_gui_paint(state, &backend);
                 } else if (state->chat_count > 0) {
@@ -656,14 +661,30 @@ int tg_gui_run_window(tg_gui_state *state)
                 tg_gui_paint(state, &backend);
                 EndRefresh(ctx.window, TRUE);
             } else if (msg_class == IDCMP_INTUITICKS) {
-                time_t now;
+                if (state->composing) {
+                    /* Blink the input caret (~2 Hz) while composing; the poll
+                       is paused so typing stays responsive. */
+                    if (++caret_ticks >= 5) {
+                        caret_ticks = 0;
+                        state->cursor_on = !state->cursor_on;
+                        /* Opaque in-place repaint (no full-window clear) so the
+                           blink does not flash the background; the input field
+                           fill still erases the previous caret. */
+                        tg_gui_set_background_clear(0);
+                        tg_gui_paint(state, &backend);
+                        tg_gui_set_background_clear(1);
+                    }
+                } else {
+                    time_t now;
 
-                now = time(0);
-                if (!state->composing && now != (time_t)-1 &&
-                    (unsigned long)(now - last_session_poll) >= watch_seconds) {
-                    last_session_poll = now;
-                    if (tg_gui_session_tick(stdout)) {
-                        session_dirty = 1;
+                    now = time(0);
+                    if (now != (time_t)-1 &&
+                        (unsigned long)(now - last_session_poll) >=
+                            watch_seconds) {
+                        last_session_poll = now;
+                        if (tg_gui_session_tick(stdout)) {
+                            session_dirty = 1;
+                        }
                     }
                 }
             } else if (msg_class == IDCMP_MOUSEBUTTONS) {
@@ -701,6 +722,8 @@ int tg_gui_run_window(tg_gui_state *state)
                                !state->composing && tg_gui_session_is_open()) {
                         /* Click the input field (or Send) to start composing. */
                         state->composing = 1;
+                        state->cursor_on = 1;
+                        caret_ticks = 0;
                         strcpy(state->status,
                                "Scrivi - INVIO invia, ESC annulla");
                         tg_gui_paint(state, &backend);

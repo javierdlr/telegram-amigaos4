@@ -627,10 +627,13 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                                    (unsigned long)strlen(state->input)) +
                       1;
         }
-        /* A caret bar at the cursor position marks the active input field. */
-        backend->fill_rect(backend, TG_GUI_PEN_TEXT,
-                           tg_gui_make_rect(caret_x, input_baseline - lh + 1, 2,
-                                            lh));
+        /* A caret bar at the cursor position; the window toggles cursor_on so
+           it blinks while composing. */
+        if (state->cursor_on) {
+            backend->fill_rect(backend, TG_GUI_PEN_TEXT,
+                               tg_gui_make_rect(caret_x, input_baseline - lh + 1,
+                                                2, lh));
+        }
     } else if (state->input[0] != '\0') {
         backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x,
                            input_baseline, state->input,
