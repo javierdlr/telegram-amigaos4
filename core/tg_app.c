@@ -4033,6 +4033,12 @@ int tg_app_run(int argc, char **argv)
         }
         strcpy(gui.status,
                rc == 0 ? "Live - 1-9/n/p, Q esce" : "Offline (cache) - Q esce");
+        /* Open the selected (first) chat up front so the transcript is
+           populated on launch instead of waiting for the first key press. */
+        if (rc == 0 && gui.chat_count > 0) {
+            (void)tg_gui_session_open_chat(
+                gui.chats[gui.selected_chat].index, stdout);
+        }
         rc = tg_gui_run_window(&gui);
         tg_gui_session_close();
         return rc;
