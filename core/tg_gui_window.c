@@ -361,6 +361,23 @@ static int tg_gui_window_select_key(const tg_gui_state *state, UWORD code)
     return sel;
 }
 
+/* Switch to chat `sel`: show its header + an empty transcript at once, then
+   fetch the history. The instant first paint keeps the switch responsive on a
+   slow link instead of the window appearing frozen on the old chat until the
+   load finishes. */
+static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
+                                         tg_gui_backend *backend)
+{
+    state->selected_chat = sel;
+    tg_gui_window_apply_selection(state);
+    if (tg_gui_session_is_open()) {
+        state->message_count = 0;
+        tg_gui_paint(state, backend);
+        (void)tg_gui_session_open_chat(state->chats[sel].index, stdout);
+    }
+    tg_gui_paint(state, backend);
+}
+
 int tg_gui_run_window(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
@@ -628,13 +645,7 @@ int tg_gui_run_window(tg_gui_state *state)
 
                     sel = tg_gui_window_select_key(state, msg_code);
                     if (sel != state->selected_chat) {
-                        state->selected_chat = sel;
-                        tg_gui_window_apply_selection(state);
-                        /* When a live session is attached, load the chat's
-                           history into the transcript (no-op otherwise). */
-                        (void)tg_gui_session_open_chat(state->chats[sel].index,
-                                                       stdout);
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_open_selection(state, sel, &backend);
                     }
                 }
             } else if (msg_class == IDCMP_NEWSIZE) {
@@ -674,12 +685,10 @@ int tg_gui_run_window(tg_gui_state *state)
                             strcpy(state->status, "Live - 1-9/n/p, Q esce");
                         }
                         if (hit != state->selected_chat) {
-                            state->selected_chat = hit;
-                            tg_gui_window_apply_selection(state);
-                            (void)tg_gui_session_open_chat(
-                                state->chats[hit].index, stdout);
+                            tg_gui_window_open_selection(state, hit, &backend);
+                        } else {
+                            tg_gui_paint(state, &backend);
                         }
-                        tg_gui_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_SEND && compose) {
                         if (state->input[0] != '\0') {
                             (void)tg_gui_session_send(state->input, stdout);

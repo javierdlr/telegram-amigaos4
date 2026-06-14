@@ -11072,10 +11072,19 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     FILE *quiet;
     unsigned long printed;
     unsigned long prev_timeout;
+    const char *history_limit;
 
     if (!tg_gui_session_state.open || stream == 0 || peer_index == 0UL) {
         return 0;
     }
+    /* Keep the opening getHistory payload small on MorphOS's slow bsdsocket
+       link -- a large reply is the documented freeze trigger there; elsewhere
+       load a fuller backlog. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    history_limit = "8";
+#else
+    history_limit = "20";
+#endif
     sprintf(tg_gui_session_state.current_peer_index, "%lu", peer_index);
     if (tg_mtproto_load_peer_cache_label(
             tg_gui_session_state.peer_cache_file,
@@ -11102,7 +11111,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
         tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
         tg_gui_session_state.peer_cache_file,
-        tg_gui_session_state.current_peer_index, "20", quiet,
+        tg_gui_session_state.current_peer_index, history_limit, quiet,
         &tg_gui_session_state.last_seen_message_id, &printed, 0, 1, 0,
         tg_gui_session_state.current_peer_label,
         tg_gui_session_state.own_label);
