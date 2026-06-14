@@ -3986,6 +3986,58 @@ int tg_app_run(int argc, char **argv)
         return tg_gui_run_window(&gui_demo);
     }
 
+    if (config.run_gui_live) {
+        tg_gui_state gui;
+        int rc;
+
+        memset(&gui, 0, sizeof(gui));
+        gui.theme = TG_GUI_THEME_DARK;
+        /* Best-effort network refresh of the chat list, then open the live
+           session (it projects the sidebar and enables the notification poll).
+           If the session cannot open, fall back to a read-only sidebar so the
+           window still shows the cached chats. */
+        tg_mtproto_gui_refresh_peer_cache(config.mtproto_auth_api_file,
+                                          config.mtproto_auth_file,
+                                          config.gui_chats_cache_file, stdout);
+        rc = tg_gui_session_open(config.mtproto_auth_api_file,
+                                 config.mtproto_auth_file,
+                                 config.gui_chats_cache_file, &gui, stdout);
+        if (rc != 0) {
+            tg_gui_chat_driver gui_driver;
+            tg_chat_driver driver;
+            tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+            int count;
+            int missing;
+
+            memset(&driver, 0, sizeof(driver));
+            missing = 0;
+            tg_gui_chat_driver_bind(&gui_driver, &gui, &driver);
+            count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file, 0UL,
+                                               rows, TG_CHAT_LIST_MAX, &missing);
+            if (driver.on_chat_list_changed != 0 && count > 0) {
+                driver.on_chat_list_changed(driver.ctx, rows, count);
+            }
+        }
+        if (gui.chat_count > 0) {
+            const char *name;
+            unsigned long k;
+
+            name = gui.chats[0].name;
+            for (k = 0UL; k + 1UL < (unsigned long)sizeof(gui.title) &&
+                          name[k] != '\0'; ++k) {
+                gui.title[k] = name[k];
+            }
+            gui.title[k] = '\0';
+        } else {
+            strcpy(gui.title, "Telegram Amiga");
+        }
+        strcpy(gui.status,
+               rc == 0 ? "Live - 1-9/n/p, Q esce" : "Offline (cache) - Q esce");
+        rc = tg_gui_run_window(&gui);
+        tg_gui_session_close();
+        return rc;
+    }
+
     if (config.run_gui_session_tick_self) {
         tg_gui_state gui;
         int i;

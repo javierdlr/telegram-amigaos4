@@ -15,9 +15,11 @@
  */
 
 #include "tg_gui.h"
+#include "tg_gui_session.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #if defined(__amigaos3__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
     defined(__AROS__)
@@ -374,6 +376,8 @@ int tg_gui_run_window(tg_gui_state *state)
     int repaints;
     int i;
     int done;
+    unsigned long watch_seconds;
+    time_t last_session_poll;
 
     if (state == 0) {
         return 2;
@@ -458,7 +462,7 @@ int tg_gui_run_window(tg_gui_state *state)
     tags[i++].ti_Data = 0xffff;
     tags[i].ti_Tag = WA_IDCMP;
     tags[i++].ti_Data = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_NEWSIZE |
-                        IDCMP_REFRESHWINDOW;
+                        IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS;
     tags[i].ti_Tag = TAG_END;
     tags[i++].ti_Data = 0;
 
@@ -540,10 +544,23 @@ int tg_gui_run_window(tg_gui_state *state)
     puts("gui window: close gadget or Q to quit.");
     fflush(stdout);
 
+    /* When a live session is attached (--gui-live), IDCMP_INTUITICKS (~10/s
+       while the window is active) drives the network poll: throttle the actual
+       tick to the per-platform watch interval so a slow link is not hammered
+       (MorphOS especially), and coalesce into a single repaint per wake-up. The
+       tick is a no-op when no session is open (demo/--gui-chats). */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    watch_seconds = 12UL;
+#else
+    watch_seconds = 2UL;
+#endif
+    last_session_poll = time(0);
     done = 0;
     while (!done) {
         struct IntuiMessage *msg;
+        int session_dirty;
 
+        session_dirty = 0;
         (void)Wait(1L << ctx.window->UserPort->mp_SigBit);
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
@@ -577,7 +594,21 @@ int tg_gui_run_window(tg_gui_state *state)
                 tg_gui_amiga_measure_geometry(&ctx);
                 tg_gui_paint(state, &backend);
                 EndRefresh(ctx.window, TRUE);
+            } else if (msg_class == IDCMP_INTUITICKS) {
+                time_t now;
+
+                now = time(0);
+                if (now != (time_t)-1 &&
+                    (unsigned long)(now - last_session_poll) >= watch_seconds) {
+                    last_session_poll = now;
+                    if (tg_gui_session_tick(stdout)) {
+                        session_dirty = 1;
+                    }
+                }
             }
+        }
+        if (session_dirty) {
+            tg_gui_paint(state, &backend);
         }
     }
 

@@ -10983,6 +10983,12 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     tg_gui_chat_driver_bind(&tg_gui_session_state.gui_driver, state,
                             &tg_gui_session_state.driver);
 
+    /* A busy account's first connect can be slow to stream in (notably on a
+       MorphOS bsdsocket link), so allow a generous per-recv window for the
+       open; the per-tick drain later runs on a much shorter leash so the
+       window stays responsive. The original timeout is restored on close. */
+    tg_gui_session_state.saved_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(20UL);
     quiet = tg_mtproto_open_quiet_stream(stream);
     rc = tg_mtproto_load_api_id_file(api_file, tg_gui_session_state.api_id,
                                      sizeof(tg_gui_session_state.api_id), quiet,
@@ -11002,12 +11008,12 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         }
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_net_set_connect_timeout_seconds(tg_gui_session_state.saved_timeout);
     if (rc != 0) {
         tg_mtproto_close_auth_context(&tg_gui_session_state.context);
         tg_chat_nq = 0;
         return 2;
     }
-    tg_gui_session_state.saved_timeout = tg_net_connect_timeout_seconds();
 
     /* Project the current cache into the sidebar (the caller may have just
        refreshed it from the network). */
@@ -11039,6 +11045,13 @@ int tg_gui_session_tick(FILE *stream)
     }
     dirty = 0;
     quiet = tg_mtproto_open_quiet_stream(stream);
+    /* Run the poll on a short leash: a stalled recv must cost a brief hiccup,
+       not freeze the window. Restored right after. */
+    {
+        unsigned long prev_timeout;
+
+        prev_timeout = tg_net_connect_timeout_seconds();
+        tg_net_set_connect_timeout_seconds(3UL);
     /* The cadence-gated getDifference drain harvests inbound messages into the
        notify queue. As on the console: every tick on MorphOS (where pushes are
        suppressed and the drain IS the path), a slower reconciliation sweep
@@ -11071,6 +11084,8 @@ int tg_gui_session_tick(FILE *stream)
                     &tg_gui_session_state.engine.updates_state, quiet);
             }
         }
+    }
+        tg_net_set_connect_timeout_seconds(prev_timeout);
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
 

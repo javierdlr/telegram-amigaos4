@@ -157,6 +157,7 @@ void tg_config_init(tg_config *config)
     config->run_gui_window = 0;
     config->run_gui_chats = 0;
     config->run_gui_chats_live = 0;
+    config->run_gui_live = 0;
     config->run_gui_session_tick_self = 0;
     config->gui_chats_cache_file = 0;
     config->run_chat_engine_self_test = 0;
@@ -353,6 +354,16 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             config->run_gui_window = 1;
         } else if (strcmp(argv[i], "--gui-chats") == 0) {
             config->run_gui_chats = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                config->gui_chats_cache_file = argv[i + 1];
+                i += 1;
+            } else {
+                config->gui_chats_cache_file = "telegram-peers.txt";
+            }
+        } else if (strcmp(argv[i], "--gui-live") == 0) {
+            config->run_gui_live = 1;
+            config->mtproto_auth_api_file = "telegram-api.txt";
+            config->mtproto_auth_file = "telegram-auth.bin";
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 config->gui_chats_cache_file = argv[i + 1];
                 i += 1;
@@ -1231,6 +1242,9 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "      --gui-chats-live [peer-cache-file]\n");
     fprintf(stream, "                         Like --gui-chats but first refreshes the cache from the network\n");
     fprintf(stream, "                         (telegram-api.txt + telegram-auth.bin), so the sidebar is live\n");
+    fprintf(stream, "      --gui-live [peer-cache-file]\n");
+    fprintf(stream, "                         Open the live GUI window: real sidebar + a background poll\n");
+    fprintf(stream, "                         that flashes a chat's unread badge as messages arrive\n");
     fprintf(stream, "      --gui-session-tick-self\n");
     fprintf(stream, "                         Smoke-test the live GUI session: open, run a few notification\n");
     fprintf(stream, "                         drains, close (needs telegram-api.txt + telegram-auth.bin)\n");
