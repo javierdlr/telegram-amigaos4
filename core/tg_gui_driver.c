@@ -189,6 +189,7 @@ static void tg_gui_driver_on_chat_list_changed(void *ctx,
         tg_gui_driver_initials(chat->initials, sizeof(chat->initials), display);
         chat->avatar_color = tg_gui_driver_color_for(display);
         chat->unread = (rows[i].unread > 0UL) ? (int)rows[i].unread : 0;
+        chat->index = rows[i].index;
         chat->peer_id_hi = rows[i].peer_id_hi;
         chat->peer_id_lo = rows[i].peer_id_lo;
         chat->flash = 0;

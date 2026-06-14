@@ -583,6 +583,10 @@ int tg_gui_run_window(tg_gui_state *state)
                     if (sel != state->selected_chat) {
                         state->selected_chat = sel;
                         tg_gui_window_apply_selection(state);
+                        /* When a live session is attached, load the chat's
+                           history into the transcript (no-op otherwise). */
+                        (void)tg_gui_session_open_chat(state->chats[sel].index,
+                                                       stdout);
                         tg_gui_paint(state, &backend);
                     }
                 }

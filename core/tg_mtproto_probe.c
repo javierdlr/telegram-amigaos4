@@ -285,6 +285,11 @@ static int tg_chat_bell_enabled = 1;
 /* Day (local-frame epoch/86400) of the last transcript line, for the
    "--- 10 Jun ---" separators; 0 = nothing printed yet this chat. */
 static unsigned long tg_chat_day_shown = 0UL;
+/* When set, the history renderer routes resolved rows here instead of building
+   the console driver -- the GUI session points this at its own driver around a
+   history fetch, then clears it. NULL (the default) keeps the console path
+   byte-identical. */
+static const tg_chat_driver *tg_chat_message_driver_override = 0;
 
 /* tg_chat_notify_reset / tg_chat_notify_seen now live in tg_chat_engine.c and
    operate on the engine's notify queue (reached here via tg_chat_nq). */
@@ -8323,15 +8328,19 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         tg_chat_console_driver console_drv;
         tg_chat_driver driver;
 
-        /* The history renderer hands each resolved row to a driver. Today the
-           only driver is the console one (wrapping this stream + the persistent
-           day-separator cursor); the GUI will plug its own driver here. */
-        console_drv.stream = stream;
-        console_drv.day_shown = &tg_chat_day_shown;
-        driver.ctx = &console_drv;
-        driver.on_message = tg_chat_console_on_message;
-        driver.on_chat_list_changed = 0; /* console list goes via render_console */
-        driver.on_notification = 0;
+        /* The history renderer hands each resolved row to a driver: the console
+           one (wrapping this stream + the day-separator cursor) by default, or
+           the GUI driver when a session has installed an override. */
+        if (tg_chat_message_driver_override != 0) {
+            driver = *tg_chat_message_driver_override;
+        } else {
+            console_drv.stream = stream;
+            console_drv.day_shown = &tg_chat_day_shown;
+            driver.ctx = &console_drv;
+            driver.on_message = tg_chat_console_on_message;
+            driver.on_chat_list_changed = 0; /* console list via render_console */
+            driver.on_notification = 0;
+        }
         while (i > 0UL) {
             --i;
             if (texts.messages[i].id > max_seen_message_id) {
@@ -10932,6 +10941,10 @@ static struct {
     const char *auth_file;
     const char *peer_cache_file;
     char api_id[32];
+    char own_label[128];
+    char current_peer_index[32];   /* the open chat (1-based number); "" = none */
+    char current_peer_label[128];
+    unsigned long last_seen_message_id;
     unsigned long saved_timeout;
     unsigned long diff_tick;
     int open;
@@ -11015,6 +11028,25 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         return 2;
     }
 
+    /* This account's display name (for is_out transcript rows); start with no
+       chat open. */
+    {
+        FILE *q;
+
+        q = tg_mtproto_open_quiet_stream(stream);
+        tg_mtproto_chat_load_own_label(host, "443", tg_gui_session_state.api_id,
+                                       auth_file, dc_id_text,
+                                       &tg_gui_session_state.context,
+                                       peer_cache_file,
+                                       tg_gui_session_state.own_label,
+                                       sizeof(tg_gui_session_state.own_label),
+                                       q);
+        tg_mtproto_close_quiet_stream(q, stream);
+    }
+    tg_gui_session_state.current_peer_index[0] = '\0';
+    tg_gui_session_state.current_peer_label[0] = '\0';
+    tg_gui_session_state.last_seen_message_id = 0UL;
+
     /* Project the current cache into the sidebar (the caller may have just
        refreshed it from the network). */
     {
@@ -11035,6 +11067,51 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     return 0;
 }
 
+int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
+{
+    FILE *quiet;
+    unsigned long printed;
+    unsigned long prev_timeout;
+
+    if (!tg_gui_session_state.open || stream == 0 || peer_index == 0UL) {
+        return 0;
+    }
+    sprintf(tg_gui_session_state.current_peer_index, "%lu", peer_index);
+    if (tg_mtproto_load_peer_cache_label(
+            tg_gui_session_state.peer_cache_file,
+            tg_gui_session_state.current_peer_index,
+            tg_gui_session_state.current_peer_label,
+            sizeof(tg_gui_session_state.current_peer_label)) != 0) {
+        tg_gui_session_state.current_peer_label[0] = '\0';
+    }
+    /* Fresh transcript for the newly opened chat. */
+    if (tg_gui_session_state.gui_driver.state != 0) {
+        tg_gui_session_state.gui_driver.state->message_count = 0;
+    }
+    tg_gui_session_state.last_seen_message_id = 0UL;
+
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(10UL); /* the recent history can stream */
+    printed = 0UL;
+    /* Route the resolved rows into the GUI transcript (in + out), then restore
+       the console default. */
+    tg_chat_message_driver_override = &tg_gui_session_state.driver;
+    (void)tg_mtproto_auth_print_history_text_peer_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+        tg_gui_session_state.peer_cache_file,
+        tg_gui_session_state.current_peer_index, "20", quiet,
+        &tg_gui_session_state.last_seen_message_id, &printed, 0, 1, 0,
+        tg_gui_session_state.current_peer_label,
+        tg_gui_session_state.own_label);
+    tg_chat_message_driver_override = 0;
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    return 1; /* the selection changed -> always repaint */
+}
+
 int tg_gui_session_tick(FILE *stream)
 {
     FILE *quiet;
@@ -11052,6 +11129,26 @@ int tg_gui_session_tick(FILE *stream)
 
         prev_timeout = tg_net_connect_timeout_seconds();
         tg_net_set_connect_timeout_seconds(3UL);
+    /* New messages in the open chat stream straight into the transcript. */
+    if (tg_gui_session_state.current_peer_index[0] != '\0') {
+        unsigned long printed;
+
+        printed = 0UL;
+        tg_chat_message_driver_override = &tg_gui_session_state.driver;
+        (void)tg_mtproto_auth_print_history_text_peer_on_context(
+            tg_gui_session_state.host, tg_gui_session_state.port,
+            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            tg_gui_session_state.peer_cache_file,
+            tg_gui_session_state.current_peer_index, "5", quiet,
+            &tg_gui_session_state.last_seen_message_id, &printed, 1, 0, 0,
+            tg_gui_session_state.current_peer_label,
+            tg_gui_session_state.own_label);
+        tg_chat_message_driver_override = 0;
+        if (printed > 0UL) {
+            dirty = 1;
+        }
+    }
     /* The cadence-gated getDifference drain harvests inbound messages into the
        notify queue. As on the console: every tick on MorphOS (where pushes are
        suppressed and the drain IS the path), a slower reconciliation sweep

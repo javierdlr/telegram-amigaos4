@@ -39,6 +39,13 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
    when no session is open (returns 0). */
 int tg_gui_session_tick(FILE *stream);
 
+/* Opens the chat at the given 1-based peer-cache index: clears the transcript,
+   fetches its recent history (incoming + outgoing) into tg_gui_state.messages
+   through the GUI driver, and marks it the open chat so tg_gui_session_tick
+   streams its new messages live. Returns 1 (always repaint) when a session is
+   open, 0 otherwise. */
+int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream);
+
 /* Closes the held connection and unbinds the notification queue. */
 void tg_gui_session_close(void);
 

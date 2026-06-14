@@ -70,6 +70,7 @@ typedef struct tg_gui_chat {
     char initials[TG_GUI_INITIALS_MAX];
     int avatar_color;
     int unread;
+    unsigned long index;      /* 1-based peer-cache number, to open this chat */
     unsigned long peer_id_hi; /* matches a notification to this row */
     unsigned long peer_id_lo;
     int flash;                /* a notification landed since last opened: blink the badge */
