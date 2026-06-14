@@ -562,6 +562,7 @@ int tg_gui_run_window(tg_gui_state *state)
 
     puts("gui window: close gadget or Q to quit.");
     fflush(stdout);
+    tg_gui_log("window: opened");
 
     /* When a live session is attached (--gui-live), IDCMP_INTUITICKS (~10/s
        while the window is active) drives the network poll: throttle the actual
@@ -598,6 +599,7 @@ int tg_gui_run_window(tg_gui_state *state)
             ReplyMsg((struct Message *)msg);
 
             if (msg_class == IDCMP_CLOSEWINDOW) {
+                tg_gui_log("window: close gadget");
                 done = 1;
             } else if (msg_class == IDCMP_VANILLAKEY && state->composing) {
                 /* Composing: keys edit the input line; RETURN sends, ESC
@@ -736,7 +738,9 @@ int tg_gui_run_window(tg_gui_state *state)
         }
     }
 
+    tg_gui_log("window: releasing pens");
     tg_gui_amiga_release_pens(&ctx, cmap);
+    tg_gui_log("window: CloseWindow");
     CloseWindow(ctx.window);
     ctx.window = 0;
 #if defined(__amigaos4__)
@@ -752,6 +756,7 @@ int tg_gui_run_window(tg_gui_state *state)
 #endif
     CloseLibrary((struct Library *)IntuitionBase);
     IntuitionBase = 0;
+    tg_gui_log("window: libraries closed");
     return 0;
 }
 

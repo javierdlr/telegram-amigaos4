@@ -56,4 +56,10 @@ int tg_gui_session_is_open(void);
 /* Closes the held connection and unbinds the notification queue. */
 void tg_gui_session_close(void);
 
+/* Crash-safe diagnostic log to a disk file (tg-gui-debug.log in the CWD), to
+   pin down where a hard crash happens. tg_gui_log_enable() turns it on
+   (--gui-live-debug); tg_gui_log() writes one flushed line when enabled. */
+void tg_gui_log_enable(void);
+void tg_gui_log(const char *msg);
+
 #endif

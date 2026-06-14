@@ -158,6 +158,7 @@ void tg_config_init(tg_config *config)
     config->run_gui_chats = 0;
     config->run_gui_chats_live = 0;
     config->run_gui_live = 0;
+    config->run_gui_live_debug = 0;
     config->run_gui_session_tick_self = 0;
     config->gui_chats_cache_file = 0;
     config->run_chat_engine_self_test = 0;
@@ -360,8 +361,12 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             } else {
                 config->gui_chats_cache_file = "telegram-peers.txt";
             }
-        } else if (strcmp(argv[i], "--gui-live") == 0) {
+        } else if (strcmp(argv[i], "--gui-live") == 0 ||
+                   strcmp(argv[i], "--gui-live-debug") == 0) {
             config->run_gui_live = 1;
+            if (strcmp(argv[i], "--gui-live-debug") == 0) {
+                config->run_gui_live_debug = 1;
+            }
             config->mtproto_auth_api_file = "telegram-api.txt";
             config->mtproto_auth_file = "telegram-auth.bin";
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -1245,6 +1250,9 @@ void tg_config_print_usage(FILE *stream, const char *program_name)
     fprintf(stream, "      --gui-live [peer-cache-file]\n");
     fprintf(stream, "                         Open the live GUI window: real sidebar + a background poll\n");
     fprintf(stream, "                         that flashes a chat's unread badge as messages arrive\n");
+    fprintf(stream, "      --gui-live-debug [peer-cache-file]\n");
+    fprintf(stream, "                         Like --gui-live, plus a crash-safe lifecycle log to\n");
+    fprintf(stream, "                         tg-gui-debug.log (in the current dir) for diagnosing crashes\n");
     fprintf(stream, "      --gui-session-tick-self\n");
     fprintf(stream, "                         Smoke-test the live GUI session: open, run a few notification\n");
     fprintf(stream, "                         drains, close (needs telegram-api.txt + telegram-auth.bin)\n");

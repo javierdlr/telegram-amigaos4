@@ -3992,16 +3992,24 @@ int tg_app_run(int argc, char **argv)
 
         memset(&gui, 0, sizeof(gui));
         gui.theme = TG_GUI_THEME_DARK;
+        if (config.run_gui_live_debug) {
+            tg_gui_log_enable();
+        }
+        tg_gui_log("live: start");
         /* Best-effort network refresh of the chat list, then open the live
            session (it projects the sidebar and enables the notification poll).
            If the session cannot open, fall back to a read-only sidebar so the
            window still shows the cached chats. */
+        tg_gui_log("live: refresh peers start");
         tg_mtproto_gui_refresh_peer_cache(config.mtproto_auth_api_file,
                                           config.mtproto_auth_file,
                                           config.gui_chats_cache_file, stdout);
+        tg_gui_log("live: refresh peers done");
+        tg_gui_log("live: session open start");
         rc = tg_gui_session_open(config.mtproto_auth_api_file,
                                  config.mtproto_auth_file,
                                  config.gui_chats_cache_file, &gui, stdout);
+        tg_gui_log(rc == 0 ? "live: session open OK" : "live: session open FAIL");
         if (rc != 0) {
             tg_gui_chat_driver gui_driver;
             tg_chat_driver driver;
@@ -4036,11 +4044,16 @@ int tg_app_run(int argc, char **argv)
         /* Open the selected (first) chat up front so the transcript is
            populated on launch instead of waiting for the first key press. */
         if (rc == 0 && gui.chat_count > 0) {
+            tg_gui_log("live: open first chat start");
             (void)tg_gui_session_open_chat(
                 gui.chats[gui.selected_chat].index, stdout);
+            tg_gui_log("live: open first chat done");
         }
+        tg_gui_log("live: run_window start");
         rc = tg_gui_run_window(&gui);
+        tg_gui_log("live: run_window returned");
         tg_gui_session_close();
+        tg_gui_log("live: session_close done");
         return rc;
     }
 

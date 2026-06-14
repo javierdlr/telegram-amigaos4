@@ -10950,6 +10950,33 @@ static struct {
     int open;
 } tg_gui_session_state;
 
+/* Crash-safe lifecycle log (--gui-live-debug): each line is opened, written,
+   flushed and closed so a hard crash/reboot still leaves the trail up to the
+   last completed step. Relative path -> the launcher's CWD (a disk dir like
+   Work:TGh, which survives a MorphOS reboot, not RAM:). Off by default. */
+static int tg_gui_log_on = 0;
+
+void tg_gui_log_enable(void)
+{
+    tg_gui_log_on = 1;
+}
+
+void tg_gui_log(const char *msg)
+{
+    FILE *f;
+
+    if (!tg_gui_log_on || msg == 0) {
+        return;
+    }
+    f = fopen("tg-gui-debug.log", "a");
+    if (f != 0) {
+        fputs(msg, f);
+        fputc('\n', f);
+        fflush(f);
+        fclose(f);
+    }
+}
+
 int tg_gui_session_open(const char *api_file, const char *auth_file,
                         const char *peer_cache_file, tg_gui_state *state,
                         FILE *stream)
@@ -11027,6 +11054,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         tg_chat_nq = 0;
         return 2;
     }
+    tg_gui_log("open: connected");
 
     /* This account's display name (for is_out transcript rows); start with no
        chat open. */
@@ -11064,6 +11092,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         }
     }
     tg_gui_session_state.open = 1;
+    tg_gui_log("open: ready");
     return 0;
 }
 
@@ -11077,6 +11106,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     if (!tg_gui_session_state.open || stream == 0 || peer_index == 0UL) {
         return 0;
     }
+    tg_gui_log("open_chat: start");
     /* Keep the opening getHistory payload small on MorphOS's slow bsdsocket
        link -- a large reply is the documented freeze trigger there; elsewhere
        load a fuller backlog. */
@@ -11118,6 +11148,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     tg_chat_message_driver_override = 0;
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_gui_log("open_chat: done");
     return 1; /* the selection changed -> always repaint */
 }
 
@@ -11262,7 +11293,9 @@ void tg_gui_session_close(void)
         tg_chat_nq = 0;
         return;
     }
+    tg_gui_log("close: closing context");
     tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+    tg_gui_log("close: context closed");
     tg_net_set_connect_timeout_seconds(tg_gui_session_state.saved_timeout);
     tg_chat_nq = 0;
     tg_gui_session_state.open = 0;
