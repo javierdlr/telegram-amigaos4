@@ -267,18 +267,28 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                            chat->initials, (unsigned long)strlen(chat->initials));
 
         text_x = 8 + avatar + 8;
-        /* Name stops before the time column; preview stops before the badge
-           (or the row edge when there is none). */
-        tg_gui_draw_clipped(backend, name_pen, text_x, y + 4 + lh, chat->name,
-                            (sidebar_w - 38) - text_x);
-        backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM,
-                           sidebar_w - 34, y + 4 + lh, chat->time,
-                           (unsigned long)strlen(chat->time));
         {
             char badge[8];
             int badge_w;
             int badge_x;
-            int preview_limit;
+            int has_preview;
+            int row_mid;
+            int name_baseline;
+            int name_limit;
+
+            /* The peer cache carries no last-message preview, so a row is a
+               single line: the name and the unread badge sit on the avatar's
+               vertical centre (level with the initials), instead of name-on-top
+               with the badge a line below. When a preview is present (a future
+               per-chat fill) the row keeps the two-line name-over-preview
+               layout with the time top-right. */
+            has_preview = chat->preview[0] != '\0';
+            row_mid = y + 6 + lh; /* avatar centre == initials baseline */
+            /* Single line: drop the name a couple of pixels below the initials
+               baseline so it sits at the optical centre between the avatar and
+               badge bubbles (the bitmap-font descent makes a baseline-aligned
+               name read high). */
+            name_baseline = has_preview ? (y + 4 + lh) : (row_mid + 2);
 
             badge[0] = '\0';
             badge_w = 0;
@@ -295,19 +305,39 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                 }
                 badge_x = sidebar_w - 8 - badge_w;
             }
-            /* Preview clips before the badge (or the row edge). */
-            preview_limit = (chat->unread > 0) ? (badge_x - 4) : (sidebar_w - 10);
-            tg_gui_draw_clipped(backend, preview_pen, text_x, y + 8 + (2 * lh),
-                                chat->preview, preview_limit - text_x);
+            /* Name clips before the time column (two-line) or before the badge
+               / row edge (single-line). */
+            if (has_preview) {
+                name_limit = sidebar_w - 38;
+            } else {
+                name_limit = (chat->unread > 0) ? (badge_x - 6)
+                                                : (sidebar_w - 10);
+            }
+            tg_gui_draw_clipped(backend, name_pen, text_x, name_baseline,
+                                chat->name, name_limit - text_x);
+            if (has_preview) {
+                int preview_limit;
+
+                backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, sidebar_w - 34,
+                                   y + 4 + lh, chat->time,
+                                   (unsigned long)strlen(chat->time));
+                preview_limit = (chat->unread > 0) ? (badge_x - 4)
+                                                   : (sidebar_w - 10);
+                tg_gui_draw_clipped(backend, preview_pen, text_x,
+                                    y + 8 + (2 * lh), chat->preview,
+                                    preview_limit - text_x);
+            }
             if (chat->unread > 0) {
                 int badge_top;
                 int badge_h;
                 int num_x;
 
-                /* Pill sized to the number and centred on the preview line, so
-                   the count sits inside the fill instead of spilling below. */
                 badge_h = lh + 4;
-                badge_top = (y + 8 + (2 * lh)) - lh;
+                /* Two-line: pill on the preview line. Single-line: pill centred
+                   on the row middle, level with the name and avatar. The count
+                   stays inside the fill either way. */
+                badge_top = has_preview ? ((y + 8 + (2 * lh)) - lh)
+                                        : (row_mid - (badge_h / 2));
                 /* A chat that just got a notification draws its badge in the
                    accent pen to stand out; the live event loop toggles
                    chat->flash for a true blink. */
@@ -322,7 +352,7 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                                        (unsigned long)strlen(badge))) /
                             2;
                 backend->draw_text(backend, TG_GUI_PEN_BADGE_TEXT, num_x,
-                                   y + 8 + (2 * lh), badge,
+                                   badge_top + lh, badge,
                                    (unsigned long)strlen(badge));
             }
         }
