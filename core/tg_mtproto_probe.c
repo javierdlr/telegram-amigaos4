@@ -10968,7 +10968,16 @@ void tg_gui_log(const char *msg)
     if (!tg_gui_log_on || msg == 0) {
         return;
     }
+    /* Absolute path via PROGDIR: (the binary's dir, e.g. Work:TGh) so the log
+       lands next to the program regardless of the launcher's current dir -- a
+       relative name followed the CWD, which IconX/Ambient does not set to the
+       program's drawer, so the file ended up unreachable. */
+#if defined(__amigaos3__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
+    defined(__AROS__)
+    f = fopen("PROGDIR:tg-gui-debug.log", "a");
+#else
     f = fopen("tg-gui-debug.log", "a");
+#endif
     if (f != 0) {
         fputs(msg, f);
         fputc('\n', f);
