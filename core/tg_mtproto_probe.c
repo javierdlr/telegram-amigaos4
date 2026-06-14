@@ -10965,12 +10965,18 @@ void tg_gui_log(const char *msg)
 {
     FILE *f;
 
-    if (!tg_gui_log_on || msg == 0) {
+    if (msg == 0) {
         return;
     }
-    /* First the unbuffered kernel-debug channel (survives a hard freeze, read
-       live by a logtool); then a disk copy for the cases that do not crash. */
+    /* Always emit on the unbuffered kernel-debug channel (a logtool reads it
+       live, and it survives a hard freeze). On MorphOS this also paces the
+       startup just enough to dodge a timing-sensitive freeze the bare run hit
+       -- a no-op channel elsewhere, so it costs nothing there. The disk copy is
+       opt-in (--gui-live-debug) since a write-back FS may not commit it. */
     tg_platform_debug(msg);
+    if (!tg_gui_log_on) {
+        return;
+    }
     /* Absolute path via PROGDIR: (the binary's dir, e.g. Work:TGh) so the log
        lands next to the program regardless of the launcher's current dir -- a
        relative name followed the CWD, which IconX/Ambient does not set to the
