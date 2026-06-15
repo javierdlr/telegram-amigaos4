@@ -157,6 +157,9 @@ typedef struct tg_mtproto_messages_summary {
 
 #define TG_MTPROTO_MESSAGE_TEXT_MAX 4096U
 #define TG_MTPROTO_MESSAGE_TEXT_LIST_MAX 8U
+/* A reply's quoted-snippet preview: one short line, capped well below the body
+   so the 8-message list stays cheap on the 8MB OS3 budget. */
+#define TG_MTPROTO_MESSAGE_REPLY_QUOTE_MAX 96U
 
 typedef struct tg_mtproto_message_text {
     unsigned long id;
@@ -168,6 +171,11 @@ typedef struct tg_mtproto_message_text {
     int is_out;
     int has_text;
     char text[TG_MTPROTO_MESSAGE_TEXT_MAX];
+    int has_reply;                  /* message replies to another (reply bit) */
+    unsigned long reply_to_msg_id;  /* id of the replied-to message, 0 if none */
+    /* Inline quote the server includes in the reply header (raw UTF-8); shown
+       as a dimmed reference line. Empty when the reply carries no quote. */
+    char reply_quote[TG_MTPROTO_MESSAGE_REPLY_QUOTE_MAX];
 } tg_mtproto_message_text;
 
 typedef struct tg_mtproto_message_text_list {

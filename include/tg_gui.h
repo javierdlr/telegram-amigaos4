@@ -73,6 +73,7 @@ struct tg_gui_backend {
 #define TG_GUI_TEXT_MAX 256
 #define TG_GUI_TIME_MAX 8
 #define TG_GUI_INITIALS_MAX 4
+#define TG_GUI_REPLY_MAX 96
 
 typedef struct tg_gui_chat {
     char name[TG_GUI_NAME_MAX];
@@ -94,6 +95,7 @@ typedef struct tg_gui_message {
     int sender_color;
     int is_own;
     int is_system;
+    char reply_text[TG_GUI_REPLY_MAX]; /* quoted reference; "" when not a reply */
 } tg_gui_message;
 
 typedef struct tg_gui_state {

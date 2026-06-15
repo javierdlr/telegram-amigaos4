@@ -79,6 +79,7 @@ typedef struct tg_chat_message_row {
     const char *peer_label;    /* chat title (group prefix + 1:1 sender fallback) */
     const char *own_label;     /* this account's name, for is_out */
     const char *sender;        /* resolved incoming sender, NULL if unknown */
+    const char *reply_quote;   /* quoted snippet if this is a reply, else NULL */
 } tg_chat_message_row;
 
 /* One resolved chat-list row. The engine parses the peer cache into these

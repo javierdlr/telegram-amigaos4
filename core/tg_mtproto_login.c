@@ -2533,21 +2533,38 @@ static tg_mtproto_tl_status tg_skip_message_entity_vector(
     return tg_read_message_entity_vector(reader, 0, 0, 0);
 }
 
-static tg_mtproto_tl_status tg_skip_message_reply_header(
-    tg_mtproto_tl_reader *reader)
+/* messageReplyHeader#6917560b (layer 214). Field order on the wire:
+   reply_to_msg_id(flags.4), reply_to_peer_id(flags.0), reply_from(flags.5),
+   reply_media(flags.8), reply_to_top_id(flags.1), quote_text(flags.6),
+   quote_entities(flags.7), quote_offset(flags.10). When out_reply_to_msg_id /
+   out_quote are non-NULL the reply target and the inline quote are captured;
+   passing NULL just skips the header (consuming its bytes). reply_from /
+   reply_media (flags 5/8) are still rejected -- this small reader cannot walk
+   a nested fwd-header / media there. */
+static tg_mtproto_tl_status tg_read_message_reply_header(
+    tg_mtproto_tl_reader *reader, unsigned long *out_reply_to_msg_id,
+    char *out_quote, unsigned long quote_size)
 {
     unsigned long constructor;
     unsigned long flags;
     unsigned long scratch;
     tg_mtproto_dialog_peer peer;
 
+    if (out_reply_to_msg_id != 0) {
+        *out_reply_to_msg_id = 0UL;
+    }
+    if (out_quote != 0 && quote_size > 0UL) {
+        out_quote[0] = '\0';
+    }
     if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK ||
         constructor != TG_MESSAGE_REPLY_HEADER_CONSTRUCTOR ||
         tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if ((flags & (1UL << 4)) != 0UL &&
-        tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_tl_read_u32(
+            reader, out_reply_to_msg_id != 0 ? out_reply_to_msg_id : &scratch) !=
+            TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if ((flags & 1UL) != 0UL &&
@@ -2561,9 +2578,15 @@ static tg_mtproto_tl_status tg_skip_message_reply_header(
         tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    if ((flags & (1UL << 6)) != 0UL &&
-        tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_INVALID_DATA;
+    if ((flags & (1UL << 6)) != 0UL) {
+        if (out_quote != 0 && quote_size > 0UL) {
+            if (tg_read_string_copy(reader, out_quote, quote_size) !=
+                TG_MTPROTO_TL_OK) {
+                return TG_MTPROTO_TL_INVALID_DATA;
+            }
+        } else if (tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
     }
     if ((flags & (1UL << 7)) != 0UL &&
         tg_skip_message_entity_vector(reader) != TG_MTPROTO_TL_OK) {
@@ -2578,6 +2601,12 @@ static tg_mtproto_tl_status tg_skip_message_reply_header(
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     return TG_MTPROTO_TL_OK;
+}
+
+static tg_mtproto_tl_status tg_skip_message_reply_header(
+    tg_mtproto_tl_reader *reader)
+{
+    return tg_read_message_reply_header(reader, 0, 0, 0UL);
 }
 
 static tg_mtproto_tl_status tg_skip_message_fwd_header(
@@ -2991,9 +3020,14 @@ static tg_mtproto_tl_status tg_read_common_message_text(
             TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    if ((flags & 8UL) != 0UL &&
-        tg_skip_message_reply_header(reader) != TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_INVALID_DATA;
+    if ((flags & 8UL) != 0UL) {
+        if (tg_read_message_reply_header(reader, &out->reply_to_msg_id,
+                                         out->reply_quote,
+                                         sizeof(out->reply_quote)) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        out->has_reply = 1;
     }
     if (tg_mtproto_tl_read_u32(reader, &out->date) != TG_MTPROTO_TL_OK ||
         tg_read_string_copy(reader, out->text, sizeof(out->text)) !=
@@ -4462,8 +4496,10 @@ int tg_mtproto_login_self_test(void)
         tg_mtproto_tl_write_u32(&writer,
                                 TG_MESSAGE_REPLY_HEADER_CONSTRUCTOR) !=
             TG_MTPROTO_TL_OK ||
-        tg_mtproto_tl_write_u32(&writer, 1UL << 4) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, (1UL << 4) | (1UL << 6)) !=
+            TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_write_u32(&writer, 1002UL) != TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "reply quote") != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_write_u32(&writer, 2224UL) != TG_MTPROTO_TL_OK ||
         tg_write_string(&writer, "group reply") != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_write_u32(&writer, TG_VECTOR_CONSTRUCTOR) !=
@@ -4499,7 +4535,11 @@ int tg_mtproto_login_self_test(void)
         text_list.messages[3].date != 2224UL ||
         text_list.messages[3].is_out ||
         /* messageEntityBold over "group" (offset 0, len 5) -> inline markers. */
-        strcmp(text_list.messages[3].text, "*group* reply") != 0) {
+        strcmp(text_list.messages[3].text, "*group* reply") != 0 ||
+        /* reply header: reply_to_msg_id (flags.4) + quote_text (flags.6). */
+        !text_list.messages[3].has_reply ||
+        text_list.messages[3].reply_to_msg_id != 1002UL ||
+        strcmp(text_list.messages[3].reply_quote, "reply quote") != 0) {
         return 2;
     }
 

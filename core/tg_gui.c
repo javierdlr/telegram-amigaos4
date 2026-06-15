@@ -65,6 +65,7 @@ static void tg_gui_set_message(tg_gui_message *message, const char *sender,
     message->sender_color = sender_color;
     message->is_own = is_own;
     message->is_system = is_system;
+    message->reply_text[0] = '\0'; /* demo carries no replies */
 }
 
 void tg_gui_demo_state(tg_gui_state *state)
@@ -433,6 +434,8 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     int time_pen;
     int has_time;
     int time_w;
+    int has_reply;
+    int reply_h;
 
     pad = 8;
     max_bubble_w = (area_w * 78) / 100;
@@ -464,6 +467,19 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     if (time_w > widest) {
         widest = time_w; /* the bubble must hold the timestamp line too */
     }
+    has_reply = (message->reply_text[0] != '\0');
+    reply_h = has_reply ? lh : 0;
+    if (has_reply) {
+        int reply_w;
+
+        reply_w = backend->text_width(backend, "> ", 2UL) +
+                  backend->text_width(
+                      backend, message->reply_text,
+                      (unsigned long)strlen(message->reply_text));
+        if (reply_w > widest) {
+            widest = reply_w; /* the quoted reference line must fit too */
+        }
+    }
     bubble_w = widest + (2 * pad);
     if (bubble_w > max_bubble_w) {
         bubble_w = max_bubble_w;
@@ -471,8 +487,9 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
 
     header_h = message->is_own ? 0 : (lh + 2);
     /* Reserve a line inside the bubble for the timestamp so it stays on the
-       coloured background instead of spilling out below it. */
-    bubble_h = header_h + (line_count * lh) + (has_time ? lh : 0) + 6;
+       coloured background instead of spilling out below it, plus one for the
+       quoted-reply reference line when present. */
+    bubble_h = header_h + reply_h + (line_count * lh) + (has_time ? lh : 0) + 6;
 
     if (message->is_own) {
         bubble_x = area_x + area_w - bubble_w;
@@ -518,11 +535,26 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                                 fill_bottom - fill_top));
         }
     }
+    if (has_reply) {
+        int reply_baseline;
+
+        reply_baseline = y + header_h + lh;
+        if (reply_baseline <= bottom) {
+            char line[TG_GUI_REPLY_MAX + 4];
+
+            line[0] = '>';
+            line[1] = ' ';
+            tg_gui_copy(line + 2, sizeof(line) - 2, message->reply_text);
+            /* Dimmed, plain (no markup), clipped to the bubble width with "..". */
+            tg_gui_draw_clipped(backend, time_pen, bubble_x + pad, reply_baseline,
+                                line, bubble_w - (2 * pad));
+        }
+    }
     style = 0;
     for (k = 0; k < line_count; ++k) {
         int baseline;
 
-        baseline = y + header_h + (k * lh) + lh;
+        baseline = y + header_h + reply_h + (k * lh) + lh;
         if (baseline <= bottom) {
             tg_gui_draw_markup(backend, text_pen, bubble_x + pad, baseline,
                                message->text + starts[k], lengths[k], &style);
@@ -536,7 +568,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
         int time_x;
 
         /* One line below the last text line, right-aligned, inside the fill. */
-        time_baseline = y + header_h + (line_count * lh) + lh;
+        time_baseline = y + header_h + reply_h + (line_count * lh) + lh;
         time_x = bubble_x + bubble_w - pad - time_w;
         if (time_x < bubble_x + pad) {
             time_x = bubble_x + pad;
@@ -564,6 +596,7 @@ static int tg_gui_message_height(tg_gui_backend *backend,
     int line_count;
     int header_h;
     int has_time;
+    int reply_h;
 
     if (message->is_system) {
         return lh + 6;
@@ -580,8 +613,9 @@ static int tg_gui_message_height(tg_gui_backend *backend,
     }
     header_h = message->is_own ? 0 : (lh + 2);
     has_time = (message->time[0] != '\0');
-    /* bubble_h + 6, mirroring tg_gui_paint_bubble's return. */
-    return header_h + (line_count * lh) + (has_time ? lh : 0) + 6 + 6;
+    reply_h = (message->reply_text[0] != '\0') ? lh : 0;
+    /* bubble_h + 6, mirroring tg_gui_paint_bubble's return (incl. reply line). */
+    return header_h + reply_h + (line_count * lh) + (has_time ? lh : 0) + 6 + 6;
 }
 
 static void tg_gui_paint_main(const tg_gui_state *state,

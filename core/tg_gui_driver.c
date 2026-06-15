@@ -151,6 +151,10 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
     tg_gui_driver_copy_latin1(message->sender, sizeof(message->sender), who);
     message->sender_color = tg_gui_driver_color_for(who);
     tg_gui_driver_copy_latin1(message->text, sizeof(message->text), row->text);
+    if (row->reply_quote != 0 && row->reply_quote[0] != '\0') {
+        tg_gui_driver_copy_latin1(message->reply_text,
+                                  sizeof(message->reply_text), row->reply_quote);
+    }
 
     if (row->has_time) {
         time_t when;

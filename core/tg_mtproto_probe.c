@@ -8077,6 +8077,13 @@ static void tg_mtproto_chat_render_message(FILE *stream,
         tg_console_ui_reset(stream);
         fputc(' ', stream);
     }
+    if (row->reply_quote != 0 && row->reply_quote[0] != '\0') {
+        /* Quoted reference, ASCII-bracketed before the body (plain -- no SGR
+           role so MorphOS stays safe even with colour on). */
+        fputs("[> ", stream);
+        tg_mtproto_print_message_text(stream, row->reply_quote);
+        fputs("] ", stream);
+    }
     tg_mtproto_print_message_text(stream, row->text);
     tg_console_ui_end_line(stream);
 }
@@ -8133,6 +8140,7 @@ static void tg_chat_render_emit(tg_chat_driver *driver, unsigned long date,
     row.peer_label = peer_label;
     row.own_label = own_label;
     row.sender = sender;
+    row.reply_quote = 0; /* golden script carries no replies */
     driver->on_message(driver->ctx, &row);
 }
 
@@ -8202,6 +8210,38 @@ int tg_mtproto_chat_render_self_test(void)
                "---end---\n",
                (unsigned long)n, buf);
         return 2;
+    }
+    /* A reply row renders its quoted reference bracketed before the body. */
+    {
+        tg_chat_message_row qrow;
+        unsigned long qday = 0UL;
+        FILE *qcap;
+        char qbuf[256];
+        size_t qn;
+
+        qcap = tmpfile();
+        if (qcap == 0) {
+            puts("chat render self-test: cannot open temp file");
+            return 2;
+        }
+        qrow.text = "ok";
+        qrow.has_time = 0;
+        qrow.local_epoch = 0UL;
+        qrow.is_out = 0;
+        qrow.is_group = 0;
+        qrow.peer_label = "Mario";
+        qrow.own_label = "Io";
+        qrow.sender = "Mario";
+        qrow.reply_quote = "ciao";
+        tg_mtproto_chat_render_message(qcap, &qrow, &qday);
+        rewind(qcap);
+        qn = fread(qbuf, 1, sizeof(qbuf) - 1U, qcap);
+        qbuf[qn] = '\0';
+        fclose(qcap);
+        if (strstr(qbuf, "[> ciao]") == 0) {
+            printf("chat render self-test: reply quote MISMATCH: %s\n", qbuf);
+            return 2;
+        }
     }
     puts("chat render self-test: ok (transcript renderer golden)");
     return 0;
@@ -8394,6 +8434,13 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                 row.peer_label = peer_label;
                 row.own_label = own_label;
                 row.sender = sender;
+                /* Show the server's inline quote when the reply carries one (no
+                   extra round-trip); else no reference line. */
+                row.reply_quote =
+                    (texts.messages[i].has_reply &&
+                     texts.messages[i].reply_quote[0] != '\0')
+                        ? texts.messages[i].reply_quote
+                        : 0;
                 driver.on_message(driver.ctx, &row);
             }
             ++printed;
