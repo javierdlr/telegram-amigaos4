@@ -223,6 +223,28 @@ static void tg_gui_amiga_draw_text(tg_gui_backend *backend, int pen, int x,
     Text(ctx->rport, (STRPTR)text, (UWORD)length);
 }
 
+/* Map the renderer's style bitmask to graphics.library soft styles. Bold and
+   italic are the algorithmic font styles; code and strike reuse underline
+   (no soft strikethrough exists). The OS clamps to what the font supports. */
+static void tg_gui_amiga_set_style(tg_gui_backend *backend, int style)
+{
+    tg_gui_amiga_ctx *ctx;
+    ULONG soft;
+
+    ctx = (tg_gui_amiga_ctx *)backend->context;
+    soft = 0UL;
+    if ((style & TG_GUI_STYLE_BOLD) != 0) {
+        soft |= FSF_BOLD;
+    }
+    if ((style & TG_GUI_STYLE_ITALIC) != 0) {
+        soft |= FSF_ITALIC;
+    }
+    if ((style & (TG_GUI_STYLE_CODE | TG_GUI_STYLE_STRIKE)) != 0) {
+        soft |= FSF_UNDERLINED;
+    }
+    SetSoftStyle(ctx->rport, soft, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
+}
+
 static ULONG tg_gui_amiga_rgb32(unsigned char component)
 {
     ULONG c;
@@ -524,6 +546,7 @@ int tg_gui_run_window(tg_gui_state *state)
     backend.fill_rect = tg_gui_amiga_fill_rect;
     backend.avatar_fill = tg_gui_amiga_avatar_fill;
     backend.draw_text = tg_gui_amiga_draw_text;
+    backend.set_style = tg_gui_amiga_set_style;
 
     mem_after = (unsigned long)AvailMem(MEMF_ANY);
     footprint = (mem_before > mem_after) ? (mem_before - mem_after) : 0UL;

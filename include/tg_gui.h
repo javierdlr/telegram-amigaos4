@@ -39,6 +39,14 @@ typedef struct tg_gui_rect {
     int h;
 } tg_gui_rect;
 
+/* Inline text styling, a bitmask the renderer derives from message markup
+   (the *bold* / _italic_ / `code` / ~strike~ markers baked in at parse time)
+   and applies through the backend's set_style hook before drawing each run. */
+#define TG_GUI_STYLE_BOLD   1
+#define TG_GUI_STYLE_ITALIC 2
+#define TG_GUI_STYLE_CODE   4
+#define TG_GUI_STYLE_STRIKE 8
+
 /* Per-platform drawing shim. The portable renderer owns all layout and only
    calls these. The host build supplies a recording backend for the self-test. */
 typedef struct tg_gui_backend tg_gui_backend;
@@ -54,6 +62,9 @@ struct tg_gui_backend {
                         tg_gui_rect rect);
     void (*draw_text)(tg_gui_backend *backend, int pen, int x, int baseline,
                       const char *text, unsigned long length);
+    /* Apply a TG_GUI_STYLE_* bitmask to subsequent draw_text calls. NULL on
+       backends that render plain (the renderer then just skips the markers). */
+    void (*set_style)(tg_gui_backend *backend, int style);
 };
 
 #define TG_GUI_MAX_CHATS 32

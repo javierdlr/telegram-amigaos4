@@ -360,10 +360,63 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
     }
 }
 
+/* Draws one wrapped line of message text, interpreting the inline markup
+   markers (* _ ` ~) as styling: each marker toggles a TG_GUI_STYLE_* bit, is
+   not drawn itself, and the run between markers is drawn in the current style
+   via the backend's set_style hook. *style carries across wrapped lines so a
+   span that breaks over two lines stays styled. Backends without set_style get
+   clean text (markers skipped), just unstyled. */
+static void tg_gui_draw_markup(tg_gui_backend *backend, int pen, int x,
+                               int baseline, const char *text,
+                               unsigned long length, int *style)
+{
+    unsigned long run_start = 0UL;
+    unsigned long i;
+
+    for (i = 0UL; i <= length; ++i) {
+        int toggle = 0;
+
+        if (i < length) {
+            switch (text[i]) {
+            case '*':
+                toggle = TG_GUI_STYLE_BOLD;
+                break;
+            case '_':
+                toggle = TG_GUI_STYLE_ITALIC;
+                break;
+            case '`':
+                toggle = TG_GUI_STYLE_CODE;
+                break;
+            case '~':
+                toggle = TG_GUI_STYLE_STRIKE;
+                break;
+            default:
+                break;
+            }
+        }
+        if (toggle != 0 || i == length) {
+            if (i > run_start) {
+                if (backend->set_style != 0) {
+                    backend->set_style(backend, *style);
+                }
+                backend->draw_text(backend, pen, x, baseline,
+                                   text + run_start, i - run_start);
+                x += backend->text_width(backend, text + run_start,
+                                         i - run_start);
+            }
+            if (toggle != 0) {
+                *style ^= toggle;
+                run_start = i + 1UL;
+            }
+        }
+    }
+}
+
 static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                const tg_gui_message *message, int area_x,
                                int area_w, int y, int lh, int bottom)
 {
+    int style;
     unsigned long starts[TG_GUI_WRAP_MAX_LINES];
     unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
     int max_bubble_w;
@@ -465,14 +518,18 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                                 fill_bottom - fill_top));
         }
     }
+    style = 0;
     for (k = 0; k < line_count; ++k) {
         int baseline;
 
         baseline = y + header_h + (k * lh) + lh;
         if (baseline <= bottom) {
-            backend->draw_text(backend, text_pen, bubble_x + pad, baseline,
-                               message->text + starts[k], lengths[k]);
+            tg_gui_draw_markup(backend, text_pen, bubble_x + pad, baseline,
+                               message->text + starts[k], lengths[k], &style);
         }
+    }
+    if (backend->set_style != 0) {
+        backend->set_style(backend, 0); /* reset before time / next bubble */
     }
     if (has_time) {
         int time_baseline;
@@ -873,6 +930,7 @@ int tg_gui_self_test(void)
     backend.fill_rect = tg_gui_rec_fill;
     backend.avatar_fill = tg_gui_rec_avatar;
     backend.draw_text = tg_gui_rec_text;
+    backend.set_style = 0; /* recorder renders plain; markers are just skipped */
 
     tg_gui_paint(&state, &backend);
 
