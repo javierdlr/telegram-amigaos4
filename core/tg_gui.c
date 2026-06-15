@@ -688,8 +688,15 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     header_h = lh + 10;
     tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, area_x, lh + 2, state->title,
                         area_w);
-    tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT_DIM, area_x, header_h + lh - 2,
-                        state->subtitle, area_w);
+    /* While the peer is typing, the second header line shows "sta scrivendo..."
+       in the accent colour instead of the static subtitle (Telegram's cue). */
+    if (state->typing[0] != '\0') {
+        tg_gui_draw_clipped(backend, TG_GUI_PEN_ACCENT, area_x, header_h + lh - 2,
+                            state->typing, area_w);
+    } else {
+        tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT_DIM, area_x,
+                            header_h + lh - 2, state->subtitle, area_w);
+    }
 
     input_h = lh + 14;
     /* Vertically centre the text line inside the input/Send box (height
@@ -1050,6 +1057,27 @@ int tg_gui_self_test(void)
                record.max_x, record.min_y, record.max_y, record.width,
                record.height);
         return 2;
+    }
+
+    /* The "is typing" header line is a transient overlay (live-only, not in the
+       demo); paint it once into a fresh recorder to keep that branch in bounds. */
+    {
+        tg_gui_record trec;
+
+        tg_gui_copy(state.typing, sizeof(state.typing), "sta scrivendo...");
+        memset(&trec, 0, sizeof(trec));
+        trec.width = 480;
+        trec.height = 320;
+        trec.min_x = trec.width;
+        trec.min_y = trec.height;
+        backend.context = &trec;
+        tg_gui_paint(&state, &backend);
+        state.typing[0] = '\0';
+        if (trec.texts <= 0 || trec.min_x < 0 || trec.min_y < 0 ||
+            trec.max_x > trec.width || trec.max_y > trec.height) {
+            puts("gui self-test: typing header overlay out of bounds");
+            return 2;
+        }
     }
 
     printf("gui self-test: ok (%d chats, %d msgs, %d fills, %d avatars, "

@@ -119,6 +119,7 @@ typedef struct tg_gui_state {
     int composing;  /* the input field is focused */
     int cursor_on;  /* caret blink phase, toggled by the window's tick */
     unsigned long open_read_outbox_max; /* peer read our msgs up to this id */
+    char typing[TG_GUI_NAME_MAX]; /* "...sta scrivendo" for the open chat; "" = none */
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used

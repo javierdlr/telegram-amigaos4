@@ -143,6 +143,17 @@
 #define TG_MTPROTO_PEER_USER_CONSTRUCTOR 0x59511722UL
 #define TG_MTPROTO_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
+/* Transient "is typing" updates (layer 214; verified hashes). These never ride
+   getDifference, only the live push stream -- so the indicator is best-effort
+   and surfaces only where pushes flow (not the suppressed MorphOS path). */
+#define TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR 0xc01e857fUL
+#define TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR 0x83487af0UL
+#define TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR 0x8c88c923UL
+#define TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR 0x16bf744eUL
+/* A typing action is refreshed by the server every ~5s while active; clear the
+   indicator a hair later so it stays lit during real typing and drops soon
+   after. */
+#define TG_MTPROTO_TYPING_TTL_SECONDS 6UL
 #define TG_MTPROTO_PHONE_MIGRATE_RC_BASE 40
 
 typedef struct tg_mtproto_auth_context {
@@ -267,6 +278,17 @@ static unsigned long tg_mtproto_read_u32_le(const unsigned char *data);
    bound at session start; it is NULL outside a chat and the notify ops are
    NULL-safe, so collection simply no-ops there. */
 static tg_chat_notify *tg_chat_nq = 0;
+/* Live "is typing" sink. The push collector records the most recent typing peer
+   here; the GUI session reads it each tick and lights the header for the open
+   chat. NULL outside a GUI session (the console path leaves it untouched). */
+typedef struct tg_chat_typing_sink {
+    int active;
+    int is_chat;             /* group/channel vs DM */
+    unsigned long peer_id_hi; /* DM user id, or group/channel id */
+    unsigned long peer_id_lo;
+    unsigned long seen_epoch; /* time() when last seen, for the TTL */
+} tg_chat_typing_sink;
+static tg_chat_typing_sink *tg_chat_typing_target = 0;
 /* The real console stream while the chat runs, for TUI components that must
    bypass capture streams (input-row redraws from the editor and the
    sub-prompts). 0 outside the chat. */
@@ -2565,6 +2587,105 @@ static void tg_chat_notify_push_message(const tg_mtproto_message_text *message,
     entry->text[copy_length] = '\0';
 }
 
+/* Records the most recent typing peer into the live sink (if a GUI session
+   armed it). The GUI tick decides whether it matches the open chat. */
+static void tg_chat_typing_record(int is_chat, unsigned long peer_id_hi,
+                                  unsigned long peer_id_lo)
+{
+    if (tg_chat_typing_target == 0) {
+        return;
+    }
+    tg_chat_typing_target->active = 1;
+    tg_chat_typing_target->is_chat = is_chat;
+    tg_chat_typing_target->peer_id_hi = peer_id_hi;
+    tg_chat_typing_target->peer_id_lo = peer_id_lo;
+    tg_chat_typing_target->seen_epoch = (unsigned long)time(0);
+}
+
+/* Reads the SendMessageAction at the reader and returns 1 only for the plain
+   "typing" action (uploading/recording/etc. are ignored -- we show "is
+   typing", not a generic activity). */
+static int tg_chat_typing_action_is_typing(tg_mtproto_tl_reader *reader)
+{
+    unsigned long action;
+
+    if (tg_mtproto_tl_read_u32(reader, &action) != TG_MTPROTO_TL_OK) {
+        return 0;
+    }
+    return action == TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR;
+}
+
+/* Given a reader positioned just after an Update constructor, parses the three
+   *UserTyping variants and records the typing peer. Other updates are ignored.
+   The reader is left in an indeterminate position (the caller stops walking). */
+static void tg_chat_typing_parse_update(tg_mtproto_tl_reader *reader,
+                                        unsigned long update_ctor)
+{
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long peer_ctor;
+    unsigned long from_hi;
+    unsigned long from_lo;
+    unsigned long flags;
+    unsigned long top;
+
+    if (update_ctor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) == TG_MTPROTO_TL_OK &&
+            tg_chat_typing_action_is_typing(reader)) {
+            tg_chat_typing_record(0, id_hi, id_lo);
+        }
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) == TG_MTPROTO_TL_OK &&
+            tg_mtproto_tl_read_u32(reader, &peer_ctor) == TG_MTPROTO_TL_OK &&
+            tg_mtproto_tl_read_u64(reader, &from_hi, &from_lo) ==
+                TG_MTPROTO_TL_OK &&
+            tg_chat_typing_action_is_typing(reader)) {
+            tg_chat_typing_record(1, id_hi, id_lo);
+        }
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) !=
+                TG_MTPROTO_TL_OK) {
+            return;
+        }
+        if ((flags & 0x1UL) != 0UL &&
+            tg_mtproto_tl_read_u32(reader, &top) != TG_MTPROTO_TL_OK) {
+            return;
+        }
+        if (tg_mtproto_tl_read_u32(reader, &peer_ctor) == TG_MTPROTO_TL_OK &&
+            tg_mtproto_tl_read_u64(reader, &from_hi, &from_lo) ==
+                TG_MTPROTO_TL_OK &&
+            tg_chat_typing_action_is_typing(reader)) {
+            tg_chat_typing_record(1, id_hi, id_lo);
+        }
+        return;
+    }
+}
+
+/* updateShort#78d4dec1 update:Update date:int -- the standard single-update
+   envelope that carries transient typing. */
+static void tg_chat_typing_collect_short(const unsigned char *body,
+                                         unsigned long body_length)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long outer;
+    unsigned long inner;
+
+    if (tg_chat_typing_target == 0) {
+        return;
+    }
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &outer) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &inner) != TG_MTPROTO_TL_OK) {
+        return;
+    }
+    tg_chat_typing_parse_update(&reader, inner);
+}
+
 static void tg_chat_notify_collect_updates(const unsigned char *body,
                                            unsigned long body_length)
 {
@@ -2586,6 +2707,16 @@ static void tg_chat_notify_collect_updates(const unsigned char *body,
     for (i = 0UL; i < count; ++i) {
         if (tg_mtproto_tl_read_u32(&reader, &item_constructor) !=
             TG_MTPROTO_TL_OK) {
+            return;
+        }
+        if (item_constructor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR ||
+            item_constructor ==
+                TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR ||
+            item_constructor ==
+                TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR) {
+            /* A typing item leading the container: record it, then stop (items
+               are not length-prefixed, so the walk cannot continue past it). */
+            tg_chat_typing_parse_update(&reader, item_constructor);
             return;
         }
         if (item_constructor != TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR &&
@@ -2657,6 +2788,11 @@ static void tg_chat_notify_collect(const unsigned char *body,
     if (constructor == TG_MTPROTO_UPDATES_CONSTRUCTOR ||
         constructor == TG_MTPROTO_UPDATES_COMBINED_CONSTRUCTOR) {
         tg_chat_notify_collect_updates(body, body_length);
+        return;
+    }
+    if (constructor == TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) {
+        /* The single-update envelope: the live "is typing" carrier. */
+        tg_chat_typing_collect_short(body, body_length);
         return;
     }
     if (constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
@@ -10955,6 +11091,98 @@ int tg_mtproto_probe_self_test(void)
     fclose(quiet);
     (void)remove(peer_path);
 
+    /* Live "is typing" parse (updateShort -> *UserTyping -> typing action). The
+       collector writes the sink; here we drive synthetic pushes through it. */
+    {
+        tg_chat_notify typing_nq;
+        tg_chat_typing_sink typing_sink;
+        int ok;
+
+        memset(&typing_nq, 0, sizeof(typing_nq));
+        tg_chat_notify_reset(&typing_nq, 1);
+        tg_chat_nq = &typing_nq;
+        tg_chat_typing_target = &typing_sink;
+
+        /* DM: updateShort{ updateUserTyping{ user=0xABCD, typing }, date }. */
+        memset(&typing_sink, 0, sizeof(typing_sink));
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0xABCDUL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000000UL) == TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || !typing_sink.active || typing_sink.is_chat != 0 ||
+            typing_sink.peer_id_hi != 0UL ||
+            typing_sink.peer_id_lo != 0xABCDUL) {
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            puts("probe self-test: typing DM parse wrong");
+            return 2;
+        }
+
+        /* A non-typing action (bogus action ctor) must NOT light typing. */
+        memset(&typing_sink, 0, sizeof(typing_sink));
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x11UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 0xdeadbeefUL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000000UL) == TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || typing_sink.active) {
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            puts("probe self-test: non-typing action must not light");
+            return 2;
+        }
+
+        /* Basic group: updateChatUserTyping{ chat=0x900, from user, typing }. */
+        memset(&typing_sink, 0, sizeof(typing_sink));
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x900UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_PEER_USER_CONSTRUCTOR) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x55UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000000UL) == TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || !typing_sink.active || typing_sink.is_chat != 1 ||
+            typing_sink.peer_id_lo != 0x900UL) {
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            puts("probe self-test: group typing parse wrong");
+            return 2;
+        }
+
+        tg_chat_nq = 0;
+        tg_chat_typing_target = 0;
+    }
+
     return 0;
 }
 
@@ -11076,6 +11304,10 @@ static struct {
     unsigned long saved_timeout;
     unsigned long diff_tick;
     unsigned long read_outbox_tick; /* cadence for the read-receipt refresh */
+    tg_chat_typing_sink typing;     /* live "is typing" sink, armed at open */
+    unsigned long open_peer_id_hi;  /* the open chat's peer id, to match typing */
+    unsigned long open_peer_id_lo;
+    int open_peer_is_chat;
     int open;
 } tg_gui_session_state;
 
@@ -11162,6 +11394,11 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     tg_chat_engine_init(&tg_gui_session_state.engine);
     tg_chat_nq = &tg_gui_session_state.engine.notify;
     tg_chat_notify_reset(&tg_gui_session_state.engine.notify, 1);
+    /* Arm the live typing sink (the push collector writes it; the tick reads
+       it). Stays NULL-armed on MorphOS too -- pushes are off there, so it
+       simply never fires, which is the intended clean degrade. */
+    memset(&tg_gui_session_state.typing, 0, sizeof(tg_gui_session_state.typing));
+    tg_chat_typing_target = &tg_gui_session_state.typing;
 #if defined(__MORPHOS__) || defined(__MORPHOS)
     tg_mtproto_set_session_updates(0);
 #else
@@ -11199,6 +11436,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     if (rc != 0) {
         tg_mtproto_close_auth_context(&tg_gui_session_state.context);
         tg_chat_nq = 0;
+        tg_chat_typing_target = 0;
         return 2;
     }
     tg_gui_log("open: connected");
@@ -11280,6 +11518,33 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     tg_gui_driver_reset_read_outbox(&tg_gui_session_state.gui_driver);
 
     quiet = tg_mtproto_open_quiet_stream(stream);
+    /* Remember the open peer's id so the tick can match inbound typing updates
+       to this chat, and clear any stale "is typing" indicator on switch. */
+    tg_gui_session_state.open_peer_id_hi = 0UL;
+    tg_gui_session_state.open_peer_id_lo = 0UL;
+    tg_gui_session_state.open_peer_is_chat = 0;
+    tg_gui_session_state.typing.active = 0;
+    if (tg_gui_session_state.gui_driver.state != 0) {
+        tg_gui_session_state.gui_driver.state->typing[0] = '\0';
+    }
+    {
+        unsigned long pc;
+        unsigned long ph;
+        unsigned long pl;
+        unsigned long ahh;
+        unsigned long ahl;
+        int hah;
+
+        if (tg_mtproto_load_peer_cache_peer(
+                tg_gui_session_state.peer_cache_file,
+                tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+                &ahl, &hah, quiet, "gui open peer") == 0) {
+            tg_gui_session_state.open_peer_id_hi = ph;
+            tg_gui_session_state.open_peer_id_lo = pl;
+            tg_gui_session_state.open_peer_is_chat =
+                (pc != TG_MTPROTO_PEER_USER_CONSTRUCTOR) ? 1 : 0;
+        }
+    }
     prev_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(10UL); /* the recent history can stream */
     printed = 0UL;
@@ -11480,6 +11745,53 @@ int tg_gui_session_tick(FILE *stream)
         tg_gui_session_state.engine.notify.dropped = 0UL;
         dirty = 1;
     }
+
+    /* Reflect the live "is typing" sink into the open chat's header: shown only
+       for the open peer and only while fresh (the TTL); cleared otherwise. A
+       change in either direction is a repaint. */
+    {
+        tg_gui_state *gs;
+
+        gs = tg_gui_session_state.gui_driver.state;
+        if (gs != 0) {
+            const char *want;
+            int fresh;
+            unsigned long now;
+
+            now = (unsigned long)time(0);
+            fresh = 0;
+            if (tg_gui_session_state.typing.active &&
+                now >= tg_gui_session_state.typing.seen_epoch &&
+                (now - tg_gui_session_state.typing.seen_epoch) <=
+                    TG_MTPROTO_TYPING_TTL_SECONDS) {
+                fresh = 1;
+            } else {
+                /* Stale or absent: disarm so a later identical push re-fires. */
+                tg_gui_session_state.typing.active = 0;
+            }
+            want = "";
+            if (fresh && tg_gui_session_state.current_peer_index[0] != '\0' &&
+                tg_gui_session_state.typing.peer_id_hi ==
+                    tg_gui_session_state.open_peer_id_hi &&
+                tg_gui_session_state.typing.peer_id_lo ==
+                    tg_gui_session_state.open_peer_id_lo) {
+                want = tg_gui_session_state.open_peer_is_chat
+                           ? "qualcuno sta scrivendo..."
+                           : "sta scrivendo...";
+            }
+            if (strcmp(gs->typing, want) != 0) {
+                unsigned long n;
+
+                n = (unsigned long)strlen(want);
+                if (n >= sizeof(gs->typing)) {
+                    n = sizeof(gs->typing) - 1UL;
+                }
+                memcpy(gs->typing, want, n);
+                gs->typing[n] = '\0';
+                dirty = 1;
+            }
+        }
+    }
     return dirty;
 }
 
@@ -11487,6 +11799,7 @@ void tg_gui_session_close(void)
 {
     if (!tg_gui_session_state.open) {
         tg_chat_nq = 0;
+        tg_chat_typing_target = 0;
         return;
     }
     tg_gui_log("close: closing context");
@@ -11494,5 +11807,6 @@ void tg_gui_session_close(void)
     tg_gui_log("close: context closed");
     tg_net_set_connect_timeout_seconds(tg_gui_session_state.saved_timeout);
     tg_chat_nq = 0;
+    tg_chat_typing_target = 0;
     tg_gui_session_state.open = 0;
 }
