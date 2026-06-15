@@ -105,6 +105,9 @@ void tg_gui_demo_state(tg_gui_state *state)
                        "09:20", 0, 1, 0);
     tg_gui_set_message(&state->messages[3], "", "Marco e' entrato nel gruppo",
                        "", 0, 0, 1);
+    /* The own message carries a read receipt so the demo shows the double-check
+       (the peer has read it); incoming/system rows keep no mark. */
+    state->messages[2].read_state = TG_GUI_READ_SEEN;
     state->message_count = 4;
 
     tg_gui_copy(state->input, sizeof(state->input), "");
@@ -413,6 +416,22 @@ static void tg_gui_draw_markup(tg_gui_backend *backend, int pen, int x,
     }
 }
 
+/* The read-receipt mark drawn after an own message's timestamp. ASCII, since
+   the bitmap fonts carry no Unicode check glyph: "v" = delivered (sent), "vv" =
+   read by the peer (seen). Empty for incoming messages and unsent echoes. */
+static const char *tg_gui_read_mark(const tg_gui_message *message)
+{
+    if (message->is_own) {
+        if (message->read_state == TG_GUI_READ_SEEN) {
+            return "vv";
+        }
+        if (message->read_state == TG_GUI_READ_SENT) {
+            return "v";
+        }
+    }
+    return "";
+}
+
 static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                const tg_gui_message *message, int area_x,
                                int area_w, int y, int lh, int bottom)
@@ -436,6 +455,11 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     int time_w;
     int has_reply;
     int reply_h;
+    const char *read_mark;
+    int read_mark_w;
+    int has_mark;
+    int has_status;
+    int status_w;
 
     pad = 8;
     max_bubble_w = (area_w * 78) / 100;
@@ -464,8 +488,17 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     time_w = has_time ? backend->text_width(backend, message->time,
                                             (unsigned long)strlen(message->time))
                       : 0;
-    if (time_w > widest) {
-        widest = time_w; /* the bubble must hold the timestamp line too */
+    /* The bottom line carries the timestamp and, for own messages, the read
+       receipt mark to its right (a 4px gap between them when both show). */
+    read_mark = tg_gui_read_mark(message);
+    has_mark = (read_mark[0] != '\0');
+    read_mark_w = has_mark ? backend->text_width(backend, read_mark,
+                                                 (unsigned long)strlen(read_mark))
+                           : 0;
+    has_status = has_time || has_mark;
+    status_w = time_w + read_mark_w + ((has_time && has_mark) ? 4 : 0);
+    if (status_w > widest) {
+        widest = status_w; /* the bubble must hold the timestamp/receipt line */
     }
     has_reply = (message->reply_text[0] != '\0');
     reply_h = has_reply ? lh : 0;
@@ -486,10 +519,10 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     }
 
     header_h = message->is_own ? 0 : (lh + 2);
-    /* Reserve a line inside the bubble for the timestamp so it stays on the
-       coloured background instead of spilling out below it, plus one for the
-       quoted-reply reference line when present. */
-    bubble_h = header_h + reply_h + (line_count * lh) + (has_time ? lh : 0) + 6;
+    /* Reserve a line inside the bubble for the timestamp / read-receipt mark so
+       it stays on the coloured background instead of spilling out below it, plus
+       one for the quoted-reply reference line when present. */
+    bubble_h = header_h + reply_h + (line_count * lh) + (has_status ? lh : 0) + 6;
 
     if (message->is_own) {
         bubble_x = area_x + area_w - bubble_w;
@@ -563,20 +596,31 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     if (backend->set_style != 0) {
         backend->set_style(backend, 0); /* reset before time / next bubble */
     }
-    if (has_time) {
-        int time_baseline;
-        int time_x;
+    if (has_status) {
+        int status_baseline;
+        int status_x;
 
-        /* One line below the last text line, right-aligned, inside the fill. */
-        time_baseline = y + header_h + reply_h + (line_count * lh) + lh;
-        time_x = bubble_x + bubble_w - pad - time_w;
-        if (time_x < bubble_x + pad) {
-            time_x = bubble_x + pad;
+        /* One line below the last text line, right-aligned, inside the fill:
+           timestamp then (for own messages) the read-receipt mark. */
+        status_baseline = y + header_h + reply_h + (line_count * lh) + lh;
+        status_x = bubble_x + bubble_w - pad - status_w;
+        if (status_x < bubble_x + pad) {
+            status_x = bubble_x + pad;
         }
-        if (time_baseline <= bottom) {
-            backend->draw_text(backend, time_pen, time_x, time_baseline,
-                               message->time,
-                               (unsigned long)strlen(message->time));
+        if (status_baseline <= bottom) {
+            if (has_time) {
+                backend->draw_text(backend, time_pen, status_x, status_baseline,
+                                   message->time,
+                                   (unsigned long)strlen(message->time));
+            }
+            if (has_mark) {
+                int mark_x;
+
+                mark_x = status_x + time_w + ((has_time) ? 4 : 0);
+                backend->draw_text(backend, time_pen, mark_x, status_baseline,
+                                   read_mark,
+                                   (unsigned long)strlen(read_mark));
+            }
         }
     }
     return bubble_h + 6;
@@ -596,6 +640,7 @@ static int tg_gui_message_height(tg_gui_backend *backend,
     int line_count;
     int header_h;
     int has_time;
+    int has_status;
     int reply_h;
 
     if (message->is_system) {
@@ -613,9 +658,12 @@ static int tg_gui_message_height(tg_gui_backend *backend,
     }
     header_h = message->is_own ? 0 : (lh + 2);
     has_time = (message->time[0] != '\0');
+    /* The status line also shows for an own message's read-receipt mark even
+       when it has no timestamp (the optimistic echo). */
+    has_status = has_time || (tg_gui_read_mark(message)[0] != '\0');
     reply_h = (message->reply_text[0] != '\0') ? lh : 0;
     /* bubble_h + 6, mirroring tg_gui_paint_bubble's return (incl. reply line). */
-    return header_h + reply_h + (line_count * lh) + (has_time ? lh : 0) + 6 + 6;
+    return header_h + reply_h + (line_count * lh) + (has_status ? lh : 0) + 6 + 6;
 }
 
 static void tg_gui_paint_main(const tg_gui_state *state,
@@ -856,6 +904,7 @@ typedef struct tg_gui_record {
     int min_y;
     int max_x;
     int max_y;
+    int read_marks; /* draw_text calls that emitted a "v"/"vv" receipt mark */
 } tg_gui_record;
 
 static int tg_gui_rec_width(tg_gui_backend *backend)
@@ -928,9 +977,19 @@ static void tg_gui_rec_text(tg_gui_backend *backend, int pen, int x,
     tg_gui_record *record;
 
     (void)pen;
-    (void)text;
     record = (tg_gui_record *)backend->context;
     record->texts += 1;
+    /* A bare "v" / "vv" run is the read-receipt mark (no other demo string is
+       just v's), so count it to prove the mark reaches the backend. */
+    if (text != 0 && length >= 1UL && length <= 2UL) {
+        unsigned long n;
+
+        for (n = 0UL; n < length && text[n] == 'v'; ++n) {
+        }
+        if (n == length) {
+            record->read_marks += 1;
+        }
+    }
     tg_gui_rec_track(record, x, baseline);
     tg_gui_rec_track(record, x + (int)(length * 6UL), baseline);
 }
@@ -977,6 +1036,12 @@ int tg_gui_self_test(void)
     }
     if (record.max_x > record.width || record.max_y > record.height) {
         ok = 0;
+    }
+    /* The demo's one "seen" own message must emit exactly one receipt mark. */
+    if (record.read_marks != 1) {
+        printf("gui self-test: expected 1 read mark, drew %d\n",
+               record.read_marks);
+        return 2;
     }
     if (!ok) {
         printf("gui self-test: failed (%d fills, %d avatars, %d texts, "

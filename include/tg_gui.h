@@ -88,6 +88,11 @@ typedef struct tg_gui_chat {
     int flash;                /* a notification landed since last opened: blink the badge */
 } tg_gui_chat;
 
+/* Outgoing read state for the receipt mark; 0/none on incoming messages. */
+#define TG_GUI_READ_NONE 0
+#define TG_GUI_READ_SENT 1 /* delivered, not yet read by the peer */
+#define TG_GUI_READ_SEEN 2 /* the peer has read it (id <= read_outbox_max) */
+
 typedef struct tg_gui_message {
     char sender[TG_GUI_NAME_MAX];
     char text[TG_GUI_TEXT_MAX];
@@ -96,6 +101,8 @@ typedef struct tg_gui_message {
     int is_own;
     int is_system;
     char reply_text[TG_GUI_REPLY_MAX]; /* quoted reference; "" when not a reply */
+    unsigned long id;                  /* server message id (0 = optimistic echo) */
+    int read_state;                    /* TG_GUI_READ_* (own messages only) */
 } tg_gui_message;
 
 typedef struct tg_gui_state {
@@ -111,6 +118,7 @@ typedef struct tg_gui_state {
     int theme;
     int composing;  /* the input field is focused */
     int cursor_on;  /* caret blink phase, toggled by the window's tick */
+    unsigned long open_read_outbox_max; /* peer read our msgs up to this id */
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used

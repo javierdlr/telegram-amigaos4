@@ -103,6 +103,7 @@ typedef struct tg_mtproto_dialog_peer {
     unsigned long id_lo;
     unsigned long top_message;
     unsigned long unread_count;
+    unsigned long read_outbox_max_id; /* peer has read our msgs up to this id */
 } tg_mtproto_dialog_peer;
 
 typedef struct tg_mtproto_dialog_peer_list {
@@ -311,6 +312,15 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
     unsigned long access_hash_lo,
     int has_access_hash,
     unsigned long limit);
+
+tg_mtproto_tl_status tg_mtproto_build_messages_get_peer_dialogs(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash);
 
 tg_mtproto_tl_status tg_mtproto_build_messages_send_self(
     tg_mtproto_tl_writer *writer,

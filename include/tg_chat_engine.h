@@ -71,6 +71,7 @@ tg_chat_notify_entry *tg_chat_notify_claim(tg_chat_notify *notify);
    driver prints today's transcript line, the GUI driver will project it into a
    tg_gui_message. Decouples "what to show" (engine) from "how to show it". */
 typedef struct tg_chat_message_row {
+    unsigned long id;          /* server message id (0 if unknown) */
     const char *text;          /* message body */
     unsigned long local_epoch; /* local-frame epoch; used only when has_time */
     int has_time;              /* the message carried a date */

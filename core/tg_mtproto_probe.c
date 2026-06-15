@@ -7489,6 +7489,85 @@ static int tg_mtproto_auth_send_peer_on_context(
     return 0;
 }
 
+/* Refresh the open chat's read_outbox_max_id (how far the peer has read OUR
+   messages -- the read-receipt cursor) with a one-peer messages.getPeerDialogs.
+   Tiny reply, so it stays MorphOS-safe. Sets *out to the cursor (0 if the chat
+   is absent / unread); returns 0 on success, non-zero on trouble. */
+static int tg_mtproto_chat_fetch_read_outbox_on_context(
+    const char *host,
+    const char *port,
+    const char *api_id,
+    const char *auth_file,
+    const char *dc_id_text,
+    tg_mtproto_auth_context *context,
+    const char *peer_cache_file,
+    const char *peer_index_text,
+    unsigned long *out_read_outbox_max,
+    FILE *stream)
+{
+    unsigned char query[64];
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    int has_access_hash;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    static tg_mtproto_dialog_peer_list dialogs;
+    unsigned long i;
+    static const char label[] = "mtproto messages.getPeerDialogs";
+
+    if (out_read_outbox_max != 0) {
+        *out_read_outbox_max = 0UL;
+    }
+    if (stream == 0 || out_read_outbox_max == 0) {
+        return 2;
+    }
+    if (tg_mtproto_load_peer_cache_peer(peer_cache_file, peer_index_text,
+                                        &peer_constructor, &peer_id_hi,
+                                        &peer_id_lo, &access_hash_hi,
+                                        &access_hash_lo, &has_access_hash,
+                                        stream, label) != 0) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_peer_dialogs(
+            &writer, peer_constructor, peer_id_hi, peer_id_lo, access_hash_hi,
+            access_hash_lo, has_access_hash) != TG_MTPROTO_TL_OK) {
+        return 2;
+    }
+    memset(&result, 0, sizeof(result));
+    if (tg_mtproto_send_saved_query_on_context(
+            host, port, api_id, auth_file, dc_id_text, context, query,
+            writer.length, &result, stream, label, 4U) != 0) {
+        return 1;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        (void)tg_mtproto_print_rpc_error(label, &result, stream);
+        return 1;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
+        return 1;
+    }
+    /* peerDialogs leads with the dialogs vector; the list parser accepts it. */
+    if (tg_mtproto_parse_dialog_peer_list(result.result_constructor,
+                                          result.result_body,
+                                          result.result_body_length,
+                                          &dialogs) != TG_MTPROTO_TL_OK) {
+        return 1;
+    }
+    for (i = 0UL; i < dialogs.count; ++i) {
+        if (dialogs.peers[i].peer_constructor == peer_constructor &&
+            dialogs.peers[i].id_hi == peer_id_hi &&
+            dialogs.peers[i].id_lo == peer_id_lo) {
+            *out_read_outbox_max = dialogs.peers[i].read_outbox_max_id;
+            break;
+        }
+    }
+    return 0;
+}
+
 static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
 {
     FILE *quiet;
@@ -8141,6 +8220,7 @@ static void tg_chat_render_emit(tg_chat_driver *driver, unsigned long date,
     row.own_label = own_label;
     row.sender = sender;
     row.reply_quote = 0; /* golden script carries no replies */
+    row.id = 0UL;
     driver->on_message(driver->ctx, &row);
 }
 
@@ -8441,6 +8521,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                      texts.messages[i].reply_quote[0] != '\0')
                         ? texts.messages[i].reply_quote
                         : 0;
+                row.id = texts.messages[i].id;
                 driver.on_message(driver.ctx, &row);
             }
             ++printed;
@@ -10994,6 +11075,7 @@ static struct {
     unsigned long last_seen_message_id;
     unsigned long saved_timeout;
     unsigned long diff_tick;
+    unsigned long read_outbox_tick; /* cadence for the read-receipt refresh */
     int open;
 } tg_gui_session_state;
 
@@ -11193,6 +11275,9 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.gui_driver.state->message_count = 0;
     }
     tg_gui_session_state.last_seen_message_id = 0UL;
+    /* Restart the read-receipt cursor: the loaded history starts as "sent",
+       then the getPeerDialogs read below promotes the read ones to "seen". */
+    tg_gui_driver_reset_read_outbox(&tg_gui_session_state.gui_driver);
 
     quiet = tg_mtproto_open_quiet_stream(stream);
     prev_timeout = tg_net_connect_timeout_seconds();
@@ -11211,6 +11296,21 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.current_peer_label,
         tg_gui_session_state.own_label);
     tg_chat_message_driver_override = 0;
+    /* One getPeerDialogs read so own messages already read by the peer show the
+       double-check at open (the tick refreshes it live thereafter). */
+    {
+        unsigned long read_max;
+
+        if (tg_mtproto_chat_fetch_read_outbox_on_context(
+                tg_gui_session_state.host, tg_gui_session_state.port,
+                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+                tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+                tg_gui_session_state.peer_cache_file,
+                tg_gui_session_state.current_peer_index, &read_max, quiet) == 0) {
+            (void)tg_gui_driver_set_read_outbox_max(
+                &tg_gui_session_state.gui_driver, read_max);
+        }
+    }
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_gui_log("open_chat: done");
@@ -11294,6 +11394,37 @@ int tg_gui_session_tick(FILE *stream)
         tg_chat_message_driver_override = 0;
         if (printed > 0UL) {
             dirty = 1;
+        }
+        /* Refresh the peer's read cursor so own messages flip to the double-
+           check once the peer reads them. Throttled: read state changes slowly
+           and getPeerDialogs is a needless round-trip on every short tick. */
+        {
+            unsigned long read_cadence;
+
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+            read_cadence = 1UL; /* ticks are already ~12s apart here */
+#else
+            read_cadence = 5UL;
+#endif
+            ++tg_gui_session_state.read_outbox_tick;
+            if ((tg_gui_session_state.read_outbox_tick % read_cadence) == 0UL) {
+                unsigned long read_max;
+
+                if (tg_mtproto_chat_fetch_read_outbox_on_context(
+                        tg_gui_session_state.host, tg_gui_session_state.port,
+                        tg_gui_session_state.api_id,
+                        tg_gui_session_state.auth_file,
+                        tg_gui_session_state.dc_id_text,
+                        &tg_gui_session_state.context,
+                        tg_gui_session_state.peer_cache_file,
+                        tg_gui_session_state.current_peer_index, &read_max,
+                        quiet) == 0) {
+                    if (tg_gui_driver_set_read_outbox_max(
+                            &tg_gui_session_state.gui_driver, read_max)) {
+                        dirty = 1;
+                    }
+                }
+            }
         }
     }
     /* The cadence-gated getDifference drain harvests inbound messages into the

@@ -23,6 +23,9 @@
 #define TG_USERS_GET_USERS_CONSTRUCTOR 0x0d91a548UL
 #define TG_INPUT_USER_SELF_CONSTRUCTOR 0xf7c1b13fUL
 #define TG_MESSAGES_GET_DIALOGS_CONSTRUCTOR 0xa0f4cb4fUL
+#define TG_MESSAGES_GET_PEER_DIALOGS_CONSTRUCTOR 0xe470bcfdUL
+#define TG_INPUT_DIALOG_PEER_CONSTRUCTOR 0xfcaafeb7UL
+#define TG_MESSAGES_PEER_DIALOGS_CONSTRUCTOR 0x3371c354UL
 #define TG_MESSAGES_GET_HISTORY_CONSTRUCTOR 0x4423e6c5UL
 #define TG_MESSAGES_SEND_MESSAGE_CONSTRUCTOR 0xfe05dc9aUL
 #define TG_CONTACTS_RESOLVE_USERNAME_CONSTRUCTOR 0xf93ccba3UL
@@ -884,6 +887,43 @@ static tg_mtproto_tl_status tg_write_input_peer(
     }
 }
 
+/* messages.getPeerDialogs#e470bcfd peers:Vector<InputDialogPeer> -- one peer,
+   to refresh that chat's read_outbox_max_id (the "seen" cursor) without the
+   heavy full getDialogs. Reply is messages.peerDialogs (dialogs vector first). */
+tg_mtproto_tl_status tg_mtproto_build_messages_get_peer_dialogs(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_MESSAGES_GET_PEER_DIALOGS_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_VECTOR_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL); /* one InputDialogPeer */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer,
+                                         TG_INPUT_DIALOG_PEER_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_input_peer(writer, peer_constructor, peer_id_hi,
+                                     peer_id_lo, access_hash_hi,
+                                     access_hash_lo, has_access_hash);
+    }
+    return status;
+}
+
 tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,
@@ -1626,8 +1666,10 @@ static tg_mtproto_tl_status tg_read_dialog_peer(
         tg_read_peer_ref(reader, peer) != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(reader, &peer->top_message) !=
             TG_MTPROTO_TL_OK ||
+        /* read_inbox_max_id (skipped) then read_outbox_max_id (captured). */
         tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
-        tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(reader, &peer->read_outbox_max_id) !=
+            TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(reader, &peer->unread_count) !=
             TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
@@ -1738,13 +1780,17 @@ tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_list(
             TG_MTPROTO_TL_OK) {
             return TG_MTPROTO_TL_INVALID_DATA;
         }
-    } else if (constructor != TG_MESSAGES_DIALOGS_CONSTRUCTOR) {
+    } else if (constructor != TG_MESSAGES_DIALOGS_CONSTRUCTOR &&
+               constructor != TG_MESSAGES_PEER_DIALOGS_CONSTRUCTOR) {
+        /* messages.peerDialogs#3371c354 leads with the same dialogs:Vector
+           (no slice count), so it parses through this path; the trailing
+           messages/chats/users/state are left unread. */
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if (tg_read_vector_count(&reader, &count) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    if (constructor == TG_MESSAGES_DIALOGS_CONSTRUCTOR) {
+    if (constructor != TG_MESSAGES_DIALOGS_SLICE_CONSTRUCTOR) {
         out->total_dialog_count = count;
     }
     for (i = 0UL; i < count; ++i) {
@@ -3869,6 +3915,39 @@ int tg_mtproto_login_self_test(void)
         query[20] != 20U) {
         return 2;
     }
+    /* messages.getPeerDialogs builder: one user InputDialogPeer, read back to
+       confirm the wire layout (constructor / vector / inputDialogPeer / peer). */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_peer_dialogs(
+            &writer, TG_PEER_USER_CONSTRUCTOR, 0UL, 0x00ABCDEFUL, 0x11223344UL,
+            0x55667788UL, 1) != TG_MTPROTO_TL_OK ||
+        writer.length != 36UL) {
+        return 2;
+    }
+    {
+        tg_mtproto_tl_reader reader;
+        unsigned long w0, w1, w2, w3, w4;
+        unsigned long id_hi, id_lo, ah_hi, ah_lo;
+
+        tg_mtproto_tl_reader_init(&reader, query, writer.length);
+        if (tg_mtproto_tl_read_u32(&reader, &w0) != TG_MTPROTO_TL_OK ||
+            w0 != TG_MESSAGES_GET_PEER_DIALOGS_CONSTRUCTOR ||
+            tg_mtproto_tl_read_u32(&reader, &w1) != TG_MTPROTO_TL_OK ||
+            w1 != TG_VECTOR_CONSTRUCTOR ||
+            tg_mtproto_tl_read_u32(&reader, &w2) != TG_MTPROTO_TL_OK ||
+            w2 != 1UL ||
+            tg_mtproto_tl_read_u32(&reader, &w3) != TG_MTPROTO_TL_OK ||
+            w3 != TG_INPUT_DIALOG_PEER_CONSTRUCTOR ||
+            tg_mtproto_tl_read_u32(&reader, &w4) != TG_MTPROTO_TL_OK ||
+            w4 != TG_INPUT_PEER_USER_CONSTRUCTOR ||
+            tg_mtproto_tl_read_u64(&reader, &id_hi, &id_lo) != TG_MTPROTO_TL_OK ||
+            id_hi != 0UL || id_lo != 0x00ABCDEFUL ||
+            tg_mtproto_tl_read_u64(&reader, &ah_hi, &ah_lo) !=
+                TG_MTPROTO_TL_OK ||
+            ah_hi != 0x11223344UL || ah_lo != 0x55667788UL) {
+            return 2;
+        }
+    }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_get_history_self(&writer, 10UL) !=
             TG_MTPROTO_TL_OK ||
@@ -4120,11 +4199,24 @@ int tg_mtproto_login_self_test(void)
         peer_list.peers[0].peer_constructor != TG_PEER_USER_CONSTRUCTOR ||
         peer_list.peers[0].id_lo != 0x12345678UL ||
         peer_list.peers[0].top_message != 11UL ||
+        peer_list.peers[0].read_outbox_max_id != 10UL ||
         peer_list.peers[0].unread_count != 3UL ||
         peer_list.peers[1].peer_constructor != TG_PEER_CHAT_CONSTRUCTOR ||
         peer_list.peers[1].id_lo != 0x87654321UL ||
         peer_list.peers[1].top_message != 21UL ||
+        peer_list.peers[1].read_outbox_max_id != 20UL ||
         peer_list.peers[1].unread_count != 4UL) {
+        return 2;
+    }
+    /* The same body parses under messages.peerDialogs too -- the getPeerDialogs
+       reply leads with the dialogs vector, so the read_outbox cursor (the "seen"
+       source) is reachable without a dedicated peerDialogs parser. */
+    if (tg_mtproto_parse_dialog_peer_list(TG_MESSAGES_PEER_DIALOGS_CONSTRUCTOR,
+                                          peer_rpc, writer.length,
+                                          &peer_list) != TG_MTPROTO_TL_OK ||
+        peer_list.count != 2UL ||
+        peer_list.peers[0].read_outbox_max_id != 10UL ||
+        peer_list.peers[1].read_outbox_max_id != 20UL) {
         return 2;
     }
 

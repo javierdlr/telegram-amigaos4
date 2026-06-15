@@ -155,6 +155,14 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
         tg_gui_driver_copy_latin1(message->reply_text,
                                   sizeof(message->reply_text), row->reply_quote);
     }
+    message->id = row->id;
+    if (message->is_own) {
+        message->read_state =
+            (message->id != 0UL &&
+             message->id <= state->open_read_outbox_max)
+                ? TG_GUI_READ_SEEN
+                : TG_GUI_READ_SENT;
+    }
 
     if (row->has_time) {
         time_t when;
@@ -198,8 +206,49 @@ void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
                               (own_label != 0) ? own_label : "");
     message->sender_color =
         tg_gui_driver_color_for((own_label != 0) ? own_label : "");
+    /* Optimistic echo: delivered ("sent"), no server id yet so it cannot be
+       promoted to "seen" until the real message arrives via history. */
+    message->read_state = TG_GUI_READ_SENT;
     /* No server timestamp on the optimistic echo (memset left time empty). */
     state->message_count += 1;
+}
+
+int tg_gui_driver_set_read_outbox_max(tg_gui_chat_driver *gui,
+                                      unsigned long read_outbox_max)
+{
+    tg_gui_state *state;
+    int changed;
+    int i;
+
+    if (gui == 0 || gui->state == 0) {
+        return 0;
+    }
+    state = gui->state;
+    if (read_outbox_max <= state->open_read_outbox_max) {
+        return 0; /* the read cursor only advances within a chat */
+    }
+    state->open_read_outbox_max = read_outbox_max;
+    /* Promote already-shown own messages the peer has now read. */
+    changed = 0;
+    for (i = 0; i < state->message_count; ++i) {
+        tg_gui_message *message;
+
+        message = &state->messages[i];
+        if (message->is_own && message->id != 0UL &&
+            message->id <= read_outbox_max &&
+            message->read_state == TG_GUI_READ_SENT) {
+            message->read_state = TG_GUI_READ_SEEN;
+            changed = 1;
+        }
+    }
+    return changed;
+}
+
+void tg_gui_driver_reset_read_outbox(tg_gui_chat_driver *gui)
+{
+    if (gui != 0 && gui->state != 0) {
+        gui->state->open_read_outbox_max = 0UL; /* new chat: cursor restarts */
+    }
 }
 
 /* Derives 1-2 uppercase initials from a display name (skipping a leading '@'):
@@ -352,6 +401,7 @@ static void tg_gui_driver_emit(tg_chat_driver *driver, unsigned long epoch,
 {
     tg_chat_message_row row;
 
+    memset(&row, 0, sizeof(row)); /* id / reply_quote default to none */
     row.text = text;
     row.local_epoch = epoch;
     row.has_time = has_time;
@@ -538,6 +588,79 @@ int tg_gui_driver_self_test(void)
         }
     }
 
-    puts("gui driver self-test: ok (messages + chat list + notifications)");
+    /* Read receipts: own messages flip "sent" -> "seen" as the peer's read
+       cursor advances (monotonically); incoming and unsent rows carry no mark. */
+    {
+        tg_gui_state rs;
+        tg_gui_chat_driver rg;
+        tg_chat_driver rd;
+        tg_chat_message_row row;
+
+        memset(&rs, 0, sizeof(rs));
+        tg_gui_chat_driver_bind(&rg, &rs, &rd);
+
+        memset(&row, 0, sizeof(row));
+        row.has_time = 1;
+        row.local_epoch = 1700000000UL;
+        row.own_label = "Io";
+        row.is_out = 1;
+        row.id = 100UL;
+        row.text = "primo";
+        rd.on_message(rd.ctx, &row);
+        row.id = 200UL;
+        row.text = "secondo";
+        rd.on_message(rd.ctx, &row);
+        row.is_out = 0;
+        row.id = 150UL;
+        row.sender = "Mario";
+        row.text = "in arrivo";
+        rd.on_message(rd.ctx, &row);
+
+        if (rs.messages[0].read_state != TG_GUI_READ_SENT ||
+            rs.messages[1].read_state != TG_GUI_READ_SENT ||
+            rs.messages[2].read_state != TG_GUI_READ_NONE) {
+            puts("gui driver self-test: initial read_state wrong");
+            return 2;
+        }
+        /* Peer reads up to #100: only own #100 becomes "seen". */
+        if (tg_gui_driver_set_read_outbox_max(&rg, 100UL) == 0 ||
+            rs.messages[0].read_state != TG_GUI_READ_SEEN ||
+            rs.messages[1].read_state != TG_GUI_READ_SENT ||
+            rs.messages[2].read_state != TG_GUI_READ_NONE) {
+            puts("gui driver self-test: read cursor 100 wrong");
+            return 2;
+        }
+        /* The cursor only advances: a stale lower value changes nothing. */
+        if (tg_gui_driver_set_read_outbox_max(&rg, 50UL) != 0) {
+            puts("gui driver self-test: read cursor must not regress");
+            return 2;
+        }
+        /* Peer reads up to #250: own #200 also becomes "seen". */
+        if (tg_gui_driver_set_read_outbox_max(&rg, 250UL) == 0 ||
+            rs.messages[1].read_state != TG_GUI_READ_SEEN) {
+            puts("gui driver self-test: read cursor 250 wrong");
+            return 2;
+        }
+        /* Re-applying the same cursor reports no change (no spurious repaint). */
+        if (tg_gui_driver_set_read_outbox_max(&rg, 250UL) != 0) {
+            puts("gui driver self-test: idempotent cursor must report no change");
+            return 2;
+        }
+        /* Switching chats resets the cursor so a smaller value can take hold. */
+        tg_gui_driver_reset_read_outbox(&rg);
+        if (rs.open_read_outbox_max != 0UL) {
+            puts("gui driver self-test: reset must clear the read cursor");
+            return 2;
+        }
+        /* The optimistic echo is delivered ("sent") with no server id yet. */
+        tg_gui_driver_append_own(&rg, "eco", "Io");
+        if (rs.messages[rs.message_count - 1].read_state != TG_GUI_READ_SENT ||
+            rs.messages[rs.message_count - 1].id != 0UL) {
+            puts("gui driver self-test: optimistic echo state wrong");
+            return 2;
+        }
+    }
+
+    puts("gui driver self-test: ok (messages + chat list + receipts)");
     return 0;
 }

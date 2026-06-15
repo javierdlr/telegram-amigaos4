@@ -40,6 +40,17 @@ int tg_gui_driver_color_for(const char *name);
 void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
                               const char *own_label);
 
+/* The peer has read our outgoing messages up to read_outbox_max: advance the
+   open-chat read cursor (monotonic) and promote shown own messages at or below
+   it from "sent" to "seen". Returns 1 if any mark changed (repaint needed).
+   Called by the live session after a getPeerDialogs refresh. */
+int tg_gui_driver_set_read_outbox_max(tg_gui_chat_driver *gui,
+                                      unsigned long read_outbox_max);
+
+/* Reset the read cursor when switching chats (so it can drop to the new chat's
+   value rather than being pinned by the monotonic advance above). */
+void tg_gui_driver_reset_read_outbox(tg_gui_chat_driver *gui);
+
 /* Host-CI self-test: feeds synthetic rows through the driver and asserts the
    resulting tg_gui_state (sender, text, time, is_own, colour, ring overflow).
    Returns 0 on success. */
