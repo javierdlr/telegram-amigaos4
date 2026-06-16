@@ -12063,6 +12063,6 @@ int tg_gui_session_login_activate(tg_gui_state *state, FILE *stream)
         tg_gui_login_copy(state->title, sizeof(state->title), "Telegram Amiga");
     }
     tg_gui_login_copy(state->status, sizeof(state->status),
-                      "Live - 1-9/n/p, Q quits");
+                      "Live - F1-F10 chats, Q quits");
     return 0;
 }

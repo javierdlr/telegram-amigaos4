@@ -4059,7 +4059,7 @@ int tg_app_run(int argc, char **argv)
             } else {
                 strcpy(gui.title, "Telegram Amiga");
             }
-            strcpy(gui.status, rc == 0 ? "Live - 1-9/n/p, Q quits"
+            strcpy(gui.status, rc == 0 ? "Live - F1-F10 chats, Q quits"
                                        : "Offline (cache) - Q quits");
         }
         /* Open the selected (first) chat up front so the transcript is
@@ -4142,7 +4142,7 @@ int tg_app_run(int argc, char **argv)
                 gui.title[k] = name[k];
             }
             gui.title[k] = '\0';
-            strcpy(gui.status, "Read-only - 1-9/n/p, Q quits");
+            strcpy(gui.status, "Read-only - F1-F10 chats, Q quits");
         } else {
             strcpy(gui.title, "Telegram Amiga");
             strcpy(gui.status, missing ? "Cache chat non trovata"

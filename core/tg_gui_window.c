@@ -39,6 +39,7 @@
 #include <exec/memory.h>
 #include <intuition/intuition.h>
 #include <intuition/screens.h>
+#include <libraries/gadtools.h>
 #include <graphics/gfx.h>
 #include <graphics/text.h>
 #include <graphics/view.h>
@@ -48,6 +49,7 @@
 #include <proto/exec.h>
 #include <proto/intuition.h>
 #include <proto/graphics.h>
+#include <proto/gadtools.h>
 #include <proto/dos.h>
 
 /* TagItem ti_Data is pointer-sized. Only AROS needs IPTR (64-bit on AROS
@@ -67,9 +69,17 @@
 #if defined(__amigaos4__)
 struct Library *GfxBase = 0;
 struct GraphicsIFace *IGraphics = 0;
+struct Library *GadToolsBase = 0;
+struct GadToolsIFace *IGadTools = 0;
 #else
 struct GfxBase *GfxBase = 0;
+struct Library *GadToolsBase = 0;
 #endif
+
+/* Menu item ids (GadTools NM_USERDATA), decoded on IDCMP_MENUPICK. */
+#define TG_MENU_ABOUT 1
+#define TG_MENU_HELP  2
+#define TG_MENU_QUIT  3
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -354,35 +364,6 @@ static void tg_gui_window_apply_selection(tg_gui_state *state)
     state->title[i] = '\0';
 }
 
-/* Maps a VANILLAKEY to a new chat selection: 1-9 jump to that row (ignored
-   past the list), n/p step next/previous. Returns the clamped target index, or
-   the current selection when the key does not navigate. */
-static int tg_gui_window_select_key(const tg_gui_state *state, UWORD code)
-{
-    int sel;
-
-    sel = state->selected_chat;
-    if (code >= '1' && code <= '9') {
-        int d;
-
-        d = (int)(code - '1');
-        if (d < state->chat_count) {
-            sel = d;
-        }
-    } else if (code == 'n' || code == 'N') {
-        sel = state->selected_chat + 1;
-    } else if (code == 'p' || code == 'P') {
-        sel = state->selected_chat - 1;
-    }
-    if (sel < 0) {
-        sel = 0;
-    }
-    if (sel >= state->chat_count) {
-        sel = state->chat_count - 1;
-    }
-    return sel;
-}
-
 /* Switch to chat `sel`: show its header + an empty transcript at once, then
    fetch the history. The instant first paint keeps the switch responsive on a
    slow link instead of the window appearing frozen on the old chat until the
@@ -533,6 +514,46 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
     tg_gui_paint(state, backend);
 }
 
+/* The right-button menu strip (laid out by GadTools so the metrics follow the
+   screen font). Quit also gets the standard Right-Amiga+Q shortcut. */
+static struct NewMenu tg_gui_newmenu[] = {
+    { NM_TITLE, (STRPTR)"Telegram", 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"About...", 0, 0, 0, (APTR)TG_MENU_ABOUT },
+    { NM_ITEM,  (STRPTR)"Help...",  0, 0, 0, (APTR)TG_MENU_HELP },
+    { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
+    { NM_END,   0, 0, 0, 0, 0 }
+};
+
+static const char tg_gui_about_text[] =
+    "Telegram Amiga\n\n"
+    "A native Telegram client for AmigaOS,\n"
+    "MorphOS and AROS -- no MUI, no ixemul.\n\n"
+    "by Michele Dipace";
+
+static const char tg_gui_help_text[] =
+    "Chat selection:\n"
+    "  F1 - F10          chats 1 to 10\n"
+    "  Shift + F1 - F10  chats 11 to 20\n\n"
+    "ENTER   write a message to the open chat\n"
+    "ESC     cancel\n"
+    "Q       quit";
+
+/* Shows a one-button info requester (About / Help). No printf args, so the
+   text is passed verbatim (it carries no '%'). */
+static void tg_gui_amiga_easyreq(struct Window *win, const char *title,
+                                 const char *body)
+{
+    struct EasyStruct es;
+
+    es.es_StructSize = (ULONG)sizeof(struct EasyStruct);
+    es.es_Flags = 0UL;
+    es.es_Title = (STRPTR)title;
+    es.es_TextFormat = (STRPTR)body;
+    es.es_GadgetFormat = (STRPTR)"OK";
+    (void)EasyRequestArgs(win, &es, 0, 0);
+}
+
 int tg_gui_run_window(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
@@ -540,6 +561,8 @@ int tg_gui_run_window(tg_gui_state *state)
     struct TagItem tags[18];
     struct ColorMap *cmap;
     struct TextFont *font;
+    APTR vi;
+    struct Menu *menu;
     unsigned long mem_before;
     unsigned long mem_after;
     unsigned long footprint;
@@ -634,9 +657,9 @@ int tg_gui_run_window(tg_gui_state *state)
     tags[i].ti_Tag = WA_MaxHeight;
     tags[i++].ti_Data = 0xffff;
     tags[i].ti_Tag = WA_IDCMP;
-    tags[i++].ti_Data = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_NEWSIZE |
-                        IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS |
-                        IDCMP_MOUSEBUTTONS;
+    tags[i++].ti_Data = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_RAWKEY |
+                        IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS |
+                        IDCMP_MOUSEBUTTONS | IDCMP_MENUPICK;
     tags[i].ti_Tag = TAG_END;
     tags[i++].ti_Data = 0;
 
@@ -670,6 +693,33 @@ int tg_gui_run_window(tg_gui_state *state)
     cmap = ctx.window->WScreen->ViewPort.ColorMap;
     tg_gui_amiga_obtain_pens(&ctx, cmap);
     tg_gui_amiga_measure_geometry(&ctx);
+
+    /* Right-button menu via GadTools (optional: a missing gadtools.library or a
+       layout failure just leaves the window menu-less). */
+    vi = 0;
+    menu = 0;
+#if defined(__amigaos4__)
+    GadToolsBase = OpenLibrary("gadtools.library", 39L);
+    if (GadToolsBase != 0) {
+        IGadTools = (struct GadToolsIFace *)GetInterface(GadToolsBase, "main",
+                                                         1L, 0);
+        if (IGadTools == 0) {
+            CloseLibrary(GadToolsBase);
+            GadToolsBase = 0;
+        }
+    }
+#else
+    GadToolsBase = OpenLibrary("gadtools.library", 39L);
+#endif
+    if (GadToolsBase != 0) {
+        vi = GetVisualInfoA(ctx.window->WScreen, 0);
+        if (vi != 0) {
+            menu = CreateMenusA(tg_gui_newmenu, 0);
+            if (menu != 0 && LayoutMenusA(menu, vi, 0)) {
+                SetMenuStrip(ctx.window, menu);
+            }
+        }
+    }
 
     backend.context = &ctx;
     backend.width = tg_gui_amiga_width;
@@ -746,11 +796,13 @@ int tg_gui_run_window(tg_gui_state *state)
                0) {
             ULONG msg_class;
             UWORD msg_code;
+            UWORD msg_qual;
             WORD mouse_x;
             WORD mouse_y;
 
             msg_class = msg->Class;
             msg_code = msg->Code;
+            msg_qual = msg->Qualifier;
             mouse_x = msg->MouseX;
             mouse_y = msg->MouseY;
             ReplyMsg((struct Message *)msg);
@@ -773,13 +825,13 @@ int tg_gui_run_window(tg_gui_state *state)
                     }
                     state->composing = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - 1-9/n/p, Q quits");
+                                       "Live - F1-F10 chats, Q quits");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 27) {
                     state->input[0] = '\0';
                     state->composing = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - 1-9/n/p, Q quits");
+                                       "Live - F1-F10 chats, Q quits");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 8 || msg_code == 127) {
                     unsigned long n;
@@ -811,13 +863,53 @@ int tg_gui_run_window(tg_gui_state *state)
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Type - ENTER sends, ESC cancels");
                     tg_gui_paint(state, &backend);
-                } else if (state->chat_count > 0) {
-                    int sel;
+                }
+                /* Chat selection is on the function keys now (IDCMP_RAWKEY). */
+            } else if (msg_class == IDCMP_RAWKEY && !state->composing &&
+                       state->mode == TG_GUI_MODE_CHAT) {
+                /* F1..F10 (rawkey 0x50..0x59) pick chats 1..10; Shift adds 10
+                   for 11..20 -- matching the console's F-key selection. */
+                if (msg_code >= 0x50 && msg_code <= 0x59 &&
+                    state->chat_count > 0) {
+                    int idx;
 
-                    sel = tg_gui_window_select_key(state, msg_code);
-                    if (sel != state->selected_chat) {
-                        tg_gui_window_open_selection(state, sel, &backend);
+                    idx = (int)(msg_code - 0x50);
+                    if ((msg_qual &
+                         (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0) {
+                        idx += 10;
                     }
+                    if (idx < state->chat_count &&
+                        idx != state->selected_chat) {
+                        tg_gui_window_open_selection(state, idx, &backend);
+                    }
+                }
+            } else if (msg_class == IDCMP_MENUPICK) {
+                UWORD mnum;
+
+                mnum = msg_code;
+                while (mnum != MENUNULL) {
+                    struct MenuItem *item;
+
+                    item = ItemAddress(menu, mnum);
+                    if (item == 0) {
+                        break;
+                    }
+                    {
+                        APTR ud;
+
+                        ud = GTMENUITEM_USERDATA(item);
+                        if (ud == (APTR)TG_MENU_ABOUT) {
+                            tg_gui_amiga_easyreq(ctx.window,
+                                                 "About Telegram Amiga",
+                                                 tg_gui_about_text);
+                        } else if (ud == (APTR)TG_MENU_HELP) {
+                            tg_gui_amiga_easyreq(ctx.window, "Telegram Amiga Help",
+                                                 tg_gui_help_text);
+                        } else if (ud == (APTR)TG_MENU_QUIT) {
+                            done = 1;
+                        }
+                    }
+                    mnum = item->NextSelect;
                 }
             } else if (msg_class == IDCMP_NEWSIZE) {
                 tg_gui_amiga_measure_geometry(&ctx);
@@ -871,7 +963,7 @@ int tg_gui_run_window(tg_gui_state *state)
                             state->composing = 0;
                             state->input[0] = '\0';
                             tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - 1-9/n/p, Q quits");
+                                       "Live - F1-F10 chats, Q quits");
                         }
                         if (hit != state->selected_chat) {
                             tg_gui_window_open_selection(state, hit, &backend);
@@ -885,7 +977,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         }
                         state->composing = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - 1-9/n/p, Q quits");
+                                       "Live - F1-F10 chats, Q quits");
                         tg_gui_paint(state, &backend);
                     } else if ((hit == TG_GUI_HIT_INPUT ||
                                 hit == TG_GUI_HIT_SEND) &&
@@ -906,6 +998,26 @@ int tg_gui_run_window(tg_gui_state *state)
         }
     }
 
+    /* Detach + free the menu strip before the window goes away. */
+    if (menu != 0) {
+        ClearMenuStrip(ctx.window);
+        FreeMenus(menu);
+        menu = 0;
+    }
+    if (vi != 0) {
+        FreeVisualInfo(vi);
+        vi = 0;
+    }
+#if defined(__amigaos4__)
+    if (IGadTools != 0) {
+        DropInterface((struct Interface *)IGadTools);
+        IGadTools = 0;
+    }
+#endif
+    if (GadToolsBase != 0) {
+        CloseLibrary(GadToolsBase);
+        GadToolsBase = 0;
+    }
     tg_gui_log("window: releasing pens");
     tg_gui_amiga_release_pens(&ctx, cmap);
     tg_gui_log("window: CloseWindow");

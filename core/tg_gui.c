@@ -793,7 +793,7 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                        tg_gui_make_rect(width - 64, content_h - input_h, 56,
                                         input_h - 4));
     backend->draw_text(backend, TG_GUI_PEN_ACCENT_TEXT, width - 56,
-                       input_baseline, "Invia", 5UL);
+                       input_baseline, "Send", 4UL);
 }
 
 /* Sidebar width for a given window width -- shared by the painter and the
