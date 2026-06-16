@@ -7648,8 +7648,10 @@ static int tg_mtproto_auth_send_peer_on_context(
 
 /* Refresh the open chat's read_outbox_max_id (how far the peer has read OUR
    messages -- the read-receipt cursor) with a one-peer messages.getPeerDialogs.
-   Tiny reply, so it stays MorphOS-safe. Sets *out to the cursor (0 if the chat
-   is absent / unread); returns 0 on success, non-zero on trouble. */
+   NOTE: despite the tiny reply, getPeerDialogs hard-freezes MorphOS, so this is
+   compiled out there (read receipts are suppressed on MorphOS). Sets *out to the
+   cursor (0 if the chat is absent / unread); returns 0 on success, non-zero. */
+#if !defined(__MORPHOS__) && !defined(__MORPHOS)
 static int tg_mtproto_chat_fetch_read_outbox_on_context(
     const char *host,
     const char *port,
@@ -7724,6 +7726,7 @@ static int tg_mtproto_chat_fetch_read_outbox_on_context(
     }
     return 0;
 }
+#endif /* !__MORPHOS__ : read-receipt getPeerDialogs is freeze-unsafe on MorphOS */
 
 static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
 {
@@ -11602,7 +11605,11 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.own_label);
     tg_chat_message_driver_override = 0;
     /* One getPeerDialogs read so own messages already read by the peer show the
-       double-check at open (the tick refreshes it live thereafter). */
+       double-check at open (the tick refreshes it live thereafter).
+       NOT on MorphOS: getPeerDialogs/dialogs payloads reproducibly hard-freeze
+       the machine there (documented), so read receipts are suppressed on MorphOS
+       like pushes/typing already are. Read state simply stays at the single check. */
+#if !defined(__MORPHOS__) && !defined(__MORPHOS)
     {
         unsigned long read_max;
 
@@ -11616,6 +11623,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
                 &tg_gui_session_state.gui_driver, read_max);
         }
     }
+#endif
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_gui_log("open_chat: done");
@@ -11702,15 +11710,16 @@ int tg_gui_session_tick(FILE *stream)
         }
         /* Refresh the peer's read cursor so own messages flip to the double-
            check once the peer reads them. Throttled: read state changes slowly
-           and getPeerDialogs is a needless round-trip on every short tick. */
+           and getPeerDialogs is a needless round-trip on every short tick.
+           Skipped entirely on MorphOS: getPeerDialogs reproducibly hard-freezes
+           that machine (same family as the dialogs payloads), so read receipts
+           are suppressed there exactly as pushes/typing already are. This was the
+           "window opens then freezes on the first tick" regression from a1aad83. */
+#if !defined(__MORPHOS__) && !defined(__MORPHOS)
         {
             unsigned long read_cadence;
 
-#if defined(__MORPHOS__) || defined(__MORPHOS)
-            read_cadence = 1UL; /* ticks are already ~12s apart here */
-#else
             read_cadence = 5UL;
-#endif
             ++tg_gui_session_state.read_outbox_tick;
             if ((tg_gui_session_state.read_outbox_tick % read_cadence) == 0UL) {
                 unsigned long read_max;
@@ -11731,6 +11740,7 @@ int tg_gui_session_tick(FILE *stream)
                 }
             }
         }
+#endif
     }
     /* The cadence-gated getDifference drain harvests inbound messages into the
        notify queue. As on the console: every tick on MorphOS (where pushes are
