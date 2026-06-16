@@ -286,6 +286,8 @@ typedef struct tg_chat_typing_sink {
     int is_chat;             /* group/channel vs DM */
     unsigned long peer_id_hi; /* DM user id, or group/channel id */
     unsigned long peer_id_lo;
+    unsigned long from_id_hi; /* who is typing (groups); = peer for a DM */
+    unsigned long from_id_lo;
     unsigned long seen_epoch; /* time() when last seen, for the TTL */
 } tg_chat_typing_sink;
 static tg_chat_typing_sink *tg_chat_typing_target = 0;
@@ -2588,9 +2590,13 @@ static void tg_chat_notify_push_message(const tg_mtproto_message_text *message,
 }
 
 /* Records the most recent typing peer into the live sink (if a GUI session
-   armed it). The GUI tick decides whether it matches the open chat. */
+   armed it). `from_id` is who is typing (the sender, for groups; the peer
+   itself for a DM). The GUI tick decides whether it matches the open chat and
+   resolves the name. */
 static void tg_chat_typing_record(int is_chat, unsigned long peer_id_hi,
-                                  unsigned long peer_id_lo)
+                                  unsigned long peer_id_lo,
+                                  unsigned long from_id_hi,
+                                  unsigned long from_id_lo)
 {
     if (tg_chat_typing_target == 0) {
         return;
@@ -2599,6 +2605,8 @@ static void tg_chat_typing_record(int is_chat, unsigned long peer_id_hi,
     tg_chat_typing_target->is_chat = is_chat;
     tg_chat_typing_target->peer_id_hi = peer_id_hi;
     tg_chat_typing_target->peer_id_lo = peer_id_lo;
+    tg_chat_typing_target->from_id_hi = from_id_hi;
+    tg_chat_typing_target->from_id_lo = from_id_lo;
     tg_chat_typing_target->seen_epoch = (unsigned long)time(0);
 }
 
@@ -2630,9 +2638,10 @@ static void tg_chat_typing_parse_update(tg_mtproto_tl_reader *reader,
     unsigned long top;
 
     if (update_ctor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR) {
+        /* DM: the typing user IS the peer. */
         if (tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) == TG_MTPROTO_TL_OK &&
             tg_chat_typing_action_is_typing(reader)) {
-            tg_chat_typing_record(0, id_hi, id_lo);
+            tg_chat_typing_record(0, id_hi, id_lo, id_hi, id_lo);
         }
         return;
     }
@@ -2642,7 +2651,7 @@ static void tg_chat_typing_parse_update(tg_mtproto_tl_reader *reader,
             tg_mtproto_tl_read_u64(reader, &from_hi, &from_lo) ==
                 TG_MTPROTO_TL_OK &&
             tg_chat_typing_action_is_typing(reader)) {
-            tg_chat_typing_record(1, id_hi, id_lo);
+            tg_chat_typing_record(1, id_hi, id_lo, from_hi, from_lo);
         }
         return;
     }
@@ -2660,7 +2669,7 @@ static void tg_chat_typing_parse_update(tg_mtproto_tl_reader *reader,
             tg_mtproto_tl_read_u64(reader, &from_hi, &from_lo) ==
                 TG_MTPROTO_TL_OK &&
             tg_chat_typing_action_is_typing(reader)) {
-            tg_chat_typing_record(1, id_hi, id_lo);
+            tg_chat_typing_record(1, id_hi, id_lo, from_hi, from_lo);
         }
         return;
     }
@@ -8357,6 +8366,8 @@ static void tg_chat_render_emit(tg_chat_driver *driver, unsigned long date,
     row.sender = sender;
     row.reply_quote = 0; /* golden script carries no replies */
     row.id = 0UL;
+    row.from_id_hi = 0UL;
+    row.from_id_lo = 0UL;
     driver->on_message(driver->ctx, &row);
 }
 
@@ -8658,6 +8669,8 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                         ? texts.messages[i].reply_quote
                         : 0;
                 row.id = texts.messages[i].id;
+                row.from_id_hi = texts.messages[i].from_id_hi;
+                row.from_id_lo = texts.messages[i].from_id_lo;
                 driver.on_message(driver.ctx, &row);
             }
             ++printed;
@@ -11122,7 +11135,8 @@ int tg_mtproto_probe_self_test(void)
         }
         if (!ok || !typing_sink.active || typing_sink.is_chat != 0 ||
             typing_sink.peer_id_hi != 0UL ||
-            typing_sink.peer_id_lo != 0xABCDUL) {
+            typing_sink.peer_id_lo != 0xABCDUL ||
+            typing_sink.from_id_lo != 0xABCDUL) { /* DM: typer == peer */
             tg_chat_nq = 0;
             tg_chat_typing_target = 0;
             puts("probe self-test: typing DM parse wrong");
@@ -11172,7 +11186,8 @@ int tg_mtproto_probe_self_test(void)
             tg_chat_notify_collect(payload, writer.length);
         }
         if (!ok || !typing_sink.active || typing_sink.is_chat != 1 ||
-            typing_sink.peer_id_lo != 0x900UL) {
+            typing_sink.peer_id_lo != 0x900UL ||
+            typing_sink.from_id_lo != 0x55UL) { /* group: typer = from user */
             tg_chat_nq = 0;
             tg_chat_typing_target = 0;
             puts("probe self-test: group typing parse wrong");
@@ -11768,6 +11783,7 @@ int tg_gui_session_tick(FILE *stream)
         gs = tg_gui_session_state.gui_driver.state;
         if (gs != 0) {
             const char *want;
+            char built[TG_GUI_NAME_MAX];
             int fresh;
             unsigned long now;
 
@@ -11788,9 +11804,50 @@ int tg_gui_session_tick(FILE *stream)
                     tg_gui_session_state.open_peer_id_hi &&
                 tg_gui_session_state.typing.peer_id_lo ==
                     tg_gui_session_state.open_peer_id_lo) {
-                want = tg_gui_session_state.open_peer_is_chat
-                           ? "qualcuno sta scrivendo..."
-                           : "sta scrivendo...";
+                const char *name;
+
+                /* Name who is typing: in a DM it is the open peer; in a group
+                   match the typer's id against a recently shown sender. */
+                name = 0;
+                if (!tg_gui_session_state.open_peer_is_chat) {
+                    if (tg_gui_session_state.current_peer_label[0] != '\0') {
+                        name = tg_gui_session_state.current_peer_label;
+                    }
+                } else {
+                    int mi;
+
+                    for (mi = 0; mi < gs->message_count; ++mi) {
+                        if (!gs->messages[mi].is_own &&
+                            gs->messages[mi].from_id_hi ==
+                                tg_gui_session_state.typing.from_id_hi &&
+                            gs->messages[mi].from_id_lo ==
+                                tg_gui_session_state.typing.from_id_lo &&
+                            gs->messages[mi].sender[0] != '\0') {
+                            name = gs->messages[mi].sender;
+                            break;
+                        }
+                    }
+                }
+                if (name != 0) {
+                    static const char suffix[] = " is typing...";
+                    unsigned long di;
+                    unsigned long si;
+
+                    di = 0UL;
+                    while (di + sizeof(suffix) < sizeof(built) &&
+                           name[di] != '\0') {
+                        built[di] = name[di];
+                        ++di;
+                    }
+                    for (si = 0UL; si + 1UL < sizeof(suffix) &&
+                                   di + 1UL < sizeof(built); ++si) {
+                        built[di++] = suffix[si];
+                    }
+                    built[di] = '\0';
+                    want = built;
+                } else {
+                    want = "someone is typing...";
+                }
             }
             if (strcmp(gs->typing, want) != 0) {
                 unsigned long n;
@@ -12006,6 +12063,6 @@ int tg_gui_session_login_activate(tg_gui_state *state, FILE *stream)
         tg_gui_login_copy(state->title, sizeof(state->title), "Telegram Amiga");
     }
     tg_gui_login_copy(state->status, sizeof(state->status),
-                      "Live - 1-9/n/p, Q esce");
+                      "Live - 1-9/n/p, Q quits");
     return 0;
 }

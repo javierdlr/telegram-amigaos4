@@ -156,6 +156,8 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
                                   sizeof(message->reply_text), row->reply_quote);
     }
     message->id = row->id;
+    message->from_id_hi = row->from_id_hi;
+    message->from_id_lo = row->from_id_lo;
     if (message->is_own) {
         message->read_state =
             (message->id != 0UL &&

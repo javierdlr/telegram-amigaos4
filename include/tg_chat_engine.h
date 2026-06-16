@@ -81,6 +81,8 @@ typedef struct tg_chat_message_row {
     const char *own_label;     /* this account's name, for is_out */
     const char *sender;        /* resolved incoming sender, NULL if unknown */
     const char *reply_quote;   /* quoted snippet if this is a reply, else NULL */
+    unsigned long from_id_hi;  /* sender user id, to match a live typing update */
+    unsigned long from_id_lo;
 } tg_chat_message_row;
 
 /* One resolved chat-list row. The engine parses the peer cache into these

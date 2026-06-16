@@ -4044,7 +4044,7 @@ int tg_app_run(int argc, char **argv)
         }
         if (gui.mode == TG_GUI_MODE_LOGIN_PHONE) {
             strcpy(gui.title, "Telegram Amiga");
-            strcpy(gui.status, "Inserisci il numero (+39...)");
+            strcpy(gui.status, "Enter your phone number (+...)");
         } else {
             if (gui.chat_count > 0) {
                 const char *name;
@@ -4059,8 +4059,8 @@ int tg_app_run(int argc, char **argv)
             } else {
                 strcpy(gui.title, "Telegram Amiga");
             }
-            strcpy(gui.status, rc == 0 ? "Live - 1-9/n/p, Q esce"
-                                       : "Offline (cache) - Q esce");
+            strcpy(gui.status, rc == 0 ? "Live - 1-9/n/p, Q quits"
+                                       : "Offline (cache) - Q quits");
         }
         /* Open the selected (first) chat up front so the transcript is
            populated on launch instead of waiting for the first key press. */
@@ -4142,7 +4142,7 @@ int tg_app_run(int argc, char **argv)
                 gui.title[k] = name[k];
             }
             gui.title[k] = '\0';
-            strcpy(gui.status, "Sola lettura - 1-9/n/p, Q esce");
+            strcpy(gui.status, "Read-only - 1-9/n/p, Q quits");
         } else {
             strcpy(gui.title, "Telegram Amiga");
             strcpy(gui.status, missing ? "Cache chat non trovata"

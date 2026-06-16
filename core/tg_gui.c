@@ -91,7 +91,7 @@ void tg_gui_demo_state(tg_gui_state *state)
     state->selected_chat = 0;
 
     tg_gui_copy(state->title, sizeof(state->title), "Sviluppo AmigaIta");
-    tg_gui_copy(state->subtitle, sizeof(state->subtitle), "gruppo - 128 membri");
+    tg_gui_copy(state->subtitle, sizeof(state->subtitle), "group - 128 members");
 
     tg_gui_set_message(&state->messages[0], "Henry Out",
                        "Sul 030 a 25 MHz ora si scrive fluido, niente piu' "
@@ -111,7 +111,7 @@ void tg_gui_demo_state(tg_gui_state *state)
     state->message_count = 4;
 
     tg_gui_copy(state->input, sizeof(state->input), "");
-    tg_gui_copy(state->status, sizeof(state->status), "Connesso - DC4");
+    tg_gui_copy(state->status, sizeof(state->status), "Connected - DC4");
 }
 
 /* Word-wraps text to max_width using the backend's font metrics, filling the
@@ -241,7 +241,7 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
 
     search_h = lh + 10;
     backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, 10, (search_h / 2) + 4,
-                       "Cerca chat...", 13UL);
+                       "Search chats...", 15UL);
 
     row_h = (2 * lh) + 12;
     y = search_h;
@@ -688,7 +688,7 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     header_h = lh + 10;
     tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, area_x, lh + 2, state->title,
                         area_w);
-    /* While the peer is typing, the second header line shows "sta scrivendo..."
+    /* While the peer is typing, the second header line shows "X is typing..."
        in the accent colour instead of the static subtitle (Telegram's cue). */
     if (state->typing[0] != '\0') {
         tg_gui_draw_clipped(backend, TG_GUI_PEN_ACCENT, area_x, header_h + lh - 2,
@@ -786,8 +786,8 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                            (unsigned long)strlen(state->input));
     } else {
         backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, area_x,
-                           input_baseline, "Scrivi un messaggio...",
-                           22UL);
+                           input_baseline, "Write a message...",
+                           18UL);
     }
     backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
                        tg_gui_make_rect(width - 64, content_h - input_h, 56,
@@ -955,7 +955,7 @@ static void tg_gui_paint_login(const tg_gui_state *state,
         }
     }
     tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT_DIM, width, mid + (3 * lh),
-                         "INVIO conferma   ESC esce");
+                         "ENTER confirms   ESC quits");
 }
 
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
@@ -1189,7 +1189,7 @@ int tg_gui_self_test(void)
     {
         tg_gui_record trec;
 
-        tg_gui_copy(state.typing, sizeof(state.typing), "sta scrivendo...");
+        tg_gui_copy(state.typing, sizeof(state.typing), "Mario is typing...");
         memset(&trec, 0, sizeof(trec));
         trec.width = 480;
         trec.height = 320;
@@ -1217,7 +1217,7 @@ int tg_gui_self_test(void)
         ls.input_masked = 1;
         ls.cursor_on = 1;
         tg_gui_copy(ls.input, sizeof(ls.input), "zzqp7secret");
-        tg_gui_copy(ls.status, sizeof(ls.status), "Password 2FA");
+        tg_gui_copy(ls.status, sizeof(ls.status), "2FA password");
 
         memset(&lrec, 0, sizeof(lrec));
         lrec.width = 480;

@@ -432,7 +432,7 @@ static void tg_gui_window_login_finish(tg_gui_state *state)
     state->input[0] = '\0';
     tg_gui_window_copy(state->title, sizeof(state->title), "Telegram Amiga");
     tg_gui_window_copy(state->status, sizeof(state->status),
-                       "Login ok - riavvia per connettere");
+                       "Logged in - relaunch to connect");
 }
 
 /* Handles one key while a login screen is shown (state->mode != CHAT). ESC
@@ -476,7 +476,7 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
     /* RETURN: submit the current field. Show progress first -- the DH/RPC round
        trip blocks the window for several seconds on a slow link. */
     tg_gui_window_copy(state->status, sizeof(state->status),
-                       "Connessione a Telegram...");
+                       "Connecting to Telegram...");
     state->cursor_on = 0;
     tg_gui_paint(state, backend);
 
@@ -488,10 +488,10 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
         if (rc == TG_GUI_LOGIN_OK) {
             state->mode = TG_GUI_MODE_LOGIN_CODE;
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Inserisci il codice ricevuto");
+                               "Enter the code you received");
         } else {
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Numero non valido - riprova");
+                               "Invalid number - try again");
         }
     } else if (state->mode == TG_GUI_MODE_LOGIN_CODE) {
         int rc;
@@ -504,13 +504,13 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
             state->mode = TG_GUI_MODE_LOGIN_2FA;
             state->input_masked = 1;
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Password 2FA");
+                               "2FA password");
         } else if (rc == TG_GUI_LOGIN_BAD_CODE) {
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Codice errato - riprova");
+                               "Wrong code - try again");
         } else {
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Errore - riprova il codice");
+                               "Error - try the code again");
         }
     } else { /* TG_GUI_MODE_LOGIN_2FA */
         int rc;
@@ -522,10 +522,10 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
             tg_gui_window_login_finish(state);
         } else if (rc == TG_GUI_LOGIN_BAD_PASSWORD) {
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Password errata - riprova");
+                               "Wrong password - try again");
         } else {
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Errore - riprova la password");
+                               "Error - try the password again");
         }
     }
     state->cursor_on = 1;
@@ -773,13 +773,13 @@ int tg_gui_run_window(tg_gui_state *state)
                     }
                     state->composing = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - 1-9/n/p, Q esce");
+                                       "Live - 1-9/n/p, Q quits");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 27) {
                     state->input[0] = '\0';
                     state->composing = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - 1-9/n/p, Q esce");
+                                       "Live - 1-9/n/p, Q quits");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 8 || msg_code == 127) {
                     unsigned long n;
@@ -809,7 +809,7 @@ int tg_gui_run_window(tg_gui_state *state)
                     state->cursor_on = 1;
                     caret_ticks = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Scrivi - INVIO invia, ESC annulla");
+                                       "Type - ENTER sends, ESC cancels");
                     tg_gui_paint(state, &backend);
                 } else if (state->chat_count > 0) {
                     int sel;
@@ -871,7 +871,7 @@ int tg_gui_run_window(tg_gui_state *state)
                             state->composing = 0;
                             state->input[0] = '\0';
                             tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - 1-9/n/p, Q esce");
+                                       "Live - 1-9/n/p, Q quits");
                         }
                         if (hit != state->selected_chat) {
                             tg_gui_window_open_selection(state, hit, &backend);
@@ -885,7 +885,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         }
                         state->composing = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - 1-9/n/p, Q esce");
+                                       "Live - 1-9/n/p, Q quits");
                         tg_gui_paint(state, &backend);
                     } else if ((hit == TG_GUI_HIT_INPUT ||
                                 hit == TG_GUI_HIT_SEND) &&
@@ -895,7 +895,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->cursor_on = 1;
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Scrivi - INVIO invia, ESC annulla");
+                               "Type - ENTER sends, ESC cancels");
                         tg_gui_paint(state, &backend);
                     }
                 }

@@ -111,6 +111,8 @@ typedef struct tg_gui_message {
     char reply_text[TG_GUI_REPLY_MAX]; /* quoted reference; "" when not a reply */
     unsigned long id;                  /* server message id (0 = optimistic echo) */
     int read_state;                    /* TG_GUI_READ_* (own messages only) */
+    unsigned long from_id_hi;          /* sender user id, to name a live typing peer */
+    unsigned long from_id_lo;
 } tg_gui_message;
 
 typedef struct tg_gui_state {
