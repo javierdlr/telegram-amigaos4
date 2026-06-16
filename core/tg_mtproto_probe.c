@@ -740,6 +740,18 @@ static void tg_mtproto_skip_auth_context_close(tg_mtproto_auth_context *context,
     (void)label;
 #endif
     if (context != 0) {
+        /* Historically this left the socket OPEN (it only re-inited the struct),
+           a workaround from when shutdown()-before-close() froze on slow links.
+           That abandoned a socket per one-shot auth op (sendCode/signIn/
+           checkPassword/saved-query). Harmless on the console (process exit
+           reaps the fds), but in the long-lived GUI those orphaned sockets pile
+           up and CloseLibrary(bsdsocket) stalls the task at exit (notably OS4).
+           The freeze is now handled in the platform close (no shutdown before
+           CloseSocket), and the struct is re-inited right below so nothing can
+           reuse the connection -- so do a real, non-blocking close here. */
+        if (context->connection_open) {
+            tg_net_close(&context->connection);
+        }
         context->connection_open = 0;
         tg_net_connection_init(&context->connection);
     }
