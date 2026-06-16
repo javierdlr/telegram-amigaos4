@@ -400,14 +400,39 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
     tg_gui_paint(state, backend);
 }
 
+/* Bounded copy into a fixed UI buffer (status/title) -- never overflows even if
+   a future string grows past the field. */
+static void tg_gui_window_copy(char *dest, unsigned long size, const char *src)
+{
+    unsigned long i;
+
+    if (dest == 0 || size == 0UL) {
+        return;
+    }
+    for (i = 0UL; i + 1UL < size && src != 0 && src[i] != '\0'; ++i) {
+        dest[i] = src[i];
+    }
+    dest[i] = '\0';
+}
+
 /* Brings the window live after a successful login: opens the session over the
-   freshly-written auth.bin (flips state->mode to chat + opens the first chat).
-   On failure the auth is still saved, so a relaunch will connect. */
+   freshly-written auth.bin (activate flips state->mode to chat + opens the first
+   chat). If the re-open fails, the login itself still succeeded (auth.bin is
+   written), so drop to chat mode offline rather than trapping the user back in
+   the login screen -- where login.active is now cleared and every retry would
+   just error. A relaunch will connect. */
 static void tg_gui_window_login_finish(tg_gui_state *state)
 {
-    if (tg_gui_session_login_activate(state, stdout) != 0) {
-        strcpy(state->status, "Sessione non aperta - riavvia");
+    if (tg_gui_session_login_activate(state, stdout) == 0) {
+        return;
     }
+    state->mode = TG_GUI_MODE_CHAT;
+    state->composing = 0;
+    state->input_masked = 0;
+    state->input[0] = '\0';
+    tg_gui_window_copy(state->title, sizeof(state->title), "Telegram Amiga");
+    tg_gui_window_copy(state->status, sizeof(state->status),
+                       "Login ok - riavvia per connettere");
 }
 
 /* Handles one key while a login screen is shown (state->mode != CHAT). ESC
@@ -419,6 +444,8 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
                                     int *caret_ticks)
 {
     if (code == 27) { /* ESC: give up on logging in */
+        memset(state->input, 0, sizeof(state->input)); /* wipe any typed secret */
+        state->input_masked = 0;
         *done = 1;
         return;
     }
@@ -448,7 +475,8 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
 
     /* RETURN: submit the current field. Show progress first -- the DH/RPC round
        trip blocks the window for several seconds on a slow link. */
-    strcpy(state->status, "Connessione a Telegram...");
+    tg_gui_window_copy(state->status, sizeof(state->status),
+                       "Connessione a Telegram...");
     state->cursor_on = 0;
     tg_gui_paint(state, backend);
 
@@ -459,9 +487,11 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
         state->input[0] = '\0';
         if (rc == TG_GUI_LOGIN_OK) {
             state->mode = TG_GUI_MODE_LOGIN_CODE;
-            strcpy(state->status, "Inserisci il codice ricevuto");
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Inserisci il codice ricevuto");
         } else {
-            strcpy(state->status, "Numero non valido - riprova");
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Numero non valido - riprova");
         }
     } else if (state->mode == TG_GUI_MODE_LOGIN_CODE) {
         int rc;
@@ -473,11 +503,14 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
         } else if (rc == TG_GUI_LOGIN_NEED_2FA) {
             state->mode = TG_GUI_MODE_LOGIN_2FA;
             state->input_masked = 1;
-            strcpy(state->status, "Password 2FA");
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Password 2FA");
         } else if (rc == TG_GUI_LOGIN_BAD_CODE) {
-            strcpy(state->status, "Codice errato - riprova");
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Codice errato - riprova");
         } else {
-            strcpy(state->status, "Errore - riprova il codice");
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Errore - riprova il codice");
         }
     } else { /* TG_GUI_MODE_LOGIN_2FA */
         int rc;
@@ -488,9 +521,11 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
             state->input_masked = 0;
             tg_gui_window_login_finish(state);
         } else if (rc == TG_GUI_LOGIN_BAD_PASSWORD) {
-            strcpy(state->status, "Password errata - riprova");
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Password errata - riprova");
         } else {
-            strcpy(state->status, "Errore - riprova la password");
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Errore - riprova la password");
         }
     }
     state->cursor_on = 1;
@@ -737,12 +772,14 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->input[0] = '\0';
                     }
                     state->composing = 0;
-                    strcpy(state->status, "Live - 1-9/n/p, Q esce");
+                    tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "Live - 1-9/n/p, Q esce");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 27) {
                     state->input[0] = '\0';
                     state->composing = 0;
-                    strcpy(state->status, "Live - 1-9/n/p, Q esce");
+                    tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "Live - 1-9/n/p, Q esce");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 8 || msg_code == 127) {
                     unsigned long n;
@@ -771,7 +808,8 @@ int tg_gui_run_window(tg_gui_state *state)
                     state->composing = 1;
                     state->cursor_on = 1;
                     caret_ticks = 0;
-                    strcpy(state->status, "Scrivi - INVIO invia, ESC annulla");
+                    tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "Scrivi - INVIO invia, ESC annulla");
                     tg_gui_paint(state, &backend);
                 } else if (state->chat_count > 0) {
                     int sel;
@@ -832,7 +870,8 @@ int tg_gui_run_window(tg_gui_state *state)
                         if (state->composing) {
                             state->composing = 0;
                             state->input[0] = '\0';
-                            strcpy(state->status, "Live - 1-9/n/p, Q esce");
+                            tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "Live - 1-9/n/p, Q esce");
                         }
                         if (hit != state->selected_chat) {
                             tg_gui_window_open_selection(state, hit, &backend);
@@ -845,7 +884,8 @@ int tg_gui_run_window(tg_gui_state *state)
                             state->input[0] = '\0';
                         }
                         state->composing = 0;
-                        strcpy(state->status, "Live - 1-9/n/p, Q esce");
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "Live - 1-9/n/p, Q esce");
                         tg_gui_paint(state, &backend);
                     } else if ((hit == TG_GUI_HIT_INPUT ||
                                 hit == TG_GUI_HIT_SEND) &&
@@ -854,7 +894,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->composing = 1;
                         state->cursor_on = 1;
                         caret_ticks = 0;
-                        strcpy(state->status,
+                        tg_gui_window_copy(state->status, sizeof(state->status),
                                "Scrivi - INVIO invia, ESC annulla");
                         tg_gui_paint(state, &backend);
                     }
