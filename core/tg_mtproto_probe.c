@@ -11309,6 +11309,19 @@ static struct {
     unsigned long open_peer_id_lo;
     int open_peer_is_chat;
     int open;
+    /* First-login flow state (no saved session). Threaded across the phone ->
+       code -> 2FA steps the window drives. */
+    struct {
+        int active;
+        const char *api_file;       /* paths the eventual session reopens with */
+        const char *auth_file;
+        const char *cache_file;
+        const char *host;           /* resolved endpoint (may change on migrate) */
+        const char *dc_id_text;
+        char api_id[32];            /* loaded once; api_hash stays transient */
+        char phone[64];             /* sanitized, set by send_code, used by sign_in */
+        char code_hash_file[64];    /* where send_code drops the phone_code_hash */
+    } login;
 } tg_gui_session_state;
 
 /* Crash-safe lifecycle log (--gui-live-debug): each line is opened, written,
@@ -11809,4 +11822,190 @@ void tg_gui_session_close(void)
     tg_chat_nq = 0;
     tg_chat_typing_target = 0;
     tg_gui_session_state.open = 0;
+}
+
+/* --- first-login flow (no saved session) -------------------------------- *
+ * The window drives phone -> code -> 2FA; each call is one blocking network
+ * round-trip over the console wizard's headless backend. Lives here so it can
+ * reach the static auth helpers (send_code / sign_in / check_password) and the
+ * session singleton directly. The login DH handshake is slow on m68k, so each
+ * step bumps the connect timeout while it runs. */
+
+static void tg_gui_login_copy(char *dest, unsigned long size, const char *src)
+{
+    unsigned long i;
+
+    if (dest == 0 || size == 0UL) {
+        return;
+    }
+    for (i = 0UL; i + 1UL < size && src != 0 && src[i] != '\0'; ++i) {
+        dest[i] = src[i];
+    }
+    dest[i] = '\0';
+}
+
+void tg_gui_session_login_begin(const char *api_file, const char *auth_file,
+                                const char *peer_cache_file)
+{
+    memset(&tg_gui_session_state.login, 0, sizeof(tg_gui_session_state.login));
+    tg_gui_session_state.login.active = 1;
+    tg_gui_session_state.login.api_file = api_file;
+    tg_gui_session_state.login.auth_file = auth_file;
+    tg_gui_session_state.login.cache_file = peer_cache_file;
+    /* European numbers usually live on DC4; a wrong guess just costs one
+       PHONE_MIGRATE round-trip, handled in send_code below. */
+    tg_gui_session_state.login.host = "149.154.167.91";
+    tg_gui_session_state.login.dc_id_text = "4";
+    tg_gui_login_copy(tg_gui_session_state.login.code_hash_file,
+                      sizeof(tg_gui_session_state.login.code_hash_file),
+                      "phone-code-hash.txt");
+}
+
+int tg_gui_session_login_send_code(const char *phone, FILE *stream)
+{
+    char api_id[32];
+    char api_hash[96];
+    unsigned long prev_timeout;
+    int rc;
+    static const char label[] = "gui auth.sendCode";
+
+    if (!tg_gui_session_state.login.active || phone == 0 || stream == 0) {
+        return TG_GUI_LOGIN_ERROR;
+    }
+    if (tg_mtproto_load_api_credentials(tg_gui_session_state.login.api_file,
+                                        api_id, sizeof(api_id), api_hash,
+                                        sizeof(api_hash), stream, label) != 0) {
+        return TG_GUI_LOGIN_ERROR;
+    }
+    tg_gui_login_copy(tg_gui_session_state.login.phone,
+                      sizeof(tg_gui_session_state.login.phone), phone);
+    tg_mtproto_sanitize_phone(tg_gui_session_state.login.phone);
+    tg_gui_login_copy(tg_gui_session_state.login.api_id,
+                      sizeof(tg_gui_session_state.login.api_id), api_id);
+    if (tg_gui_session_state.login.phone[0] == '\0') {
+        tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
+        return TG_GUI_LOGIN_BAD_PHONE;
+    }
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(45UL); /* DH handshake is slow on m68k */
+    rc = tg_mtproto_auth_send_code(tg_gui_session_state.login.host, "443",
+                                   tg_gui_session_state.login.dc_id_text, api_id,
+                                   api_hash, tg_gui_session_state.login.phone,
+                                   tg_gui_session_state.login.auth_file,
+                                   tg_gui_session_state.login.code_hash_file,
+                                   stream);
+    if (rc > TG_MTPROTO_PHONE_MIGRATE_RC_BASE) {
+        unsigned long migrate_dc;
+        const char *migrate_host;
+        const char *migrate_dc_text;
+
+        migrate_dc = (unsigned long)(rc - TG_MTPROTO_PHONE_MIGRATE_RC_BASE);
+        if (tg_mtproto_production_endpoint_for_dc(migrate_dc, &migrate_host,
+                                                  &migrate_dc_text) == 0) {
+            /* The migrated endpoint is what sign_in / checkPassword must use. */
+            tg_gui_session_state.login.host = migrate_host;
+            tg_gui_session_state.login.dc_id_text = migrate_dc_text;
+            rc = tg_mtproto_auth_send_code(
+                migrate_host, "443", migrate_dc_text, api_id, api_hash,
+                tg_gui_session_state.login.phone,
+                tg_gui_session_state.login.auth_file,
+                tg_gui_session_state.login.code_hash_file, stream);
+        }
+    }
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
+    return (rc == 0) ? TG_GUI_LOGIN_OK : TG_GUI_LOGIN_BAD_PHONE;
+}
+
+int tg_gui_session_login_sign_in(const char *code, FILE *stream)
+{
+    unsigned long prev_timeout;
+    int rc;
+
+    if (!tg_gui_session_state.login.active || code == 0 || stream == 0) {
+        return TG_GUI_LOGIN_ERROR;
+    }
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(45UL);
+    rc = tg_mtproto_auth_sign_in(tg_gui_session_state.login.host, "443",
+                                 tg_gui_session_state.login.api_id,
+                                 tg_gui_session_state.login.auth_file,
+                                 tg_gui_session_state.login.phone,
+                                 tg_gui_session_state.login.code_hash_file, code,
+                                 tg_gui_session_state.login.dc_id_text, stream);
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    if (rc == 0) {
+        return TG_GUI_LOGIN_OK;
+    }
+    if (rc == TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED) {
+        return TG_GUI_LOGIN_NEED_2FA;
+    }
+    if (rc == TG_MTPROTO_SIGN_IN_CODE_INVALID) {
+        return TG_GUI_LOGIN_BAD_CODE;
+    }
+    return TG_GUI_LOGIN_ERROR;
+}
+
+int tg_gui_session_login_check_password(const char *password, FILE *stream)
+{
+    unsigned long prev_timeout;
+    int rc;
+
+    if (!tg_gui_session_state.login.active || password == 0 || stream == 0) {
+        return TG_GUI_LOGIN_ERROR;
+    }
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(45UL);
+    rc = tg_mtproto_auth_check_password_text(
+        tg_gui_session_state.login.host, "443",
+        tg_gui_session_state.login.api_id, tg_gui_session_state.login.auth_file,
+        tg_gui_session_state.login.dc_id_text, password, stream);
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    if (rc == 0) {
+        return TG_GUI_LOGIN_OK;
+    }
+    if (rc == TG_MTPROTO_CHECK_PASSWORD_INVALID) {
+        return TG_GUI_LOGIN_BAD_PASSWORD;
+    }
+    return TG_GUI_LOGIN_ERROR;
+}
+
+int tg_gui_session_login_activate(tg_gui_state *state, FILE *stream)
+{
+    const char *api_file;
+    const char *auth_file;
+    const char *cache_file;
+    int rc;
+
+    if (!tg_gui_session_state.login.active || state == 0 || stream == 0) {
+        return 2;
+    }
+    /* tg_gui_session_open memsets the singleton (clearing login), so snapshot
+       the paths first. */
+    api_file = tg_gui_session_state.login.api_file;
+    auth_file = tg_gui_session_state.login.auth_file;
+    cache_file = tg_gui_session_state.login.cache_file;
+    /* Pull the fresh peer list, then open the live session over the auth.bin the
+       login just wrote (session_open reloads everything from the file). */
+    (void)tg_mtproto_gui_refresh_peer_cache(api_file, auth_file, cache_file,
+                                            stream);
+    rc = tg_gui_session_open(api_file, auth_file, cache_file, state, stream);
+    if (rc != 0) {
+        return rc;
+    }
+    state->mode = TG_GUI_MODE_CHAT;
+    state->composing = 0;
+    state->input[0] = '\0';
+    state->input_masked = 0;
+    if (state->chat_count > 0) {
+        tg_gui_login_copy(state->title, sizeof(state->title),
+                          state->chats[state->selected_chat].name);
+        (void)tg_gui_session_open_chat(
+            state->chats[state->selected_chat].index, stream);
+    } else {
+        tg_gui_login_copy(state->title, sizeof(state->title), "Telegram Amiga");
+    }
+    tg_gui_login_copy(state->status, sizeof(state->status),
+                      "Live - 1-9/n/p, Q esce");
+    return 0;
 }

@@ -4011,36 +4011,57 @@ int tg_app_run(int argc, char **argv)
                                  config.gui_chats_cache_file, &gui, stdout);
         tg_gui_log(rc == 0 ? "live: session open OK" : "live: session open FAIL");
         if (rc != 0) {
-            tg_gui_chat_driver gui_driver;
-            tg_chat_driver driver;
-            tg_chat_list_row rows[TG_CHAT_LIST_MAX];
-            int count;
-            int missing;
+            FILE *auth_probe;
 
-            memset(&driver, 0, sizeof(driver));
-            missing = 0;
-            tg_gui_chat_driver_bind(&gui_driver, &gui, &driver);
-            count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file, 0UL,
-                                               rows, TG_CHAT_LIST_MAX, &missing);
-            if (driver.on_chat_list_changed != 0 && count > 0) {
-                driver.on_chat_list_changed(driver.ctx, rows, count);
+            /* No saved session at all -> drive the first-login flow in the
+               window. An existing-but-unusable auth (network down, expired)
+               keeps the read-only cached sidebar instead. */
+            auth_probe = fopen(config.mtproto_auth_file, "rb");
+            if (auth_probe == 0) {
+                tg_gui_log("live: no auth -> login flow");
+                tg_gui_session_login_begin(config.mtproto_auth_api_file,
+                                           config.mtproto_auth_file,
+                                           config.gui_chats_cache_file);
+                gui.mode = TG_GUI_MODE_LOGIN_PHONE;
+            } else {
+                tg_gui_chat_driver gui_driver;
+                tg_chat_driver driver;
+                tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+                int count;
+                int missing;
+
+                fclose(auth_probe);
+                memset(&driver, 0, sizeof(driver));
+                missing = 0;
+                tg_gui_chat_driver_bind(&gui_driver, &gui, &driver);
+                count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file,
+                                                   0UL, rows, TG_CHAT_LIST_MAX,
+                                                   &missing);
+                if (driver.on_chat_list_changed != 0 && count > 0) {
+                    driver.on_chat_list_changed(driver.ctx, rows, count);
+                }
             }
         }
-        if (gui.chat_count > 0) {
-            const char *name;
-            unsigned long k;
-
-            name = gui.chats[0].name;
-            for (k = 0UL; k + 1UL < (unsigned long)sizeof(gui.title) &&
-                          name[k] != '\0'; ++k) {
-                gui.title[k] = name[k];
-            }
-            gui.title[k] = '\0';
-        } else {
+        if (gui.mode == TG_GUI_MODE_LOGIN_PHONE) {
             strcpy(gui.title, "Telegram Amiga");
+            strcpy(gui.status, "Inserisci il numero (+39...)");
+        } else {
+            if (gui.chat_count > 0) {
+                const char *name;
+                unsigned long k;
+
+                name = gui.chats[0].name;
+                for (k = 0UL; k + 1UL < (unsigned long)sizeof(gui.title) &&
+                              name[k] != '\0'; ++k) {
+                    gui.title[k] = name[k];
+                }
+                gui.title[k] = '\0';
+            } else {
+                strcpy(gui.title, "Telegram Amiga");
+            }
+            strcpy(gui.status, rc == 0 ? "Live - 1-9/n/p, Q esce"
+                                       : "Offline (cache) - Q esce");
         }
-        strcpy(gui.status,
-               rc == 0 ? "Live - 1-9/n/p, Q esce" : "Offline (cache) - Q esce");
         /* Open the selected (first) chat up front so the transcript is
            populated on launch instead of waiting for the first key press. */
         if (rc == 0 && gui.chat_count > 0) {

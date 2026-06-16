@@ -88,6 +88,14 @@ typedef struct tg_gui_chat {
     int flash;                /* a notification landed since last opened: blink the badge */
 } tg_gui_chat;
 
+/* Window mode: the normal chat UI, or one of the first-login screens shown when
+   there is no saved session yet. The login screens reuse the input buffer +
+   caret; the renderer paints a centered panel instead of the chat layout. */
+#define TG_GUI_MODE_CHAT        0
+#define TG_GUI_MODE_LOGIN_PHONE 1 /* enter phone number */
+#define TG_GUI_MODE_LOGIN_CODE  2 /* enter the login code */
+#define TG_GUI_MODE_LOGIN_2FA   3 /* enter the 2FA password (masked) */
+
 /* Outgoing read state for the receipt mark; 0/none on incoming messages. */
 #define TG_GUI_READ_NONE 0
 #define TG_GUI_READ_SENT 1 /* delivered, not yet read by the peer */
@@ -120,6 +128,8 @@ typedef struct tg_gui_state {
     int cursor_on;  /* caret blink phase, toggled by the window's tick */
     unsigned long open_read_outbox_max; /* peer read our msgs up to this id */
     char typing[TG_GUI_NAME_MAX]; /* "...sta scrivendo" for the open chat; "" = none */
+    int mode;          /* TG_GUI_MODE_* (chat vs a first-login screen) */
+    int input_masked;  /* render `input` as '*' (the 2FA password field) */
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used

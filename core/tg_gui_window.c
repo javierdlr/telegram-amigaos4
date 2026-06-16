@@ -400,6 +400,104 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
     tg_gui_paint(state, backend);
 }
 
+/* Brings the window live after a successful login: opens the session over the
+   freshly-written auth.bin (flips state->mode to chat + opens the first chat).
+   On failure the auth is still saved, so a relaunch will connect. */
+static void tg_gui_window_login_finish(tg_gui_state *state)
+{
+    if (tg_gui_session_login_activate(state, stdout) != 0) {
+        strcpy(state->status, "Sessione non aperta - riavvia");
+    }
+}
+
+/* Handles one key while a login screen is shown (state->mode != CHAT). ESC
+   aborts the window; printable keys edit the field; RETURN submits the field
+   to the matching auth step and advances the screen (or shows an error). The
+   network round-trip blocks, so a "Connessione..." status is painted first. */
+static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
+                                    tg_gui_backend *backend, int *done,
+                                    int *caret_ticks)
+{
+    if (code == 27) { /* ESC: give up on logging in */
+        *done = 1;
+        return;
+    }
+    if (code == 8 || code == 127) { /* BACKSPACE */
+        unsigned long n;
+
+        n = (unsigned long)strlen(state->input);
+        if (n > 0UL) {
+            state->input[n - 1UL] = '\0';
+            tg_gui_paint(state, backend);
+        }
+        return;
+    }
+    if (code != 13 && code != 10) { /* a printable character */
+        if (code >= 32 && code < 256) {
+            unsigned long n;
+
+            n = (unsigned long)strlen(state->input);
+            if (n + 1UL < (unsigned long)sizeof(state->input)) {
+                state->input[n] = (char)code;
+                state->input[n + 1UL] = '\0';
+                tg_gui_paint(state, backend);
+            }
+        }
+        return;
+    }
+
+    /* RETURN: submit the current field. Show progress first -- the DH/RPC round
+       trip blocks the window for several seconds on a slow link. */
+    strcpy(state->status, "Connessione a Telegram...");
+    state->cursor_on = 0;
+    tg_gui_paint(state, backend);
+
+    if (state->mode == TG_GUI_MODE_LOGIN_PHONE) {
+        int rc;
+
+        rc = tg_gui_session_login_send_code(state->input, stdout);
+        state->input[0] = '\0';
+        if (rc == TG_GUI_LOGIN_OK) {
+            state->mode = TG_GUI_MODE_LOGIN_CODE;
+            strcpy(state->status, "Inserisci il codice ricevuto");
+        } else {
+            strcpy(state->status, "Numero non valido - riprova");
+        }
+    } else if (state->mode == TG_GUI_MODE_LOGIN_CODE) {
+        int rc;
+
+        rc = tg_gui_session_login_sign_in(state->input, stdout);
+        state->input[0] = '\0';
+        if (rc == TG_GUI_LOGIN_OK) {
+            tg_gui_window_login_finish(state);
+        } else if (rc == TG_GUI_LOGIN_NEED_2FA) {
+            state->mode = TG_GUI_MODE_LOGIN_2FA;
+            state->input_masked = 1;
+            strcpy(state->status, "Password 2FA");
+        } else if (rc == TG_GUI_LOGIN_BAD_CODE) {
+            strcpy(state->status, "Codice errato - riprova");
+        } else {
+            strcpy(state->status, "Errore - riprova il codice");
+        }
+    } else { /* TG_GUI_MODE_LOGIN_2FA */
+        int rc;
+
+        rc = tg_gui_session_login_check_password(state->input, stdout);
+        memset(state->input, 0, sizeof(state->input)); /* wipe the password */
+        if (rc == TG_GUI_LOGIN_OK) {
+            state->input_masked = 0;
+            tg_gui_window_login_finish(state);
+        } else if (rc == TG_GUI_LOGIN_BAD_PASSWORD) {
+            strcpy(state->status, "Password errata - riprova");
+        } else {
+            strcpy(state->status, "Errore - riprova la password");
+        }
+    }
+    state->cursor_on = 1;
+    *caret_ticks = 0;
+    tg_gui_paint(state, backend);
+}
+
 int tg_gui_run_window(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
@@ -600,7 +698,8 @@ int tg_gui_run_window(tg_gui_state *state)
     last_session_poll = time(0);
     done = 0;
     state->composing = 0;
-    state->cursor_on = 0;
+    /* A login screen shows its caret from the first frame. */
+    state->cursor_on = (state->mode != TG_GUI_MODE_CHAT) ? 1 : 0;
     caret_ticks = 0;
     while (!done) {
         struct IntuiMessage *msg;
@@ -624,6 +723,11 @@ int tg_gui_run_window(tg_gui_state *state)
             if (msg_class == IDCMP_CLOSEWINDOW) {
                 tg_gui_log("window: close gadget");
                 done = 1;
+            } else if (msg_class == IDCMP_VANILLAKEY &&
+                       state->mode != TG_GUI_MODE_CHAT) {
+                /* A login screen owns the keyboard until the session opens. */
+                tg_gui_window_login_key(state, msg_code, &backend, &done,
+                                        &caret_ticks);
             } else if (msg_class == IDCMP_VANILLAKEY && state->composing) {
                 /* Composing: keys edit the input line; RETURN sends, ESC
                    cancels, BACKSPACE deletes. */
@@ -686,9 +790,9 @@ int tg_gui_run_window(tg_gui_state *state)
                 tg_gui_paint(state, &backend);
                 EndRefresh(ctx.window, TRUE);
             } else if (msg_class == IDCMP_INTUITICKS) {
-                if (state->composing) {
-                    /* Blink the input caret (~2 Hz) while composing; the poll
-                       is paused so typing stays responsive. */
+                if (state->composing || state->mode != TG_GUI_MODE_CHAT) {
+                    /* Blink the input/login caret (~2 Hz); the network poll is
+                       paused while composing or logging in. */
                     if (++caret_ticks >= 5) {
                         caret_ticks = 0;
                         state->cursor_on = !state->cursor_on;
@@ -712,7 +816,8 @@ int tg_gui_run_window(tg_gui_state *state)
                         }
                     }
                 }
-            } else if (msg_class == IDCMP_MOUSEBUTTONS) {
+            } else if (msg_class == IDCMP_MOUSEBUTTONS &&
+                       state->mode == TG_GUI_MODE_CHAT) {
                 if (msg_code == SELECTDOWN) {
                     int hx;
                     int hy;

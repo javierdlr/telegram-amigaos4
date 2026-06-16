@@ -56,6 +56,44 @@ int tg_gui_session_is_open(void);
 /* Closes the held connection and unbinds the notification queue. */
 void tg_gui_session_close(void);
 
+/* --- First-login flow (no saved session) -------------------------------- *
+ * When there is no telegram-auth.bin yet, the window drives a phone -> code
+ * -> (optional) 2FA login through these calls, each a single blocking network
+ * round-trip the window wraps with a "Connessione..." status. They reuse the
+ * console wizard's headless backend (auth.sendCode / auth.signIn / SRP
+ * checkPassword) and persist telegram-auth.bin on success. */
+
+/* Result codes for the step calls below. */
+#define TG_GUI_LOGIN_OK           0 /* step accepted; advance */
+#define TG_GUI_LOGIN_NEED_2FA     1 /* code accepted, a 2FA password is required */
+#define TG_GUI_LOGIN_BAD_CODE     2 /* the login code was rejected -- re-prompt */
+#define TG_GUI_LOGIN_BAD_PASSWORD 3 /* the 2FA password was wrong -- re-prompt */
+#define TG_GUI_LOGIN_BAD_PHONE    4 /* the number was rejected -- re-prompt */
+#define TG_GUI_LOGIN_ERROR        5 /* network/other error -- retry */
+
+/* Stores the file paths the login + the eventual session need. Call once before
+   entering a login screen (paths must outlive the session). */
+void tg_gui_session_login_begin(const char *api_file, const char *auth_file,
+                                const char *peer_cache_file);
+
+/* Requests the login code for `phone` (auth.sendCode, handling PHONE_MIGRATE by
+   re-deriving the DC). On TG_GUI_LOGIN_OK the next step is the code. */
+int tg_gui_session_login_send_code(const char *phone, FILE *stream);
+
+/* Submits the login `code` (auth.signIn). TG_GUI_LOGIN_OK = logged in (call
+   activate); TG_GUI_LOGIN_NEED_2FA = ask for the password; TG_GUI_LOGIN_BAD_CODE
+   = re-prompt. */
+int tg_gui_session_login_sign_in(const char *code, FILE *stream);
+
+/* Submits the 2FA `password` (SRP auth.checkPassword). TG_GUI_LOGIN_OK = logged
+   in (call activate); TG_GUI_LOGIN_BAD_PASSWORD = re-prompt. */
+int tg_gui_session_login_check_password(const char *password, FILE *stream);
+
+/* After a successful login, brings the window live: refreshes the peer cache,
+   opens the session into `state`, sets the title/status and opens the first
+   chat, flipping `state->mode` to TG_GUI_MODE_CHAT. Returns 0 on success. */
+int tg_gui_session_login_activate(tg_gui_state *state, FILE *stream);
+
 /* Crash-safe diagnostic log to a disk file (tg-gui-debug.log in the CWD), to
    pin down where a hard crash happens. tg_gui_log_enable() turns it on
    (--gui-live-debug); tg_gui_log() writes one flushed line when enabled. */

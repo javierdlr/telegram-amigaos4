@@ -860,6 +860,104 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
     return TG_GUI_HIT_NONE;
 }
 
+/* Draws one centered line, clamped into the window so it never overflows. */
+static void tg_gui_draw_centered(tg_gui_backend *backend, int pen, int width,
+                                 int baseline, const char *text)
+{
+    int tw;
+    int x;
+
+    if (text == 0 || text[0] == '\0' || baseline < 0) {
+        return;
+    }
+    tw = backend->text_width(backend, text, (unsigned long)strlen(text));
+    x = (width - tw) / 2;
+    if (x < 2) {
+        x = 2;
+    }
+    tg_gui_draw_clipped(backend, pen, x, baseline, text, width - x - 2);
+}
+
+/* The first-login screen: a centered panel with the title, the current prompt
+   (state->status), the input field (masked for the 2FA password) with caret,
+   and a key hint. Shown while state->mode is a TG_GUI_MODE_LOGIN_* value. */
+static void tg_gui_paint_login(const tg_gui_state *state,
+                               tg_gui_backend *backend)
+{
+    int width;
+    int height;
+    int lh;
+    int cx;
+    int mid;
+    int box_w;
+    int box_x;
+    int box_y;
+    int box_h;
+    const char *field;
+    char masked[TG_GUI_TEXT_MAX];
+
+    width = backend->width(backend);
+    height = backend->height(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || height <= 0 || lh <= 0) {
+        return;
+    }
+    if (tg_gui_clear_background) {
+        backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
+                           tg_gui_make_rect(0, 0, width, height));
+    }
+    cx = width / 2;
+    mid = height / 2;
+
+    tg_gui_draw_centered(backend, TG_GUI_PEN_ACCENT, width, mid - (3 * lh),
+                         "Telegram Amiga");
+    tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT, width, mid - lh,
+                         state->status);
+
+    box_w = (width - 40 < 280) ? (width - 40) : 280;
+    if (box_w < 40) {
+        box_w = (width > 8) ? (width - 8) : width;
+    }
+    box_x = cx - (box_w / 2);
+    box_y = mid + 4;
+    box_h = lh + 8;
+    backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
+                       tg_gui_make_rect(box_x, box_y, box_w, box_h));
+
+    if (state->input_masked) {
+        unsigned long n;
+        unsigned long i;
+
+        n = (unsigned long)strlen(state->input);
+        if (n >= sizeof(masked)) {
+            n = sizeof(masked) - 1UL;
+        }
+        for (i = 0UL; i < n; ++i) {
+            masked[i] = '*';
+        }
+        masked[n] = '\0';
+        field = masked;
+    } else {
+        field = state->input;
+    }
+    tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, box_x + 6, box_y + lh + 1,
+                        field, box_w - 12);
+    if (state->cursor_on) {
+        int caret_x;
+
+        caret_x = box_x + 6 +
+                  backend->text_width(backend, field,
+                                      (unsigned long)strlen(field));
+        if (caret_x < box_x + box_w - 2) {
+            backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                               tg_gui_make_rect(caret_x, box_y + 3, 2,
+                                                box_h - 6));
+        }
+    }
+    tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT_DIM, width, mid + (3 * lh),
+                         "INVIO conferma   ESC esce");
+}
+
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
 {
     int width;
@@ -870,6 +968,10 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
     int content_h;
 
     if (state == 0 || backend == 0) {
+        return;
+    }
+    if (state->mode != TG_GUI_MODE_CHAT) {
+        tg_gui_paint_login(state, backend);
         return;
     }
     width = backend->width(backend);
@@ -912,6 +1014,8 @@ typedef struct tg_gui_record {
     int max_x;
     int max_y;
     int read_marks; /* draw_text calls that emitted a "v"/"vv" receipt mark */
+    const char *forbidden; /* a string that must NEVER be drawn (e.g. a password) */
+    int forbidden_hits;    /* how many draw_text calls contained `forbidden` */
 } tg_gui_record;
 
 static int tg_gui_rec_width(tg_gui_backend *backend)
@@ -997,6 +1101,27 @@ static void tg_gui_rec_text(tg_gui_backend *backend, int pen, int x,
             record->read_marks += 1;
         }
     }
+    /* Guard that a forbidden string (a masked password) never reaches draw. */
+    if (record->forbidden != 0 && record->forbidden[0] != '\0' && text != 0) {
+        unsigned long flen;
+
+        flen = (unsigned long)strlen(record->forbidden);
+        if (length >= flen) {
+            unsigned long i;
+
+            for (i = 0UL; i + flen <= length; ++i) {
+                unsigned long j;
+
+                for (j = 0UL; j < flen && text[i + j] == record->forbidden[j];
+                     ++j) {
+                }
+                if (j == flen) {
+                    record->forbidden_hits += 1;
+                    break;
+                }
+            }
+        }
+    }
     tg_gui_rec_track(record, x, baseline);
     tg_gui_rec_track(record, x + (int)(length * 6UL), baseline);
 }
@@ -1076,6 +1201,39 @@ int tg_gui_self_test(void)
         if (trec.texts <= 0 || trec.min_x < 0 || trec.min_y < 0 ||
             trec.max_x > trec.width || trec.max_y > trec.height) {
             puts("gui self-test: typing header overlay out of bounds");
+            return 2;
+        }
+    }
+
+    /* The first-login 2FA screen must paint in bounds AND mask the password:
+       the raw secret must never reach the backend's draw_text. */
+    {
+        tg_gui_state ls;
+        tg_gui_record lrec;
+
+        memset(&ls, 0, sizeof(ls));
+        ls.theme = TG_GUI_THEME_DARK;
+        ls.mode = TG_GUI_MODE_LOGIN_2FA;
+        ls.input_masked = 1;
+        ls.cursor_on = 1;
+        tg_gui_copy(ls.input, sizeof(ls.input), "zzqp7secret");
+        tg_gui_copy(ls.status, sizeof(ls.status), "Password 2FA");
+
+        memset(&lrec, 0, sizeof(lrec));
+        lrec.width = 480;
+        lrec.height = 320;
+        lrec.min_x = lrec.width;
+        lrec.min_y = lrec.height;
+        lrec.forbidden = "zzqp7secret";
+        backend.context = &lrec;
+        tg_gui_paint(&ls, &backend);
+        if (lrec.texts <= 0 || lrec.min_x < 0 || lrec.min_y < 0 ||
+            lrec.max_x > lrec.width || lrec.max_y > lrec.height) {
+            puts("gui self-test: login screen out of bounds");
+            return 2;
+        }
+        if (lrec.forbidden_hits != 0) {
+            puts("gui self-test: 2FA password must be masked, not drawn");
             return 2;
         }
     }
