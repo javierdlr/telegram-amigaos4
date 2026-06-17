@@ -7851,6 +7851,10 @@ static long tg_chat_history_recall = -1L;
  * chat entry is sufficient.
  */
 static int tg_chat_input_raw = 0;
+/* TUI message-input caret: byte offset into the line buffer (0..line_length).
+   File-static like the history because the line editor is called once per key and
+   the caret must persist across calls. Used only on the full-screen TUI. */
+static unsigned long tg_chat_caret = 0UL;
 
 static void tg_chat_history_reset(void)
 {
@@ -7895,6 +7899,24 @@ static void tg_chat_history_add(const char *text)
  * the message history and Up/Down there is simply swallowed. In cooked fallback
  * mode (raw == 0) it just accumulates the line as before, without echo.
  */
+/* After repainting the TUI input row (which leaves the hardware cursor at the end
+   of the visible text), pull the cursor back to the caret so LEFT/RIGHT show where
+   the next edit lands. TUI-only; one short CSI move, no SGR -> safe on MorphOS. */
+static void tg_chat_tui_place_caret(FILE *stream, unsigned long line_length,
+                                    unsigned long caret)
+{
+    unsigned long back;
+
+    if (caret > line_length) {
+        caret = line_length;
+    }
+    back = line_length - caret;
+    if (back > 0UL) {
+        fprintf(stream, TG_UI_CSI "%luD", back);
+        fflush(stream);
+    }
+}
+
 static int tg_mtproto_chat_read_line_edit(char *line,
                                           unsigned long line_size,
                                           unsigned long *line_length,
@@ -7912,6 +7934,9 @@ static int tg_mtproto_chat_read_line_edit(char *line,
 
     if (line == 0 || line_size == 0UL || line_length == 0 || stream == 0) {
         return -1;
+    }
+    if (tg_chat_caret > *line_length) {
+        tg_chat_caret = *line_length;
     }
     /* C:Break (or a break signal set while a query ran) should quit prompts
        too, not just network waits. */
@@ -7960,16 +7985,31 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             tg_chat_history_add(line);
         }
         *line_length = 0UL;
+        tg_chat_caret = 0UL;
         return 1;
     }
     if (ch == '\b' || ch == 127) {
-        if (*line_length > 0UL) {
-            --(*line_length);
-            if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+        if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+            unsigned long c;
+
+            c = tg_chat_caret;
+            if (c > *line_length) {
+                c = *line_length;
+            }
+            if (c > 0UL) {
+                /* delete the char before the caret, shifting the tail left */
+                memmove(&line[c - 1UL], &line[c], *line_length - c);
+                --(*line_length);
+                tg_chat_caret = c - 1UL;
                 tg_console_tui_input(tg_chat_tui_stream,
                                      tg_console_tui_prompt(), line,
                                      *line_length);
-            } else if (raw) {
+                tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
+                                        tg_chat_caret);
+            }
+        } else if (*line_length > 0UL) {
+            --(*line_length);
+            if (raw) {
                 fputs("\b \b", stream);
                 fflush(stream);
             }
@@ -8011,6 +8051,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 }
                 sprintf(line, "/peer %lu", fkey + 1UL);
                 *line_length = 0UL;
+                tg_chat_caret = 0UL;
                 if (!tg_console_tui_active()) {
                     fputc('\n', stream);
                 }
@@ -8030,7 +8071,24 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 }
                 direction = (int)(unsigned char)ch;
             }
-            if (direction == '|' && fkey == 12UL) {
+            if (direction == 'C') {
+                /* cursor RIGHT (TUI only): step the caret toward the end and
+                   nudge the hardware cursor one column right (no full redraw). */
+                if (tg_console_tui_active() && tg_chat_tui_stream != 0 &&
+                    tg_chat_caret < *line_length) {
+                    ++tg_chat_caret;
+                    fputs(TG_UI_CSI "C", tg_chat_tui_stream);
+                    fflush(tg_chat_tui_stream);
+                }
+            } else if (direction == 'D') {
+                /* cursor LEFT (TUI only): step the caret toward the start. */
+                if (tg_console_tui_active() && tg_chat_tui_stream != 0 &&
+                    tg_chat_caret > 0UL) {
+                    --tg_chat_caret;
+                    fputs(TG_UI_CSI "D", tg_chat_tui_stream);
+                    fflush(tg_chat_tui_stream);
+                }
+            } else if (direction == '|' && fkey == 12UL) {
                 /* Window NEWSIZE raw event: let the chat loop repaint the
                    full-screen layout with the new geometry. */
                 tg_console_tui_note_resize();
@@ -8069,6 +8127,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         if (direction == 'B' && idx >= (long)tg_chat_history_count) {
             *line_length = 0UL;
             line[0] = '\0';
+            tg_chat_caret = 0UL;
             tg_chat_history_recall = -1L;
             if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
                 tg_console_tui_input(tg_chat_tui_stream,
@@ -8081,6 +8140,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         strncpy(line, tg_chat_history[idx], line_size - 1UL);
         line[line_size - 1UL] = '\0';
         *line_length = (unsigned long)strlen(line);
+        tg_chat_caret = *line_length;
         if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
             tg_console_tui_input(tg_chat_tui_stream,
                                  tg_console_tui_prompt(), line,
@@ -8092,15 +8152,30 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         return 0;
     }
     if (*line_length + 1UL < line_size) {
-        line[*line_length] = ch;
-        ++(*line_length);
         if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+            unsigned long c;
+
+            c = tg_chat_caret;
+            if (c > *line_length) {
+                c = *line_length;
+            }
+            /* insert at the caret, shifting the tail right (the buffer is not
+               NUL-terminated mid-edit, so move exactly *line_length - c bytes) */
+            memmove(&line[c + 1UL], &line[c], *line_length - c);
+            line[c] = ch;
+            ++(*line_length);
+            tg_chat_caret = c + 1UL;
             tg_console_tui_input(tg_chat_tui_stream,
-                                 tg_console_tui_prompt(), line,
-                                 *line_length);
-        } else if (raw) {
-            fputc(ch, stream);
-            fflush(stream);
+                                 tg_console_tui_prompt(), line, *line_length);
+            tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
+                                    tg_chat_caret);
+        } else {
+            line[*line_length] = ch;
+            ++(*line_length);
+            if (raw) {
+                fputc(ch, stream);
+                fflush(stream);
+            }
         }
     }
     return 0;
