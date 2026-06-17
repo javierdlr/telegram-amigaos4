@@ -518,7 +518,10 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
         bubble_w = max_bubble_w;
     }
 
-    header_h = message->is_own ? 0 : (lh + 2);
+    /* lh + lh/2: leave a gap below the sender-name baseline (drawn at y+lh) wider
+       than the font descent, so the name's descenders (g/j/p/q/y) are not covered
+       by the message's coloured background fill. Plain lh+2 left only 2px. */
+    header_h = message->is_own ? 0 : (lh + (lh / 2));
     /* Reserve a line inside the bubble for the timestamp / read-receipt mark so
        it stays on the coloured background instead of spilling out below it, plus
        one for the quoted-reply reference line when present. */
@@ -656,7 +659,10 @@ static int tg_gui_message_height(tg_gui_backend *backend,
     if (line_count <= 0) {
         line_count = 1;
     }
-    header_h = message->is_own ? 0 : (lh + 2);
+    /* lh + lh/2: leave a gap below the sender-name baseline (drawn at y+lh) wider
+       than the font descent, so the name's descenders (g/j/p/q/y) are not covered
+       by the message's coloured background fill. Plain lh+2 left only 2px. */
+    header_h = message->is_own ? 0 : (lh + (lh / 2));
     has_time = (message->time[0] != '\0');
     /* The status line also shows for an own message's read-receipt mark even
        when it has no timestamp (the optimistic echo). */
@@ -765,12 +771,19 @@ static void tg_gui_paint_main(const tg_gui_state *state,
 
         caret_x = area_x;
         if (state->input[0] != '\0') {
+            unsigned long caret_off;
+
             backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x, input_baseline,
                                state->input,
                                (unsigned long)strlen(state->input));
-            caret_x = area_x + backend->text_width(
-                                   backend, state->input,
-                                   (unsigned long)strlen(state->input)) +
+            /* Caret after the prefix up to input_caret (not the end), so LEFT/
+               RIGHT move it within the typed text. */
+            caret_off = (unsigned long)state->input_caret;
+            if (caret_off > (unsigned long)strlen(state->input)) {
+                caret_off = (unsigned long)strlen(state->input);
+            }
+            caret_x = area_x + backend->text_width(backend, state->input,
+                                                   caret_off) +
                       1;
         }
         /* A caret bar at the cursor position; the window toggles cursor_on so

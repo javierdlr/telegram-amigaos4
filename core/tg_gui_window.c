@@ -823,31 +823,49 @@ int tg_gui_run_window(tg_gui_state *state)
                         (void)tg_gui_session_send(state->input, stdout);
                         state->input[0] = '\0';
                     }
+                    state->input_caret = 0;
                     state->composing = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 27) {
                     state->input[0] = '\0';
+                    state->input_caret = 0;
                     state->composing = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 8 || msg_code == 127) {
                     unsigned long n;
+                    unsigned long c;
 
                     n = (unsigned long)strlen(state->input);
-                    if (n > 0UL) {
-                        state->input[n - 1UL] = '\0';
+                    c = (unsigned long)state->input_caret;
+                    if (c > n) {
+                        c = n;
+                    }
+                    if (c > 0UL) {
+                        /* delete the char before the caret, keeping the NUL */
+                        memmove(&state->input[c - 1UL], &state->input[c],
+                                n - c + 1UL);
+                        state->input_caret = (int)(c - 1UL);
                         tg_gui_paint(state, &backend);
                     }
                 } else if (msg_code >= 32 && msg_code < 256) {
                     unsigned long n;
+                    unsigned long c;
 
                     n = (unsigned long)strlen(state->input);
+                    c = (unsigned long)state->input_caret;
+                    if (c > n) {
+                        c = n;
+                    }
                     if (n + 1UL < (unsigned long)sizeof(state->input)) {
-                        state->input[n] = (char)msg_code;
-                        state->input[n + 1UL] = '\0';
+                        /* insert at the caret, shifting the tail (incl. NUL) */
+                        memmove(&state->input[c + 1UL], &state->input[c],
+                                n - c + 1UL);
+                        state->input[c] = (char)msg_code;
+                        state->input_caret = (int)(c + 1UL);
                         tg_gui_paint(state, &backend);
                     }
                 }
@@ -858,6 +876,7 @@ int tg_gui_run_window(tg_gui_state *state)
                            tg_gui_session_is_open()) {
                     /* RETURN starts composing a message for the open chat. */
                     state->composing = 1;
+                    state->input_caret = (int)strlen(state->input);
                     state->cursor_on = 1;
                     caret_ticks = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
@@ -865,6 +884,22 @@ int tg_gui_run_window(tg_gui_state *state)
                     tg_gui_paint(state, &backend);
                 }
                 /* Chat selection is on the function keys now (IDCMP_RAWKEY). */
+            } else if (msg_class == IDCMP_RAWKEY && state->composing &&
+                       state->mode == TG_GUI_MODE_CHAT) {
+                /* While composing, LEFT/RIGHT move the caret within the input.
+                   The key-up event arrives as code|0x80, so the strict == tests
+                   fire exactly once per press. */
+                if (msg_code == 0x4F) { /* cursor left */
+                    if (state->input_caret > 0) {
+                        state->input_caret--;
+                        tg_gui_paint(state, &backend);
+                    }
+                } else if (msg_code == 0x4E) { /* cursor right */
+                    if (state->input_caret < (int)strlen(state->input)) {
+                        state->input_caret++;
+                        tg_gui_paint(state, &backend);
+                    }
+                }
             } else if (msg_class == IDCMP_RAWKEY && !state->composing &&
                        state->mode == TG_GUI_MODE_CHAT) {
                 /* F1..F10 (rawkey 0x50..0x59) pick chats 1..10; Shift adds 10
@@ -962,6 +997,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         if (state->composing) {
                             state->composing = 0;
                             state->input[0] = '\0';
+                            state->input_caret = 0;
                             tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                         }
@@ -975,6 +1011,7 @@ int tg_gui_run_window(tg_gui_state *state)
                             (void)tg_gui_session_send(state->input, stdout);
                             state->input[0] = '\0';
                         }
+                        state->input_caret = 0;
                         state->composing = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
@@ -984,6 +1021,7 @@ int tg_gui_run_window(tg_gui_state *state)
                                !state->composing && tg_gui_session_is_open()) {
                         /* Click the input field (or Send) to start composing. */
                         state->composing = 1;
+                        state->input_caret = (int)strlen(state->input);
                         state->cursor_on = 1;
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
