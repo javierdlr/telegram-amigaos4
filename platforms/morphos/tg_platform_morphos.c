@@ -651,10 +651,20 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
-        /* No graceful shutdown(SHUT_RDWR) here: on this bsdsocket stack it can
-           block waiting on the peer over a slow/flaky link, which froze the GUI
-           window when it tore the held connection down on close. close() sends
-           the FIN and returns immediately. */
+        struct linger lin;
+
+        /* Abortive close: SO_LINGER with a zero timeout makes close() send a RST
+           and drop the socket straight to CLOSED, instead of leaving it in
+           FIN-WAIT on this slow/flaky bsdsocket link. We run -noixemul and never
+           own SocketBase, so bsdsocket.library is auto-closed by the C-runtime
+           AFTER main() returns; if a held connection were still live (FIN-WAIT)
+           at that point, that library teardown HARD-FROZE MorphOS on GUI close.
+           Forcing CLOSED here removes the live connection before exit.
+           No graceful shutdown(SHUT_RDWR): on this stack it can block on the peer. */
+        lin.l_onoff = 1;
+        lin.l_linger = 0;
+        (void)setsockopt((int)connection->platform_handle, SOL_SOCKET, SO_LINGER,
+                         (const void *)&lin, sizeof(lin));
         close((int)connection->platform_handle);
     }
 }
