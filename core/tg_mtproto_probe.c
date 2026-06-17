@@ -11840,6 +11840,13 @@ int tg_gui_session_tick(FILE *stream)
 #endif
         ++tg_gui_session_state.diff_tick;
         if ((tg_gui_session_state.diff_tick % diff_cadence) == 0UL) {
+            /* The drain can sit in a quiet recv; on MorphOS the per-recv select()
+               timeout IS the connect timeout, so cap it short here (the history
+               poll above keeps the 12s it needs to reconnect). This stops a window
+               close from waiting ~12s on an idle drain recv. Restored after. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+            tg_net_set_connect_timeout_seconds(4UL);
+#endif
             if (tg_gui_session_state.engine.updates_state.pts == 0UL) {
                 (void)tg_mtproto_chat_get_updates_state_on_context(
                     tg_gui_session_state.host, tg_gui_session_state.port,
@@ -11857,6 +11864,9 @@ int tg_gui_session_tick(FILE *stream)
                     &tg_gui_session_state.context,
                     &tg_gui_session_state.engine.updates_state, quiet);
             }
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+            tg_net_set_connect_timeout_seconds(12UL);
+#endif
         }
     }
         tg_net_set_connect_timeout_seconds(prev_timeout);

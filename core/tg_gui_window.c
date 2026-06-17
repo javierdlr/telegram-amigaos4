@@ -972,9 +972,12 @@ int tg_gui_run_window(tg_gui_state *state)
                     time_t now;
 
                     now = time(0);
-                    if (now != (time_t)-1 &&
+                    if (!done && now != (time_t)-1 &&
                         (unsigned long)(now - last_session_poll) >=
                             watch_seconds) {
+                        /* Skip the (blocking) network tick if a close/quit is
+                           already queued this drain, so the window closes at once
+                           instead of waiting out a poll. */
                         last_session_poll = now;
                         if (tg_gui_session_tick(stdout)) {
                             session_dirty = 1;
