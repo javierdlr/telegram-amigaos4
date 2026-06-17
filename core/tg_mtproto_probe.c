@@ -11688,7 +11688,16 @@ int tg_gui_session_tick(FILE *stream)
         unsigned long prev_timeout;
 
         prev_timeout = tg_net_connect_timeout_seconds();
+        /* On MorphOS this value is ALSO the per-recv and per-connect select()
+           timeout. 3s is too short to RECONNECT the dropped idle MTProto link,
+           so the inbound poll never re-established and nothing was received (send
+           worked because it uses 10s). Give MorphOS the same headroom the console
+           steady-state poll (20s) and GUI send (10s) already use. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+        tg_net_set_connect_timeout_seconds(12UL);
+#else
         tg_net_set_connect_timeout_seconds(3UL);
+#endif
     /* New messages in the open chat stream straight into the transcript. */
     if (tg_gui_session_state.current_peer_index[0] != '\0') {
         unsigned long printed;
