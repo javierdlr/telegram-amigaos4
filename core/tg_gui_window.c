@@ -396,6 +396,33 @@ static void tg_gui_window_copy(char *dest, unsigned long size, const char *src)
     dest[i] = '\0';
 }
 
+/* Push a just-sent line into the composer recall ring (UP/DOWN). Skips empty and
+   consecutive duplicates, shifts the ring when full, resets the recall cursor.
+   Mirrors the TUI's tg_chat_history_add. */
+static void tg_gui_history_add(tg_gui_state *state, const char *text)
+{
+    int i;
+
+    state->history_pos = -1;
+    if (text == 0 || text[0] == '\0') {
+        return;
+    }
+    if (state->history_count > 0 &&
+        strcmp(state->history[state->history_count - 1], text) == 0) {
+        return;
+    }
+    if (state->history_count >= TG_GUI_HISTORY_MAX) {
+        for (i = 1; i < TG_GUI_HISTORY_MAX; ++i) {
+            tg_gui_window_copy(state->history[i - 1], TG_GUI_TEXT_MAX,
+                               state->history[i]);
+        }
+        state->history_count = TG_GUI_HISTORY_MAX - 1;
+    }
+    tg_gui_window_copy(state->history[state->history_count], TG_GUI_TEXT_MAX,
+                       text);
+    ++state->history_count;
+}
+
 /* Brings the window live after a successful login: opens the session over the
    freshly-written auth.bin (activate flips state->mode to chat + opens the first
    chat). If the re-open fails, the login itself still succeeded (auth.bin is
@@ -528,8 +555,9 @@ static struct NewMenu tg_gui_newmenu[] = {
 static const char tg_gui_about_text[] =
     "Telegram Amiga\n\n"
     "A native Telegram client for AmigaOS,\n"
-    "MorphOS and AROS -- no MUI, no ixemul.\n\n"
-    "by Michele Dipace";
+    "MorphOS and AROS.\n\n"
+    "by Michele Dipace\n"
+    "michele.dipace@kaffeine.net";
 
 static const char tg_gui_help_text[] =
     "Chat selection:\n"
@@ -783,6 +811,9 @@ int tg_gui_run_window(tg_gui_state *state)
     last_session_poll = time(0);
     done = 0;
     state->composing = 0;
+    state->history_count = 0;
+    state->history_pos = -1;
+    state->history_draft[0] = '\0';
     /* A login screen shows its caret from the first frame. */
     state->cursor_on = (state->mode != TG_GUI_MODE_CHAT) ? 1 : 0;
     caret_ticks = 0;
@@ -820,17 +851,26 @@ int tg_gui_run_window(tg_gui_state *state)
                    cancels, BACKSPACE deletes. */
                 if (msg_code == 13 || msg_code == 10) {
                     if (state->input[0] != '\0') {
-                        (void)tg_gui_session_send(state->input, stdout);
+                        if (tg_gui_session_send(state->input, stdout) == 0) {
+                            tg_gui_history_add(state, state->input);
+                        }
                         state->input[0] = '\0';
                     }
                     state->input_caret = 0;
-                    state->composing = 0;
+                    state->history_pos = -1;
+                    state->history_draft[0] = '\0';
+                    /* Keep focus in the composer so the next message can be
+                       typed without re-clicking; re-prime the caret blink. */
+                    state->composing = 1;
+                    state->cursor_on = 1;
+                    caret_ticks = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - F1-F10 chats, Q quits");
+                                       "Type - ENTER sends, ESC cancels");
                     tg_gui_paint(state, &backend);
                 } else if (msg_code == 27) {
                     state->input[0] = '\0';
                     state->input_caret = 0;
+                    state->history_pos = -1;
                     state->composing = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
@@ -897,6 +937,47 @@ int tg_gui_run_window(tg_gui_state *state)
                 } else if (msg_code == 0x4E) { /* cursor right */
                     if (state->input_caret < (int)strlen(state->input)) {
                         state->input_caret++;
+                        tg_gui_paint(state, &backend);
+                    }
+                } else if (msg_code == 0x4C) { /* cursor up: older sent line */
+                    if (state->history_count > 0) {
+                        int hidx;
+
+                        if (state->history_pos < 0) {
+                            /* entering recall: stash the live draft */
+                            tg_gui_window_copy(state->history_draft,
+                                               sizeof(state->history_draft),
+                                               state->input);
+                            hidx = state->history_count - 1;
+                        } else if (state->history_pos > 0) {
+                            hidx = state->history_pos - 1;
+                        } else {
+                            hidx = 0;
+                        }
+                        state->history_pos = hidx;
+                        tg_gui_window_copy(state->input, sizeof(state->input),
+                                           state->history[hidx]);
+                        state->input_caret = (int)strlen(state->input);
+                        tg_gui_paint(state, &backend);
+                    }
+                } else if (msg_code == 0x4D) { /* cursor down: newer sent line */
+                    if (state->history_pos >= 0) {
+                        int hidx;
+
+                        hidx = state->history_pos + 1;
+                        if (hidx >= state->history_count) {
+                            /* past the newest: restore the live draft */
+                            tg_gui_window_copy(state->input,
+                                               sizeof(state->input),
+                                               state->history_draft);
+                            state->history_pos = -1;
+                        } else {
+                            state->history_pos = hidx;
+                            tg_gui_window_copy(state->input,
+                                               sizeof(state->input),
+                                               state->history[hidx]);
+                        }
+                        state->input_caret = (int)strlen(state->input);
                         tg_gui_paint(state, &backend);
                     }
                 }
@@ -1001,6 +1082,7 @@ int tg_gui_run_window(tg_gui_state *state)
                             state->composing = 0;
                             state->input[0] = '\0';
                             state->input_caret = 0;
+                            state->history_pos = -1;
                             tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                         }
@@ -1011,13 +1093,21 @@ int tg_gui_run_window(tg_gui_state *state)
                         }
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
                         if (state->input[0] != '\0') {
-                            (void)tg_gui_session_send(state->input, stdout);
+                            if (tg_gui_session_send(state->input, stdout) == 0) {
+                                tg_gui_history_add(state, state->input);
+                            }
                             state->input[0] = '\0';
                         }
                         state->input_caret = 0;
-                        state->composing = 0;
+                        state->history_pos = -1;
+                        state->history_draft[0] = '\0';
+                        /* Keep focus in the composer so the next message can be
+                           typed without re-clicking; re-prime the caret blink. */
+                        state->composing = 1;
+                        state->cursor_on = 1;
+                        caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - F1-F10 chats, Q quits");
+                                       "Type - ENTER sends, ESC cancels");
                         tg_gui_paint(state, &backend);
                     } else if ((hit == TG_GUI_HIT_INPUT ||
                                 hit == TG_GUI_HIT_SEND) &&

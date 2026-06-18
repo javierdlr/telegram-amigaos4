@@ -71,6 +71,7 @@ struct tg_gui_backend {
 #define TG_GUI_MAX_MESSAGES 64
 #define TG_GUI_NAME_MAX 48
 #define TG_GUI_TEXT_MAX 256
+#define TG_GUI_HISTORY_MAX 16
 #define TG_GUI_TIME_MAX 8
 #define TG_GUI_INITIALS_MAX 4
 #define TG_GUI_REPLY_MAX 96
@@ -133,6 +134,11 @@ typedef struct tg_gui_state {
     char typing[TG_GUI_NAME_MAX]; /* "...sta scrivendo" for the open chat; "" = none */
     int mode;          /* TG_GUI_MODE_* (chat vs a first-login screen) */
     int input_masked;  /* render `input` as '*' (the 2FA password field) */
+    /* Sent-message history for UP/DOWN recall in the composer (like the TUI). */
+    char history[TG_GUI_HISTORY_MAX][TG_GUI_TEXT_MAX];
+    int history_count;
+    int history_pos;   /* -1 = not recalling; else index into history[] */
+    char history_draft[TG_GUI_TEXT_MAX]; /* live text stashed on first UP */
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used
