@@ -12039,6 +12039,7 @@ int tg_gui_session_login_send_code(const char *phone, FILE *stream)
     char api_id[32];
     char api_hash[96];
     unsigned long prev_timeout;
+    FILE *quiet;
     int rc;
     static const char label[] = "gui auth.sendCode";
 
@@ -12061,12 +12062,19 @@ int tg_gui_session_login_send_code(const char *phone, FILE *stream)
     }
     prev_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(45UL); /* DH handshake is slow on m68k */
+    /* Run the DH handshake on a QUIET stream (tmpfile) + KPutStr pacing: on
+       MorphOS raw console output during network I/O hard-freezes the machine, and
+       open_auth_context fputc('.')/fprintf's the DH progress. The chat path is
+       safe precisely because it never lets net output touch CON:; the login must
+       do the same. */
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_gui_log("login: send_code start");
     rc = tg_mtproto_auth_send_code(tg_gui_session_state.login.host, "443",
                                    tg_gui_session_state.login.dc_id_text, api_id,
                                    api_hash, tg_gui_session_state.login.phone,
                                    tg_gui_session_state.login.auth_file,
                                    tg_gui_session_state.login.code_hash_file,
-                                   stream);
+                                   quiet);
     if (rc > TG_MTPROTO_PHONE_MIGRATE_RC_BASE) {
         unsigned long migrate_dc;
         const char *migrate_host;
@@ -12082,9 +12090,11 @@ int tg_gui_session_login_send_code(const char *phone, FILE *stream)
                 migrate_host, "443", migrate_dc_text, api_id, api_hash,
                 tg_gui_session_state.login.phone,
                 tg_gui_session_state.login.auth_file,
-                tg_gui_session_state.login.code_hash_file, stream);
+                tg_gui_session_state.login.code_hash_file, quiet);
         }
     }
+    tg_gui_log("login: send_code done");
+    tg_mtproto_close_quiet_stream(quiet, stream);
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
     return (rc == 0) ? TG_GUI_LOGIN_OK : TG_GUI_LOGIN_BAD_PHONE;
@@ -12093,6 +12103,7 @@ int tg_gui_session_login_send_code(const char *phone, FILE *stream)
 int tg_gui_session_login_sign_in(const char *code, FILE *stream)
 {
     unsigned long prev_timeout;
+    FILE *quiet;
     int rc;
 
     if (!tg_gui_session_state.login.active || code == 0 || stream == 0) {
@@ -12100,12 +12111,17 @@ int tg_gui_session_login_sign_in(const char *code, FILE *stream)
     }
     prev_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(45UL);
+    /* Quiet stream + pacing, as in send_code: no raw CON: output on MorphOS. */
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_gui_log("login: sign_in start");
     rc = tg_mtproto_auth_sign_in(tg_gui_session_state.login.host, "443",
                                  tg_gui_session_state.login.api_id,
                                  tg_gui_session_state.login.auth_file,
                                  tg_gui_session_state.login.phone,
                                  tg_gui_session_state.login.code_hash_file, code,
-                                 tg_gui_session_state.login.dc_id_text, stream);
+                                 tg_gui_session_state.login.dc_id_text, quiet);
+    tg_gui_log("login: sign_in done");
+    tg_mtproto_close_quiet_stream(quiet, stream);
     tg_net_set_connect_timeout_seconds(prev_timeout);
     if (rc == 0) {
         return TG_GUI_LOGIN_OK;
@@ -12122,6 +12138,7 @@ int tg_gui_session_login_sign_in(const char *code, FILE *stream)
 int tg_gui_session_login_check_password(const char *password, FILE *stream)
 {
     unsigned long prev_timeout;
+    FILE *quiet;
     int rc;
 
     if (!tg_gui_session_state.login.active || password == 0 || stream == 0) {
@@ -12129,10 +12146,15 @@ int tg_gui_session_login_check_password(const char *password, FILE *stream)
     }
     prev_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(45UL);
+    /* Quiet stream + pacing, as in send_code: no raw CON: output on MorphOS. */
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_gui_log("login: check_password start");
     rc = tg_mtproto_auth_check_password_text(
         tg_gui_session_state.login.host, "443",
         tg_gui_session_state.login.api_id, tg_gui_session_state.login.auth_file,
-        tg_gui_session_state.login.dc_id_text, password, stream);
+        tg_gui_session_state.login.dc_id_text, password, quiet);
+    tg_gui_log("login: check_password done");
+    tg_mtproto_close_quiet_stream(quiet, stream);
     tg_net_set_connect_timeout_seconds(prev_timeout);
     if (rc == 0) {
         return TG_GUI_LOGIN_OK;
