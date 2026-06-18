@@ -4104,7 +4104,16 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
         }
     }
     if (rc == TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED) {
-        fprintf(stream, "2FA password required.\n");
+        fprintf(stream,
+                "2FA password required.\n"
+                "WARNING: two-step verification derives the key with PBKDF2 "
+                "(100000 iterations of SHA-512). On a slow 68k -- e.g. a stock "
+                "14 MHz 68020 -- this takes about 40 minutes, long enough for "
+                "Telegram to drop the login before it finishes. If this machine "
+                "is slow, disable Two-Step Verification on your account "
+                "(Telegram app: Settings > Privacy and Security > Two-Step "
+                "Verification) and sign in again. To try anyway, enter the "
+                "password (empty to abort).\n");
         for (;;) {
             if (tg_mtproto_prompt_hidden_line("2FA password, empty to abort: ",
                                               password, sizeof(password),
