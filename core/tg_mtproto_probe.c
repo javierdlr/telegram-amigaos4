@@ -6428,8 +6428,6 @@ int tg_mtproto_gui_refresh_peer_cache(const char *api_file,
     tg_mtproto_session_status status;
     const char *host;
     const char *dc_id_text;
-    FILE *quiet;
-    int rc;
 
     if (api_file == 0 || auth_file == 0 || peer_cache_file == 0) {
         return 2;
@@ -6444,19 +6442,41 @@ int tg_mtproto_gui_refresh_peer_cache(const char *api_file,
                                               &dc_id_text) != 0) {
         return 2;
     }
-    quiet = tg_mtproto_open_quiet_stream(stream);
-    rc = tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
-                                         dc_id_text, "5", peer_cache_file,
-                                         quiet);
-    tg_mtproto_close_quiet_stream(quiet, stream);
-    if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
+    /* An existing peer cache is authoritative: never re-fetch getDialogs on every
+       launch (wasteful, and on MorphOS freeze-prone). The TUI path already guards
+       on cache presence the same way. */
+    if (tg_mtproto_peer_cache_available(peer_cache_file)) {
+        return 0;
+    }
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    /* MorphOS: messages.getDialogs hard-freezes the machine on a real (heavy)
+       account even at limit 1 -- the same dialogs payload class as the read-
+       receipt getPeerDialogs already suppressed here (f14daa1). With no cache yet
+       we open with an empty sidebar instead of freezing; the chat list is
+       populated from the staged telegram-peers.txt cache. */
+    (void)host;
+    (void)dc_id_text;
+    return 2;
+#else
+    {
+        FILE *quiet;
+        int rc;
+
         quiet = tg_mtproto_open_quiet_stream(stream);
         rc = tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
-                                             dc_id_text, "1", peer_cache_file,
+                                             dc_id_text, "5", peer_cache_file,
                                              quiet);
         tg_mtproto_close_quiet_stream(quiet, stream);
+        if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
+            quiet = tg_mtproto_open_quiet_stream(stream);
+            rc = tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
+                                                 dc_id_text, "1", peer_cache_file,
+                                                 quiet);
+            tg_mtproto_close_quiet_stream(quiet, stream);
+        }
+        return rc;
     }
-    return rc;
+#endif
 }
 
 int tg_mtproto_chat_list_parse(const char *path, unsigned long current_index,
