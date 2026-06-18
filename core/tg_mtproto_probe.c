@@ -11991,6 +11991,16 @@ void tg_gui_session_close(void)
     tg_gui_log("close: closing context");
     tg_mtproto_close_auth_context(&tg_gui_session_state.context);
     tg_gui_log("close: context closed");
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    /* Let the bsdsocket stack drive the just-closed connection from FIN-WAIT to
+       CLOSED before we exit. On this -noixemul stack the runtime tears bsdsocket
+       down after main(), and doing that while the held connection is still in
+       transit on the slow link HARD-FREEZES the machine. The old 3s build never
+       hit this because the idle link had already died long before close. A short
+       settle reproduces that "already dead" state deterministically. */
+    tg_platform_sleep_seconds(3UL);
+    tg_gui_log("close: settle done");
+#endif
     tg_net_set_connect_timeout_seconds(tg_gui_session_state.saved_timeout);
     tg_chat_nq = 0;
     tg_chat_typing_target = 0;
