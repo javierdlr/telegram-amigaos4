@@ -246,4 +246,12 @@ int tg_mtproto_chat_list_self_test(void);
    in seconds how the UI renders on a given console (--console-ui-test). */
 int tg_mtproto_console_ui_test(FILE *stream);
 
+/* Render one Unicode codepoint into `out` (cap >= 8) as ASCII/Latin-1 for the
+   native GUI text path. Returns the bytes written; 0 means "omit" (no glyph).
+   The mapping mirrors the console display path, but unmapped/symbol-block
+   codepoints are omitted instead of drawn as '?'. */
+unsigned long tg_mtproto_display_codepoint_to_latin1(unsigned long cp,
+                                                     char *out,
+                                                     unsigned long cap);
+
 #endif

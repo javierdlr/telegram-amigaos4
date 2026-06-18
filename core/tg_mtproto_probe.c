@@ -4725,57 +4725,12 @@ static int tg_mtproto_display_utf8(void)
 #endif
 }
 
-#if TG_MTPROTO_DISPLAY_LATIN1
-static unsigned long tg_mtproto_utf8_read_codepoint(const char *text,
-                                                    unsigned long *index)
-{
-    const unsigned char *bytes;
-    unsigned long i;
-    unsigned long cp;
-
-    bytes = (const unsigned char *)text;
-    i = *index;
-    if (bytes[i] < 0x80U) {
-        *index = i + 1UL;
-        return bytes[i];
-    }
-    if ((bytes[i] & 0xe0U) == 0xc0U && bytes[i + 1UL] != '\0' &&
-        (bytes[i + 1UL] & 0xc0U) == 0x80U) {
-        cp = ((unsigned long)(bytes[i] & 0x1fU) << 6) |
-             (unsigned long)(bytes[i + 1UL] & 0x3fU);
-        *index = i + 2UL;
-        return cp;
-    }
-    if ((bytes[i] & 0xf0U) == 0xe0U && bytes[i + 1UL] != '\0' &&
-        bytes[i + 2UL] != '\0' &&
-        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
-        (bytes[i + 2UL] & 0xc0U) == 0x80U) {
-        cp = ((unsigned long)(bytes[i] & 0x0fU) << 12) |
-             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 6) |
-             (unsigned long)(bytes[i + 2UL] & 0x3fU);
-        *index = i + 3UL;
-        return cp;
-    }
-    if ((bytes[i] & 0xf8U) == 0xf0U && bytes[i + 1UL] != '\0' &&
-        bytes[i + 2UL] != '\0' && bytes[i + 3UL] != '\0' &&
-        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
-        (bytes[i + 2UL] & 0xc0U) == 0x80U &&
-        (bytes[i + 3UL] & 0xc0U) == 0x80U) {
-        cp = ((unsigned long)(bytes[i] & 0x07U) << 18) |
-             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 12) |
-             ((unsigned long)(bytes[i + 2UL] & 0x3fU) << 6) |
-             (unsigned long)(bytes[i + 3UL] & 0x3fU);
-        *index = i + 4UL;
-        return cp;
-    }
-    *index = i + 1UL;
-    return bytes[i];
-}
-
 /* ASCII/Latin-1 emoticon for the emoji people actually send, or 0 when the
    codepoint has no readable rendition. A retro text client drawing ":)" is
    both honest and period-correct; everything else falls through to the '¤'
-   placeholder rather than a bare '?', which reads as lost text. */
+   placeholder rather than a bare '?', which reads as lost text. These helpers
+   are pure (no Amiga deps) so they live outside the Latin-1 display guard and
+   feed both the console path and the GUI text path. */
 static const char *tg_mtproto_display_emoticon(unsigned long cp)
 {
     switch (cp) {
@@ -4871,6 +4826,131 @@ static int tg_mtproto_display_is_symbol_block(unsigned long cp)
            (cp >= 0x2b00UL && cp <= 0x2bffUL) ||
            (cp >= 0x2190UL && cp <= 0x21ffUL) ||
            (cp >= 0x2300UL && cp <= 0x23ffUL);
+}
+
+/* GUI counterpart of tg_mtproto_print_display_codepoint: render one codepoint
+   into `out` (cap >= 8) as ASCII/Latin-1 and return the bytes written. The
+   mapping order mirrors the console path exactly, but symbol-block and unknown
+   codepoints return 0 (OMIT) so the GUI skips them instead of drawing a box or
+   a '?'. */
+unsigned long tg_mtproto_display_codepoint_to_latin1(unsigned long cp,
+                                                     char *out,
+                                                     unsigned long cap)
+{
+    const char *emoticon;
+
+    if (out == 0 || cap == 0UL) {
+        return 0UL;
+    }
+    if (cp == '\r' || cp == '\n' || cp == '\t') {
+        out[0] = ' ';
+        return 1UL;
+    }
+    if (cp < 0x100UL) {
+        out[0] = (char)(unsigned char)cp;
+        return 1UL;
+    }
+    switch (cp) {
+    case 0x2018UL:
+    case 0x2019UL:
+    case 0x02bcUL:
+        out[0] = '\'';
+        return 1UL;
+    case 0x201cUL:
+    case 0x201dUL:
+        out[0] = '"';
+        return 1UL;
+    case 0x2013UL:
+    case 0x2014UL:
+    case 0x2212UL:
+        out[0] = '-';
+        return 1UL;
+    case 0x2026UL:
+        if (cap < 3UL) {
+            return 0UL;
+        }
+        out[0] = '.';
+        out[1] = '.';
+        out[2] = '.';
+        return 3UL;
+    default:
+        break;
+    }
+    if (tg_mtproto_display_is_invisible(cp)) {
+        return 0UL;
+    }
+    /* Flag emoji are pairs of regional indicators: render each as its country
+       letter ("IT", "DE"), which is exactly the information. */
+    if (cp >= 0x1f1e6UL && cp <= 0x1f1ffUL) {
+        out[0] = (char)('A' + (int)(cp - 0x1f1e6UL));
+        return 1UL;
+    }
+    emoticon = tg_mtproto_display_emoticon(cp);
+    if (emoticon != 0) {
+        unsigned long n;
+
+        n = 0UL;
+        while (emoticon[n] != '\0') {
+            if (n >= cap) {
+                return 0UL;
+            }
+            out[n] = emoticon[n];
+            ++n;
+        }
+        return n;
+    }
+    /* Symbol-block placeholder and the final fallback both OMIT in the GUI. */
+    if (tg_mtproto_display_is_symbol_block(cp)) {
+        return 0UL;
+    }
+    return 0UL;
+}
+
+#if TG_MTPROTO_DISPLAY_LATIN1
+static unsigned long tg_mtproto_utf8_read_codepoint(const char *text,
+                                                    unsigned long *index)
+{
+    const unsigned char *bytes;
+    unsigned long i;
+    unsigned long cp;
+
+    bytes = (const unsigned char *)text;
+    i = *index;
+    if (bytes[i] < 0x80U) {
+        *index = i + 1UL;
+        return bytes[i];
+    }
+    if ((bytes[i] & 0xe0U) == 0xc0U && bytes[i + 1UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x1fU) << 6) |
+             (unsigned long)(bytes[i + 1UL] & 0x3fU);
+        *index = i + 2UL;
+        return cp;
+    }
+    if ((bytes[i] & 0xf0U) == 0xe0U && bytes[i + 1UL] != '\0' &&
+        bytes[i + 2UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 2UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x0fU) << 12) |
+             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 6) |
+             (unsigned long)(bytes[i + 2UL] & 0x3fU);
+        *index = i + 3UL;
+        return cp;
+    }
+    if ((bytes[i] & 0xf8U) == 0xf0U && bytes[i + 1UL] != '\0' &&
+        bytes[i + 2UL] != '\0' && bytes[i + 3UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 2UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 3UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x07U) << 18) |
+             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 12) |
+             ((unsigned long)(bytes[i + 2UL] & 0x3fU) << 6) |
+             (unsigned long)(bytes[i + 3UL] & 0x3fU);
+        *index = i + 4UL;
+        return cp;
+    }
+    *index = i + 1UL;
+    return bytes[i];
 }
 
 static void tg_mtproto_print_display_codepoint(FILE *stream, unsigned long cp)

@@ -8,6 +8,7 @@
  */
 
 #include "tg_gui_driver.h"
+#include "tg_mtproto_probe.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -33,8 +34,11 @@ static void tg_gui_driver_copy(char *dest, unsigned long size, const char *src)
 /* Engine rows carry raw UTF-8 (the console transcodes at print time). The GUI
    draws with the Amiga font (Latin-1), so copy text with a UTF-8 -> Latin-1
    transcode: codepoints < 256 map 1:1 (Italian accents render correctly),
-   control bytes flatten to a space, and anything higher (emoji, CJK, ...) has
-   no glyph so it becomes '?' instead of a run of boxes. */
+   control bytes flatten to a space, and anything higher (emoji, dashes, ...)
+   routes through tg_mtproto_display_codepoint_to_latin1, which renders the
+   common emoji as their ASCII emoticons (":)" etc.) and omits anything with no
+   readable rendition rather than drawing a '?'. Invalid UTF-8 bytes are
+   skipped. */
 static void tg_gui_driver_copy_latin1(char *dest, unsigned long size,
                                       const char *src)
 {
@@ -50,7 +54,9 @@ static void tg_gui_driver_copy_latin1(char *dest, unsigned long size,
         unsigned char c;
         unsigned long cp;
         int extra;
+        int skip;
 
+        skip = 0;
         c = (unsigned char)src[i++];
         if (c < 0x80U) {
             cp = c;
@@ -65,27 +71,38 @@ static void tg_gui_driver_copy_latin1(char *dest, unsigned long size,
             cp = (unsigned long)(c & 0x07U);
             extra = 3;
         } else {
-            cp = (unsigned long)'?'; /* stray continuation / invalid lead byte */
+            cp = 0UL; /* stray continuation / invalid lead byte -> omit */
             extra = 0;
+            skip = 1;
         }
         while (extra > 0) {
             unsigned char cc;
 
             cc = (unsigned char)src[i];
             if ((cc & 0xC0U) != 0x80U) {
-                cp = (unsigned long)'?';
+                skip = 1; /* truncated sequence -> omit */
                 break;
             }
             cp = (cp << 6) | (unsigned long)(cc & 0x3FU);
             ++i;
             --extra;
         }
+        if (skip) {
+            continue;
+        }
         if (cp < 0x20UL) {
             dest[o++] = ' ';
         } else if (cp < 0x100UL) {
             dest[o++] = (char)cp;
         } else {
-            dest[o++] = '?';
+            char tmp[8];
+            unsigned long n;
+            unsigned long k;
+
+            n = tg_mtproto_display_codepoint_to_latin1(cp, tmp, sizeof(tmp));
+            for (k = 0UL; k < n && o + 1UL < size; ++k) {
+                dest[o++] = tmp[k];
+            }
         }
     }
     dest[o] = '\0';
@@ -478,13 +495,24 @@ int tg_gui_driver_self_test(void)
         return 2;
     }
 
-    /* UTF-8 -> Latin-1 transcode: Italian accents map 1:1, emoji collapse to
-       '?'. "cia\xC3\xB2 \xF0\x9F\x99\x82" = "ciao'(o-grave) (slight-smile)". */
+    /* UTF-8 -> Latin-1 transcode: Italian accents map 1:1, the common emoji
+       map to their ASCII emoticon via the shared display table.
+       "cia\xC3\xB2 \xF0\x9F\x99\x82" = "cia(o-grave) (slight-smile)" ->
+       "cia(o-grave) :)". */
     tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "Mario", "Io", 0,
                        "cia\xC3\xB2 \xF0\x9F\x99\x82");
     if (strcmp(state.messages[state.message_count - 1].text,
-               "cia\xF2 ?") != 0) {
+               "cia\xF2 :)") != 0) {
         printf("gui driver self-test: utf8->latin1 wrong (%s)\n",
+               state.messages[state.message_count - 1].text);
+        return 2;
+    }
+
+    /* Unmapped symbol (U+1F4A9, no readable rendition) is OMITTED, not '?'. */
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "Mario", "Io", 0,
+                       "\xF0\x9F\x92\xA9");
+    if (state.messages[state.message_count - 1].text[0] != '\0') {
+        printf("gui driver self-test: unmapped symbol not omitted (%s)\n",
                state.messages[state.message_count - 1].text);
         return 2;
     }
