@@ -330,16 +330,6 @@ static void tg_gui_amiga_measure_geometry(tg_gui_amiga_ctx *ctx)
     }
 }
 
-static unsigned long tg_gui_amiga_ticks(void)
-{
-    struct DateStamp now;
-
-    DateStamp(&now);
-    return (unsigned long)now.ds_Days * 24UL * 60UL * 50UL +
-           (unsigned long)now.ds_Minute * 60UL * 50UL +
-           (unsigned long)now.ds_Tick;
-}
-
 /* Mirrors the selected chat's name into the header title so the title line
    tracks the highlighted sidebar row as the user navigates. */
 static void tg_gui_window_apply_selection(tg_gui_state *state)
@@ -594,9 +584,6 @@ int tg_gui_run_window(tg_gui_state *state)
     unsigned long mem_before;
     unsigned long mem_after;
     unsigned long footprint;
-    unsigned long t0;
-    unsigned long t1;
-    int repaints;
     int i;
     int done;
     int caret_ticks;
@@ -749,6 +736,7 @@ int tg_gui_run_window(tg_gui_state *state)
         }
     }
 
+    tg_gui_log("window: setup done");
     backend.context = &ctx;
     backend.width = tg_gui_amiga_width;
     backend.height = tg_gui_amiga_height;
@@ -762,37 +750,23 @@ int tg_gui_run_window(tg_gui_state *state)
     mem_after = (unsigned long)AvailMem(MEMF_ANY);
     footprint = (mem_before > mem_after) ? (mem_before - mem_after) : 0UL;
 
+    /* Paint the initial content ONCE. Do NOT burst-repaint at window-open: a
+       former 60x repaint "benchmark" here raced MorphOS's input.device/intuition
+       task while it was still building this window's layer/ClipRect list. With no
+       mutual exclusion the two tasks mutated the same cliprect chain; the input
+       task then walked a corrupted node and wrote through it inside layers3d,
+       freezing the entire machine (DSI store to protected memory). This is the
+       "lists a few chats then the system freezes" report on real hardware. Live
+       repaints are driven later by IDCMP, and the IDCMP_REFRESHWINDOW path is
+       properly bracketed with BeginRefresh/EndRefresh. One settled paint here is
+       all that is needed. */
     tg_gui_paint(state, &backend);
-
-    /* Milestone 0 measurement: time a batch of full repaints so a slow 68k
-       reports a real number. The first paint above cleared the background;
-       these redraw the same opaque content in place with the clear suppressed,
-       so the window does not flash during the timing burst. */
-    repaints = 60;
-    tg_gui_set_background_clear(0);
-    t0 = tg_gui_amiga_ticks();
-    for (i = 0; i < repaints; ++i) {
-        tg_gui_paint(state, &backend);
-    }
-    t1 = tg_gui_amiga_ticks();
-    tg_gui_set_background_clear(1);
-    {
-        unsigned long ticks;
-        unsigned long ms_total;
-
-        ticks = (t1 >= t0) ? (t1 - t0) : 0UL;
-        ms_total = ticks * 20UL; /* DateStamp tick = 1/50 s = 20 ms */
-        printf("gui window: open %dx%d, font %dpx, %lu pens; "
-               "%d full repaints in %lu ms (%lu ms/paint); window footprint "
-               "~%lu KB\n",
-               ctx.inner_w, ctx.inner_h, ctx.line_h,
-               (unsigned long)(TG_GUI_PEN_COUNT + TG_GUI_AVATAR_COLORS),
-               repaints, ms_total,
-               repaints > 0 ? ms_total / (unsigned long)repaints : 0UL,
-               footprint / 1024UL);
-        fflush(stdout);
-    }
-    tg_gui_paint(state, &backend);
+    printf("gui window: open %dx%d, font %dpx, %lu pens; window footprint "
+           "~%lu KB\n",
+           ctx.inner_w, ctx.inner_h, ctx.line_h,
+           (unsigned long)(TG_GUI_PEN_COUNT + TG_GUI_AVATAR_COLORS),
+           footprint / 1024UL);
+    fflush(stdout);
 
     puts("gui window: close gadget or Q to quit.");
     fflush(stdout);
