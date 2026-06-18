@@ -165,6 +165,15 @@ The wizard asks for phone number, Telegram login code and optional 2FA
 password. Some retro consoles may echo password input, so avoid doing this
 while screen-sharing.
 
+Two-step verification (2FA) on slow 68k: Telegram fixes the 2FA key derivation
+at PBKDF2 with 100000 iterations of SHA-512, which is extremely heavy on a slow
+CPU. On a stock 14 MHz 68020 it takes about 40 minutes -- long enough that
+Telegram drops the login before it finishes, so 2FA cannot be used there. To
+run the client on such a machine, disable Two-Step Verification on the account
+(Telegram app: Settings > Privacy and Security > Two-Step Verification). Faster
+or accelerated 68k may still manage it, so the client warns at the password
+prompt rather than blocking.
+
 Manual validation/debug commands:
 
 ```text
