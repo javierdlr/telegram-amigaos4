@@ -26,6 +26,14 @@
 #define TG_GUI_AMIGA 1
 #endif
 
+/* While the composer is focused, defer the (blocking) live network poll until
+   typing has paused this many seconds, so a quiet recv never stalls active
+   keystrokes -- yet live messages and the "is typing" header still arrive as
+   soon as you pause. Without this the poll was skipped for the whole time the
+   composer was focused, and "keep composer focus after send" leaves it focused,
+   so reception + the typing header silently stopped until a chat switch. */
+#define TG_GUI_COMPOSE_IDLE_POLL_SECONDS 3UL
+
 #if defined(TG_GUI_AMIGA)
 
 /* AmigaOS4: make the library calls expand to interface inlines (IGraphics->...,
@@ -589,6 +597,7 @@ int tg_gui_run_window(tg_gui_state *state)
     int caret_ticks;
     unsigned long watch_seconds;
     time_t last_session_poll;
+    time_t last_key_time;
 
     if (state == 0) {
         return 2;
@@ -783,6 +792,7 @@ int tg_gui_run_window(tg_gui_state *state)
     watch_seconds = 2UL;
 #endif
     last_session_poll = time(0);
+    last_key_time = time(0);
     done = 0;
     state->composing = 0;
     state->history_count = 0;
@@ -811,6 +821,13 @@ int tg_gui_run_window(tg_gui_state *state)
             mouse_x = msg->MouseX;
             mouse_y = msg->MouseY;
             ReplyMsg((struct Message *)msg);
+
+            /* Remember the last keystroke so the live poll can defer the
+               (blocking) tick while you are actively typing -- see the
+               IDCMP_INTUITICKS handler below. */
+            if (msg_class == IDCMP_VANILLAKEY || msg_class == IDCMP_RAWKEY) {
+                last_key_time = time(0);
+            }
 
             if (msg_class == IDCMP_CLOSEWINDOW) {
                 tg_gui_log("window: close gadget");
@@ -1010,10 +1027,21 @@ int tg_gui_run_window(tg_gui_state *state)
                 tg_gui_paint(state, &backend);
                 EndRefresh(ctx.window, TRUE);
             } else if (msg_class == IDCMP_INTUITICKS) {
-                if (state->composing || state->mode != TG_GUI_MODE_CHAT) {
-                    /* Blink the input/login caret (~2 Hz); the network poll is
-                       paused while composing or logging in. */
+                if (state->mode != TG_GUI_MODE_CHAT) {
+                    /* A login screen owns the keyboard: blink the caret (~2 Hz);
+                       no network poll until the session opens. */
                     if (++caret_ticks >= 5) {
+                        caret_ticks = 0;
+                        state->cursor_on = !state->cursor_on;
+                        tg_gui_set_background_clear(0);
+                        tg_gui_paint(state, &backend);
+                        tg_gui_set_background_clear(1);
+                    }
+                } else {
+                    time_t now;
+
+                    /* Blink the composer caret (~2 Hz) while typing. */
+                    if (state->composing && ++caret_ticks >= 5) {
                         caret_ticks = 0;
                         state->cursor_on = !state->cursor_on;
                         /* Opaque in-place repaint (no full-window clear) so the
@@ -1023,16 +1051,21 @@ int tg_gui_run_window(tg_gui_state *state)
                         tg_gui_paint(state, &backend);
                         tg_gui_set_background_clear(1);
                     }
-                } else {
-                    time_t now;
 
+                    /* Live poll on the watch interval -- now runs even while the
+                       composer is focused (keep-focus-after-send leaves
+                       composing=1, and pausing the poll there silently stopped
+                       reception + the "is typing" header). To keep typing smooth,
+                       defer the (blocking) tick until the composer has been idle
+                       for TG_GUI_COMPOSE_IDLE_POLL_SECONDS; skip it entirely when
+                       a close/quit is already queued this drain. */
                     now = time(0);
                     if (!done && now != (time_t)-1 &&
                         (unsigned long)(now - last_session_poll) >=
-                            watch_seconds) {
-                        /* Skip the (blocking) network tick if a close/quit is
-                           already queued this drain, so the window closes at once
-                           instead of waiting out a poll. */
+                            watch_seconds &&
+                        (!state->composing ||
+                         (unsigned long)(now - last_key_time) >=
+                             TG_GUI_COMPOSE_IDLE_POLL_SECONDS)) {
                         last_session_poll = now;
                         if (tg_gui_session_tick(stdout)) {
                             session_dirty = 1;
