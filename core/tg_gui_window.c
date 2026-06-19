@@ -655,7 +655,7 @@ int tg_gui_run_window(tg_gui_state *state)
     memset(&ctx, 0, sizeof(ctx));
     i = 0;
     tags[i].ti_Tag = WA_Title;
-    tags[i++].ti_Data = TG_GUI_TAG("Telegram Amiga - GUI test");
+    tags[i++].ti_Data = TG_GUI_TAG("Telegram Amiga - GUI");
     tags[i].ti_Tag = WA_InnerWidth;
     tags[i++].ti_Data = 600;
     tags[i].ti_Tag = WA_InnerHeight;
