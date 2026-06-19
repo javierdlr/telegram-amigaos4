@@ -1,0 +1,76 @@
+TELEGRAM AMIGA - Manual (English)
+AmigaOS 4 - alpha 0.0.1
+=================================
+
+Telegram Amiga is a from-scratch Telegram client (MTProto protocol) for
+Amiga systems, fully native and with NO external dependencies: no MUI, no
+ixemul, no AmiSSL. All the cryptography (RSA, Diffie-Hellman, SRP/2FA, AES,
+SHA) is built into the program.
+
+This package ships TWO clients that share the same engine:
+
+  - TelegramGUI : the native graphical client (Intuition/GadTools), with a
+                  chat list + conversation, scrollbars and mouse.
+  - TelegramTUI : the text-mode / command-line client (console).
+
+
+INSTALL
+-------
+1. Copy this drawer to a WRITABLE volume (for example a drawer on System: or
+   Work:). The program must be able to write its files next to itself; do
+   not run it from the CD (it is read-only).
+2. Double-click TelegramGUI for the graphical client, or TelegramTUI for the
+   text client.
+
+
+FIRST RUN / LOGIN
+-----------------
+On first run you sign in: phone number -> the code Telegram sends you ->
+optional two-factor (2FA) password. A telegram-auth.bin file (your session)
+is created next to the program; later runs reuse it and go straight to the
+chats.
+
+
+USING THE GUI
+-------------
+- Left: the chat list. Select by clicking, with the function keys F1-F10
+  (Shift+F1-F10 for chats 11-20), or by scrolling with the wheel/scrollbar.
+- Right: the conversation.
+- Scrolling: mouse wheel, Up/Down arrow keys, or by dragging the scrollbar
+  knob (or clicking above/below it) - on both panels.
+- Sending: press RETURN (or click the input field) to compose, then RETURN
+  to send; ESC cancels.
+- Real-time receive, a "is typing..." indicator, and read marks (v / vv) on
+  your own messages.
+- The window opens large and remembers its last size between runs.
+- Q or the close gadget to quit.
+
+
+USING THE TEXT CLIENT (TUI)
+---------------------------
+Double-click TelegramTUI: it runs in the console window and is driven from
+the keyboard (handy on mouse-less systems or for a lightweight UI).
+
+
+REQUIREMENTS
+------------
+- AmigaOS 4.x with a working TCP/IP stack (bsdsocket.library, e.g. Roadshow)
+  and internet access.
+- A few MB of free RAM.
+
+
+PRIVATE FILES - NEVER SHARE
+---------------------------
+These are created locally and must never be shared:
+  - telegram-auth.bin  : your MTProto session. Anyone who gets it can access
+                         your Telegram account. Do not download it from anyone.
+  - telegram-peers.txt : your chat-list cache.
+  - phone-code-hash.txt, telegram-password.txt, telegram-seed.bin
+
+
+NOTES ON THIS ALPHA (0.0.1)
+---------------------------
+This is the first alpha: everyday use (direct messages and groups) works,
+but rough edges are possible. Feedback welcome.
+
+Author: Michele Dipace <michele.dipace@kaffeine.net>
