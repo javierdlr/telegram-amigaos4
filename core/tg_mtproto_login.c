@@ -2521,7 +2521,10 @@ static tg_mtproto_tl_status tg_read_message_entity_vector(
         switch (constructor) {
         case 0x73924be0UL: /* messageEntityPre (offset,length,language) */
             type = TG_MSG_ENT_CODE;
-            /* fall through: consume the trailing language string */
+            if (tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+                return TG_MTPROTO_TL_INVALID_DATA;
+            }
+            break;
         case 0x76a6d327UL: /* messageEntityTextUrl (offset,length,url) */
             if (tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
                 return TG_MTPROTO_TL_INVALID_DATA;
