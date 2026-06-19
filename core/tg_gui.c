@@ -16,6 +16,11 @@
 
 #define TG_GUI_WRAP_MAX_LINES 16
 
+/* Custom-drawn vertical scrollbar geometry (no GadTools propgadget, so it is
+   identical on every backend). TG_GUI_SCROLLBAR_W lives in tg_gui.h, shared
+   with the event loop's knob hit-test. */
+#define TG_GUI_SCROLLBAR_MIN_KNOB 14
+
 /* When 0, tg_gui_paint skips the leading full-window clear so a repeated repaint
    of unchanged opaque content does not flash the window (used by the redraw-time
    measurement). Default on. */
@@ -227,6 +232,68 @@ static void tg_gui_draw_clipped(tg_gui_backend *backend, int pen, int x,
     }
 }
 
+/* Draws a vertical scrollbar: a full-height track with a proportional knob.
+   total/view/offset are in the panel's own units (chat rows or messages);
+   offset is measured from the top (0..total-view). No knob when all fits. */
+static void tg_gui_paint_scrollbar(tg_gui_backend *backend, int x, int track_y,
+                                   int track_h, int total, int view, int offset,
+                                   int *out_knob_y, int *out_knob_h)
+{
+    int knob_h;
+    int knob_y;
+    int span;
+    int max_off;
+
+    knob_y = track_y;
+    knob_h = (track_h > 0) ? track_h : 0;
+    if (track_h <= 0) {
+        if (out_knob_y) {
+            *out_knob_y = knob_y;
+        }
+        if (out_knob_h) {
+            *out_knob_h = knob_h;
+        }
+        return;
+    }
+    backend->fill_rect(backend, TG_GUI_PEN_SELECT,
+                       tg_gui_make_rect(x, track_y, TG_GUI_SCROLLBAR_W, track_h));
+    if (total <= view || view <= 0) {
+        /* Everything fits: inert full track, no draggable knob. */
+        if (out_knob_y) {
+            *out_knob_y = track_y;
+        }
+        if (out_knob_h) {
+            *out_knob_h = track_h;
+        }
+        return;
+    }
+    knob_h = (track_h * view) / total;
+    if (knob_h < TG_GUI_SCROLLBAR_MIN_KNOB) {
+        knob_h = TG_GUI_SCROLLBAR_MIN_KNOB;
+    }
+    if (knob_h > track_h) {
+        knob_h = track_h;
+    }
+    span = track_h - knob_h;
+    max_off = total - view;
+    if (offset < 0) {
+        offset = 0;
+    }
+    if (offset > max_off) {
+        offset = max_off;
+    }
+    knob_y = track_y + (max_off > 0 ? (span * offset) / max_off : 0);
+    backend->fill_rect(backend, TG_GUI_PEN_TEXT_DIM,
+                       tg_gui_make_rect(x + 2, knob_y, TG_GUI_SCROLLBAR_W - 4,
+                                        knob_h));
+    if (out_knob_y) {
+        *out_knob_y = knob_y;
+    }
+    if (out_knob_h) {
+        *out_knob_h = knob_h;
+    }
+}
+
 static void tg_gui_paint_sidebar(const tg_gui_state *state,
                                  tg_gui_backend *backend, int sidebar_w,
                                  int content_h, int lh)
@@ -235,6 +302,10 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
     int row_h;
     int y;
     int i;
+    int view_rows;
+    int need_bar;
+    int list_w;
+    tg_gui_state *st;
 
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                        tg_gui_make_rect(0, 0, sidebar_w, content_h));
@@ -244,8 +315,24 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                        "Search chats...", 15UL);
 
     row_h = (2 * lh) + 12;
+    view_rows = (row_h > 0) ? ((content_h - search_h) / row_h) : 0;
+    if (view_rows < 1) {
+        view_rows = 1;
+    }
+    need_bar = state->chat_count > view_rows;
+    list_w = need_bar ? (sidebar_w - TG_GUI_SCROLLBAR_W) : sidebar_w;
+    /* The painter owns the geometry, so it clamps the scroll offset the event
+       loop advanced freely (cast away const to write the model's own field). */
+    st = (tg_gui_state *)state;
+    if (st->chat_scroll > state->chat_count - view_rows) {
+        st->chat_scroll = state->chat_count - view_rows;
+    }
+    if (st->chat_scroll < 0) {
+        st->chat_scroll = 0;
+    }
     y = search_h;
-    for (i = 0; i < state->chat_count && y + row_h <= content_h; ++i) {
+    for (i = state->chat_scroll;
+         i < state->chat_count && y + row_h <= content_h; ++i) {
         const tg_gui_chat *chat;
         int avatar;
         int text_x;
@@ -296,7 +383,7 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
 
             badge[0] = '\0';
             badge_w = 0;
-            badge_x = sidebar_w - 10;
+            badge_x = list_w - 10;
             if (chat->unread > 0) {
                 int num_w;
 
@@ -307,15 +394,15 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                 if (badge_w < lh + 6) {
                     badge_w = lh + 6; /* keep it pill-shaped for one digit */
                 }
-                badge_x = sidebar_w - 8 - badge_w;
+                badge_x = list_w - 8 - badge_w;
             }
             /* Name clips before the time column (two-line) or before the badge
                / row edge (single-line). */
             if (has_preview) {
-                name_limit = sidebar_w - 38;
+                name_limit = list_w - 38;
             } else {
                 name_limit = (chat->unread > 0) ? (badge_x - 6)
-                                                : (sidebar_w - 10);
+                                                : (list_w - 10);
             }
             tg_gui_draw_clipped(backend, name_pen, text_x, name_baseline,
                                 chat->name, name_limit - text_x);
@@ -361,6 +448,22 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
             }
         }
         y += row_h;
+    }
+    if (need_bar) {
+        int ky;
+        int kh;
+
+        tg_gui_paint_scrollbar(backend, sidebar_w - TG_GUI_SCROLLBAR_W, search_h,
+                               content_h - search_h, state->chat_count,
+                               view_rows, state->chat_scroll, &ky, &kh);
+        st->sb_list_x = sidebar_w - TG_GUI_SCROLLBAR_W;
+        st->sb_list_ty = search_h;
+        st->sb_list_th = content_h - search_h;
+        st->sb_list_ky = ky;
+        st->sb_list_kh = kh;
+        st->sb_list_max = state->chat_count - view_rows;
+    } else {
+        st->sb_list_max = 0;
     }
 }
 
@@ -684,9 +787,12 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     int y;
     int i;
     int transcript_bottom;
+    int last;
+    int transcript_top;
+    tg_gui_state *st;
 
     area_x = sidebar_w + 12;
-    area_w = width - sidebar_w - 24;
+    area_w = width - sidebar_w - 24 - TG_GUI_SCROLLBAR_W;
     if (area_w < 40) {
         area_w = 40;
     }
@@ -716,16 +822,53 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     /* One full line below the subtitle baseline so the first incoming bubble's
        sender name clears the header at any font size. */
     y = header_h + (2 * lh) + 4;
-    /* Auto-scroll to the bottom: walk back from the newest message, summing
-       heights until the visible set fills the transcript, then anchor that set
-       to the bottom so the latest send/receive is always on screen. */
-    i = state->message_count;
+    transcript_top = y;
+    /* Walk back from the newest VISIBLE message (message_count minus the rows
+       scrolled up past), summing heights until the visible set fills the
+       transcript, then anchor that set to the bottom. transcript_scroll == 0
+       keeps the newest pinned to the bottom (the live default). */
     {
         int avail;
         int used;
+        int max_scroll;
+        int view_msgs;
 
-        avail = transcript_bottom - y;
+        avail = transcript_bottom - transcript_top;
+        /* Max scroll: how many newest messages can be hidden before the oldest
+           fills the top of a full view (forward-walk from the oldest). */
+        {
+            int fwd_used = 0;
+            int top_fit = 0;
+            int j = 0;
+
+            while (j < state->message_count) {
+                int h = tg_gui_message_height(backend, &state->messages[j],
+                                              area_w, lh);
+                if (fwd_used > 0 && fwd_used + h > avail) {
+                    break;
+                }
+                fwd_used += h;
+                ++top_fit;
+                ++j;
+            }
+            max_scroll = state->message_count - top_fit;
+            if (max_scroll < 0) {
+                max_scroll = 0;
+            }
+        }
+        /* The painter owns the geometry: clamp the offset the event loop
+           advanced freely (cast away const to write the model's own field). */
+        st = (tg_gui_state *)state;
+        if (st->transcript_scroll > max_scroll) {
+            st->transcript_scroll = max_scroll;
+        }
+        if (st->transcript_scroll < 0) {
+            st->transcript_scroll = 0;
+        }
+        last = state->message_count - state->transcript_scroll;
+
         used = 0;
+        i = last;
         while (i > 0) {
             int h;
 
@@ -740,8 +883,31 @@ static void tg_gui_paint_main(const tg_gui_state *state,
         if (used < avail) {
             y = transcript_bottom - used;
         }
+        view_msgs = last - i;
+        if (view_msgs < 1) {
+            view_msgs = 1;
+        }
+        if (max_scroll > 0) {
+            int ky;
+            int kh;
+
+            tg_gui_paint_scrollbar(
+                backend, width - TG_GUI_SCROLLBAR_W, transcript_top,
+                transcript_bottom - transcript_top, state->message_count,
+                view_msgs,
+                (state->message_count - view_msgs) - state->transcript_scroll,
+                &ky, &kh);
+            st->sb_tr_x = width - TG_GUI_SCROLLBAR_W;
+            st->sb_tr_ty = transcript_top;
+            st->sb_tr_th = transcript_bottom - transcript_top;
+            st->sb_tr_ky = ky;
+            st->sb_tr_kh = kh;
+            st->sb_tr_max = state->message_count - view_msgs;
+        } else {
+            st->sb_tr_max = 0;
+        }
     }
-    for (; i < state->message_count; ++i) {
+    for (; i < last; ++i) {
         const tg_gui_message *message;
 
         /* Guard every message type, system lines included, against running
@@ -811,7 +977,7 @@ static void tg_gui_paint_main(const tg_gui_state *state,
 
 /* Sidebar width for a given window width -- shared by the painter and the
    hit-test so a click maps to exactly what was drawn. */
-static int tg_gui_sidebar_w(int width)
+int tg_gui_sidebar_w(int width)
 {
     int sidebar_w;
 
@@ -864,7 +1030,7 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
         if (y >= search_h) {
             int row;
 
-            row = (y - search_h) / row_h;
+            row = (y - search_h) / row_h + state->chat_scroll;
             if (row >= 0 && row < state->chat_count) {
                 return row;
             }
@@ -953,18 +1119,29 @@ static void tg_gui_paint_login(const tg_gui_state *state,
     } else {
         field = state->input;
     }
-    tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, box_x + 6, box_y + lh + 1,
-                        field, box_w - 12);
-    if (state->cursor_on) {
-        int caret_x;
+    {
+        int tw;
+        int text_x;
 
-        caret_x = box_x + 6 +
-                  backend->text_width(backend, field,
-                                      (unsigned long)strlen(field));
-        if (caret_x < box_x + box_w - 2) {
-            backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
-                               tg_gui_make_rect(caret_x, box_y + 3, 2,
-                                                box_h - 6));
+        /* Centre the typed text in the box so it lines up under the centred
+           title/status above and the hint below. Long input falls back to
+           left-aligned + clipped to the box. */
+        tw = backend->text_width(backend, field, (unsigned long)strlen(field));
+        text_x = box_x + (box_w - tw) / 2;
+        if (text_x < box_x + 6) {
+            text_x = box_x + 6;
+        }
+        tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, text_x, box_y + lh + 1,
+                            field, box_x + box_w - 6 - text_x);
+        if (state->cursor_on) {
+            int caret_x;
+
+            caret_x = text_x + tw;
+            if (caret_x < box_x + box_w - 2) {
+                backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                                   tg_gui_make_rect(caret_x, box_y + 3, 2,
+                                                    box_h - 6));
+            }
         }
     }
     tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT_DIM, width, mid + (3 * lh),

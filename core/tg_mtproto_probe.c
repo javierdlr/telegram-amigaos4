@@ -11714,9 +11714,9 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
        link -- a large reply is the documented freeze trigger there; elsewhere
        load a fuller backlog. */
 #if defined(__MORPHOS__) || defined(__MORPHOS)
-    history_limit = "8";
+    history_limit = "12";
 #else
-    history_limit = "20";
+    history_limit = "45";
 #endif
     sprintf(tg_gui_session_state.current_peer_index, "%lu", peer_index);
     if (tg_mtproto_load_peer_cache_label(

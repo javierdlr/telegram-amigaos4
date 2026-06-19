@@ -370,6 +370,7 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
                                          tg_gui_backend *backend)
 {
     state->selected_chat = sel;
+    state->transcript_scroll = 0; /* a freshly opened chat pins to the newest */
     tg_gui_window_apply_selection(state);
     if (tg_gui_session_is_open()) {
         state->message_count = 0;
@@ -580,10 +581,50 @@ static void tg_gui_amiga_easyreq(struct Window *win, const char *title,
     (void)EasyRequestArgs(win, &es, 0, 0);
 }
 
+/* Persist the last window size to a small file next to the binary (Work:TGh,
+   which survives a reboot) so a reopen restores it; a roomier default on first
+   run than the old 600x380. */
+static void tg_gui_window_load_size(int *w, int *h)
+{
+    FILE *f;
+    int rw;
+    int rh;
+
+    *w = 820;
+    *h = 560;
+    rw = 0;
+    rh = 0;
+    f = fopen("telegram-gui-win.txt", "r");
+    if (f != 0) {
+        if (fscanf(f, "%d %d", &rw, &rh) == 2 && rw >= 320 && rh >= 200 &&
+            rw <= 4096 && rh <= 4096) {
+            *w = rw;
+            *h = rh;
+        }
+        fclose(f);
+    }
+}
+
+static void tg_gui_window_save_size(int w, int h)
+{
+    FILE *f;
+
+    if (w < 320 || h < 200) {
+        return;
+    }
+    f = fopen("telegram-gui-win.txt", "w");
+    if (f != 0) {
+        fprintf(f, "%d %d\n", w, h);
+        fclose(f);
+    }
+}
+
 int tg_gui_run_window(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
     tg_gui_backend backend;
+    int init_w;
+    int init_h;
     struct TagItem tags[18];
     struct ColorMap *cmap;
     struct TextFont *font;
@@ -653,13 +694,14 @@ int tg_gui_run_window(tg_gui_state *state)
     }
 
     memset(&ctx, 0, sizeof(ctx));
+    tg_gui_window_load_size(&init_w, &init_h);
     i = 0;
     tags[i].ti_Tag = WA_Title;
     tags[i++].ti_Data = TG_GUI_TAG("Telegram Amiga - GUI");
     tags[i].ti_Tag = WA_InnerWidth;
-    tags[i++].ti_Data = 600;
+    tags[i++].ti_Data = (ULONG)init_w;
     tags[i].ti_Tag = WA_InnerHeight;
-    tags[i++].ti_Data = 380;
+    tags[i++].ti_Data = (ULONG)init_h;
     tags[i].ti_Tag = WA_DragBar;
     tags[i++].ti_Data = TRUE;
     tags[i].ti_Tag = WA_DepthGadget;
@@ -683,7 +725,12 @@ int tg_gui_run_window(tg_gui_state *state)
     tags[i].ti_Tag = WA_IDCMP;
     tags[i++].ti_Data = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_RAWKEY |
                         IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS |
-                        IDCMP_MOUSEBUTTONS | IDCMP_MENUPICK;
+                        IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_MENUPICK;
+    /* MOUSEMOVE is only delivered with REPORTMOUSE (or a follow-mouse gadget),
+       so the scrollbar knob-drag needs this. The handler ignores moves unless a
+       knob is grabbed, so the extra reports cost nothing when idle. */
+    tags[i].ti_Tag = WA_ReportMouse;
+    tags[i++].ti_Data = TRUE;
     tags[i].ti_Tag = TAG_END;
     tags[i++].ti_Data = 0;
 
@@ -798,14 +845,19 @@ int tg_gui_run_window(tg_gui_state *state)
     state->history_count = 0;
     state->history_pos = -1;
     state->history_draft[0] = '\0';
+    state->chat_scroll = 0;
+    state->transcript_scroll = 0;
+    state->sb_drag = 0;
     /* A login screen shows its caret from the first frame. */
     state->cursor_on = (state->mode != TG_GUI_MODE_CHAT) ? 1 : 0;
     caret_ticks = 0;
     while (!done) {
         struct IntuiMessage *msg;
         int session_dirty;
+        int scroll_dirty;
 
         session_dirty = 0;
+        scroll_dirty = 0;
         (void)Wait(1L << ctx.window->UserPort->mp_SigBit);
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
@@ -915,6 +967,31 @@ int tg_gui_run_window(tg_gui_state *state)
                     tg_gui_paint(state, &backend);
                 }
                 /* Chat selection is on the function keys now (IDCMP_RAWKEY). */
+            } else if (msg_class == IDCMP_RAWKEY &&
+                       (msg_code == 0x7A || msg_code == 0x7B) &&
+                       state->mode == TG_GUI_MODE_CHAT) {
+                /* Mouse wheel (NewMouse RAWKEY 0x7A up / 0x7B down): scroll the
+                   panel under the pointer. The up-transition arrives as
+                   0xFA/0xFB and is ignored by the strict == tests (fires once).
+                   Works while composing too (no gate). */
+                int sw;
+                int hx;
+
+                sw = tg_gui_sidebar_w(ctx.inner_w);
+                hx = (int)mouse_x - ctx.origin_x;
+                if (hx < sw) {
+                    state->chat_scroll += (msg_code == 0x7A) ? -3 : 3;
+                    if (state->chat_scroll < 0) {
+                        state->chat_scroll = 0;
+                    }
+                } else {
+                    /* 0x7A reveals older history (scroll up), 0x7B newer. */
+                    state->transcript_scroll += (msg_code == 0x7A) ? 3 : -3;
+                    if (state->transcript_scroll < 0) {
+                        state->transcript_scroll = 0;
+                    }
+                }
+                scroll_dirty = 1;
             } else if (msg_class == IDCMP_RAWKEY && state->composing &&
                        state->mode == TG_GUI_MODE_CHAT) {
                 /* While composing, LEFT/RIGHT move the caret within the input.
@@ -989,6 +1066,15 @@ int tg_gui_run_window(tg_gui_state *state)
                         idx != state->selected_chat) {
                         tg_gui_window_open_selection(state, idx, &backend);
                     }
+                } else if (msg_code == 0x4C) { /* cursor up: older messages */
+                    state->transcript_scroll += 3;
+                    scroll_dirty = 1;
+                } else if (msg_code == 0x4D) { /* cursor down: newer messages */
+                    state->transcript_scroll -= 3;
+                    if (state->transcript_scroll < 0) {
+                        state->transcript_scroll = 0;
+                    }
+                    scroll_dirty = 1;
                 }
             } else if (msg_class == IDCMP_MENUPICK) {
                 UWORD mnum;
@@ -1074,13 +1160,66 @@ int tg_gui_run_window(tg_gui_state *state)
                 }
             } else if (msg_class == IDCMP_MOUSEBUTTONS &&
                        state->mode == TG_GUI_MODE_CHAT) {
-                if (msg_code == SELECTDOWN) {
-                    int hx;
-                    int hy;
+                int hx;
+                int hy;
+
+                hx = (int)mouse_x - ctx.origin_x;
+                hy = (int)mouse_y - ctx.origin_y;
+                if (msg_code == SELECTUP) {
+                    state->sb_drag = 0;
+                } else if (msg_code == SELECTDOWN && state->sb_tr_max > 0 &&
+                           hx >= state->sb_tr_x &&
+                           hx < state->sb_tr_x + TG_GUI_SCROLLBAR_W &&
+                           hy >= state->sb_tr_ty &&
+                           hy < state->sb_tr_ty + state->sb_tr_th) {
+                    if (hy >= state->sb_tr_ky &&
+                        hy < state->sb_tr_ky + state->sb_tr_kh) {
+                        state->sb_drag = 2;
+                        state->sb_grab_dy = hy - state->sb_tr_ky;
+                    } else {
+                        int page = state->message_count - state->sb_tr_max;
+
+                        if (page < 1) {
+                            page = 1;
+                        }
+                        if (hy < state->sb_tr_ky) {
+                            state->transcript_scroll += page;
+                        } else {
+                            state->transcript_scroll -= page;
+                            if (state->transcript_scroll < 0) {
+                                state->transcript_scroll = 0;
+                            }
+                        }
+                        scroll_dirty = 1;
+                    }
+                } else if (msg_code == SELECTDOWN && state->sb_list_max > 0 &&
+                           hx >= state->sb_list_x &&
+                           hx < state->sb_list_x + TG_GUI_SCROLLBAR_W &&
+                           hy >= state->sb_list_ty &&
+                           hy < state->sb_list_ty + state->sb_list_th) {
+                    if (hy >= state->sb_list_ky &&
+                        hy < state->sb_list_ky + state->sb_list_kh) {
+                        state->sb_drag = 1;
+                        state->sb_grab_dy = hy - state->sb_list_ky;
+                    } else {
+                        int page = state->chat_count - state->sb_list_max;
+
+                        if (page < 1) {
+                            page = 1;
+                        }
+                        if (hy < state->sb_list_ky) {
+                            state->chat_scroll -= page;
+                            if (state->chat_scroll < 0) {
+                                state->chat_scroll = 0;
+                            }
+                        } else {
+                            state->chat_scroll += page;
+                        }
+                        scroll_dirty = 1;
+                    }
+                } else if (msg_code == SELECTDOWN) {
                     int hit;
 
-                    hx = (int)mouse_x - ctx.origin_x;
-                    hy = (int)mouse_y - ctx.origin_y;
                     hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
                                           ctx.line_h, hx, hy);
                     if (hit >= 0) {
@@ -1129,9 +1268,55 @@ int tg_gui_run_window(tg_gui_state *state)
                         tg_gui_paint(state, &backend);
                     }
                 }
+            } else if (msg_class == IDCMP_MOUSEMOVE) {
+                /* Intuition reports moves while a button is held -- so this only
+                   fires during a knob drag. Map the cursor to a scroll offset;
+                   the painter re-clamps and redraws the knob to match. */
+                if (state->sb_drag != 0) {
+                    int hy;
+                    int nky;
+                    int span;
+
+                    hy = (int)mouse_y - ctx.origin_y;
+                    if (state->sb_drag == 2) {
+                        span = state->sb_tr_th - state->sb_tr_kh;
+                        nky = hy - state->sb_grab_dy;
+                        if (nky < state->sb_tr_ty) {
+                            nky = state->sb_tr_ty;
+                        }
+                        if (nky > state->sb_tr_ty + span) {
+                            nky = state->sb_tr_ty + span;
+                        }
+                        if (span > 0) {
+                            int off_top;
+
+                            off_top = (nky - state->sb_tr_ty) *
+                                      state->sb_tr_max / span;
+                            state->transcript_scroll =
+                                state->sb_tr_max - off_top;
+                            if (state->transcript_scroll < 0) {
+                                state->transcript_scroll = 0;
+                            }
+                        }
+                    } else {
+                        span = state->sb_list_th - state->sb_list_kh;
+                        nky = hy - state->sb_grab_dy;
+                        if (nky < state->sb_list_ty) {
+                            nky = state->sb_list_ty;
+                        }
+                        if (nky > state->sb_list_ty + span) {
+                            nky = state->sb_list_ty + span;
+                        }
+                        if (span > 0) {
+                            state->chat_scroll = (nky - state->sb_list_ty) *
+                                                 state->sb_list_max / span;
+                        }
+                    }
+                    scroll_dirty = 1;
+                }
             }
         }
-        if (session_dirty) {
+        if (session_dirty || scroll_dirty) {
             tg_gui_paint(state, &backend);
         }
     }
@@ -1158,6 +1343,7 @@ int tg_gui_run_window(tg_gui_state *state)
     }
     tg_gui_log("window: releasing pens");
     tg_gui_amiga_release_pens(&ctx, cmap);
+    tg_gui_window_save_size(ctx.inner_w, ctx.inner_h);
     tg_gui_log("window: CloseWindow");
     CloseWindow(ctx.window);
     ctx.window = 0;

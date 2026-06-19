@@ -76,6 +76,10 @@ struct tg_gui_backend {
 #define TG_GUI_INITIALS_MAX 4
 #define TG_GUI_REPLY_MAX 96
 
+/* Width of the custom-drawn vertical scrollbars; shared with the event loop so
+   a click maps to the same strip the painter drew. */
+#define TG_GUI_SCROLLBAR_W 14
+
 typedef struct tg_gui_chat {
     char name[TG_GUI_NAME_MAX];
     char preview[TG_GUI_TEXT_MAX];
@@ -124,6 +128,15 @@ typedef struct tg_gui_state {
     char subtitle[TG_GUI_NAME_MAX];
     tg_gui_message messages[TG_GUI_MAX_MESSAGES];
     int message_count;
+    int chat_scroll;       /* first visible chat row in the sidebar (0 = top) */
+    int transcript_scroll; /* newest messages hidden below the view (0 = pinned newest) */
+    /* Scrollbar geometry the painter caches each frame for the event loop's
+       knob-drag / track-click (only the painter has the backend to size the
+       transcript). *_max == 0 means no bar / nothing to drag. */
+    int sb_list_x, sb_list_ty, sb_list_th, sb_list_ky, sb_list_kh, sb_list_max;
+    int sb_tr_x, sb_tr_ty, sb_tr_th, sb_tr_ky, sb_tr_kh, sb_tr_max;
+    int sb_drag;    /* 0 none, 1 chat list, 2 transcript -- a knob being dragged */
+    int sb_grab_dy; /* cursor y within the knob when the drag began */
     char input[TG_GUI_TEXT_MAX];
     char status[TG_GUI_NAME_MAX];
     int theme;
@@ -158,6 +171,10 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend);
 #define TG_GUI_HIT_SEND (-3)  /* the Send button */
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
+
+/* The sidebar (chat-list) width for a window width -- shared with the event
+   loop so a mouse-wheel can tell which panel the pointer is over. */
+int tg_gui_sidebar_w(int width);
 
 /* Toggles the leading full-window background clear in tg_gui_paint (default
    on). Turn it off for an in-place repaint of unchanged, opaque content -- the
