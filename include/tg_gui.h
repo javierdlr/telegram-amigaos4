@@ -163,6 +163,11 @@ void tg_gui_demo_state(tg_gui_state *state);
    host backend records the calls for the self-test. */
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend);
 
+/* Repaints ONLY the active caret region (composer input row in chat mode, login
+   input box otherwise). Lets the ~2 Hz caret blink avoid a full-window repaint,
+   which was visible as a constant refresh on slow OS3 planar displays. */
+void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend);
+
 /* Maps a click at renderer-space (x, y) to an actionable region, so a mouse
    can drive the same things the keyboard does. Returns a chat-row index
    (0..chat_count-1) to open that chat, or one of the negative codes below. */

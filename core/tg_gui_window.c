@@ -1119,9 +1119,10 @@ int tg_gui_run_window(tg_gui_state *state)
                     if (++caret_ticks >= 5) {
                         caret_ticks = 0;
                         state->cursor_on = !state->cursor_on;
-                        tg_gui_set_background_clear(0);
-                        tg_gui_paint(state, &backend);
-                        tg_gui_set_background_clear(1);
+                        /* Repaint ONLY the login input box, not the whole window
+                           -- a full repaint twice a second was a visible refresh
+                           on OS3. */
+                        tg_gui_paint_caret(state, &backend);
                     }
                 } else {
                     time_t now;
@@ -1130,12 +1131,10 @@ int tg_gui_run_window(tg_gui_state *state)
                     if (state->composing && ++caret_ticks >= 5) {
                         caret_ticks = 0;
                         state->cursor_on = !state->cursor_on;
-                        /* Opaque in-place repaint (no full-window clear) so the
-                           blink does not flash the background; the input field
-                           fill still erases the previous caret. */
-                        tg_gui_set_background_clear(0);
-                        tg_gui_paint(state, &backend);
-                        tg_gui_set_background_clear(1);
+                        /* Repaint ONLY the composer input row, not the whole
+                           window -- the previous full repaint twice a second was
+                           a visible refresh on slow OS3 planar displays. */
+                        tg_gui_paint_caret(state, &backend);
                     }
 
                     /* Live poll on the watch interval -- now runs even while the

@@ -11811,6 +11811,10 @@ int tg_gui_session_send(const char *text, FILE *stream)
     unsigned long sent_id;
     unsigned long prev_timeout;
     int rc;
+    const char *send_text;
+#if TG_MTPROTO_DISPLAY_LATIN1
+    char send_line[1024];
+#endif
 
     if (!tg_gui_session_state.open || stream == 0 || text == 0 ||
         text[0] == '\0' ||
@@ -11821,18 +11825,31 @@ int tg_gui_session_send(const char *text, FILE *stream)
     prev_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(10UL);
     sent_id = 0UL;
+    send_text = text;
+#if TG_MTPROTO_DISPLAY_LATIN1
+    /* The composer text is ISO-8859-1 (Amiga keymap); convert to UTF-8 so
+       accented characters (a-grave = 0xE0, etc.) reach Telegram intact instead
+       of being sent as a lone high byte (invalid UTF-8 -> U+FFFD). Mirrors the
+       TUI send path. The composer is at most TG_GUI_TEXT_MAX bytes, so the
+       worst-case 2x expansion still fits send_line[1024]; on overflow fall back
+       to the raw text (best effort). */
+    if (tg_mtproto_latin1_to_utf8(text, send_line, sizeof(send_line))) {
+        send_text = send_line;
+    }
+#endif
     rc = tg_mtproto_auth_send_peer_on_context(
         tg_gui_session_state.host, tg_gui_session_state.port,
         tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
         tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
         tg_gui_session_state.peer_cache_file,
-        tg_gui_session_state.current_peer_index, text, &sent_id, quiet);
+        tg_gui_session_state.current_peer_index, send_text, &sent_id, quiet);
     if (rc == 0) {
         /* Show the sent message at once, optimistically, with no extra network
            round-trip -- a confirm-poll is slow and unreliable on MorphOS (it
-           was the "sent but not shown" symptom). The text is already Latin-1
-           (typed), and the open-chat poll uses include_outgoing=0, so it is
-           never re-fetched into a duplicate. */
+           was the "sent but not shown" symptom). Echo the ORIGINAL Latin-1
+           `text` (NOT send_text): the GUI renderer is Latin-1, so passing the
+           UTF-8 copy would double-encode into mojibake. The open-chat poll uses
+           include_outgoing=0, so it is never re-fetched into a duplicate. */
         tg_gui_driver_append_own(&tg_gui_session_state.gui_driver, text,
                                  tg_gui_session_state.own_label);
     }

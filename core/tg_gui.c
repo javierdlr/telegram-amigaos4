@@ -775,6 +775,87 @@ static int tg_gui_message_height(tg_gui_backend *backend,
     return header_h + reply_h + (line_count * lh) + (has_status ? lh : 0) + 6 + 6;
 }
 
+/* Draws just the bottom composer row: the input box, the typed text (or the
+   placeholder / idle text) with the blinking caret, and the Send button.
+   Factored out of tg_gui_paint_main so the caret blink (tg_gui_paint_caret) can
+   repaint ONLY this strip instead of the whole window -- a full repaint twice a
+   second was visible as a constant refresh on slow planar displays (OS3). The
+   geometry is recomputed from the backend so it matches tg_gui_paint_main. */
+static void tg_gui_paint_input_row(const tg_gui_state *state,
+                                   tg_gui_backend *backend)
+{
+    int width;
+    int height;
+    int lh;
+    int sidebar_w;
+    int status_h;
+    int content_h;
+    int area_x;
+    int input_h;
+    int input_baseline;
+
+    width = backend->width(backend);
+    height = backend->height(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || height <= 0 || lh <= 0) {
+        return;
+    }
+    status_h = lh + 6;
+    content_h = height - status_h;
+    sidebar_w = tg_gui_sidebar_w(width);
+    area_x = sidebar_w + 12;
+    input_h = lh + 14;
+    /* Vertically centre the text line inside the input/Send box (height
+       input_h - 4 = lh + 10). The optical centre sits a couple of pixels below
+       box_top + lh once the Amiga bitmap-font descent (~2px) is accounted for. */
+    input_baseline = content_h - input_h + lh + 2;
+
+    backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
+                       tg_gui_make_rect(sidebar_w + 8, content_h - input_h,
+                                        width - sidebar_w - 16, input_h - 4));
+    if (state->composing) {
+        int caret_x;
+
+        caret_x = area_x;
+        if (state->input[0] != '\0') {
+            unsigned long caret_off;
+
+            backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x, input_baseline,
+                               state->input,
+                               (unsigned long)strlen(state->input));
+            /* Caret after the prefix up to input_caret (not the end), so LEFT/
+               RIGHT move it within the typed text. */
+            caret_off = (unsigned long)state->input_caret;
+            if (caret_off > (unsigned long)strlen(state->input)) {
+                caret_off = (unsigned long)strlen(state->input);
+            }
+            caret_x = area_x + backend->text_width(backend, state->input,
+                                                   caret_off) +
+                      1;
+        }
+        /* A caret bar at the cursor position; the window toggles cursor_on so
+           it blinks while composing. */
+        if (state->cursor_on) {
+            backend->fill_rect(backend, TG_GUI_PEN_TEXT,
+                               tg_gui_make_rect(caret_x, input_baseline - lh + 1,
+                                                2, lh));
+        }
+    } else if (state->input[0] != '\0') {
+        backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x,
+                           input_baseline, state->input,
+                           (unsigned long)strlen(state->input));
+    } else {
+        backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, area_x,
+                           input_baseline, "Write a message...",
+                           18UL);
+    }
+    backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                       tg_gui_make_rect(width - 64, content_h - input_h, 56,
+                                        input_h - 4));
+    backend->draw_text(backend, TG_GUI_PEN_ACCENT_TEXT, width - 56,
+                       input_baseline, "Send", 4UL);
+}
+
 static void tg_gui_paint_main(const tg_gui_state *state,
                               tg_gui_backend *backend, int sidebar_w,
                               int width, int content_h, int lh)
@@ -783,13 +864,20 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     int area_w;
     int header_h;
     int input_h;
-    int input_baseline;
     int y;
     int i;
     int transcript_bottom;
     int last;
     int transcript_top;
     tg_gui_state *st;
+
+    /* Clear this panel's own background (the sidebar already does the same), so
+       tg_gui_paint no longer needs a leading full-window clear that flashed the
+       entire window on every repaint -- very visible on OS3 planar displays. The
+       sidebar + this main panel + the status bar tile the whole window. */
+    backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
+                       tg_gui_make_rect(sidebar_w, 0, width - sidebar_w,
+                                        content_h));
 
     area_x = sidebar_w + 12;
     area_w = width - sidebar_w - 24 - TG_GUI_SCROLLBAR_W;
@@ -811,12 +899,6 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     }
 
     input_h = lh + 14;
-    /* Vertically centre the text line inside the input/Send box (height
-       input_h - 4 = lh + 10). The old baseline (box_top + lh) rode high; a
-       full geometric centre sat too low once the Amiga bitmap-font descent
-       (~2px below the baseline) is accounted for. The optical centre is a
-       couple of pixels below box_top + lh. */
-    input_baseline = content_h - input_h + lh + 2;
     transcript_bottom = content_h - input_h - 4;
 
     /* One full line below the subtitle baseline so the first incoming bubble's
@@ -929,50 +1011,7 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                                  transcript_bottom);
     }
 
-    backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
-                       tg_gui_make_rect(sidebar_w + 8, content_h - input_h,
-                                        width - sidebar_w - 16, input_h - 4));
-    if (state->composing) {
-        int caret_x;
-
-        caret_x = area_x;
-        if (state->input[0] != '\0') {
-            unsigned long caret_off;
-
-            backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x, input_baseline,
-                               state->input,
-                               (unsigned long)strlen(state->input));
-            /* Caret after the prefix up to input_caret (not the end), so LEFT/
-               RIGHT move it within the typed text. */
-            caret_off = (unsigned long)state->input_caret;
-            if (caret_off > (unsigned long)strlen(state->input)) {
-                caret_off = (unsigned long)strlen(state->input);
-            }
-            caret_x = area_x + backend->text_width(backend, state->input,
-                                                   caret_off) +
-                      1;
-        }
-        /* A caret bar at the cursor position; the window toggles cursor_on so
-           it blinks while composing. */
-        if (state->cursor_on) {
-            backend->fill_rect(backend, TG_GUI_PEN_TEXT,
-                               tg_gui_make_rect(caret_x, input_baseline - lh + 1,
-                                                2, lh));
-        }
-    } else if (state->input[0] != '\0') {
-        backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x,
-                           input_baseline, state->input,
-                           (unsigned long)strlen(state->input));
-    } else {
-        backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, area_x,
-                           input_baseline, "Write a message...",
-                           18UL);
-    }
-    backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
-                       tg_gui_make_rect(width - 64, content_h - input_h, 56,
-                                        input_h - 4));
-    backend->draw_text(backend, TG_GUI_PEN_ACCENT_TEXT, width - 56,
-                       input_baseline, "Send", 4UL);
+    tg_gui_paint_input_row(state, backend);
 }
 
 /* Sidebar width for a given window width -- shared by the painter and the
@@ -1057,11 +1096,13 @@ static void tg_gui_draw_centered(tg_gui_backend *backend, int pen, int width,
     tg_gui_draw_clipped(backend, pen, x, baseline, text, width - x - 2);
 }
 
-/* The first-login screen: a centered panel with the title, the current prompt
-   (state->status), the input field (masked for the 2FA password) with caret,
-   and a key hint. Shown while state->mode is a TG_GUI_MODE_LOGIN_* value. */
-static void tg_gui_paint_login(const tg_gui_state *state,
-                               tg_gui_backend *backend)
+/* Draws just the login input box: the SURFACE field, the typed text (masked for
+   the 2FA password) centred in the box, and the blinking caret. Factored out of
+   tg_gui_paint_login so the caret blink (tg_gui_paint_caret) repaints ONLY this
+   box, not the whole login screen. Geometry is recomputed to match
+   tg_gui_paint_login. */
+static void tg_gui_paint_login_input(const tg_gui_state *state,
+                                     tg_gui_backend *backend)
 {
     int width;
     int height;
@@ -1081,17 +1122,8 @@ static void tg_gui_paint_login(const tg_gui_state *state,
     if (width <= 0 || height <= 0 || lh <= 0) {
         return;
     }
-    if (tg_gui_clear_background) {
-        backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
-                           tg_gui_make_rect(0, 0, width, height));
-    }
     cx = width / 2;
     mid = height / 2;
-
-    tg_gui_draw_centered(backend, TG_GUI_PEN_ACCENT, width, mid - (3 * lh),
-                         "Telegram Amiga");
-    tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT, width, mid - lh,
-                         state->status);
 
     box_w = (width - 40 < 280) ? (width - 40) : 280;
     if (box_w < 40) {
@@ -1144,8 +1176,56 @@ static void tg_gui_paint_login(const tg_gui_state *state,
             }
         }
     }
+}
+
+/* The first-login screen: a centered panel with the title, the current prompt
+   (state->status), the input field (masked for the 2FA password) with caret,
+   and a key hint. Shown while state->mode is a TG_GUI_MODE_LOGIN_* value. */
+static void tg_gui_paint_login(const tg_gui_state *state,
+                               tg_gui_backend *backend)
+{
+    int width;
+    int height;
+    int lh;
+    int mid;
+
+    width = backend->width(backend);
+    height = backend->height(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || height <= 0 || lh <= 0) {
+        return;
+    }
+    if (tg_gui_clear_background) {
+        backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
+                           tg_gui_make_rect(0, 0, width, height));
+    }
+    mid = height / 2;
+
+    tg_gui_draw_centered(backend, TG_GUI_PEN_ACCENT, width, mid - (3 * lh),
+                         "Telegram Amiga");
+    tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT, width, mid - lh,
+                         state->status);
+
+    tg_gui_paint_login_input(state, backend);
+
     tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT_DIM, width, mid + (3 * lh),
                          "ENTER confirms   ESC quits");
+}
+
+/* Repaints ONLY the active caret region -- the composer input row in chat mode,
+   or the login input box otherwise -- so the ~2 Hz caret blink no longer
+   repaints the whole window (a visible, constant refresh on slow OS3 displays).
+   Geometry is recomputed by the panel helpers to match a full tg_gui_paint. */
+void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend)
+{
+    if (state == 0 || backend == 0) {
+        return;
+    }
+    if (state->mode != TG_GUI_MODE_CHAT) {
+        tg_gui_paint_login_input(state, backend);
+    } else {
+        tg_gui_paint_input_row(state, backend);
+    }
 }
 
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
@@ -1178,10 +1258,10 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
        width-160]. */
     sidebar_w = tg_gui_sidebar_w(width);
 
-    if (tg_gui_clear_background) {
-        backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
-                           tg_gui_make_rect(0, 0, width, height));
-    }
+    /* No leading full-window clear: tg_gui_paint_sidebar, tg_gui_paint_main and
+       the status bar below each fill their own region, so they tile the whole
+       window. This avoids the full-window flash that was visible as a constant
+       refresh on slow OS3 planar displays. */
     tg_gui_paint_sidebar(state, backend, sidebar_w, content_h, lh);
     tg_gui_paint_main(state, backend, sidebar_w, width, content_h, lh);
 
