@@ -27,6 +27,10 @@
 #include <dos/dos.h>
 
 struct Library *SocketBase = 0;
+/* NB: CloseSocket() is already available as a macro from the AROS bsdsocket
+   defines (defines/bsdsocket.h, via SocketBase); we use it instead of close()
+   to release a failed-connect socket -- close() leaves it in AROSTCP's list and
+   the later CloseLibrary re-closes it, GURUing (soclose -> bsd_free). */
 #else
 #include <termios.h>
 #endif
@@ -638,20 +642,33 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     }
 #endif
 
-    host_entry = gethostbyname(host);
-    if (host_entry == 0 || host_entry->h_addr_list == 0 ||
-        host_entry->h_addr_list[0] == 0) {
-        tg_platform_set_error(error_buffer, error_buffer_size, "host lookup failed");
-#if defined(__AROS__)
-        tg_aros_close_socket_library();
-#endif
-        return TG_NET_RESOLVE_FAILED;
-    }
-
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_port = htons((unsigned short)port_number);
-    memcpy(&address.sin_addr, host_entry->h_addr_list[0], sizeof(address.sin_addr));
+    {
+        /* Telegram DC addresses are numeric IPv4 literals. Parse them with
+           inet_addr() and SKIP gethostbyname(): AROS/AROSTCP's gethostbyname()
+           on x86_64 corrupts the socket heap for an IP literal (a freed block
+           ends up holding the IP string -> GURU in soclose/bsd_free when the
+           socket is later closed). Only fall back to DNS for real host names. */
+        unsigned long numeric = (unsigned long)(unsigned int)inet_addr(host);
+        if (numeric != 0xFFFFFFFFUL) {
+            address.sin_addr.s_addr = (unsigned int)numeric;
+        } else {
+            host_entry = gethostbyname(host);
+            if (host_entry == 0 || host_entry->h_addr_list == 0 ||
+                host_entry->h_addr_list[0] == 0) {
+                tg_platform_set_error(error_buffer, error_buffer_size,
+                                      "host lookup failed");
+#if defined(__AROS__)
+                tg_aros_close_socket_library();
+#endif
+                return TG_NET_RESOLVE_FAILED;
+            }
+            memcpy(&address.sin_addr, host_entry->h_addr_list[0],
+                   sizeof(address.sin_addr));
+        }
+    }
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -675,12 +692,14 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
         return TG_NET_OK;
     }
 
-    close(sock);
 #if defined(__AROS__)
+    /* CloseSocket(), not close(): close() leaves a failed-connect socket in
+       AROSTCP's list and the CloseLibrary below would re-close it and crash. */
+    CloseSocket(sock);
     tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
-#endif
-#if defined(__AROS__)
     tg_aros_close_socket_library();
+#else
+    close(sock);
 #endif
     return TG_NET_CONNECT_FAILED;
 }
