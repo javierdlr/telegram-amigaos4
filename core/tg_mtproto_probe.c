@@ -7748,10 +7748,11 @@ static int tg_mtproto_auth_send_peer_on_context(
 
 /* Refresh the open chat's read_outbox_max_id (how far the peer has read OUR
    messages -- the read-receipt cursor) with a one-peer messages.getPeerDialogs.
-   NOTE: despite the tiny reply, getPeerDialogs hard-freezes MorphOS, so this is
-   compiled out there (read receipts are suppressed on MorphOS). Sets *out to the
-   cursor (0 if the chat is absent / unread); returns 0 on success, non-zero. */
-#if !defined(__MORPHOS__) && !defined(__MORPHOS)
+   Sets *out to the cursor (0 if the chat is absent / unread); returns 0 on
+   success, non-zero. Re-enabled on MorphOS 2026-06-20: the "window opens then
+   freezes on the first tick" symptom this was disabled for was the unserialized
+   first-tick repaint racing the layer build, now cured by the LockLayerRom
+   bracket in tg_gui_window.c -- not the (tiny one-peer) getPeerDialogs reply. */
 static int tg_mtproto_chat_fetch_read_outbox_on_context(
     const char *host,
     const char *port,
@@ -7826,7 +7827,6 @@ static int tg_mtproto_chat_fetch_read_outbox_on_context(
     }
     return 0;
 }
-#endif /* !__MORPHOS__ : read-receipt getPeerDialogs is freeze-unsafe on MorphOS */
 
 static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
 {
@@ -11612,16 +11612,19 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     tg_chat_engine_init(&tg_gui_session_state.engine);
     tg_chat_nq = &tg_gui_session_state.engine.notify;
     tg_chat_notify_reset(&tg_gui_session_state.engine.notify, 1);
-    /* Arm the live typing sink (the push collector writes it; the tick reads
-       it). Stays NULL-armed on MorphOS too -- pushes are off there, so it
-       simply never fires, which is the intended clean degrade. */
+    /* Arm the live typing sink (the push collector writes it; the tick reads it)
+       and turn ON the update push stream so "<name> is typing" arrives -- typing
+       is a transient updateShort that the getDifference drain never carries, so
+       pushes are the ONLY path. Now enabled on MorphOS too (2026-06-20): the deep
+       freeze that justified keeping pushes off there was the unserialized repaint
+       racing the layer build (now cured by the LockLayerRom bracket). CAVEAT: a
+       busy account's initial update backlog still floods the slow bsdsocket link
+       at session open -- with the layer lock that degrades to SLOW, no longer a
+       freeze, but if it is too slow on a packed account this is the first knob to
+       reconsider (a backlog-draining strategy, or pushes off again). */
     memset(&tg_gui_session_state.typing, 0, sizeof(tg_gui_session_state.typing));
     tg_chat_typing_target = &tg_gui_session_state.typing;
-#if defined(__MORPHOS__) || defined(__MORPHOS)
-    tg_mtproto_set_session_updates(0);
-#else
     tg_mtproto_set_session_updates(1);
-#endif
     tg_gui_chat_driver_bind(&tg_gui_session_state.gui_driver, state,
                             &tg_gui_session_state.driver);
 
@@ -11780,11 +11783,9 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.own_label);
     tg_chat_message_driver_override = 0;
     /* One getPeerDialogs read so own messages already read by the peer show the
-       double-check at open (the tick refreshes it live thereafter).
-       NOT on MorphOS: getPeerDialogs/dialogs payloads reproducibly hard-freeze
-       the machine there (documented), so read receipts are suppressed on MorphOS
-       like pushes/typing already are. Read state simply stays at the single check. */
-#if !defined(__MORPHOS__) && !defined(__MORPHOS)
+       double-check at open (the tick refreshes it live thereafter). Now ALSO on
+       MorphOS: the freeze this was disabled for was the first-tick repaint racing
+       the layer build (cured by the LockLayerRom bracket), not the tiny reply. */
     {
         unsigned long read_max;
 
@@ -11798,7 +11799,6 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
                 &tg_gui_session_state.gui_driver, read_max);
         }
     }
-#endif
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_gui_log("open_chat: done");
@@ -11911,12 +11911,11 @@ int tg_gui_session_tick(FILE *stream)
         }
         /* Refresh the peer's read cursor so own messages flip to the double-
            check once the peer reads them. Throttled: read state changes slowly
-           and getPeerDialogs is a needless round-trip on every short tick.
-           Skipped entirely on MorphOS: getPeerDialogs reproducibly hard-freezes
-           that machine (same family as the dialogs payloads), so read receipts
-           are suppressed there exactly as pushes/typing already are. This was the
-           "window opens then freezes on the first tick" regression from a1aad83. */
-#if !defined(__MORPHOS__) && !defined(__MORPHOS)
+           and getPeerDialogs is a needless round-trip on every short tick. Now
+           runs on MorphOS too: the "window opens then freezes on the first tick"
+           regression (a1aad83) this was disabled for was the unserialized repaint
+           racing the layer build, cured by the LockLayerRom bracket -- the reply
+           is one peer. Cadence kept (the round-trip still costs on the slow link). */
         {
             unsigned long read_cadence;
 
@@ -11941,7 +11940,6 @@ int tg_gui_session_tick(FILE *stream)
                 }
             }
         }
-#endif
     }
     /* The cadence-gated getDifference drain harvests inbound messages into the
        notify queue. As on the console: every tick on MorphOS (where pushes are
@@ -11950,8 +11948,14 @@ int tg_gui_session_tick(FILE *stream)
     if (tg_gui_session_state.engine.diff_enabled) {
         unsigned long diff_cadence;
 
+        /* MorphOS GUI: with pushes now ON (typing/read-receipts re-enabled) the
+           live cross-chat stream arrives via pushes, so the getDifference drain
+           reverts from every-tick to a periodic backstop (every 4th tick) that
+           recovers anything a dropped push missed. This is what lets watch_seconds
+           drop to 6 without each tick getting heavier. The open chat's own new
+           messages do not depend on this drain (the history poll carries them). */
 #if defined(__MORPHOS__) || defined(__MORPHOS)
-        diff_cadence = 1UL;
+        diff_cadence = 4UL;
 #else
         diff_cadence = 30UL;
 #endif

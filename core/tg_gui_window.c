@@ -362,6 +362,50 @@ static void tg_gui_window_apply_selection(tg_gui_state *state)
     state->title[i] = '\0';
 }
 
+/* Serialize every direct render against Intuition's layer machinery.
+   OpenWindowTagList guarantees only a non-NULL Window -- NOT when the layer is
+   safe to draw -- and the input.device/intuition task edits this window's
+   ClipRect list at activation, sizing and dragging. An unserialized RastPort
+   write while it does so corrupts the cliprect chain and, on MorphOS, freezes
+   the whole box inside layers3d (DSI). LockLayerRom()/UnlockLayerRom() (the only
+   layers.library pair the autodocs sanction for Intuition windows; reached here
+   through graphics.library / GfxBase, already open, so no extra library) blocks
+   Intuition from touching the layer while we render. The bracket is short (one
+   full renderer paint of pure graphics ops -- no Intuition calls inside, which
+   the LockLayer autodoc forbids) and rport->Layer is the window's layer for our
+   non-GIMMEZEROZERO window. The IDCMP_REFRESHWINDOW path does NOT use these: it
+   already runs inside BeginRefresh()'s own layer lock. */
+static void tg_gui_window_paint(const tg_gui_state *state,
+                                tg_gui_backend *backend)
+{
+    tg_gui_amiga_ctx *c = (tg_gui_amiga_ctx *)backend->context;
+    struct Layer *layer = (c != 0 && c->rport != 0) ? c->rport->Layer : 0;
+
+    if (layer != 0) {
+        LockLayerRom(layer);
+    }
+    tg_gui_paint(state, backend);
+    if (layer != 0) {
+        UnlockLayerRom(layer);
+    }
+}
+
+/* Caret-only blink repaint, same layer-lock discipline as tg_gui_window_paint(). */
+static void tg_gui_window_paint_caret(const tg_gui_state *state,
+                                      tg_gui_backend *backend)
+{
+    tg_gui_amiga_ctx *c = (tg_gui_amiga_ctx *)backend->context;
+    struct Layer *layer = (c != 0 && c->rport != 0) ? c->rport->Layer : 0;
+
+    if (layer != 0) {
+        LockLayerRom(layer);
+    }
+    tg_gui_paint_caret(state, backend);
+    if (layer != 0) {
+        UnlockLayerRom(layer);
+    }
+}
+
 /* Switch to chat `sel`: show its header + an empty transcript at once, then
    fetch the history. The instant first paint keeps the switch responsive on a
    slow link instead of the window appearing frozen on the old chat until the
@@ -374,10 +418,10 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
     tg_gui_window_apply_selection(state);
     if (tg_gui_session_is_open()) {
         state->message_count = 0;
-        tg_gui_paint(state, backend);
+        tg_gui_window_paint(state, backend);
         (void)tg_gui_session_open_chat(state->chats[sel].index, stdout);
     }
-    tg_gui_paint(state, backend);
+    tg_gui_window_paint(state, backend);
 }
 
 /* Bounded copy into a fixed UI buffer (status/title) -- never overflows even if
@@ -462,7 +506,7 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
         n = (unsigned long)strlen(state->input);
         if (n > 0UL) {
             state->input[n - 1UL] = '\0';
-            tg_gui_paint(state, backend);
+            tg_gui_window_paint(state, backend);
         }
         return;
     }
@@ -474,7 +518,7 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
             if (n + 1UL < (unsigned long)sizeof(state->input)) {
                 state->input[n] = (char)code;
                 state->input[n + 1UL] = '\0';
-                tg_gui_paint(state, backend);
+                tg_gui_window_paint(state, backend);
             }
         }
         return;
@@ -485,7 +529,7 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
     tg_gui_window_copy(state->status, sizeof(state->status),
                        "Connecting to Telegram...");
     state->cursor_on = 0;
-    tg_gui_paint(state, backend);
+    tg_gui_window_paint(state, backend);
 
     if (state->mode == TG_GUI_MODE_LOGIN_PHONE) {
         int rc;
@@ -537,7 +581,7 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
     }
     state->cursor_on = 1;
     *caret_ticks = 0;
-    tg_gui_paint(state, backend);
+    tg_gui_window_paint(state, backend);
 }
 
 /* The right-button menu strip (laid out by GadTools so the metrics follow the
@@ -710,8 +754,12 @@ int tg_gui_run_window(tg_gui_state *state)
     tags[i++].ti_Data = TRUE;
     tags[i].ti_Tag = WA_SizeGadget;
     tags[i++].ti_Data = TRUE;
+    /* Open INACTIVE: activation is what makes the input.device/intuition task
+       build this window's layer/ClipRect list, and an immediate paint that races
+       that build is what freezes MorphOS inside layers3d. We paint the first
+       frame under LockLayerRom() and only then ActivateWindow() (see below). */
     tags[i].ti_Tag = WA_Activate;
-    tags[i++].ti_Data = TRUE;
+    tags[i++].ti_Data = FALSE;
     tags[i].ti_Tag = WA_SmartRefresh;
     tags[i++].ti_Data = TRUE;
     tags[i].ti_Tag = WA_MinWidth;
@@ -806,17 +854,24 @@ int tg_gui_run_window(tg_gui_state *state)
     mem_after = (unsigned long)AvailMem(MEMF_ANY);
     footprint = (mem_before > mem_after) ? (mem_before - mem_after) : 0UL;
 
-    /* Paint the initial content ONCE. Do NOT burst-repaint at window-open: a
-       former 60x repaint "benchmark" here raced MorphOS's input.device/intuition
-       task while it was still building this window's layer/ClipRect list. With no
-       mutual exclusion the two tasks mutated the same cliprect chain; the input
-       task then walked a corrupted node and wrote through it inside layers3d,
-       freezing the entire machine (DSI store to protected memory). This is the
-       "lists a few chats then the system freezes" report on real hardware. Live
-       repaints are driven later by IDCMP, and the IDCMP_REFRESHWINDOW path is
-       properly bracketed with BeginRefresh/EndRefresh. One settled paint here is
-       all that is needed. */
-    tg_gui_paint(state, &backend);
+    /* Paint the initial content ONCE, under the layer lock. The window was opened
+       INACTIVE (WA_Activate=FALSE) precisely so this first paint does not race the
+       input.device/intuition task that builds the layer/ClipRect list at
+       activation: a former 60x "benchmark" burst here mutated the same cliprect
+       chain that the input task was building, which then walked a corrupted node
+       and wrote through it inside layers3d, freezing the whole machine (DSI store
+       to protected memory -- the "lists a few chats then the system freezes"
+       report). OpenWindowTagList only guarantees a non-NULL Window; it does NOT
+       guarantee when the layer is safe to draw, so tg_gui_window_paint() takes
+       LockLayerRom() -- the one layers primitive sanctioned for Intuition windows,
+       which blocks Intuition's window machinery from touching this layer while we
+       render -- around every direct paint. We activate the window only AFTER this
+       first locked paint settles (ActivateWindow must NOT be called while a layer
+       is locked, so it goes here, after the wrapper has unlocked). Later repaints
+       are IDCMP-driven and the IDCMP_REFRESHWINDOW path is bracketed by
+       BeginRefresh/EndRefresh, which carries its own layer lock. */
+    tg_gui_window_paint(state, &backend);
+    ActivateWindow(ctx.window);
     printf("gui window: open %dx%d, font %dpx, %lu pens; window footprint "
            "~%lu KB\n",
            ctx.inner_w, ctx.inner_h, ctx.line_h,
@@ -834,7 +889,18 @@ int tg_gui_run_window(tg_gui_state *state)
        (MorphOS especially), and coalesce into a single repaint per wake-up. The
        tick is a no-op when no session is open (demo/--gui-chats). */
 #if defined(__MORPHOS__) || defined(__MORPHOS)
-    watch_seconds = 12UL;
+    /* 6s is the VALIDATED FLOOR on MorphOS -- do NOT lower further at a flat
+       cadence. 1s was tried (2026-06-20) and HARD-FROZE the system AT BOOT: the
+       LockLayerRom bracket cured the *paint* race, but a SECOND race lives in the
+       startup network sequence (session open = DH + first connect + push-backlog
+       drain), the one the KPutStr pacing only mitigates. Polling every 1s hammers
+       that sequence before it settles and re-triggers the freeze. 6s gives the
+       boot enough breathing room while keeping reception snappy. The open chat's
+       new messages surface via this poll, so the interval IS the reception
+       latency; the per-tick getDifference is throttled to a backstop (pushes
+       carry the live cross-chat stream). A future adaptive ramp (slow for the
+       first few seconds at boot, then faster) could beat 6s safely. */
+    watch_seconds = 6UL;
 #else
     watch_seconds = 2UL;
 #endif
@@ -909,7 +975,7 @@ int tg_gui_run_window(tg_gui_state *state)
                     caret_ticks = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Type - ENTER sends, ESC cancels");
-                    tg_gui_paint(state, &backend);
+                    tg_gui_window_paint(state, &backend);
                 } else if (msg_code == 27) {
                     state->input[0] = '\0';
                     state->input_caret = 0;
@@ -917,7 +983,7 @@ int tg_gui_run_window(tg_gui_state *state)
                     state->composing = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
-                    tg_gui_paint(state, &backend);
+                    tg_gui_window_paint(state, &backend);
                 } else if (msg_code == 8 || msg_code == 127) {
                     unsigned long n;
                     unsigned long c;
@@ -932,7 +998,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         memmove(&state->input[c - 1UL], &state->input[c],
                                 n - c + 1UL);
                         state->input_caret = (int)(c - 1UL);
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code >= 32 && msg_code < 256) {
                     unsigned long n;
@@ -949,7 +1015,7 @@ int tg_gui_run_window(tg_gui_state *state)
                                 n - c + 1UL);
                         state->input[c] = (char)msg_code;
                         state->input_caret = (int)(c + 1UL);
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_paint(state, &backend);
                     }
                 }
             } else if (msg_class == IDCMP_VANILLAKEY) {
@@ -964,7 +1030,7 @@ int tg_gui_run_window(tg_gui_state *state)
                     caret_ticks = 0;
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Type - ENTER sends, ESC cancels");
-                    tg_gui_paint(state, &backend);
+                    tg_gui_window_paint(state, &backend);
                 }
                 /* Chat selection is on the function keys now (IDCMP_RAWKEY). */
             } else if (msg_class == IDCMP_RAWKEY &&
@@ -1000,12 +1066,12 @@ int tg_gui_run_window(tg_gui_state *state)
                 if (msg_code == 0x4F) { /* cursor left */
                     if (state->input_caret > 0) {
                         state->input_caret--;
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 0x4E) { /* cursor right */
                     if (state->input_caret < (int)strlen(state->input)) {
                         state->input_caret++;
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 0x4C) { /* cursor up: older sent line */
                     if (state->history_count > 0) {
@@ -1026,7 +1092,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         tg_gui_window_copy(state->input, sizeof(state->input),
                                            state->history[hidx]);
                         state->input_caret = (int)strlen(state->input);
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 0x4D) { /* cursor down: newer sent line */
                     if (state->history_pos >= 0) {
@@ -1046,7 +1112,7 @@ int tg_gui_run_window(tg_gui_state *state)
                                                state->history[hidx]);
                         }
                         state->input_caret = (int)strlen(state->input);
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_paint(state, &backend);
                     }
                 }
             } else if (msg_class == IDCMP_RAWKEY && !state->composing &&
@@ -1106,8 +1172,12 @@ int tg_gui_run_window(tg_gui_state *state)
                 }
             } else if (msg_class == IDCMP_NEWSIZE) {
                 tg_gui_amiga_measure_geometry(&ctx);
-                tg_gui_paint(state, &backend);
+                tg_gui_window_paint(state, &backend);
             } else if (msg_class == IDCMP_REFRESHWINDOW) {
+                /* BeginRefresh() already holds this window's layer locked for the
+                   whole bracket (it wraps the Layers BeginUpdate() locking
+                   protocol), so paint RAW here -- tg_gui_window_paint() would take
+                   a second, redundant LockLayerRom on top of it. */
                 BeginRefresh(ctx.window);
                 tg_gui_amiga_measure_geometry(&ctx);
                 tg_gui_paint(state, &backend);
@@ -1122,7 +1192,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         /* Repaint ONLY the login input box, not the whole window
                            -- a full repaint twice a second was a visible refresh
                            on OS3. */
-                        tg_gui_paint_caret(state, &backend);
+                        tg_gui_window_paint_caret(state, &backend);
                     }
                 } else {
                     time_t now;
@@ -1134,7 +1204,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         /* Repaint ONLY the composer input row, not the whole
                            window -- the previous full repaint twice a second was
                            a visible refresh on slow OS3 planar displays. */
-                        tg_gui_paint_caret(state, &backend);
+                        tg_gui_window_paint_caret(state, &backend);
                     }
 
                     /* Live poll on the watch interval -- now runs even while the
@@ -1234,7 +1304,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         if (hit != state->selected_chat) {
                             tg_gui_window_open_selection(state, hit, &backend);
                         } else {
-                            tg_gui_paint(state, &backend);
+                            tg_gui_window_paint(state, &backend);
                         }
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
                         if (state->input[0] != '\0') {
@@ -1253,7 +1323,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Type - ENTER sends, ESC cancels");
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_paint(state, &backend);
                     } else if ((hit == TG_GUI_HIT_INPUT ||
                                 hit == TG_GUI_HIT_SEND) &&
                                !state->composing && tg_gui_session_is_open()) {
@@ -1264,7 +1334,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                "Type - ENTER sends, ESC cancels");
-                        tg_gui_paint(state, &backend);
+                        tg_gui_window_paint(state, &backend);
                     }
                 }
             } else if (msg_class == IDCMP_MOUSEMOVE) {
@@ -1316,7 +1386,7 @@ int tg_gui_run_window(tg_gui_state *state)
             }
         }
         if (session_dirty || scroll_dirty) {
-            tg_gui_paint(state, &backend);
+            tg_gui_window_paint(state, &backend);
         }
     }
 
