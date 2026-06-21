@@ -40,6 +40,17 @@
 /* bsdsocket.library base referenced by the proto/socket.h inlines. */
 struct Library *SocketBase = 0;
 
+/* PPC task stack size for this -noixemul (libnix) MorphOS binary. CRITICAL: on
+   MorphOS the shell "Stack" command -- and the launcher's "Stack 1048576" -- size
+   the 68k stack, NOT the PPC task stack, which otherwise defaults to ~32 KB. The
+   DH handshake and the GUI's wrapped-line arrays overflow that, giving
+   "PPC Stack Ptr is not between PPCSPLower/Upper" (maxstack 32756/32756) and then
+   an Illegal-Access freeze. libnix's startup swaps to at least __stack bytes
+   before main(), so we override its weak default with a generous PPC stack here.
+   Diagnosed from a community logtool dump (PowerBook G4 + PowerMac G5,
+   MorphOS 3.20), 2026-06-21. */
+unsigned long __stack = 1048576UL;
+
 #ifndef TG_ENABLE_TLS
 #define TG_ENABLE_TLS 0
 #endif
