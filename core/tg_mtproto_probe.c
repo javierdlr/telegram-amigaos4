@@ -4218,7 +4218,16 @@ int tg_mtproto_auth_login_wizard_file(const char *host,
         }
     }
     if (rc == TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED) {
-        fprintf(stream, "2FA password required.\n");
+        fprintf(stream,
+                "2FA password required.\n"
+                "WARNING: two-step verification derives the key with PBKDF2 "
+                "(100000 iterations of SHA-512). On a slow 68k -- e.g. a stock "
+                "14 MHz 68020 -- this takes about 40 minutes, long enough for "
+                "Telegram to drop the login before it finishes. If this machine "
+                "is slow, disable Two-Step Verification on your account "
+                "(Telegram app: Settings > Privacy and Security > Two-Step "
+                "Verification) and sign in again. To try anyway, enter the "
+                "password (empty to abort).\n");
         for (;;) {
             if (tg_mtproto_prompt_hidden_line("2FA password, empty to abort: ",
                                               password, sizeof(password),
@@ -7702,6 +7711,15 @@ int tg_mtproto_auth_send_peer_file(const char *host,
                                         stream, label) != 0) {
         return 2;
     }
+    /* Diagnostic (surfaced via the quiet-stream replay on failure): which peer
+       kind the cache resolved and whether it carries an access_hash. A channel
+       (supergroup) with access_hash=NO cannot be addressed -- the immediate
+       send failure we are chasing on the stock A1200. */
+    fprintf(stream, "%s: peer=%s id=0x%08lx%08lx access_hash=%s\n", label,
+            peer_constructor == TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR ? "channel" :
+            peer_constructor == TG_MTPROTO_PEER_CHAT_CONSTRUCTOR ? "chat" :
+            peer_constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR ? "user" : "?",
+            peer_id_hi, peer_id_lo, has_access_hash ? "yes" : "NO");
     tg_mtproto_saved_session_random(random_id, sizeof(random_id));
     random_id_lo = tg_mtproto_read_u32_le(random_id);
     random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
@@ -7793,6 +7811,15 @@ static int tg_mtproto_auth_send_peer_on_context(
                                         stream, label) != 0) {
         return 2;
     }
+    /* Diagnostic (surfaced via the quiet-stream replay on failure): which peer
+       kind the cache resolved and whether it carries an access_hash. A channel
+       (supergroup) with access_hash=NO cannot be addressed -- the immediate
+       send failure we are chasing on the stock A1200. */
+    fprintf(stream, "%s: peer=%s id=0x%08lx%08lx access_hash=%s\n", label,
+            peer_constructor == TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR ? "channel" :
+            peer_constructor == TG_MTPROTO_PEER_CHAT_CONSTRUCTOR ? "chat" :
+            peer_constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR ? "user" : "?",
+            peer_id_hi, peer_id_lo, has_access_hash ? "yes" : "NO");
     tg_mtproto_saved_session_random(random_id, sizeof(random_id));
     random_id_lo = tg_mtproto_read_u32_le(random_id);
     random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
@@ -10541,6 +10568,11 @@ int tg_mtproto_auth_chat_file(const char *host,
             consecutive_failures = 0UL;
         }
         if (rc != 0) {
+            /* Surface the captured send diagnostics (peer kind/access_hash,
+               build or RPC error) so a failed send is not just an opaque
+               "Could not send message." -- needed to diagnose the supergroup
+               send failure on the stock A1200. */
+            tg_mtproto_replay_quiet_stream(quiet, stream);
             tg_mtproto_close_quiet_stream(quiet, stream);
             if (rc == TG_MTPROTO_QUERY_SOFT_FAIL) {
                 tg_mtproto_chat_print_system_line(

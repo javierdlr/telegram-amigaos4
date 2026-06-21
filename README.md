@@ -53,6 +53,12 @@ build.
 3. First run signs you in: phone number → login code → optional 2FA password. A
    `telegram-auth.bin` session is saved; later runs go straight to your chats.
 
+> **2FA on a slow 68k:** Telegram's two-step key derivation is PBKDF2 (100000×
+> SHA-512) — about 40 minutes on a stock 14 MHz 68020, long enough that Telegram
+> drops the login first. On such machines disable Two-Step Verification (Telegram
+> app → Settings → Privacy and Security) before signing in. The client warns at
+> the password prompt rather than blocking, so faster/accelerated 68k can still try.
+
 Full IT/EN instructions are inside each package.
 
 ## What works
