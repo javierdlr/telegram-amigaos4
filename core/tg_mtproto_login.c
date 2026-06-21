@@ -2988,6 +2988,24 @@ static tg_mtproto_tl_status tg_skip_common_message(
     return TG_MTPROTO_TL_OK;
 }
 
+/* A short bracketed placeholder for a media-only message (no caption), so the
+   transcript shows "[Photo]" instead of an empty bubble. The client does not
+   download media -- this is awareness only. Constructor ids verified against the
+   Telegram TL schema (core.telegram.org); anything else falls back to "[Media]". */
+static const char *tg_mtproto_media_label(unsigned long constructor)
+{
+    switch (constructor) {
+    case 0x695150d7UL: /* messageMediaPhoto */
+        return "[Photo]";
+    case 0x52d8ccd9UL: /* messageMediaDocument (file/video/voice/sticker/gif) */
+        return "[File]";
+    case 0x56e0d474UL: /* messageMediaGeo */
+        return "[Location]";
+    default:
+        return "[Media]";
+    }
+}
+
 static tg_mtproto_tl_status tg_read_common_message_text(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_message_text *out,
@@ -3090,8 +3108,29 @@ static tg_mtproto_tl_status tg_read_common_message_text(
      */
     if ((flags & 64UL) != 0UL || (flags & 512UL) != 0UL ||
         (flags2 & 8UL) != 0UL || (flags2 & 128UL) != 0UL) {
+        /* media (flag.9) is the first tail field after the text in the TL. For a
+           media-only message (no caption) read JUST its constructor for a
+           "[Photo]"/"[File]"/... placeholder, then bail on the rest of the tail
+           (we do not walk the full MessageMedia). Reading one u32 here cannot
+           corrupt the parse -- we return immediately after, exactly as before. */
+        if ((flags & 512UL) != 0UL && !out->has_text) {
+            unsigned long media_ctor;
+
+            if (tg_mtproto_tl_read_u32(reader, &media_ctor) == TG_MTPROTO_TL_OK) {
+                const char *label = tg_mtproto_media_label(media_ctor);
+                unsigned long li = 0UL;
+
+                while (label[li] != '\0' && li + 1UL < sizeof(out->text)) {
+                    out->text[li] = label[li];
+                    ++li;
+                }
+                out->text[li] = '\0';
+                out->has_text = 1;
+            }
+        }
         return TG_MTPROTO_TL_OK;
     }
+
     if ((flags & 128UL) != 0UL) {
         tg_msg_entity ents[TG_MSG_ENTITY_MAX];
         int ent_count = 0;
