@@ -11944,14 +11944,28 @@ int tg_gui_session_search_open(const char *query, FILE *stream)
 
             if (gs != 0) {
                 int r;
+                int found = 0;
 
                 for (r = 0; r < gs->chat_count; ++r) {
                     if (gs->chats[r].index == idx) {
                         gs->selected_chat = r;
+                        found = 1;
                         break;
                     }
                 }
-                gs->chat_scroll_to_sel = 1; /* scroll the sidebar to it */
+                if (found) {
+                    const char *nm = gs->chats[gs->selected_chat].name;
+                    unsigned long ti;
+
+                    gs->chat_scroll_to_sel = 1; /* scroll the sidebar to it */
+                    /* Update the header title too -- the normal open path does
+                       this via apply_selection, which search bypasses. */
+                    for (ti = 0UL; ti + 1UL < sizeof(gs->title) &&
+                                   nm[ti] != '\0'; ++ti) {
+                        gs->title[ti] = nm[ti];
+                    }
+                    gs->title[ti] = '\0';
+                }
             }
             (void)tg_gui_session_open_chat(idx, stream);
         }
