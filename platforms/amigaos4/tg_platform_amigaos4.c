@@ -79,7 +79,9 @@ void tg_platform_workbench_init(void)
        data files resolve. The lock is process-lifetime (freed at exit). */
     BPTR progdir = Lock((CONST_STRPTR)"PROGDIR:", SHARED_LOCK);
     if (progdir != 0) {
-        CurrentDir(progdir);
+        /* AmigaOS 4.x renamed dos.library's CurrentDir() to SetCurrentDir();
+           the classic name is not in the OS4 inline set (Lock() kept its name). */
+        SetCurrentDir(progdir);
     }
 #endif
 }
