@@ -415,6 +415,11 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
 {
     state->selected_chat = sel;
     state->transcript_scroll = 0; /* a freshly opened chat pins to the newest */
+    /* Opening a chat clears its unread badge / flash -- you are now reading it. */
+    if (sel >= 0 && sel < state->chat_count) {
+        state->chats[sel].unread = 0;
+        state->chats[sel].flash = 0;
+    }
     tg_gui_window_apply_selection(state);
     if (tg_gui_session_is_open()) {
         state->message_count = 0;

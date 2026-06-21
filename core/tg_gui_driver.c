@@ -389,8 +389,11 @@ static void tg_gui_driver_on_notification(void *ctx,
         chat = &state->chats[i];
         if (chat->peer_id_hi == entry->peer_id_hi &&
             chat->peer_id_lo == entry->peer_id_lo) {
-            chat->unread += 1;
+            /* Only count/flash what you are NOT reading: the open chat's incoming
+               messages are already shown in the transcript, so its badge must not
+               grow while you look at it. */
             if (i != state->selected_chat) {
+                chat->unread += 1;
                 chat->flash = 1;
             }
             return;
@@ -602,10 +605,10 @@ int tg_gui_driver_self_test(void)
                 puts("gui driver self-test: notification did not flash row");
                 return 2;
             }
-            note.peer_id_lo = 0x100UL; /* the selected/open chat: bump, no flash */
+            note.peer_id_lo = 0x100UL; /* the selected/open chat: no bump, no flash */
             driver.on_notification(driver.ctx, &note);
-            if (state.chats[0].unread != 1 || state.chats[0].flash != 0) {
-                puts("gui driver self-test: open chat should not flash");
+            if (state.chats[0].unread != 0 || state.chats[0].flash != 0) {
+                puts("gui driver self-test: open chat must not bump unread/flash");
                 return 2;
             }
             note.peer_id_lo = 0x999UL; /* not in the sidebar: ignored */

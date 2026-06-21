@@ -4803,6 +4803,33 @@ static const char *tg_mtproto_display_emoticon(unsigned long cp)
         return "->";
     case 0x2190UL:
         return "<-";
+    case 0x1f60eUL: /* sunglasses */
+        return "8)";
+    case 0x1f607UL: /* halo */
+        return "O:)";
+    case 0x1f620UL: /* angry */
+    case 0x1f621UL: /* pouting */
+    case 0x1f624UL: /* triumph / huffing */
+        return ">:(";
+    case 0x1f614UL: /* pensive */
+    case 0x1f615UL: /* confused */
+    case 0x1f910UL: /* zipper-mouth */
+    case 0x1f914UL: /* thinking */
+    case 0x1f62cUL: /* grimace */
+        return ":/";
+    case 0x1f628UL: /* fearful */
+    case 0x1f631UL: /* face screaming */
+    case 0x1f62fUL: /* hushed */
+    case 0x1f635UL: /* dizzy */
+        return ":O";
+    case 0x1f44cUL: /* OK hand */
+        return "(ok)";
+    case 0x1f634UL: /* sleeping */
+    case 0x1f971UL: /* yawning */
+        return "(zzz)";
+    case 0x1f62aUL: /* sleepy */
+    case 0x1f613UL: /* downcast w/ sweat */
+        return ":(";
     default:
         return 0;
     }
