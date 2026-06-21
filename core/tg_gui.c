@@ -301,6 +301,50 @@ static void tg_gui_paint_scrollbar(tg_gui_backend *backend, int x, int track_y,
     }
 }
 
+/* The sidebar search box (top strip): its own background + the query/placeholder
+   + a caret that blinks when focused. Standalone so the caret blink can repaint
+   just this strip (via tg_gui_paint_caret) instead of the whole window. */
+static void tg_gui_paint_search_box(const tg_gui_state *state,
+                                    tg_gui_backend *backend)
+{
+    int width;
+    int lh;
+    int sidebar_w;
+    int search_h;
+    int sbase;
+
+    width = backend->width(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || lh <= 0) {
+        return;
+    }
+    sidebar_w = tg_gui_sidebar_w(width);
+    search_h = lh + 10;
+    sbase = (search_h / 2) + 4;
+    backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
+                       tg_gui_make_rect(0, 0, sidebar_w, search_h));
+    if (state->search_query[0] != '\0') {
+        backend->draw_text(backend, TG_GUI_PEN_TEXT, 10, sbase,
+                           state->search_query,
+                           (unsigned long)strlen(state->search_query));
+    } else {
+        backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, 10, sbase,
+                           state->search_active ? "Type a name, ENTER..."
+                                                : "Search chats...",
+                           state->search_active ? 20UL : 15UL);
+    }
+    if (state->search_active && state->cursor_on) {
+        int cx;
+
+        cx = 10 +
+             backend->text_width(backend, state->search_query,
+                                 (unsigned long)strlen(state->search_query)) +
+             1;
+        backend->fill_rect(backend, TG_GUI_PEN_TEXT,
+                           tg_gui_make_rect(cx, sbase - lh + 2, 2, lh));
+    }
+}
+
 static void tg_gui_paint_sidebar(const tg_gui_state *state,
                                  tg_gui_backend *backend, int sidebar_w,
                                  int content_h, int lh)
@@ -318,30 +362,7 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                        tg_gui_make_rect(0, 0, sidebar_w, content_h));
 
     search_h = lh + 10;
-    {
-        int sbase = (search_h / 2) + 4;
-
-        if (state->search_query[0] != '\0') {
-            backend->draw_text(backend, TG_GUI_PEN_TEXT, 10, sbase,
-                               state->search_query,
-                               (unsigned long)strlen(state->search_query));
-        } else {
-            backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, 10, sbase,
-                               state->search_active ? "Type a name, ENTER..."
-                                                    : "Search chats...",
-                               state->search_active ? 20UL : 15UL);
-        }
-        /* Caret while the search box is focused (blinks via cursor_on). */
-        if (state->search_active && state->cursor_on) {
-            int cx;
-
-            cx = 10 + backend->text_width(
-                          backend, state->search_query,
-                          (unsigned long)strlen(state->search_query)) + 1;
-            backend->fill_rect(backend, TG_GUI_PEN_TEXT,
-                               tg_gui_make_rect(cx, sbase - lh + 2, 2, lh));
-        }
-    }
+    tg_gui_paint_search_box(state, backend);
 
     row_h = (2 * lh) + 12;
     view_rows = (row_h > 0) ? ((content_h - search_h) / row_h) : 0;
@@ -358,6 +379,23 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
     }
     if (st->chat_scroll < 0) {
         st->chat_scroll = 0;
+    }
+    /* One-shot: a fresh selection (chat opened / search result) scrolls the list
+       so the selected chat is visible -- without snapping back when you scroll the
+       list manually on later frames. */
+    if (st->chat_scroll_to_sel) {
+        st->chat_scroll_to_sel = 0;
+        if (state->selected_chat < st->chat_scroll) {
+            st->chat_scroll = state->selected_chat;
+        } else if (state->selected_chat >= st->chat_scroll + view_rows) {
+            st->chat_scroll = state->selected_chat - view_rows + 1;
+        }
+        if (st->chat_scroll > state->chat_count - view_rows) {
+            st->chat_scroll = state->chat_count - view_rows;
+        }
+        if (st->chat_scroll < 0) {
+            st->chat_scroll = 0;
+        }
     }
     y = search_h;
     for (i = state->chat_scroll;
@@ -1299,6 +1337,8 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend)
     }
     if (state->mode != TG_GUI_MODE_CHAT) {
         tg_gui_paint_login_input(state, backend);
+    } else if (state->search_active) {
+        tg_gui_paint_search_box(state, backend);
     } else {
         tg_gui_paint_input_row(state, backend);
     }

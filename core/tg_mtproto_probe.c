@@ -11951,6 +11951,7 @@ int tg_gui_session_search_open(const char *query, FILE *stream)
                         break;
                     }
                 }
+                gs->chat_scroll_to_sel = 1; /* scroll the sidebar to it */
             }
             (void)tg_gui_session_open_chat(idx, stream);
         }

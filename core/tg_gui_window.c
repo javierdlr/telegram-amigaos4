@@ -415,6 +415,7 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
 {
     state->selected_chat = sel;
     state->transcript_scroll = 0; /* a freshly opened chat pins to the newest */
+    state->chat_scroll_to_sel = 1; /* scroll the sidebar so the row is visible */
     /* Opening a chat clears its unread badge / flash -- you are now reading it. */
     if (sel >= 0 && sel < state->chat_count) {
         state->chats[sel].unread = 0;
@@ -1253,12 +1254,13 @@ int tg_gui_run_window(tg_gui_state *state)
                     time_t now;
 
                     /* Blink the composer caret (~2 Hz) while typing. */
-                    if (state->composing && ++caret_ticks >= 5) {
+                    if ((state->composing || state->search_active) &&
+                        ++caret_ticks >= 5) {
                         caret_ticks = 0;
                         state->cursor_on = !state->cursor_on;
-                        /* Repaint ONLY the composer input row, not the whole
-                           window -- the previous full repaint twice a second was
-                           a visible refresh on slow OS3 planar displays. */
+                        /* Repaint ONLY the focused input strip (composer row or
+                           the sidebar search box), not the whole window -- a full
+                           repaint twice a second flickered on slow OS3 displays. */
                         tg_gui_window_paint_caret(state, &backend);
                     }
 

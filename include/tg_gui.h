@@ -140,6 +140,7 @@ typedef struct tg_gui_state {
     tg_gui_message messages[TG_GUI_MAX_MESSAGES];
     int message_count;
     int chat_scroll;       /* first visible chat row in the sidebar (0 = top) */
+    int chat_scroll_to_sel; /* one-shot: next paint scrolls the list to selected_chat */
     int transcript_scroll; /* PIXELS scrolled up from the newest-pinned bottom (0 = newest) */
     int input_h;           /* composer box height (px), cached by the painter for the hit-test */
     /* Scrollbar geometry the painter caches each frame for the event loop's
