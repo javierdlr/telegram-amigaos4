@@ -71,6 +71,16 @@ struct tg_gui_backend {
 #define TG_GUI_MAX_MESSAGES 64
 #define TG_GUI_NAME_MAX 48
 #define TG_GUI_TEXT_MAX 256
+/* Received-message body buffer, decoupled from the 256-byte preview/input/name
+   size so long messages are not truncated at ingestion. The MTProto parse holds
+   up to TG_MTPROTO_MESSAGE_TEXT_MAX = 4096, so PPC/AROS use the full 4096 to show
+   ANY message in full; m68k is capped lower for its 2 MB box. 64 of these live in
+   tg_gui_state, which the gui-live path keeps STATIC (off the stack). */
+#if defined(__m68k__)
+#define TG_GUI_MSG_TEXT_MAX 2048
+#else
+#define TG_GUI_MSG_TEXT_MAX 4096
+#endif
 #define TG_GUI_HISTORY_MAX 16
 #define TG_GUI_TIME_MAX 8
 #define TG_GUI_INITIALS_MAX 4
@@ -108,7 +118,7 @@ typedef struct tg_gui_chat {
 
 typedef struct tg_gui_message {
     char sender[TG_GUI_NAME_MAX];
-    char text[TG_GUI_TEXT_MAX];
+    char text[TG_GUI_MSG_TEXT_MAX];
     char time[TG_GUI_TIME_MAX];
     int sender_color;
     int is_own;
@@ -129,7 +139,8 @@ typedef struct tg_gui_state {
     tg_gui_message messages[TG_GUI_MAX_MESSAGES];
     int message_count;
     int chat_scroll;       /* first visible chat row in the sidebar (0 = top) */
-    int transcript_scroll; /* newest messages hidden below the view (0 = pinned newest) */
+    int transcript_scroll; /* PIXELS scrolled up from the newest-pinned bottom (0 = newest) */
+    int input_h;           /* composer box height (px), cached by the painter for the hit-test */
     /* Scrollbar geometry the painter caches each frame for the event loop's
        knob-drag / track-click (only the painter has the backend to size the
        transcript). *_max == 0 means no bar / nothing to drag. */
@@ -137,7 +148,7 @@ typedef struct tg_gui_state {
     int sb_tr_x, sb_tr_ty, sb_tr_th, sb_tr_ky, sb_tr_kh, sb_tr_max;
     int sb_drag;    /* 0 none, 1 chat list, 2 transcript -- a knob being dragged */
     int sb_grab_dy; /* cursor y within the knob when the drag began */
-    char input[TG_GUI_TEXT_MAX];
+    char input[TG_GUI_MSG_TEXT_MAX];
     char status[TG_GUI_NAME_MAX];
     int theme;
     int composing;  /* the input field is focused */
@@ -148,10 +159,10 @@ typedef struct tg_gui_state {
     int mode;          /* TG_GUI_MODE_* (chat vs a first-login screen) */
     int input_masked;  /* render `input` as '*' (the 2FA password field) */
     /* Sent-message history for UP/DOWN recall in the composer (like the TUI). */
-    char history[TG_GUI_HISTORY_MAX][TG_GUI_TEXT_MAX];
+    char history[TG_GUI_HISTORY_MAX][TG_GUI_MSG_TEXT_MAX];
     int history_count;
     int history_pos;   /* -1 = not recalling; else index into history[] */
-    char history_draft[TG_GUI_TEXT_MAX]; /* live text stashed on first UP */
+    char history_draft[TG_GUI_MSG_TEXT_MAX]; /* live text stashed on first UP */
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used

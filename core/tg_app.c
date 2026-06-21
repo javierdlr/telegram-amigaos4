@@ -3987,7 +3987,9 @@ int tg_app_run(int argc, char **argv)
     }
 
     if (config.run_gui_live) {
-        tg_gui_state gui;
+        /* Static, not stack: at MSG_TEXT_MAX=4096 this struct is ~340 KB; keeping
+           it off the stack leaves the full GUI stack for the first-login DH. */
+        static tg_gui_state gui;
         int rc;
 
         memset(&gui, 0, sizeof(gui));

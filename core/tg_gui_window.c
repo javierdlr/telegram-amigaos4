@@ -1052,7 +1052,7 @@ int tg_gui_run_window(tg_gui_state *state)
                     }
                 } else {
                     /* 0x7A reveals older history (scroll up), 0x7B newer. */
-                    state->transcript_scroll += (msg_code == 0x7A) ? 3 : -3;
+                    state->transcript_scroll += (msg_code == 0x7A) ? (3 * ctx.line_h) : (-3 * ctx.line_h);
                     if (state->transcript_scroll < 0) {
                         state->transcript_scroll = 0;
                     }
@@ -1133,10 +1133,10 @@ int tg_gui_run_window(tg_gui_state *state)
                         tg_gui_window_open_selection(state, idx, &backend);
                     }
                 } else if (msg_code == 0x4C) { /* cursor up: older messages */
-                    state->transcript_scroll += 3;
+                    state->transcript_scroll += 3 * ctx.line_h;
                     scroll_dirty = 1;
                 } else if (msg_code == 0x4D) { /* cursor down: newer messages */
-                    state->transcript_scroll -= 3;
+                    state->transcript_scroll -= 3 * ctx.line_h;
                     if (state->transcript_scroll < 0) {
                         state->transcript_scroll = 0;
                     }
@@ -1246,7 +1246,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->sb_drag = 2;
                         state->sb_grab_dy = hy - state->sb_tr_ky;
                     } else {
-                        int page = state->message_count - state->sb_tr_max;
+                        int page = state->sb_tr_th;
 
                         if (page < 1) {
                             page = 1;

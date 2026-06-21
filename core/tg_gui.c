@@ -14,7 +14,14 @@
 #include <stdio.h>
 #include <string.h>
 
-#define TG_GUI_WRAP_MAX_LINES 16
+/* Enough wrapped lines to render a full TG_GUI_MSG_TEXT_MAX message at a narrow
+   bubble width. starts[]/lengths[] are stack arrays (~lines * 16 B per paint),
+   fine under the GUI launcher's 1 MB stack. Tiered to match the message buffer. */
+#if defined(__m68k__)
+#define TG_GUI_WRAP_MAX_LINES 128
+#else
+#define TG_GUI_WRAP_MAX_LINES 256
+#endif
 
 /* Custom-drawn vertical scrollbar geometry (no GadTools propgadget, so it is
    identical on every backend). TG_GUI_SCROLLBAR_W lives in tg_gui.h, shared
@@ -537,7 +544,7 @@ static const char *tg_gui_read_mark(const tg_gui_message *message)
 
 static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                const tg_gui_message *message, int area_x,
-                               int area_w, int y, int lh, int bottom)
+                               int area_w, int y, int lh, int top, int bottom)
 {
     int style;
     unsigned long starts[TG_GUI_WRAP_MAX_LINES];
@@ -649,7 +656,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
             if (sender_pen < 0 || sender_pen >= TG_GUI_AVATAR_COLORS) {
                 sender_pen = 0;
             }
-            if ((y + lh) <= bottom) {
+            if ((y + lh) <= bottom && y >= top) {
                 backend->draw_text(backend, sender_pen + TG_GUI_PEN_COUNT,
                                    bubble_x + 2, y + lh, message->sender,
                                    (unsigned long)strlen(message->sender));
@@ -665,6 +672,9 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
 
         fill_top = y + header_h;
         fill_bottom = y + bubble_h;
+        if (fill_top < top) {
+            fill_top = top;
+        }
         if (fill_bottom > bottom) {
             fill_bottom = bottom;
         }
@@ -678,7 +688,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
         int reply_baseline;
 
         reply_baseline = y + header_h + lh;
-        if (reply_baseline <= bottom) {
+        if (reply_baseline <= bottom && reply_baseline - lh >= top) {
             char line[TG_GUI_REPLY_MAX + 4];
 
             line[0] = '>';
@@ -694,7 +704,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
         int baseline;
 
         baseline = y + header_h + reply_h + (k * lh) + lh;
-        if (baseline <= bottom) {
+        if (baseline <= bottom && baseline - lh >= top) {
             tg_gui_draw_markup(backend, text_pen, bubble_x + pad, baseline,
                                message->text + starts[k], lengths[k], &style);
         }
@@ -713,7 +723,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
         if (status_x < bubble_x + pad) {
             status_x = bubble_x + pad;
         }
-        if (status_baseline <= bottom) {
+        if (status_baseline <= bottom && status_baseline - lh >= top) {
             if (has_time) {
                 backend->draw_text(backend, time_pen, status_x, status_baseline,
                                    message->time,
@@ -781,6 +791,59 @@ static int tg_gui_message_height(tg_gui_backend *backend,
    repaint ONLY this strip instead of the whole window -- a full repaint twice a
    second was visible as a constant refresh on slow planar displays (OS3). The
    geometry is recomputed from the backend so it matches tg_gui_paint_main. */
+/* Composer box geometry. The input box grows to WRAP a long message instead of
+   running it off the right edge, capped so it never eats the transcript. Shared
+   by the input-row painter, tg_gui_paint_main (transcript_bottom) and -- via the
+   painter-cached state->input_h -- the hit-test, so all three agree. */
+#define TG_GUI_INPUT_MAX_ROWS 4
+
+/* Width available for the typed text: from the text origin to just before the
+   Send button at width-64. */
+static int tg_gui_input_text_w(int width, int sidebar_w)
+{
+    int w;
+
+    w = (width - 64) - (sidebar_w + 12) - 8;
+    if (w < 20) {
+        w = 20;
+    }
+    return w;
+}
+
+/* Number of wrapped input rows to show (1..TG_GUI_INPUT_MAX_ROWS). */
+static int tg_gui_input_rows(const tg_gui_state *state, tg_gui_backend *backend,
+                             int width, int sidebar_w)
+{
+    unsigned long starts[TG_GUI_WRAP_MAX_LINES];
+    unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
+    int n;
+
+    if (state->mode != TG_GUI_MODE_CHAT || state->input[0] == '\0') {
+        return 1;
+    }
+    n = tg_gui_wrap(backend, state->input,
+                    tg_gui_input_text_w(width, sidebar_w), starts, lengths,
+                    TG_GUI_WRAP_MAX_LINES);
+    if (n < 1) {
+        n = 1;
+    }
+    if (n > TG_GUI_INPUT_MAX_ROWS) {
+        n = TG_GUI_INPUT_MAX_ROWS;
+    }
+    return n;
+}
+
+static int tg_gui_input_h(const tg_gui_state *state, tg_gui_backend *backend,
+                          int width, int sidebar_w, int lh)
+{
+    return (tg_gui_input_rows(state, backend, width, sidebar_w) * lh) + 14;
+}
+
+/* Draws just the bottom composer row: the input box (now wrapped to multiple
+   lines for a long message, with the caret on the right line), the placeholder /
+   idle text, and the Send button. Factored out so the caret blink can repaint
+   ONLY this strip. Geometry is recomputed from the backend to match
+   tg_gui_paint_main, and the box height comes from the shared helper above. */
 static void tg_gui_paint_input_row(const tg_gui_state *state,
                                    tg_gui_backend *backend)
 {
@@ -792,7 +855,8 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
     int content_h;
     int area_x;
     int input_h;
-    int input_baseline;
+    int box_top;
+    int rows;
 
     width = backend->width(backend);
     height = backend->height(backend);
@@ -804,56 +868,80 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
     content_h = height - status_h;
     sidebar_w = tg_gui_sidebar_w(width);
     area_x = sidebar_w + 12;
-    input_h = lh + 14;
-    /* Vertically centre the text line inside the input/Send box (height
-       input_h - 4 = lh + 10). The optical centre sits a couple of pixels below
-       box_top + lh once the Amiga bitmap-font descent (~2px) is accounted for. */
-    input_baseline = content_h - input_h + lh + 2;
+    rows = tg_gui_input_rows(state, backend, width, sidebar_w);
+    input_h = (rows * lh) + 14;
+    box_top = content_h - input_h;
 
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
-                       tg_gui_make_rect(sidebar_w + 8, content_h - input_h,
+                       tg_gui_make_rect(sidebar_w + 8, box_top,
                                         width - sidebar_w - 16, input_h - 4));
-    if (state->composing) {
-        int caret_x;
+    if (state->input[0] != '\0') {
+        unsigned long starts[TG_GUI_WRAP_MAX_LINES];
+        unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
+        int n;
+        int first;
+        int k;
 
-        caret_x = area_x;
-        if (state->input[0] != '\0') {
+        n = tg_gui_wrap(backend, state->input,
+                        tg_gui_input_text_w(width, sidebar_w), starts, lengths,
+                        TG_GUI_WRAP_MAX_LINES);
+        if (n < 1) {
+            n = 1;
+            starts[0] = 0UL;
+            lengths[0] = (unsigned long)strlen(state->input);
+        }
+        /* If the message wraps past the box, show its LAST `rows` lines so the
+           caret (normally at the end while typing) stays in view. */
+        first = (n > rows) ? (n - rows) : 0;
+        for (k = first; k < n && (k - first) < rows; ++k) {
+            backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x,
+                               box_top + ((k - first) * lh) + lh + 2,
+                               state->input + starts[k], lengths[k]);
+        }
+        if (state->composing && state->cursor_on) {
             unsigned long caret_off;
+            int line;
 
-            backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x, input_baseline,
-                               state->input,
-                               (unsigned long)strlen(state->input));
-            /* Caret after the prefix up to input_caret (not the end), so LEFT/
-               RIGHT move it within the typed text. */
             caret_off = (unsigned long)state->input_caret;
             if (caret_off > (unsigned long)strlen(state->input)) {
                 caret_off = (unsigned long)strlen(state->input);
             }
-            caret_x = area_x + backend->text_width(backend, state->input,
-                                                   caret_off) +
-                      1;
+            /* The wrapped line the caret falls on (first line it fits within). */
+            line = n - 1;
+            for (k = 0; k < n; ++k) {
+                if (caret_off >= starts[k] &&
+                    caret_off <= starts[k] + lengths[k]) {
+                    line = k;
+                    break;
+                }
+            }
+            if (line >= first && (line - first) < rows) {
+                int caret_x;
+
+                caret_x = area_x +
+                          backend->text_width(backend,
+                                              state->input + starts[line],
+                                              caret_off - starts[line]) +
+                          1;
+                backend->fill_rect(
+                    backend, TG_GUI_PEN_TEXT,
+                    tg_gui_make_rect(caret_x, box_top + ((line - first) * lh) + 3,
+                                     2, lh));
+            }
         }
-        /* A caret bar at the cursor position; the window toggles cursor_on so
-           it blinks while composing. */
+    } else if (state->composing) {
         if (state->cursor_on) {
             backend->fill_rect(backend, TG_GUI_PEN_TEXT,
-                               tg_gui_make_rect(caret_x, input_baseline - lh + 1,
-                                                2, lh));
+                               tg_gui_make_rect(area_x, box_top + 3, 2, lh));
         }
-    } else if (state->input[0] != '\0') {
-        backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x,
-                           input_baseline, state->input,
-                           (unsigned long)strlen(state->input));
     } else {
         backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, area_x,
-                           input_baseline, "Write a message...",
-                           18UL);
+                           box_top + lh + 2, "Write a message...", 18UL);
     }
     backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
-                       tg_gui_make_rect(width - 64, content_h - input_h, 56,
-                                        input_h - 4));
+                       tg_gui_make_rect(width - 64, box_top, 56, input_h - 4));
     backend->draw_text(backend, TG_GUI_PEN_ACCENT_TEXT, width - 56,
-                       input_baseline, "Send", 4UL);
+                       box_top + lh + 2, "Send", 4UL);
 }
 
 static void tg_gui_paint_main(const tg_gui_state *state,
@@ -867,7 +955,6 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     int y;
     int i;
     int transcript_bottom;
-    int last;
     int transcript_top;
     tg_gui_state *st;
 
@@ -898,46 +985,32 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                             header_h + lh - 2, state->subtitle, area_w);
     }
 
-    input_h = lh + 14;
+    input_h = tg_gui_input_h(state, backend, width, sidebar_w, lh);
+    ((tg_gui_state *)state)->input_h = input_h; /* cache for the hit-test */
     transcript_bottom = content_h - input_h - 4;
 
     /* One full line below the subtitle baseline so the first incoming bubble's
        sender name clears the header at any font size. */
     y = header_h + (2 * lh) + 4;
     transcript_top = y;
-    /* Walk back from the newest VISIBLE message (message_count minus the rows
-       scrolled up past), summing heights until the visible set fills the
-       transcript, then anchor that set to the bottom. transcript_scroll == 0
-       keeps the newest pinned to the bottom (the live default). */
+    /* Pixel-granular transcript scroll: transcript_scroll is a PIXEL offset up
+       from the newest-pinned position (0 = newest pinned to the bottom). This
+       lets a single message taller than the viewport be scrolled through fully --
+       the old message-granular scroll left such a bubble's tail clipped and
+       unreachable. */
     {
         int avail;
-        int used;
+        int total;
         int max_scroll;
-        int view_msgs;
+        int j;
 
         avail = transcript_bottom - transcript_top;
-        /* Max scroll: how many newest messages can be hidden before the oldest
-           fills the top of a full view (forward-walk from the oldest). */
-        {
-            int fwd_used = 0;
-            int top_fit = 0;
-            int j = 0;
-
-            while (j < state->message_count) {
-                int h = tg_gui_message_height(backend, &state->messages[j],
-                                              area_w, lh);
-                if (fwd_used > 0 && fwd_used + h > avail) {
-                    break;
-                }
-                fwd_used += h;
-                ++top_fit;
-                ++j;
-            }
-            max_scroll = state->message_count - top_fit;
-            if (max_scroll < 0) {
-                max_scroll = 0;
-            }
+        total = 0;
+        for (j = 0; j < state->message_count; ++j) {
+            total += tg_gui_message_height(backend, &state->messages[j], area_w,
+                                           lh);
         }
+        max_scroll = (total > avail) ? (total - avail) : 0;
         /* The painter owns the geometry: clamp the offset the event loop
            advanced freely (cast away const to write the model's own field). */
         st = (tg_gui_state *)state;
@@ -947,68 +1020,47 @@ static void tg_gui_paint_main(const tg_gui_state *state,
         if (st->transcript_scroll < 0) {
             st->transcript_scroll = 0;
         }
-        last = state->message_count - state->transcript_scroll;
-
-        used = 0;
-        i = last;
-        while (i > 0) {
-            int h;
-
-            h = tg_gui_message_height(backend, &state->messages[i - 1], area_w,
-                                      lh);
-            if (used > 0 && used + h > avail) {
-                break;
-            }
-            used += h;
-            --i;
-        }
-        if (used < avail) {
-            y = transcript_bottom - used;
-        }
-        view_msgs = last - i;
-        if (view_msgs < 1) {
-            view_msgs = 1;
-        }
+        /* Oldest message's top y; scroll == 0 pins the newest to the bottom. */
+        y = transcript_bottom - total + st->transcript_scroll;
         if (max_scroll > 0) {
             int ky;
             int kh;
 
-            tg_gui_paint_scrollbar(
-                backend, width - TG_GUI_SCROLLBAR_W, transcript_top,
-                transcript_bottom - transcript_top, state->message_count,
-                view_msgs,
-                (state->message_count - view_msgs) - state->transcript_scroll,
-                &ky, &kh);
+            tg_gui_paint_scrollbar(backend, width - TG_GUI_SCROLLBAR_W,
+                                   transcript_top, avail, total, avail,
+                                   max_scroll - st->transcript_scroll, &ky, &kh);
             st->sb_tr_x = width - TG_GUI_SCROLLBAR_W;
             st->sb_tr_ty = transcript_top;
-            st->sb_tr_th = transcript_bottom - transcript_top;
+            st->sb_tr_th = avail;
             st->sb_tr_ky = ky;
             st->sb_tr_kh = kh;
-            st->sb_tr_max = state->message_count - view_msgs;
+            st->sb_tr_max = max_scroll;
         } else {
             st->sb_tr_max = 0;
         }
     }
-    for (; i < last; ++i) {
+    for (i = 0; i < state->message_count; ++i) {
         const tg_gui_message *message;
+        int h;
 
-        /* Guard every message type, system lines included, against running
-           into the input row. */
-        if (y >= transcript_bottom) {
-            break;
-        }
         message = &state->messages[i];
-        if (message->is_system) {
-            if (y + lh <= transcript_bottom) {
-                backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM,
-                                   area_x + (area_w / 4), y + lh, message->text,
-                                   (unsigned long)strlen(message->text));
+        h = tg_gui_message_height(backend, message, area_w, lh);
+        /* Draw only messages intersecting the viewport; each part is clipped to
+           [transcript_top, transcript_bottom] inside the bubble. */
+        if (y + h > transcript_top && y < transcript_bottom) {
+            if (message->is_system) {
+                if (y + lh > transcript_top && y + lh <= transcript_bottom) {
+                    backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM,
+                                       area_x + (area_w / 4), y + lh,
+                                       message->text,
+                                       (unsigned long)strlen(message->text));
+                }
+            } else {
+                (void)tg_gui_paint_bubble(backend, message, area_x, area_w, y, lh,
+                                          transcript_top, transcript_bottom);
             }
-            y += lh + 6;
-            continue;
         }
-        y += tg_gui_paint_bubble(backend, message, area_x, area_w, y, lh,
-                                 transcript_bottom);
+        y += h;
     }
 
     tg_gui_paint_input_row(state, backend);
@@ -1051,7 +1103,7 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
     status_h = lh + 6;
     content_h = height - status_h;
     sidebar_w = tg_gui_sidebar_w(width);
-    input_h = lh + 14;
+    input_h = (state->input_h > 0) ? state->input_h : (lh + 14);
     /* The input row / Send button live along the bottom of the right pane. */
     if (y >= content_h - input_h && y < content_h - 4 && x >= sidebar_w) {
         if (x >= width - 64) {
