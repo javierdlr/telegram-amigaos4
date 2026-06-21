@@ -511,9 +511,10 @@ int tg_gui_driver_self_test(void)
         return 2;
     }
 
-    /* Unmapped symbol (U+1F4A9, no readable rendition) is OMITTED, not '?'. */
+    /* Unmapped symbol (U+1F4E6 package, no readable rendition) is OMITTED, not
+       '?'. (U+1F4A9 now maps to "(poo)", so it is no longer an unmapped case.) */
     tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "Mario", "Io", 0,
-                       "\xF0\x9F\x92\xA9");
+                       "\xF0\x9F\x93\xA6");
     if (state.messages[state.message_count - 1].text[0] != '\0') {
         printf("gui driver self-test: unmapped symbol not omitted (%s)\n",
                state.messages[state.message_count - 1].text);

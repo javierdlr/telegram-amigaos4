@@ -687,6 +687,10 @@ int tg_gui_run_window(tg_gui_state *state)
     int done;
     int caret_ticks;
     unsigned long watch_seconds;
+    unsigned long watch_boot_seconds;
+    unsigned long watch_boot_grace;
+    unsigned long effective_watch;
+    time_t session_boot;
     time_t last_session_poll;
     time_t last_key_time;
 
@@ -895,21 +899,26 @@ int tg_gui_run_window(tg_gui_state *state)
        (MorphOS especially), and coalesce into a single repaint per wake-up. The
        tick is a no-op when no session is open (demo/--gui-chats). */
 #if defined(__MORPHOS__) || defined(__MORPHOS)
-    /* 6s is the VALIDATED FLOOR on MorphOS -- do NOT lower further at a flat
-       cadence. 1s was tried (2026-06-20) and HARD-FROZE the system AT BOOT: the
-       LockLayerRom bracket cured the *paint* race, but a SECOND race lives in the
-       startup network sequence (session open = DH + first connect + push-backlog
-       drain), the one the KPutStr pacing only mitigates. Polling every 1s hammers
-       that sequence before it settles and re-triggers the freeze. 6s gives the
-       boot enough breathing room while keeping reception snappy. The open chat's
-       new messages surface via this poll, so the interval IS the reception
-       latency; the per-tick getDifference is throttled to a backstop (pushes
-       carry the live cross-chat stream). A future adaptive ramp (slow for the
-       first few seconds at boot, then faster) could beat 6s safely. */
-    watch_seconds = 6UL;
+    /* ADAPTIVE RAMP on MorphOS: slow for the first WATCH_BOOT_GRACE seconds after
+       the window opens, then faster steady-state. The 2026-06-20 boot freeze at a
+       flat 1s was the PPC STACK OVERFLOW (Background CLI hit 32756/32756 bytes of
+       the libnix default ~32KB task stack) -- now CURED by `__stack = 1MB` in
+       platforms/morphos/tg_platform_morphos.c. With the stack fixed, the only
+       remaining caution is the startup network burst (session open = DH + first
+       connect + push-backlog drain): keep the FIRST few seconds at the proven 6s
+       so that settles undisturbed, then drop to 3s steady-state -- halving the
+       reception latency (the poll interval IS the latency for the open chat) while
+       staying boot-safe. The per-tick getDifference is throttled to a backstop;
+       pushes carry the live cross-chat stream. */
+    watch_seconds = 3UL;
+    watch_boot_seconds = 6UL;
+    watch_boot_grace = 12UL;
 #else
     watch_seconds = 2UL;
+    watch_boot_seconds = 2UL;
+    watch_boot_grace = 0UL;
 #endif
+    session_boot = time(0);
     last_session_poll = time(0);
     last_key_time = time(0);
     done = 0;
@@ -1272,9 +1281,21 @@ int tg_gui_run_window(tg_gui_state *state)
                        for TG_GUI_COMPOSE_IDLE_POLL_SECONDS; skip it entirely when
                        a close/quit is already queued this drain. */
                     now = time(0);
+                    /* Effective interval: hold the conservative boot cadence until
+                       the startup network burst has had WATCH_BOOT_GRACE seconds to
+                       settle, then use the faster steady-state interval. */
+                    {
+                        unsigned long eff = watch_seconds;
+                        if (watch_boot_grace &&
+                            session_boot != (time_t)-1 && now != (time_t)-1 &&
+                            (unsigned long)(now - session_boot) < watch_boot_grace) {
+                            eff = watch_boot_seconds;
+                        }
+                        effective_watch = eff;
+                    }
                     if (!done && now != (time_t)-1 &&
                         (unsigned long)(now - last_session_poll) >=
-                            watch_seconds &&
+                            effective_watch &&
                         (!state->composing ||
                          (unsigned long)(now - last_key_time) >=
                              TG_GUI_COMPOSE_IDLE_POLL_SECONDS)) {

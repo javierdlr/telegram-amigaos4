@@ -4780,6 +4780,14 @@ static const char *tg_mtproto_display_emoticon(unsigned long cp)
     case 0x1f90dUL:
     case 0x1f90eUL:
     case 0x1f9e1UL:
+    case 0x1f493UL: /* beating heart */
+    case 0x1f495UL: /* two hearts */
+    case 0x1f496UL: /* sparkling heart */
+    case 0x1f497UL: /* growing heart */
+    case 0x1f498UL: /* heart with arrow */
+    case 0x1f49dUL: /* heart with ribbon */
+    case 0x1f49eUL: /* revolving hearts */
+    case 0x1f49fUL: /* heart decoration */
     case 0x1f60dUL: /* heart eyes */
     case 0x1f970UL: /* smiling with hearts */
         return "<3";
@@ -4829,7 +4837,62 @@ static const char *tg_mtproto_display_emoticon(unsigned long cp)
         return "(zzz)";
     case 0x1f62aUL: /* sleepy */
     case 0x1f613UL: /* downcast w/ sweat */
+    case 0x1f629UL: /* weary */
+    case 0x1f62bUL: /* tired */
+    case 0x1f97aUL: /* pleading */
         return ":(";
+    case 0x1f60fUL: /* smirk */
+        return ";)";
+    case 0x1f60bUL: /* yum */
+    case 0x1f924UL: /* drooling */
+        return ":P";
+    case 0x1f644UL: /* rolling eyes */
+    case 0x1f612UL: /* unamused */
+        return ":/";
+    case 0x1f633UL: /* flushed */
+        return ":O";
+    case 0x1f389UL: /* party popper */
+    case 0x1f38aUL: /* confetti ball */
+    case 0x1f973UL: /* partying face */
+    case 0x1f64cUL: /* raising hands */
+    case 0x1f64bUL: /* happy person raising hand */
+        return "\\o/";
+    case 0x1f525UL: /* fire */
+        return "(fire)";
+    case 0x1f4aaUL: /* flexed biceps */
+        return "(flex)";
+    case 0x1f44fUL: /* clapping hands */
+        return "(clap)";
+    case 0x1f917UL: /* hugging face */
+        return "(hug)";
+    case 0x1f4afUL: /* hundred points */
+        return "(100)";
+    case 0x2728UL: /* sparkles */
+        return "*";
+    case 0x1f937UL: /* shrug */
+        return "(shrug)";
+    case 0x1f440UL: /* eyes */
+        return "(eyes)";
+    case 0x1f44bUL: /* waving hand */
+        return "(wave)";
+    case 0x1f91dUL: /* handshake */
+        return "(shake)";
+    case 0x270cUL: /* victory hand */
+    case 0x1f91eUL: /* crossed fingers */
+        return "v";
+    case 0x1f64fUL: /* folded hands / thanks */
+        return "(pray)";
+    case 0x1f4a9UL: /* pile of poo */
+        return "(poo)";
+    case 0x2757UL: /* exclamation mark */
+    case 0x2755UL: /* white exclamation */
+        return "!";
+    case 0x2753UL: /* question mark */
+    case 0x2754UL: /* white question */
+        return "?";
+    case 0x1f339UL: /* rose */
+    case 0x1f490UL: /* bouquet */
+        return "(rose)";
     default:
         return 0;
     }
