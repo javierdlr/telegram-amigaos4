@@ -56,6 +56,18 @@ const char *tg_platform_default_data_dir(void)
     return "PROGDIR:";
 }
 
+void tg_platform_workbench_init(void)
+{
+#if defined(__AROS__)
+    /* Workbench start: anchor the CWD to the binary's drawer so the relative
+       data files resolve. The lock is process-lifetime (freed at exit). */
+    BPTR progdir = Lock((CONST_STRPTR)"PROGDIR:", SHARED_LOCK);
+    if (progdir != 0) {
+        CurrentDir(progdir);
+    }
+#endif
+}
+
 void tg_platform_log(const char *level, const char *message)
 {
     printf("[aros:%s] %s\n", level, message);

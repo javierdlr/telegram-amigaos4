@@ -93,6 +93,18 @@ int tg_platform_stdin_set_raw(int enabled);
  */
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count);
 
+/**
+ * Prepare the process for a Workbench (icon double-click) launch.
+ *
+ * Called once from main() when the program was started with no CLI (argc == 0,
+ * the Amiga C-runtime convention for a Workbench start). On the Amiga family
+ * this CurrentDir()s to PROGDIR: so the relative data files (telegram-api.txt,
+ * telegram-auth.bin, telegram-peers.txt, ...) resolve next to the binary even
+ * though Workbench did not set the drawer as the working directory. No-op on
+ * the host build and anywhere a working directory is already correct.
+ */
+void tg_platform_workbench_init(void);
+
 /*
  * Returns non-zero when the user asked to abort (Amiga family: the shell
  * break signal SIGBREAKF_CTRL_C, left pending so the caller's main loop can
