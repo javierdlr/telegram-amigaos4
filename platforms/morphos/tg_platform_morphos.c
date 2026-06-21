@@ -11,8 +11,8 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/filio.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -22,8 +22,34 @@
 #include <devices/timer.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
+#include <clib/debug_protos.h>
 #include <dos/dos.h>
 #include <proto/timer.h>
+/* Own bsdsocket.library ourselves. We are built -noixemul (libnix), so without
+   this libnix auto-opens bsdsocket.library and auto-CLOSES it from its exit
+   list (ADD2EXIT __exitsocket) AFTER main() returns -- and that deferred
+   CloseLibrary, run against a connection that was live until the last second on
+   a slow link, HARD-FROZE the whole machine ~5-10s after the GUI closed. By
+   routing every socket call through SocketBase (proto/socket.h inlines), the
+   libnix auto-open/auto-close stubs are never linked, so we open SocketBase in
+   tg_platform_tcp_connect and CloseLibrary it ourselves in tg_platform_tcp_close
+   while the task is still alive -- exactly like the OS3 no-ixemul / AROS lanes
+   that never freeze. */
+#include <proto/socket.h>
+
+/* bsdsocket.library base referenced by the proto/socket.h inlines. */
+struct Library *SocketBase = 0;
+
+/* PPC task stack size for this -noixemul (libnix) MorphOS binary. CRITICAL: on
+   MorphOS the shell "Stack" command -- and the launcher's "Stack 1048576" -- size
+   the 68k stack, NOT the PPC task stack, which otherwise defaults to ~32 KB. The
+   DH handshake and the GUI's wrapped-line arrays overflow that, giving
+   "PPC Stack Ptr is not between PPCSPLower/Upper" (maxstack 32756/32756) and then
+   an Illegal-Access freeze. libnix's startup swaps to at least __stack bytes
+   before main(), so we override its weak default with a generous PPC stack here.
+   Diagnosed from a community logtool dump (PowerBook G4 + PowerMac G5,
+   MorphOS 3.20), 2026-06-21. */
+unsigned long __stack = 1048576UL;
 
 #ifndef TG_ENABLE_TLS
 #define TG_ENABLE_TLS 0
@@ -52,9 +78,32 @@ const char *tg_platform_default_data_dir(void)
     return "PROGDIR:";
 }
 
+void tg_platform_workbench_init(void)
+{
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    /* Workbench start: anchor the CWD to the binary's drawer so the relative
+       data files resolve. The lock is process-lifetime (freed at exit). */
+    BPTR progdir = Lock((CONST_STRPTR)"PROGDIR:", SHARED_LOCK);
+    if (progdir != 0) {
+        CurrentDir(progdir);
+    }
+#endif
+}
+
 void tg_platform_log(const char *level, const char *message)
 {
     printf("[morphos:%s] %s\n", level, message);
+}
+
+void tg_platform_debug(const char *message)
+{
+    /* KPutStr (debug.lib) writes straight to the kernel debug output, so it
+       survives a hard freeze and is captured live by Sashimi -- unlike a disk
+       log, which the write-back filesystem may never commit before the crash. */
+    if (message != 0) {
+        KPutStr((CONST_STRPTR)message);
+        KPutStr((CONST_STRPTR)"\n");
+    }
 }
 
 void tg_platform_sleep_seconds(unsigned long seconds)
@@ -443,21 +492,53 @@ static void tg_platform_set_error(char *error_buffer, unsigned long error_buffer
     }
 }
 
+/* Open bsdsocket.library in-process and point its errno at ours. Mirrors the
+   OS3 no-ixemul lane (OpenLibrary v4 + SetErrnoPtr); returns 1 on success. */
+static int tg_morphos_open_socket_library(void)
+{
+    if (SocketBase != 0) {
+        return 1;
+    }
+
+    SocketBase = OpenLibrary((CONST_STRPTR)"bsdsocket.library", 4);
+    if (SocketBase == 0) {
+        return 0;
+    }
+
+    SetErrnoPtr(&errno, (LONG)sizeof(errno));
+    return 1;
+}
+
+/* Close bsdsocket.library IN-PROCESS, while the task is still alive. This is
+   the whole point of owning SocketBase: it removes the deferred libnix-exit
+   CloseLibrary that hard-froze MorphOS on GUI close. */
+static void tg_morphos_close_socket_library(void)
+{
+    if (SocketBase != 0) {
+        CloseLibrary(SocketBase);
+        SocketBase = 0;
+    }
+}
+
 static tg_net_status tg_platform_connect_socket(int sock, struct sockaddr_in *address,
                                                 char *error_buffer,
                                                 unsigned long error_buffer_size)
 {
     unsigned long timeout_seconds;
-    int flags;
+    long nonblock;
     int rc;
     int socket_error;
     long socket_error_size;
     fd_set write_fds;
     struct timeval timeout;
 
+    /* Same timeout semantics as before; only the syscalls change to bsdsocket
+       primitives (IoctlSocket(FIONBIO) for non-blocking instead of fcntl, and
+       WaitSelect() instead of select()) so the call binds to SocketBase and the
+       libnix auto-stubs are not linked. */
     timeout_seconds = tg_net_connect_timeout_seconds();
     if (timeout_seconds == 0) {
-        rc = connect(sock, (struct sockaddr *)address, sizeof(*address));
+        rc = (int)connect(sock, (struct sockaddr *)address, sizeof(*address));
         if (rc == 0) {
             return TG_NET_OK;
         }
@@ -465,9 +546,9 @@ static tg_net_status tg_platform_connect_socket(int sock, struct sockaddr_in *ad
         return TG_NET_CONNECT_FAILED;
     }
 
-    flags = fcntl(sock, F_GETFL, 0);
-    if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
-        rc = connect(sock, (struct sockaddr *)address, sizeof(*address));
+    nonblock = 1;
+    if (IoctlSocket(sock, FIONBIO, (char *)&nonblock) < 0) {
+        rc = (int)connect(sock, (struct sockaddr *)address, sizeof(*address));
         if (rc == 0) {
             return TG_NET_OK;
         }
@@ -475,13 +556,15 @@ static tg_net_status tg_platform_connect_socket(int sock, struct sockaddr_in *ad
         return TG_NET_CONNECT_FAILED;
     }
 
-    rc = connect(sock, (struct sockaddr *)address, sizeof(*address));
+    rc = (int)connect(sock, (struct sockaddr *)address, sizeof(*address));
     if (rc == 0) {
-        (void)fcntl(sock, F_SETFL, flags);
+        nonblock = 0;
+        (void)IoctlSocket(sock, FIONBIO, (char *)&nonblock);
         return TG_NET_OK;
     }
     if (errno != EINPROGRESS && errno != EWOULDBLOCK) {
-        (void)fcntl(sock, F_SETFL, flags);
+        nonblock = 0;
+        (void)IoctlSocket(sock, FIONBIO, (char *)&nonblock);
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
         return TG_NET_CONNECT_FAILED;
     }
@@ -491,9 +574,10 @@ static tg_net_status tg_platform_connect_socket(int sock, struct sockaddr_in *ad
     timeout.tv_sec = (long)timeout_seconds;
     timeout.tv_usec = 0;
 
-    rc = select(sock + 1, 0, &write_fds, 0, &timeout);
+    rc = (int)WaitSelect(sock + 1, 0, &write_fds, 0, &timeout, 0);
     if (rc <= 0) {
-        (void)fcntl(sock, F_SETFL, flags);
+        nonblock = 0;
+        (void)IoctlSocket(sock, FIONBIO, (char *)&nonblock);
         if (rc == 0) {
             tg_platform_set_error(error_buffer, error_buffer_size,
                                   "socket connect timed out");
@@ -507,17 +591,20 @@ static tg_net_status tg_platform_connect_socket(int sock, struct sockaddr_in *ad
     socket_error_size = sizeof(socket_error);
     if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &socket_error,
                    &socket_error_size) != 0) {
-        (void)fcntl(sock, F_SETFL, flags);
+        nonblock = 0;
+        (void)IoctlSocket(sock, FIONBIO, (char *)&nonblock);
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
         return TG_NET_CONNECT_FAILED;
     }
     if (socket_error != 0) {
-        (void)fcntl(sock, F_SETFL, flags);
+        nonblock = 0;
+        (void)IoctlSocket(sock, FIONBIO, (char *)&nonblock);
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(socket_error));
         return TG_NET_CONNECT_FAILED;
     }
 
-    (void)fcntl(sock, F_SETFL, flags);
+    nonblock = 0;
+    (void)IoctlSocket(sock, FIONBIO, (char *)&nonblock);
     return TG_NET_OK;
 }
 
@@ -539,9 +626,19 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
         return TG_NET_INVALID_ARGUMENT;
     }
 
-    host_entry = gethostbyname((const unsigned char *)host);
+    /* Own bsdsocket.library: open it before any socket call (mirrors AROS/OS3),
+       and close it again on every failure path below so it is never left held
+       for the libnix exit list to tear down. */
+    if (!tg_morphos_open_socket_library()) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "cannot open bsdsocket.library");
+        return TG_NET_CONNECT_FAILED;
+    }
+
+    host_entry = gethostbyname((const UBYTE *)host);
     if (host_entry == 0 || host_entry->h_addr_list == 0 || host_entry->h_addr_list[0] == 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, "host lookup failed");
+        tg_morphos_close_socket_library();
         return TG_NET_RESOLVE_FAILED;
     }
 
@@ -550,9 +647,10 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     address.sin_port = htons((unsigned short)port_number);
     memcpy(&address.sin_addr, host_entry->h_addr_list[0], sizeof(address.sin_addr));
 
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+    sock = (int)socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+        tg_morphos_close_socket_library();
         return TG_NET_CONNECT_FAILED;
     }
 
@@ -563,7 +661,8 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
         return TG_NET_OK;
     }
 
-    close(sock);
+    CloseSocket((long)sock);
+    tg_morphos_close_socket_library();
     return TG_NET_CONNECT_FAILED;
 }
 
@@ -577,7 +676,8 @@ tg_net_status tg_platform_tcp_send(tg_net_connection *connection, const void *da
         *bytes_sent = 0;
     }
 
-    rc = send((int)connection->platform_handle, data, byte_count, 0);
+    rc = send((int)connection->platform_handle, (const UBYTE *)data,
+              (LONG)byte_count, 0);
     if (rc < 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
         return TG_NET_SEND_FAILED;
@@ -601,6 +701,9 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
         *bytes_received = 0;
     }
 
+    /* Same timeout semantics as before; WaitSelect() replaces select() so the
+       wait binds to bsdsocket via SocketBase (the descriptor lives in the
+       bsdsocket fd namespace, exactly as on the OS3 no-ixemul lane). */
     timeout_seconds = tg_net_connect_timeout_seconds();
     if (timeout_seconds == 0UL) {
         timeout_seconds = 30UL;
@@ -609,8 +712,8 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
     FD_SET((int)connection->platform_handle, &read_fds);
     timeout.tv_sec = (long)timeout_seconds;
     timeout.tv_usec = 0;
-    rc = select((int)connection->platform_handle + 1, &read_fds, 0, 0,
-                &timeout);
+    rc = WaitSelect((int)connection->platform_handle + 1, &read_fds, 0, 0,
+                    &timeout, 0);
     if (rc <= 0 || !FD_ISSET((int)connection->platform_handle, &read_fds)) {
         if (rc == 0) {
             tg_platform_set_error(error_buffer, error_buffer_size,
@@ -622,7 +725,8 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
         return rc == 0 ? TG_NET_TIMEOUT : TG_NET_RECV_FAILED;
     }
 
-    rc = recv((int)connection->platform_handle, buffer, buffer_size, 0);
+    rc = recv((int)connection->platform_handle, (UBYTE *)buffer,
+              (LONG)buffer_size, 0);
     if (rc < 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
         return TG_NET_RECV_FAILED;
@@ -639,9 +743,24 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
-        (void)shutdown((int)connection->platform_handle, SHUT_RDWR);
-        close((int)connection->platform_handle);
+        struct linger lin;
+
+        /* Abortive close: SO_LINGER with a zero timeout makes CloseSocket() send
+           a RST and drop the socket straight to CLOSED, instead of leaving it in
+           FIN-WAIT on this slow/flaky bsdsocket link.
+           No graceful shutdown(SHUT_RDWR): on this stack it can block on the peer. */
+        lin.l_onoff = 1;
+        lin.l_linger = 0;
+        (void)setsockopt((int)connection->platform_handle, SOL_SOCKET, SO_LINGER,
+                         (const void *)&lin, sizeof(lin));
+        CloseSocket((long)connection->platform_handle);
+        connection->is_open = 0;
     }
+    /* Close bsdsocket.library IN-PROCESS while the task is still alive. We OWN
+       SocketBase now (opened in tg_platform_tcp_connect), so this is the only
+       CloseLibrary -- the libnix exit-list __exitsocket stub is never linked,
+       which removes the deferred teardown that HARD-FROZE MorphOS on GUI close. */
+    tg_morphos_close_socket_library();
 }
 
 #if TG_ENABLE_TLS

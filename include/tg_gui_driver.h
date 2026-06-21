@@ -1,0 +1,59 @@
+/*
+ * Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+ * SPDX-License-Identifier: MIT
+ *
+ * The GUI chat driver: the bridge that lets the chat engine feed the native
+ * GUI. It implements tg_chat_driver.on_message (the seam from step 3) by
+ * projecting each resolved tg_chat_message_row into a tg_gui_message appended
+ * to a tg_gui_state -- instead of the console driver, which prints it. This is
+ * what turns the demo GUI window into one that shows real conversation rows.
+ *
+ * Pure projection: no I/O, no network, host-testable. See tg_chat_engine.h
+ * (tg_chat_driver / tg_chat_message_row) and tg_gui.h (tg_gui_state).
+ */
+
+#ifndef TG_GUI_DRIVER_H
+#define TG_GUI_DRIVER_H
+
+#include "tg_chat_engine.h"
+#include "tg_gui.h"
+
+typedef struct tg_gui_chat_driver {
+    tg_gui_state *state; /* the GUI model this driver appends messages to */
+} tg_gui_chat_driver;
+
+/* Binds chat_driver (the engine-facing vtable) so its on_message appends to
+   `state` through `gui`. After this, hand chat_driver to the engine; every row
+   it emits lands in state->messages (newest last, oldest dropped past the
+   ring's capacity). */
+void tg_gui_chat_driver_bind(tg_gui_chat_driver *gui, tg_gui_state *state,
+                             tg_chat_driver *chat_driver);
+
+/* Maps a sender name to a stable avatar tint index [0, TG_GUI_AVATAR_COLORS).
+   Exposed so the chat-list projection can colour the same name identically. */
+int tg_gui_driver_color_for(const char *name);
+
+/* Appends a just-sent outgoing message to the transcript optimistically (no
+   network), so it shows at once even when a confirm-poll would be slow to come
+   back (notably MorphOS). `text` is already Latin-1 (typed) and copied
+   verbatim; `own_label` is the sender label. */
+void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
+                              const char *own_label);
+
+/* The peer has read our outgoing messages up to read_outbox_max: advance the
+   open-chat read cursor (monotonic) and promote shown own messages at or below
+   it from "sent" to "seen". Returns 1 if any mark changed (repaint needed).
+   Called by the live session after a getPeerDialogs refresh. */
+int tg_gui_driver_set_read_outbox_max(tg_gui_chat_driver *gui,
+                                      unsigned long read_outbox_max);
+
+/* Reset the read cursor when switching chats (so it can drop to the new chat's
+   value rather than being pinned by the monotonic advance above). */
+void tg_gui_driver_reset_read_outbox(tg_gui_chat_driver *gui);
+
+/* Host-CI self-test: feeds synthetic rows through the driver and asserts the
+   resulting tg_gui_state (sender, text, time, is_own, colour, ring overflow).
+   Returns 0 on success. */
+int tg_gui_driver_self_test(void);
+
+#endif

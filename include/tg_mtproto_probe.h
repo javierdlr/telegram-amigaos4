@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 
+#include "tg_chat_engine.h"
 #include "tg_mtproto_tl.h"
 
 tg_mtproto_tl_status tg_mtproto_build_req_pq_multi(
@@ -156,6 +157,13 @@ int tg_mtproto_auth_list_peers_file(const char *host,
                                     const char *limit_text,
                                     const char *peer_cache_file,
                                     FILE *stream);
+/* One-shot live peer-cache refresh for the GUI sidebar: derives host/DC from
+   the saved session and runs list-peers (with a heavy-account retry). See the
+   definition in tg_mtproto_probe.c. */
+int tg_mtproto_gui_refresh_peer_cache(const char *api_file,
+                                      const char *auth_file,
+                                      const char *peer_cache_file,
+                                      FILE *stream);
 int tg_mtproto_auth_resolve_username_file(const char *host,
                                           const char *port,
                                           const char *api_file,
@@ -215,9 +223,35 @@ int tg_mtproto_auth_forget(const char *auth_file,
                            FILE *stream);
 int tg_mtproto_probe_self_test(void);
 
+/* Golden parity check for the transcript renderer (the chat model/view seam):
+   renders a fixed message script with colours off and asserts byte-equality
+   against a recorded golden. Host/CI runnable; pins output across the
+   chat-engine extraction. */
+int tg_mtproto_chat_render_self_test(void);
+
+/* Parses the peer-cache file into chat-list rows (resolving display name +
+   @username flag, user/group kind, unread, current-chat marker). Returns the
+   row count (<= max); sets *file_missing non-zero when the cache file is absent.
+   The file format is probe.c's, hence this lives here. */
+int tg_mtproto_chat_list_parse(const char *path, unsigned long current_index,
+                               tg_chat_list_row *rows, int max,
+                               int *file_missing);
+
+/* Golden parity check for the chat-list renderer: parses a fixed peer cache and
+   asserts the grouped console output byte-for-byte. Host/CI runnable. */
+int tg_mtproto_chat_list_self_test(void);
+
 /* Interactive console diagnostic: prints the colour roles, the pen palette,
    the Latin-1 marker glyphs and sample emoji mappings so a tester can verify
    in seconds how the UI renders on a given console (--console-ui-test). */
 int tg_mtproto_console_ui_test(FILE *stream);
+
+/* Render one Unicode codepoint into `out` (cap >= 8) as ASCII/Latin-1 for the
+   native GUI text path. Returns the bytes written; 0 means "omit" (no glyph).
+   The mapping mirrors the console display path, but unmapped/symbol-block
+   codepoints are omitted instead of drawn as '?'. */
+unsigned long tg_mtproto_display_codepoint_to_latin1(unsigned long cp,
+                                                     char *out,
+                                                     unsigned long cap);
 
 #endif

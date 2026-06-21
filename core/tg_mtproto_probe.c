@@ -25,6 +25,7 @@
 #include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_envelope.h"
 #include "tg_mtproto_login.h"
+#include "tg_chat_engine.h"
 #include "tg_mtproto_message_id.h"
 #include "tg_mtproto_probe.h"
 #include "tg_mtproto_rsa.h"
@@ -35,6 +36,9 @@
 #include "tg_console_ui.h"
 #include "tg_console_tui.h"
 #include "tg_file.h"
+#include "tg_gui.h"
+#include "tg_gui_driver.h"
+#include "tg_gui_session.h"
 #include "tg_net.h"
 #include "tg_platform.h"
 
@@ -139,6 +143,17 @@
 #define TG_MTPROTO_PEER_USER_CONSTRUCTOR 0x59511722UL
 #define TG_MTPROTO_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
+/* Transient "is typing" updates (layer 214; verified hashes). These never ride
+   getDifference, only the live push stream -- so the indicator is best-effort
+   and surfaces only where pushes flow (not the suppressed MorphOS path). */
+#define TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR 0xc01e857fUL
+#define TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR 0x83487af0UL
+#define TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR 0x8c88c923UL
+#define TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR 0x16bf744eUL
+/* A typing action is refreshed by the server every ~5s while active; clear the
+   indicator a hair later so it stays lit during real typing and drops soon
+   after. */
+#define TG_MTPROTO_TYPING_TTL_SECONDS 6UL
 #define TG_MTPROTO_PHONE_MIGRATE_RC_BASE 40
 
 typedef struct tg_mtproto_auth_context {
@@ -255,31 +270,27 @@ static int tg_mtproto_is_async_update_constructor(unsigned long constructor)
  * commands (list-peers, login) never accumulate entries. Zero extra network
  * traffic: everything here was already on the wire.
  */
-#define TG_CHAT_NOTIFY_MAX 8U
-#define TG_CHAT_NOTIFY_TEXT 96U
-/* Dedupe ring: must absorb the overlap between live pushes and the
-   reconciliation sweep on a busy hour, not just push repeats. */
-#define TG_CHAT_NOTIFY_RECENT 64U
-
 static unsigned long tg_mtproto_read_u32_le(const unsigned char *data);
 
-typedef struct tg_chat_notify_entry {
-    int is_chat; /* 1 = basic group (peer ids are the chat), 0 = DM user */
-    unsigned long peer_id_hi;
+/* The cross-chat notification queue, dedupe ring and constants now live in the
+   chat engine (tg_chat_engine.notify, see tg_chat_engine.h). The MTProto
+   parsers below reach the active chat session's queue through this back-pointer,
+   bound at session start; it is NULL outside a chat and the notify ops are
+   NULL-safe, so collection simply no-ops there. */
+static tg_chat_notify *tg_chat_nq = 0;
+/* Live "is typing" sink. The push collector records the most recent typing peer
+   here; the GUI session reads it each tick and lights the header for the open
+   chat. NULL outside a GUI session (the console path leaves it untouched). */
+typedef struct tg_chat_typing_sink {
+    int active;
+    int is_chat;             /* group/channel vs DM */
+    unsigned long peer_id_hi; /* DM user id, or group/channel id */
     unsigned long peer_id_lo;
-    /* The sender, for groups whose chat is not in the peer cache yet: a
-       stale cache then still shows WHO wrote instead of a generic line. */
-    unsigned long from_id_hi;
+    unsigned long from_id_hi; /* who is typing (groups); = peer for a DM */
     unsigned long from_id_lo;
-    char text[TG_CHAT_NOTIFY_TEXT];
-} tg_chat_notify_entry;
-
-static tg_chat_notify_entry tg_chat_notify_queue[TG_CHAT_NOTIFY_MAX];
-static unsigned long tg_chat_notify_count = 0UL;
-static unsigned long tg_chat_notify_dropped = 0UL;
-static unsigned long tg_chat_notify_recent_ids[TG_CHAT_NOTIFY_RECENT];
-static unsigned long tg_chat_notify_recent_pos = 0UL;
-static int tg_chat_notify_armed = 0;
+    unsigned long seen_epoch; /* time() when last seen, for the TTL */
+} tg_chat_typing_sink;
+static tg_chat_typing_sink *tg_chat_typing_target = 0;
 /* The real console stream while the chat runs, for TUI components that must
    bypass capture streams (input-row redraws from the editor and the
    sub-prompts). 0 outside the chat. */
@@ -292,47 +303,20 @@ static void tg_mtproto_chat_show_prompt(FILE *stream,
                                         int raw);
 /* Console bell (BEL -> screen flash on Amiga consoles) on notifications. */
 static int tg_chat_bell_enabled = 1;
-/* Gap-handling cursor (updates.getState / getDifference); pts == 0 means
-   not primed, so the paced drain stays off. /diff toggles the background
-   drain (the bisection knob for the fragile MorphOS link). */
-static tg_mtproto_updates_state tg_chat_updates_state;
-static int tg_chat_diff_enabled = 1;
+/* Gap-handling cursor (updates.getState / getDifference) and the /diff toggle
+   now live in the chat engine (tg_chat_engine), a stack-local of
+   tg_mtproto_auth_chat_file -- the first slice of the engine extraction. */
 /* Day (local-frame epoch/86400) of the last transcript line, for the
    "--- 10 Jun ---" separators; 0 = nothing printed yet this chat. */
 static unsigned long tg_chat_day_shown = 0UL;
+/* When set, the history renderer routes resolved rows here instead of building
+   the console driver -- the GUI session points this at its own driver around a
+   history fetch, then clears it. NULL (the default) keeps the console path
+   byte-identical. */
+static const tg_chat_driver *tg_chat_message_driver_override = 0;
 
-static void tg_chat_notify_reset(int armed)
-{
-    unsigned long i;
-
-    tg_chat_notify_count = 0UL;
-    tg_chat_notify_dropped = 0UL;
-    tg_chat_notify_recent_pos = 0UL;
-    for (i = 0UL; i < TG_CHAT_NOTIFY_RECENT; ++i) {
-        tg_chat_notify_recent_ids[i] = 0UL;
-    }
-    tg_chat_notify_armed = armed;
-}
-
-/* Updates are redelivered until acked; remember recent message ids so a
-   redelivery does not notify twice. */
-static int tg_chat_notify_seen(unsigned long message_id)
-{
-    unsigned long i;
-
-    if (message_id == 0UL) {
-        return 0;
-    }
-    for (i = 0UL; i < TG_CHAT_NOTIFY_RECENT; ++i) {
-        if (tg_chat_notify_recent_ids[i] == message_id) {
-            return 1;
-        }
-    }
-    tg_chat_notify_recent_ids[tg_chat_notify_recent_pos] = message_id;
-    tg_chat_notify_recent_pos =
-        (tg_chat_notify_recent_pos + 1UL) % TG_CHAT_NOTIFY_RECENT;
-    return 0;
-}
+/* tg_chat_notify_reset / tg_chat_notify_seen now live in tg_chat_engine.c and
+   operate on the engine's notify queue (reached here via tg_chat_nq). */
 
 /* Parses one bare updateShortMessage/updateShortChatMessage payload. */
 static void tg_chat_notify_collect_one(const unsigned char *body,
@@ -391,14 +375,13 @@ static void tg_chat_notify_collect_one(const unsigned char *body,
     if ((flags & 0x2UL) != 0UL) {
         return;
     }
-    if (tg_chat_notify_seen(message_id)) {
+    if (tg_chat_notify_seen(tg_chat_nq, message_id)) {
         return;
     }
-    if (tg_chat_notify_count >= TG_CHAT_NOTIFY_MAX) {
-        ++tg_chat_notify_dropped;
+    entry = tg_chat_notify_claim(tg_chat_nq);
+    if (entry == 0) {
         return;
     }
-    entry = &tg_chat_notify_queue[tg_chat_notify_count];
     entry->is_chat = is_chat;
     entry->peer_id_hi = chat_hi;
     entry->peer_id_lo = chat_lo;
@@ -410,7 +393,6 @@ static void tg_chat_notify_collect_one(const unsigned char *body,
     }
     memcpy(entry->text, text, copy_length);
     entry->text[copy_length] = '\0';
-    ++tg_chat_notify_count;
 }
 
 static void tg_chat_notify_collect(const unsigned char *body,
@@ -758,6 +740,18 @@ static void tg_mtproto_skip_auth_context_close(tg_mtproto_auth_context *context,
     (void)label;
 #endif
     if (context != 0) {
+        /* Historically this left the socket OPEN (it only re-inited the struct),
+           a workaround from when shutdown()-before-close() froze on slow links.
+           That abandoned a socket per one-shot auth op (sendCode/signIn/
+           checkPassword/saved-query). Harmless on the console (process exit
+           reaps the fds), but in the long-lived GUI those orphaned sockets pile
+           up and CloseLibrary(bsdsocket) stalls the task at exit (notably OS4).
+           The freeze is now handled in the platform close (no shutdown before
+           CloseSocket), and the struct is re-inited right below so nothing can
+           reuse the connection -- so do a real, non-blocking close here. */
+        if (context->connection_open) {
+            tg_net_close(&context->connection);
+        }
         context->connection_open = 0;
         tg_net_connection_init(&context->connection);
     }
@@ -2580,14 +2574,13 @@ static void tg_chat_notify_push_message(const tg_mtproto_message_text *message,
     unsigned long copy_length;
 
     if (message == 0 || !message->has_text || message->is_out ||
-        tg_chat_notify_seen(message->id)) {
+        tg_chat_notify_seen(tg_chat_nq, message->id)) {
         return;
     }
-    if (tg_chat_notify_count >= TG_CHAT_NOTIFY_MAX) {
-        ++tg_chat_notify_dropped;
+    entry = tg_chat_notify_claim(tg_chat_nq);
+    if (entry == 0) {
         return;
     }
-    entry = &tg_chat_notify_queue[tg_chat_notify_count];
     if (dest != 0 && dest->peer_constructor != 0UL) {
         entry->is_chat =
             dest->peer_constructor != TG_MTPROTO_PEER_USER_CONSTRUCTOR;
@@ -2606,7 +2599,112 @@ static void tg_chat_notify_push_message(const tg_mtproto_message_text *message,
     }
     memcpy(entry->text, message->text, copy_length);
     entry->text[copy_length] = '\0';
-    ++tg_chat_notify_count;
+}
+
+/* Records the most recent typing peer into the live sink (if a GUI session
+   armed it). `from_id` is who is typing (the sender, for groups; the peer
+   itself for a DM). The GUI tick decides whether it matches the open chat and
+   resolves the name. */
+static void tg_chat_typing_record(int is_chat, unsigned long peer_id_hi,
+                                  unsigned long peer_id_lo,
+                                  unsigned long from_id_hi,
+                                  unsigned long from_id_lo)
+{
+    if (tg_chat_typing_target == 0) {
+        return;
+    }
+    tg_chat_typing_target->active = 1;
+    tg_chat_typing_target->is_chat = is_chat;
+    tg_chat_typing_target->peer_id_hi = peer_id_hi;
+    tg_chat_typing_target->peer_id_lo = peer_id_lo;
+    tg_chat_typing_target->from_id_hi = from_id_hi;
+    tg_chat_typing_target->from_id_lo = from_id_lo;
+    tg_chat_typing_target->seen_epoch = (unsigned long)time(0);
+}
+
+/* Reads the SendMessageAction at the reader and returns 1 only for the plain
+   "typing" action (uploading/recording/etc. are ignored -- we show "is
+   typing", not a generic activity). */
+static int tg_chat_typing_action_is_typing(tg_mtproto_tl_reader *reader)
+{
+    unsigned long action;
+
+    if (tg_mtproto_tl_read_u32(reader, &action) != TG_MTPROTO_TL_OK) {
+        return 0;
+    }
+    return action == TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR;
+}
+
+/* Given a reader positioned just after an Update constructor, parses the three
+   *UserTyping variants and records the typing peer. Other updates are ignored.
+   The reader is left in an indeterminate position (the caller stops walking). */
+static void tg_chat_typing_parse_update(tg_mtproto_tl_reader *reader,
+                                        unsigned long update_ctor)
+{
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long peer_ctor;
+    unsigned long from_hi;
+    unsigned long from_lo;
+    unsigned long flags;
+    unsigned long top;
+
+    if (update_ctor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR) {
+        /* DM: the typing user IS the peer. */
+        if (tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) == TG_MTPROTO_TL_OK &&
+            tg_chat_typing_action_is_typing(reader)) {
+            tg_chat_typing_record(0, id_hi, id_lo, id_hi, id_lo);
+        }
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) == TG_MTPROTO_TL_OK &&
+            tg_mtproto_tl_read_u32(reader, &peer_ctor) == TG_MTPROTO_TL_OK &&
+            tg_mtproto_tl_read_u64(reader, &from_hi, &from_lo) ==
+                TG_MTPROTO_TL_OK &&
+            tg_chat_typing_action_is_typing(reader)) {
+            tg_chat_typing_record(1, id_hi, id_lo, from_hi, from_lo);
+        }
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR) {
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u64(reader, &id_hi, &id_lo) !=
+                TG_MTPROTO_TL_OK) {
+            return;
+        }
+        if ((flags & 0x1UL) != 0UL &&
+            tg_mtproto_tl_read_u32(reader, &top) != TG_MTPROTO_TL_OK) {
+            return;
+        }
+        if (tg_mtproto_tl_read_u32(reader, &peer_ctor) == TG_MTPROTO_TL_OK &&
+            tg_mtproto_tl_read_u64(reader, &from_hi, &from_lo) ==
+                TG_MTPROTO_TL_OK &&
+            tg_chat_typing_action_is_typing(reader)) {
+            tg_chat_typing_record(1, id_hi, id_lo, from_hi, from_lo);
+        }
+        return;
+    }
+}
+
+/* updateShort#78d4dec1 update:Update date:int -- the standard single-update
+   envelope that carries transient typing. */
+static void tg_chat_typing_collect_short(const unsigned char *body,
+                                         unsigned long body_length)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long outer;
+    unsigned long inner;
+
+    if (tg_chat_typing_target == 0) {
+        return;
+    }
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &outer) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &inner) != TG_MTPROTO_TL_OK) {
+        return;
+    }
+    tg_chat_typing_parse_update(&reader, inner);
 }
 
 static void tg_chat_notify_collect_updates(const unsigned char *body,
@@ -2630,6 +2728,16 @@ static void tg_chat_notify_collect_updates(const unsigned char *body,
     for (i = 0UL; i < count; ++i) {
         if (tg_mtproto_tl_read_u32(&reader, &item_constructor) !=
             TG_MTPROTO_TL_OK) {
+            return;
+        }
+        if (item_constructor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR ||
+            item_constructor ==
+                TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR ||
+            item_constructor ==
+                TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR) {
+            /* A typing item leading the container: record it, then stop (items
+               are not length-prefixed, so the walk cannot continue past it). */
+            tg_chat_typing_parse_update(&reader, item_constructor);
             return;
         }
         if (item_constructor != TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR &&
@@ -2672,7 +2780,8 @@ static void tg_chat_notify_collect(const unsigned char *body,
     const unsigned char *unpacked;
     unsigned long unpacked_length;
 
-    if (!tg_chat_notify_armed || body == 0 || body_length < 4UL) {
+    if (tg_chat_nq == 0 || !tg_chat_nq->armed || body == 0 ||
+        body_length < 4UL) {
         return;
     }
     constructor = tg_mtproto_read_u32_le(body);
@@ -2700,6 +2809,11 @@ static void tg_chat_notify_collect(const unsigned char *body,
     if (constructor == TG_MTPROTO_UPDATES_CONSTRUCTOR ||
         constructor == TG_MTPROTO_UPDATES_COMBINED_CONSTRUCTOR) {
         tg_chat_notify_collect_updates(body, body_length);
+        return;
+    }
+    if (constructor == TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) {
+        /* The single-update envelope: the live "is typing" carrier. */
+        tg_chat_typing_collect_short(body, body_length);
         return;
     }
     if (constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
@@ -4620,57 +4734,12 @@ static int tg_mtproto_display_utf8(void)
 #endif
 }
 
-#if TG_MTPROTO_DISPLAY_LATIN1
-static unsigned long tg_mtproto_utf8_read_codepoint(const char *text,
-                                                    unsigned long *index)
-{
-    const unsigned char *bytes;
-    unsigned long i;
-    unsigned long cp;
-
-    bytes = (const unsigned char *)text;
-    i = *index;
-    if (bytes[i] < 0x80U) {
-        *index = i + 1UL;
-        return bytes[i];
-    }
-    if ((bytes[i] & 0xe0U) == 0xc0U && bytes[i + 1UL] != '\0' &&
-        (bytes[i + 1UL] & 0xc0U) == 0x80U) {
-        cp = ((unsigned long)(bytes[i] & 0x1fU) << 6) |
-             (unsigned long)(bytes[i + 1UL] & 0x3fU);
-        *index = i + 2UL;
-        return cp;
-    }
-    if ((bytes[i] & 0xf0U) == 0xe0U && bytes[i + 1UL] != '\0' &&
-        bytes[i + 2UL] != '\0' &&
-        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
-        (bytes[i + 2UL] & 0xc0U) == 0x80U) {
-        cp = ((unsigned long)(bytes[i] & 0x0fU) << 12) |
-             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 6) |
-             (unsigned long)(bytes[i + 2UL] & 0x3fU);
-        *index = i + 3UL;
-        return cp;
-    }
-    if ((bytes[i] & 0xf8U) == 0xf0U && bytes[i + 1UL] != '\0' &&
-        bytes[i + 2UL] != '\0' && bytes[i + 3UL] != '\0' &&
-        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
-        (bytes[i + 2UL] & 0xc0U) == 0x80U &&
-        (bytes[i + 3UL] & 0xc0U) == 0x80U) {
-        cp = ((unsigned long)(bytes[i] & 0x07U) << 18) |
-             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 12) |
-             ((unsigned long)(bytes[i + 2UL] & 0x3fU) << 6) |
-             (unsigned long)(bytes[i + 3UL] & 0x3fU);
-        *index = i + 4UL;
-        return cp;
-    }
-    *index = i + 1UL;
-    return bytes[i];
-}
-
 /* ASCII/Latin-1 emoticon for the emoji people actually send, or 0 when the
    codepoint has no readable rendition. A retro text client drawing ":)" is
    both honest and period-correct; everything else falls through to the '¤'
-   placeholder rather than a bare '?', which reads as lost text. */
+   placeholder rather than a bare '?', which reads as lost text. These helpers
+   are pure (no Amiga deps) so they live outside the Latin-1 display guard and
+   feed both the console path and the GUI text path. */
 static const char *tg_mtproto_display_emoticon(unsigned long cp)
 {
     switch (cp) {
@@ -4720,6 +4789,14 @@ static const char *tg_mtproto_display_emoticon(unsigned long cp)
     case 0x1f90dUL:
     case 0x1f90eUL:
     case 0x1f9e1UL:
+    case 0x1f493UL: /* beating heart */
+    case 0x1f495UL: /* two hearts */
+    case 0x1f496UL: /* sparkling heart */
+    case 0x1f497UL: /* growing heart */
+    case 0x1f498UL: /* heart with arrow */
+    case 0x1f49dUL: /* heart with ribbon */
+    case 0x1f49eUL: /* revolving hearts */
+    case 0x1f49fUL: /* heart decoration */
     case 0x1f60dUL: /* heart eyes */
     case 0x1f970UL: /* smiling with hearts */
         return "<3";
@@ -4743,6 +4820,88 @@ static const char *tg_mtproto_display_emoticon(unsigned long cp)
         return "->";
     case 0x2190UL:
         return "<-";
+    case 0x1f60eUL: /* sunglasses */
+        return "8)";
+    case 0x1f607UL: /* halo */
+        return "O:)";
+    case 0x1f620UL: /* angry */
+    case 0x1f621UL: /* pouting */
+    case 0x1f624UL: /* triumph / huffing */
+        return ">:(";
+    case 0x1f614UL: /* pensive */
+    case 0x1f615UL: /* confused */
+    case 0x1f910UL: /* zipper-mouth */
+    case 0x1f914UL: /* thinking */
+    case 0x1f62cUL: /* grimace */
+        return ":/";
+    case 0x1f628UL: /* fearful */
+    case 0x1f631UL: /* face screaming */
+    case 0x1f62fUL: /* hushed */
+    case 0x1f635UL: /* dizzy */
+        return ":O";
+    case 0x1f44cUL: /* OK hand */
+        return "(ok)";
+    case 0x1f634UL: /* sleeping */
+    case 0x1f971UL: /* yawning */
+        return "(zzz)";
+    case 0x1f62aUL: /* sleepy */
+    case 0x1f613UL: /* downcast w/ sweat */
+    case 0x1f629UL: /* weary */
+    case 0x1f62bUL: /* tired */
+    case 0x1f97aUL: /* pleading */
+        return ":(";
+    case 0x1f60fUL: /* smirk */
+        return ";)";
+    case 0x1f60bUL: /* yum */
+    case 0x1f924UL: /* drooling */
+        return ":P";
+    case 0x1f644UL: /* rolling eyes */
+    case 0x1f612UL: /* unamused */
+        return ":/";
+    case 0x1f633UL: /* flushed */
+        return ":O";
+    case 0x1f389UL: /* party popper */
+    case 0x1f38aUL: /* confetti ball */
+    case 0x1f973UL: /* partying face */
+    case 0x1f64cUL: /* raising hands */
+    case 0x1f64bUL: /* happy person raising hand */
+        return "\\o/";
+    case 0x1f525UL: /* fire */
+        return "(fire)";
+    case 0x1f4aaUL: /* flexed biceps */
+        return "(flex)";
+    case 0x1f44fUL: /* clapping hands */
+        return "(clap)";
+    case 0x1f917UL: /* hugging face */
+        return "(hug)";
+    case 0x1f4afUL: /* hundred points */
+        return "(100)";
+    case 0x2728UL: /* sparkles */
+        return "*";
+    case 0x1f937UL: /* shrug */
+        return "(shrug)";
+    case 0x1f440UL: /* eyes */
+        return "(eyes)";
+    case 0x1f44bUL: /* waving hand */
+        return "(wave)";
+    case 0x1f91dUL: /* handshake */
+        return "(shake)";
+    case 0x270cUL: /* victory hand */
+    case 0x1f91eUL: /* crossed fingers */
+        return "v";
+    case 0x1f64fUL: /* folded hands / thanks */
+        return "(pray)";
+    case 0x1f4a9UL: /* pile of poo */
+        return "(poo)";
+    case 0x2757UL: /* exclamation mark */
+    case 0x2755UL: /* white exclamation */
+        return "!";
+    case 0x2753UL: /* question mark */
+    case 0x2754UL: /* white question */
+        return "?";
+    case 0x1f339UL: /* rose */
+    case 0x1f490UL: /* bouquet */
+        return "(rose)";
     default:
         return 0;
     }
@@ -4766,6 +4925,131 @@ static int tg_mtproto_display_is_symbol_block(unsigned long cp)
            (cp >= 0x2b00UL && cp <= 0x2bffUL) ||
            (cp >= 0x2190UL && cp <= 0x21ffUL) ||
            (cp >= 0x2300UL && cp <= 0x23ffUL);
+}
+
+/* GUI counterpart of tg_mtproto_print_display_codepoint: render one codepoint
+   into `out` (cap >= 8) as ASCII/Latin-1 and return the bytes written. The
+   mapping order mirrors the console path exactly, but symbol-block and unknown
+   codepoints return 0 (OMIT) so the GUI skips them instead of drawing a box or
+   a '?'. */
+unsigned long tg_mtproto_display_codepoint_to_latin1(unsigned long cp,
+                                                     char *out,
+                                                     unsigned long cap)
+{
+    const char *emoticon;
+
+    if (out == 0 || cap == 0UL) {
+        return 0UL;
+    }
+    if (cp == '\r' || cp == '\n' || cp == '\t') {
+        out[0] = ' ';
+        return 1UL;
+    }
+    if (cp < 0x100UL) {
+        out[0] = (char)(unsigned char)cp;
+        return 1UL;
+    }
+    switch (cp) {
+    case 0x2018UL:
+    case 0x2019UL:
+    case 0x02bcUL:
+        out[0] = '\'';
+        return 1UL;
+    case 0x201cUL:
+    case 0x201dUL:
+        out[0] = '"';
+        return 1UL;
+    case 0x2013UL:
+    case 0x2014UL:
+    case 0x2212UL:
+        out[0] = '-';
+        return 1UL;
+    case 0x2026UL:
+        if (cap < 3UL) {
+            return 0UL;
+        }
+        out[0] = '.';
+        out[1] = '.';
+        out[2] = '.';
+        return 3UL;
+    default:
+        break;
+    }
+    if (tg_mtproto_display_is_invisible(cp)) {
+        return 0UL;
+    }
+    /* Flag emoji are pairs of regional indicators: render each as its country
+       letter ("IT", "DE"), which is exactly the information. */
+    if (cp >= 0x1f1e6UL && cp <= 0x1f1ffUL) {
+        out[0] = (char)('A' + (int)(cp - 0x1f1e6UL));
+        return 1UL;
+    }
+    emoticon = tg_mtproto_display_emoticon(cp);
+    if (emoticon != 0) {
+        unsigned long n;
+
+        n = 0UL;
+        while (emoticon[n] != '\0') {
+            if (n >= cap) {
+                return 0UL;
+            }
+            out[n] = emoticon[n];
+            ++n;
+        }
+        return n;
+    }
+    /* Symbol-block placeholder and the final fallback both OMIT in the GUI. */
+    if (tg_mtproto_display_is_symbol_block(cp)) {
+        return 0UL;
+    }
+    return 0UL;
+}
+
+#if TG_MTPROTO_DISPLAY_LATIN1
+static unsigned long tg_mtproto_utf8_read_codepoint(const char *text,
+                                                    unsigned long *index)
+{
+    const unsigned char *bytes;
+    unsigned long i;
+    unsigned long cp;
+
+    bytes = (const unsigned char *)text;
+    i = *index;
+    if (bytes[i] < 0x80U) {
+        *index = i + 1UL;
+        return bytes[i];
+    }
+    if ((bytes[i] & 0xe0U) == 0xc0U && bytes[i + 1UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x1fU) << 6) |
+             (unsigned long)(bytes[i + 1UL] & 0x3fU);
+        *index = i + 2UL;
+        return cp;
+    }
+    if ((bytes[i] & 0xf0U) == 0xe0U && bytes[i + 1UL] != '\0' &&
+        bytes[i + 2UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 2UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x0fU) << 12) |
+             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 6) |
+             (unsigned long)(bytes[i + 2UL] & 0x3fU);
+        *index = i + 3UL;
+        return cp;
+    }
+    if ((bytes[i] & 0xf8U) == 0xf0U && bytes[i + 1UL] != '\0' &&
+        bytes[i + 2UL] != '\0' && bytes[i + 3UL] != '\0' &&
+        (bytes[i + 1UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 2UL] & 0xc0U) == 0x80U &&
+        (bytes[i + 3UL] & 0xc0U) == 0x80U) {
+        cp = ((unsigned long)(bytes[i] & 0x07U) << 18) |
+             ((unsigned long)(bytes[i + 1UL] & 0x3fU) << 12) |
+             ((unsigned long)(bytes[i + 2UL] & 0x3fU) << 6) |
+             (unsigned long)(bytes[i + 3UL] & 0x3fU);
+        *index = i + 4UL;
+        return cp;
+    }
+    *index = i + 1UL;
+    return bytes[i];
 }
 
 static void tg_mtproto_print_display_codepoint(FILE *stream, unsigned long cp)
@@ -6220,25 +6504,256 @@ static int tg_mtproto_load_peer_cache_peer(const char *path,
 /* Prints the cached chat list. When current_index_text names a chat index,
    that entry is rendered in the prompt (bold) colour with a trailing marker
    so the active chat is visible at a glance. */
-static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
-                                               const char *current_index_text)
+static void tg_chat_list_copy_name(char *dest, const char *src)
+{
+    strncpy(dest, src, TG_CHAT_LIST_NAME_MAX - 1U);
+    dest[TG_CHAT_LIST_NAME_MAX - 1U] = '\0';
+}
+
+/* One-shot live refresh of the peer cache for the GUI sidebar: load the saved
+   session to learn its DC, resolve the production endpoint, and run the same
+   list-peers fetch the console chat session uses (limit 5, then a minimal
+   retry for heavy dialogsSlice accounts). No interactive prompt, no held
+   context -- it opens and closes its own connection inside list_peers_file.
+   The caller then re-parses the cache through tg_mtproto_chat_list_parse.
+   Returns 0 when the cache was (re)written or already usable, non-zero when no
+   chats could be obtained (the caller falls back to whatever cache exists). */
+int tg_mtproto_gui_refresh_peer_cache(const char *api_file,
+                                      const char *auth_file,
+                                      const char *peer_cache_file, FILE *stream)
+{
+    tg_mtproto_session session;
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    tg_mtproto_session_status status;
+    const char *host;
+    const char *dc_id_text;
+
+    if (api_file == 0 || auth_file == 0 || peer_cache_file == 0) {
+        return 2;
+    }
+    status = tg_mtproto_session_load_authorization(auth_file, &session,
+                                                   auth_key);
+    tg_mtproto_secure_zero(auth_key, sizeof(auth_key));
+    if (status != TG_MTPROTO_SESSION_OK) {
+        return 2;
+    }
+    if (tg_mtproto_production_endpoint_for_dc(session.dc_id, &host,
+                                              &dc_id_text) != 0) {
+        return 2;
+    }
+    /* An existing peer cache is authoritative: never re-fetch getDialogs on every
+       launch (wasteful, and on MorphOS freeze-prone). The TUI path already guards
+       on cache presence the same way. */
+    if (tg_mtproto_peer_cache_available(peer_cache_file)) {
+        return 0;
+    }
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    /* MorphOS: messages.getDialogs hard-freezes the machine on a real (heavy)
+       account even at limit 1 -- the same dialogs payload class as the read-
+       receipt getPeerDialogs already suppressed here (f14daa1). With no cache yet
+       we open with an empty sidebar instead of freezing; the chat list is
+       populated from the staged telegram-peers.txt cache. */
+    (void)host;
+    (void)dc_id_text;
+    return 2;
+#else
+    {
+        FILE *quiet;
+        int rc;
+
+        quiet = tg_mtproto_open_quiet_stream(stream);
+        rc = tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
+                                             dc_id_text, "5", peer_cache_file,
+                                             quiet);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
+            quiet = tg_mtproto_open_quiet_stream(stream);
+            rc = tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
+                                                 dc_id_text, "1", peer_cache_file,
+                                                 quiet);
+            tg_mtproto_close_quiet_stream(quiet, stream);
+        }
+        return rc;
+    }
+#endif
+}
+
+int tg_mtproto_chat_list_parse(const char *path, unsigned long current_index,
+                               tg_chat_list_row *rows, int max, int *file_missing)
 {
     FILE *file;
     char line[512];
-    unsigned long index;
+    char type[24];
+    int count;
+
+    if (file_missing != 0) {
+        *file_missing = 0;
+    }
+    if (path == 0 || rows == 0 || max <= 0) {
+        return 0;
+    }
+    file = fopen(path, "r");
+    if (file == 0) {
+        if (file_missing != 0) {
+            *file_missing = 1;
+        }
+        return 0;
+    }
+    count = 0;
+    while (count < max && fgets(line, sizeof(line), file) != 0) {
+        tg_chat_list_row *row;
+        unsigned long index;
+        unsigned long unread;
+        char *title;
+        char *username;
+        char *unread_text;
+
+        index = 0UL;
+        type[0] = '\0';
+        if (sscanf(line, "peer %lu type %23s", &index, type) < 2) {
+            continue;
+        }
+        row = &rows[count];
+        row->index = index;
+        row->is_user = strcmp(type, "user") == 0;
+        unread = 0UL;
+        unread_text = strstr(line, " unread ");
+        if (unread_text != 0) {
+            (void)sscanf(unread_text + 8, "%lu", &unread);
+        }
+        row->unread = unread;
+        row->is_current = (current_index != 0UL && index == current_index);
+        /* The peer id (id 0x<hi8><lo8>) lets a driver match a notification to
+           this row; written by the cache, ignored by the console renderer. */
+        row->peer_id_hi = 0UL;
+        row->peer_id_lo = 0UL;
+        {
+            char *id_text;
+
+            id_text = strstr(line, " id 0x");
+            if (id_text != 0) {
+                (void)sscanf(id_text + 6, "%8lx%8lx", &row->peer_id_hi,
+                             &row->peer_id_lo);
+            }
+        }
+        row->name[0] = '\0';
+        row->name_is_username = 0;
+        /* Name resolution, byte-for-byte as the old inline printer: title
+           (unless "-"), else @username (unless "-"), else the type string. The
+           file always writes a title field, so the @username fallback only
+           fires for malformed lines; a present-but-"-" title yields a blank
+           name (preserved quirk). */
+        title = strstr(line, " title ");
+        username = strstr(line, " username ");
+        if (title != 0) {
+            title += 7;
+            tg_mtproto_trim_line(title);
+            if (title[0] != '-' || title[1] != '\0') {
+                tg_chat_list_copy_name(row->name, title);
+            }
+        } else if (username != 0) {
+            char *cut;
+
+            username += 10;
+            cut = strstr(username, " title ");
+            if (cut != 0) {
+                *cut = '\0';
+            }
+            tg_mtproto_trim_line(username);
+            if (username[0] != '-' || username[1] != '\0') {
+                tg_chat_list_copy_name(row->name, username);
+                row->name_is_username = 1;
+            }
+        } else {
+            tg_chat_list_copy_name(row->name, type);
+        }
+        ++count;
+    }
+    fclose(file);
+    return count;
+}
+
+/* Console rendering of the chat list: two passes (single chats, then groups and
+   channels), each with its header, the per-row "N. name[ U new][ *]". The
+   driver-agnostic rows come from tg_mtproto_chat_list_parse; the GUI driver
+   fills tg_gui_state.chats from the same rows instead. */
+static void tg_mtproto_chat_list_render_console(FILE *stream,
+                                                const tg_chat_list_row *rows,
+                                                int count)
+{
+    int printed_single;
+    int printed_group;
+    int pass;
+
+    if (stream == 0) {
+        return;
+    }
+    if (count <= 0) {
+        fprintf(stream, "No chats available.\n");
+        return;
+    }
+    printed_single = 0;
+    printed_group = 0;
+    for (pass = 0; pass < 2; ++pass) {
+        int want_user;
+        int i;
+
+        want_user = pass == 0;
+        for (i = 0; i < count; ++i) {
+            const tg_chat_list_row *row;
+
+            row = &rows[i];
+            if ((row->is_user != 0) != (want_user != 0)) {
+                continue;
+            }
+            if (row->is_user) {
+                if (!printed_single) {
+                    fputs("Single chats:", stream);
+                    tg_console_ui_end_line(stream);
+                    printed_single = 1;
+                }
+            } else {
+                if (!printed_group) {
+                    if (printed_single) {
+                        tg_console_ui_end_line(stream);
+                    }
+                    fputs("Groups and channels:", stream);
+                    tg_console_ui_end_line(stream);
+                    printed_group = 1;
+                }
+            }
+            if (row->is_current) {
+                tg_console_ui_role(stream, TG_UI_ROLE_PROMPT);
+            }
+            fprintf(stream, "%lu. ", row->index);
+            if (row->name[0] != '\0') {
+                if (row->name_is_username) {
+                    fprintf(stream, "@");
+                }
+                tg_mtproto_print_cache_text(stream, row->name);
+            }
+            if (row->unread > 0UL) {
+                tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
+                fprintf(stream, " %lu new", row->unread);
+                tg_console_ui_reset(stream);
+            }
+            if (row->is_current) {
+                fputs(" *", stream);
+                tg_console_ui_reset(stream);
+            }
+            tg_console_ui_end_line(stream);
+        }
+    }
+}
+
+static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
+                                               const char *current_index_text)
+{
+    tg_chat_list_row rows[TG_CHAT_LIST_MAX];
     unsigned long current_index;
     const char *digits;
-    char type[24];
-    char *title;
-    char *username;
-    char *unread_text;
-    unsigned long unread_count;
-    int printed_single_header;
-    int printed_group_header;
-    int is_current;
-    int pass;
-    int want_user;
-    int is_user;
+    int count;
+    int file_missing;
 
     current_index = 0UL;
     if (current_index_text != 0) {
@@ -6252,90 +6767,103 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
             current_index = 0UL;
         }
     }
-    file = fopen(path, "r");
-    if (file == 0) {
+    count = tg_mtproto_chat_list_parse(path, current_index, rows,
+                                       TG_CHAT_LIST_MAX, &file_missing);
+    if (file_missing) {
         fprintf(stream, "No cached chats yet.\n");
         return;
     }
-    printed_single_header = 0;
-    printed_group_header = 0;
-    for (pass = 0; pass < 2; ++pass) {
-        want_user = pass == 0;
-        rewind(file);
-        while (fgets(line, sizeof(line), file) != 0) {
-            index = 0UL;
-            type[0] = '\0';
-            if (sscanf(line, "peer %lu type %23s", &index, type) < 2) {
-                continue;
-            }
-            is_user = strcmp(type, "user") == 0;
-            if (is_user != want_user) {
-                continue;
-            }
-            if (is_user) {
-                if (!printed_single_header) {
-                    fputs("Single chats:", stream);
-                    tg_console_ui_end_line(stream);
-                    printed_single_header = 1;
-                }
-            } else {
-                if (!printed_group_header) {
-                    if (printed_single_header) {
-                        tg_console_ui_end_line(stream);
-                    }
-                    fputs("Groups and channels:", stream);
-                    tg_console_ui_end_line(stream);
-                    printed_group_header = 1;
-                }
-            }
-            is_current = current_index != 0UL && index == current_index;
-            unread_count = 0UL;
-            unread_text = strstr(line, " unread ");
-            if (unread_text != 0) {
-                (void)sscanf(unread_text + 8, "%lu", &unread_count);
-            }
-            if (is_current) {
-                tg_console_ui_role(stream, TG_UI_ROLE_PROMPT);
-            }
-            fprintf(stream, "%lu. ", index);
-            title = strstr(line, " title ");
-            username = strstr(line, " username ");
-            if (title != 0) {
-                title += 7;
-                tg_mtproto_trim_line(title);
-                if (title[0] != '-' || title[1] != '\0') {
-                    tg_mtproto_print_cache_text(stream, title);
-                }
-            } else if (username != 0) {
-                username += 10;
-                title = strstr(username, " title ");
-                if (title != 0) {
-                    *title = '\0';
-                }
-                tg_mtproto_trim_line(username);
-                if (username[0] != '-' || username[1] != '\0') {
-                    fprintf(stream, "@");
-                    tg_mtproto_print_cache_text(stream, username);
-                }
-            } else {
-                tg_mtproto_print_cache_text(stream, type);
-            }
-            if (unread_count > 0UL) {
-                tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
-                fprintf(stream, " %lu new", unread_count);
-                tg_console_ui_reset(stream);
-            }
-            if (is_current) {
-                fputs(" *", stream);
-                tg_console_ui_reset(stream);
-            }
-            tg_console_ui_end_line(stream);
-        }
+    tg_mtproto_chat_list_render_console(stream, rows, count);
+}
+
+static const char tg_chat_list_golden[] =
+    "Single chats:\n"
+    "1. Mario Rossi\n"
+    "2. \n"
+    "3. @carla\n"
+    "\n"
+    "Groups and channels:\n"
+    "4. Dev Group 9 new\n"
+    "5. News 11 new *\n";
+
+int tg_mtproto_chat_list_self_test(void)
+{
+    static const char path[] = "tg-chatlist-selftest.tmp";
+    tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+    FILE *file;
+    FILE *cap;
+    char buf[1024];
+    size_t n;
+    int count;
+    int file_missing;
+    int saved_color;
+    int saved_charset;
+    int saved_theme;
+
+    file = fopen(path, "w");
+    if (file == 0) {
+        puts("chat list self-test: cannot write temp cache");
+        return 2;
     }
-    if (!printed_single_header && !printed_group_header) {
-        fprintf(stream, "No chats available.\n");
-    }
+    /* user w/ title; user w/ title "-" (blank name quirk); user w/o title
+       (@username fallback); group w/ unread; channel w/ unread + current. */
+    fputs("peer 1 type user id 0x0 access_hash - top 0 unread 0 self no bot no "
+          "username mario title Mario Rossi\n",
+          file);
+    fputs("peer 2 type user id 0x0 access_hash - top 0 unread 0 self no bot no "
+          "username pippo title -\n",
+          file);
+    fputs("peer 3 type user id 0x0 access_hash - top 0 unread 0 self no bot no "
+          "username carla\n",
+          file);
+    fputs("peer 4 type group id 0x0 access_hash - top 0 unread 9 self no bot no "
+          "username - title Dev Group\n",
+          file);
+    fputs("peer 5 type channel id 0x0 access_hash - top 0 unread 11 self no bot "
+          "no username news title News\n",
+          file);
     fclose(file);
+
+    saved_color = tg_console_ui_color_mode();
+    saved_charset = tg_console_ui_charset();
+    saved_theme = tg_console_ui_theme();
+    tg_console_ui_set_color_mode(TG_UI_COLOR_OFF);
+    tg_console_ui_set_charset(TG_UI_CHARSET_LATIN1);
+    tg_console_ui_set_theme(TG_UI_THEME_PLAIN);
+
+    count = tg_mtproto_chat_list_parse(path, 5UL, rows, TG_CHAT_LIST_MAX,
+                                       &file_missing);
+    remove(path);
+
+    cap = tmpfile();
+    if (cap == 0) {
+        tg_console_ui_set_color_mode(saved_color);
+        tg_console_ui_set_charset(saved_charset);
+        tg_console_ui_set_theme(saved_theme);
+        puts("chat list self-test: cannot open temp file");
+        return 2;
+    }
+    tg_mtproto_chat_list_render_console(cap, rows, count);
+    rewind(cap);
+    n = fread(buf, 1, sizeof(buf) - 1U, cap);
+    buf[n] = '\0';
+    fclose(cap);
+
+    tg_console_ui_set_color_mode(saved_color);
+    tg_console_ui_set_charset(saved_charset);
+    tg_console_ui_set_theme(saved_theme);
+
+    if (file_missing) {
+        puts("chat list self-test: temp cache reported missing");
+        return 2;
+    }
+    if (strcmp(buf, tg_chat_list_golden) != 0) {
+        printf("chat list self-test: MISMATCH\n---actual(%lu)---\n%s---end---\n",
+               (unsigned long)n, buf);
+        return 2;
+    }
+    puts("chat list self-test: ok (grouped chat-list golden)");
+    return 0;
 }
 
 static int tg_mtproto_load_self_cache_label(const char *path,
@@ -7335,6 +7863,88 @@ static int tg_mtproto_auth_send_peer_on_context(
     return 0;
 }
 
+/* Refresh the open chat's read_outbox_max_id (how far the peer has read OUR
+   messages -- the read-receipt cursor) with a one-peer messages.getPeerDialogs.
+   Sets *out to the cursor (0 if the chat is absent / unread); returns 0 on
+   success, non-zero. Re-enabled on MorphOS 2026-06-20: the "window opens then
+   freezes on the first tick" symptom this was disabled for was the unserialized
+   first-tick repaint racing the layer build, now cured by the LockLayerRom
+   bracket in tg_gui_window.c -- not the (tiny one-peer) getPeerDialogs reply. */
+static int tg_mtproto_chat_fetch_read_outbox_on_context(
+    const char *host,
+    const char *port,
+    const char *api_id,
+    const char *auth_file,
+    const char *dc_id_text,
+    tg_mtproto_auth_context *context,
+    const char *peer_cache_file,
+    const char *peer_index_text,
+    unsigned long *out_read_outbox_max,
+    FILE *stream)
+{
+    unsigned char query[64];
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    int has_access_hash;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    static tg_mtproto_dialog_peer_list dialogs;
+    unsigned long i;
+    static const char label[] = "mtproto messages.getPeerDialogs";
+
+    if (out_read_outbox_max != 0) {
+        *out_read_outbox_max = 0UL;
+    }
+    if (stream == 0 || out_read_outbox_max == 0) {
+        return 2;
+    }
+    if (tg_mtproto_load_peer_cache_peer(peer_cache_file, peer_index_text,
+                                        &peer_constructor, &peer_id_hi,
+                                        &peer_id_lo, &access_hash_hi,
+                                        &access_hash_lo, &has_access_hash,
+                                        stream, label) != 0) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_peer_dialogs(
+            &writer, peer_constructor, peer_id_hi, peer_id_lo, access_hash_hi,
+            access_hash_lo, has_access_hash) != TG_MTPROTO_TL_OK) {
+        return 2;
+    }
+    memset(&result, 0, sizeof(result));
+    if (tg_mtproto_send_saved_query_on_context(
+            host, port, api_id, auth_file, dc_id_text, context, query,
+            writer.length, &result, stream, label, 4U) != 0) {
+        return 1;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        (void)tg_mtproto_print_rpc_error(label, &result, stream);
+        return 1;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
+        return 1;
+    }
+    /* peerDialogs leads with the dialogs vector; the list parser accepts it. */
+    if (tg_mtproto_parse_dialog_peer_list(result.result_constructor,
+                                          result.result_body,
+                                          result.result_body_length,
+                                          &dialogs) != TG_MTPROTO_TL_OK) {
+        return 1;
+    }
+    for (i = 0UL; i < dialogs.count; ++i) {
+        if (dialogs.peers[i].peer_constructor == peer_constructor &&
+            dialogs.peers[i].id_hi == peer_id_hi &&
+            dialogs.peers[i].id_lo == peer_id_lo) {
+            *out_read_outbox_max = dialogs.peers[i].read_outbox_max_id;
+            break;
+        }
+    }
+    return 0;
+}
+
 static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
 {
     FILE *quiet;
@@ -7458,6 +8068,10 @@ static long tg_chat_history_recall = -1L;
  * chat entry is sufficient.
  */
 static int tg_chat_input_raw = 0;
+/* TUI message-input caret: byte offset into the line buffer (0..line_length).
+   File-static like the history because the line editor is called once per key and
+   the caret must persist across calls. Used only on the full-screen TUI. */
+static unsigned long tg_chat_caret = 0UL;
 
 static void tg_chat_history_reset(void)
 {
@@ -7502,6 +8116,24 @@ static void tg_chat_history_add(const char *text)
  * the message history and Up/Down there is simply swallowed. In cooked fallback
  * mode (raw == 0) it just accumulates the line as before, without echo.
  */
+/* After repainting the TUI input row (which leaves the hardware cursor at the end
+   of the visible text), pull the cursor back to the caret so LEFT/RIGHT show where
+   the next edit lands. TUI-only; one short CSI move, no SGR -> safe on MorphOS. */
+static void tg_chat_tui_place_caret(FILE *stream, unsigned long line_length,
+                                    unsigned long caret)
+{
+    unsigned long back;
+
+    if (caret > line_length) {
+        caret = line_length;
+    }
+    back = line_length - caret;
+    if (back > 0UL) {
+        fprintf(stream, TG_UI_CSI "%luD", back);
+        fflush(stream);
+    }
+}
+
 static int tg_mtproto_chat_read_line_edit(char *line,
                                           unsigned long line_size,
                                           unsigned long *line_length,
@@ -7519,6 +8151,9 @@ static int tg_mtproto_chat_read_line_edit(char *line,
 
     if (line == 0 || line_size == 0UL || line_length == 0 || stream == 0) {
         return -1;
+    }
+    if (tg_chat_caret > *line_length) {
+        tg_chat_caret = *line_length;
     }
     /* C:Break (or a break signal set while a query ran) should quit prompts
        too, not just network waits. */
@@ -7567,16 +8202,31 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             tg_chat_history_add(line);
         }
         *line_length = 0UL;
+        tg_chat_caret = 0UL;
         return 1;
     }
     if (ch == '\b' || ch == 127) {
-        if (*line_length > 0UL) {
-            --(*line_length);
-            if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+        if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+            unsigned long c;
+
+            c = tg_chat_caret;
+            if (c > *line_length) {
+                c = *line_length;
+            }
+            if (c > 0UL) {
+                /* delete the char before the caret, shifting the tail left */
+                memmove(&line[c - 1UL], &line[c], *line_length - c);
+                --(*line_length);
+                tg_chat_caret = c - 1UL;
                 tg_console_tui_input(tg_chat_tui_stream,
                                      tg_console_tui_prompt(), line,
                                      *line_length);
-            } else if (raw) {
+                tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
+                                        tg_chat_caret);
+            }
+        } else if (*line_length > 0UL) {
+            --(*line_length);
+            if (raw) {
                 fputs("\b \b", stream);
                 fflush(stream);
             }
@@ -7618,6 +8268,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 }
                 sprintf(line, "/peer %lu", fkey + 1UL);
                 *line_length = 0UL;
+                tg_chat_caret = 0UL;
                 if (!tg_console_tui_active()) {
                     fputc('\n', stream);
                 }
@@ -7637,7 +8288,24 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 }
                 direction = (int)(unsigned char)ch;
             }
-            if (direction == '|' && fkey == 12UL) {
+            if (direction == 'C') {
+                /* cursor RIGHT (TUI only): step the caret toward the end and
+                   nudge the hardware cursor one column right (no full redraw). */
+                if (tg_console_tui_active() && tg_chat_tui_stream != 0 &&
+                    tg_chat_caret < *line_length) {
+                    ++tg_chat_caret;
+                    fputs(TG_UI_CSI "C", tg_chat_tui_stream);
+                    fflush(tg_chat_tui_stream);
+                }
+            } else if (direction == 'D') {
+                /* cursor LEFT (TUI only): step the caret toward the start. */
+                if (tg_console_tui_active() && tg_chat_tui_stream != 0 &&
+                    tg_chat_caret > 0UL) {
+                    --tg_chat_caret;
+                    fputs(TG_UI_CSI "D", tg_chat_tui_stream);
+                    fflush(tg_chat_tui_stream);
+                }
+            } else if (direction == '|' && fkey == 12UL) {
                 /* Window NEWSIZE raw event: let the chat loop repaint the
                    full-screen layout with the new geometry. */
                 tg_console_tui_note_resize();
@@ -7676,6 +8344,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         if (direction == 'B' && idx >= (long)tg_chat_history_count) {
             *line_length = 0UL;
             line[0] = '\0';
+            tg_chat_caret = 0UL;
             tg_chat_history_recall = -1L;
             if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
                 tg_console_tui_input(tg_chat_tui_stream,
@@ -7688,6 +8357,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         strncpy(line, tg_chat_history[idx], line_size - 1UL);
         line[line_size - 1UL] = '\0';
         *line_length = (unsigned long)strlen(line);
+        tg_chat_caret = *line_length;
         if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
             tg_console_tui_input(tg_chat_tui_stream,
                                  tg_console_tui_prompt(), line,
@@ -7699,15 +8369,30 @@ static int tg_mtproto_chat_read_line_edit(char *line,
         return 0;
     }
     if (*line_length + 1UL < line_size) {
-        line[*line_length] = ch;
-        ++(*line_length);
         if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
+            unsigned long c;
+
+            c = tg_chat_caret;
+            if (c > *line_length) {
+                c = *line_length;
+            }
+            /* insert at the caret, shifting the tail right (the buffer is not
+               NUL-terminated mid-edit, so move exactly *line_length - c bytes) */
+            memmove(&line[c + 1UL], &line[c], *line_length - c);
+            line[c] = ch;
+            ++(*line_length);
+            tg_chat_caret = c + 1UL;
             tg_console_tui_input(tg_chat_tui_stream,
-                                 tg_console_tui_prompt(), line,
-                                 *line_length);
-        } else if (raw) {
-            fputc(ch, stream);
-            fflush(stream);
+                                 tg_console_tui_prompt(), line, *line_length);
+            tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
+                                    tg_chat_caret);
+        } else {
+            line[*line_length] = ch;
+            ++(*line_length);
+            if (raw) {
+                fputc(ch, stream);
+                fflush(stream);
+            }
         }
     }
     return 0;
@@ -7861,6 +8546,241 @@ static int tg_mtproto_chat_is_number_line(const char *line)
     return 1;
 }
 
+/* Console rendering of one resolved transcript row: the day separator (when the
+   day changes) + [HH:MM] time, the optional [group] prefix, the sender prefix
+   (own / resolved sender / 1:1 peer / unknown group author / "them:") and the
+   message text. `day_shown` carries the last printed day across calls. This is
+   the console driver's realisation of a tg_chat_message_row; the GUI driver
+   projects the same row into a tg_gui_message instead. Pinned byte-for-byte by
+   the --chat-render-self-test golden. */
+static void tg_mtproto_chat_render_message(FILE *stream,
+                                           const tg_chat_message_row *row,
+                                           unsigned long *day_shown)
+{
+    if (stream == 0 || row == 0 || day_shown == 0) {
+        return;
+    }
+    if (row->has_time) {
+        if (*day_shown != row->local_epoch / 86400UL) {
+            if (*day_shown != 0UL) {
+                tg_mtproto_chat_print_day_separator(stream, row->local_epoch);
+            }
+            *day_shown = row->local_epoch / 86400UL;
+        }
+        tg_mtproto_chat_print_message_time(stream, row->local_epoch);
+    }
+    if (row->is_group && row->peer_label != 0 && row->peer_label[0] != '\0') {
+        tg_console_ui_role(stream, TG_UI_ROLE_GROUP);
+        fputc('[', stream);
+        tg_mtproto_print_label_truncated(stream, row->peer_label,
+                                         TG_MTPROTO_GROUP_LABEL_MAX);
+        fputc(']', stream);
+        tg_console_ui_reset(stream);
+        fputc(' ', stream);
+    }
+    if (row->is_out) {
+        tg_console_ui_role(stream, TG_UI_ROLE_OWN);
+        if (row->own_label != 0 && row->own_label[0] != '\0') {
+            tg_mtproto_print_cache_text(stream, row->own_label);
+            fprintf(stream, ":");
+        } else {
+            fprintf(stream, "me:");
+        }
+        tg_console_ui_reset(stream);
+        fputc(' ', stream);
+    } else {
+        tg_console_ui_role(stream, TG_UI_ROLE_PEER);
+        if (row->sender != 0) {
+            tg_mtproto_print_cache_text(stream, row->sender);
+            fprintf(stream, ":");
+        } else if (!row->is_group && row->peer_label != 0 &&
+                   row->peer_label[0] != '\0') {
+            /* 1:1 chat: the peer is the sender. */
+            tg_mtproto_print_cache_text(stream, row->peer_label);
+            fprintf(stream, ":");
+        } else if (row->is_group) {
+            /* Group sender we could not resolve; the [group] prefix is already
+               shown, so just mark the unknown author. */
+            fprintf(stream, "?:");
+        } else {
+            fprintf(stream, "them:");
+        }
+        tg_console_ui_reset(stream);
+        fputc(' ', stream);
+    }
+    if (row->reply_quote != 0 && row->reply_quote[0] != '\0') {
+        /* Quoted reference, ASCII-bracketed before the body (plain -- no SGR
+           role so MorphOS stays safe even with colour on). */
+        fputs("[> ", stream);
+        tg_mtproto_print_message_text(stream, row->reply_quote);
+        fputs("] ", stream);
+    }
+    tg_mtproto_print_message_text(stream, row->text);
+    tg_console_ui_end_line(stream);
+}
+
+/* The console driver: realises tg_chat_driver.on_message by printing the row
+   with tg_mtproto_chat_render_message. Its ctx carries the output stream and
+   the persistent day-separator cursor. */
+typedef struct tg_chat_console_driver {
+    FILE *stream;
+    unsigned long *day_shown;
+} tg_chat_console_driver;
+
+static void tg_chat_console_on_message(void *ctx,
+                                       const tg_chat_message_row *row)
+{
+    tg_chat_console_driver *console = (tg_chat_console_driver *)ctx;
+
+    tg_mtproto_chat_render_message(console->stream, row, console->day_shown);
+}
+
+/* Golden parity harness for the transcript renderer. Drives
+   tg_mtproto_chat_render_message over a fixed message script (colours off,
+   latin1, fixed epochs so gmtime output is deterministic and host/CI-portable)
+   and asserts the captured bytes match a recorded golden. This pins the
+   model/view seam byte-for-byte across the chat-engine extraction steps that
+   reroute it (history split, tick body, command dispatch). */
+static const char tg_chat_render_golden[] =
+    "[22:13] Mario: Ciao\n"
+    "[22:18] Io: Tutto bene?\n"
+    "[23:13] [Sviluppo] Alice: Salve a tutti\n"
+    "[23:18] [Sviluppo] ?: boh\n"
+    "--- 15 Nov ---\n"
+    "[23:13] Mario: Nuovo giorno\n"
+    "--- 16 Nov ---\n"
+    "[00:13] [Sviluppo Server..] Bob: ok\n"
+    "Mario: senza data\n"
+    "them: anon\n"
+    "me: io anon\n"
+    "Mario: riga1\n"
+    "  riga2\n";
+
+static void tg_chat_render_emit(tg_chat_driver *driver, unsigned long date,
+                                int is_out, int is_group, const char *peer_label,
+                                const char *own_label, const char *sender,
+                                const char *text)
+{
+    tg_chat_message_row row;
+
+    row.text = text;
+    row.has_time = (date != 0UL);
+    row.local_epoch = date; /* the test uses delta 0, so local_epoch == date */
+    row.is_out = is_out;
+    row.is_group = is_group;
+    row.peer_label = peer_label;
+    row.own_label = own_label;
+    row.sender = sender;
+    row.reply_quote = 0; /* golden script carries no replies */
+    row.id = 0UL;
+    row.from_id_hi = 0UL;
+    row.from_id_lo = 0UL;
+    driver->on_message(driver->ctx, &row);
+}
+
+int tg_mtproto_chat_render_self_test(void)
+{
+    unsigned long day_shown;
+    tg_chat_console_driver console_drv;
+    tg_chat_driver driver;
+    FILE *cap;
+    char buf[1024];
+    size_t n;
+    int saved_color;
+    int saved_charset;
+    int saved_theme;
+
+    saved_color = tg_console_ui_color_mode();
+    saved_charset = tg_console_ui_charset();
+    saved_theme = tg_console_ui_theme();
+    tg_console_ui_set_color_mode(TG_UI_COLOR_OFF);
+    tg_console_ui_set_charset(TG_UI_CHARSET_LATIN1);
+    tg_console_ui_set_theme(TG_UI_THEME_PLAIN);
+
+    cap = tmpfile();
+    if (cap == 0) {
+        puts("chat render self-test: cannot open temp file");
+        return 2;
+    }
+    day_shown = 0UL;
+    /* Route every row through the console driver's on_message so the test pins
+       the whole step-3 path (driver vtable -> render_message), not just the
+       renderer in isolation. */
+    console_drv.stream = cap;
+    console_drv.day_shown = &day_shown;
+    driver.ctx = &console_drv;
+    driver.on_message = tg_chat_console_on_message;
+    driver.on_chat_list_changed = 0;
+    driver.on_notification = 0;
+
+    tg_chat_render_emit(&driver, 1700000000UL, 0, 0, "Mario", "Io", 0, "Ciao");
+    tg_chat_render_emit(&driver, 1700000300UL, 1, 0, "Mario", "Io", 0,
+                        "Tutto bene?");
+    tg_chat_render_emit(&driver, 1700003600UL, 0, 1, "Sviluppo", "Io", "Alice",
+                        "Salve a tutti");
+    tg_chat_render_emit(&driver, 1700003900UL, 0, 1, "Sviluppo", "Io", 0, "boh");
+    tg_chat_render_emit(&driver, 1700090000UL, 0, 0, "Mario", "Io", 0,
+                        "Nuovo giorno");
+    /* Long group label: exercises tg_mtproto_print_label_truncated (>=16 chars
+       -> trailing-space trim + ".." ellipsis). */
+    tg_chat_render_emit(&driver, 1700093600UL, 0, 1, "Sviluppo Server Group",
+                        "Io", "Bob", "ok");
+    tg_chat_render_emit(&driver, 0UL, 0, 0, "Mario", "Io", 0, "senza data");
+    tg_chat_render_emit(&driver, 0UL, 0, 0, "", "Io", 0, "anon");
+    tg_chat_render_emit(&driver, 0UL, 1, 0, "", "", 0, "io anon");
+    tg_chat_render_emit(&driver, 0UL, 0, 0, "Mario", "Io", 0, "riga1\nriga2");
+
+    rewind(cap);
+    n = fread(buf, 1, sizeof(buf) - 1U, cap);
+    buf[n] = '\0';
+    fclose(cap);
+
+    tg_console_ui_set_color_mode(saved_color);
+    tg_console_ui_set_charset(saved_charset);
+    tg_console_ui_set_theme(saved_theme);
+
+    if (strcmp(buf, tg_chat_render_golden) != 0) {
+        printf("chat render self-test: MISMATCH\n---actual(%lu)---\n%s"
+               "---end---\n",
+               (unsigned long)n, buf);
+        return 2;
+    }
+    /* A reply row renders its quoted reference bracketed before the body. */
+    {
+        tg_chat_message_row qrow;
+        unsigned long qday = 0UL;
+        FILE *qcap;
+        char qbuf[256];
+        size_t qn;
+
+        qcap = tmpfile();
+        if (qcap == 0) {
+            puts("chat render self-test: cannot open temp file");
+            return 2;
+        }
+        qrow.text = "ok";
+        qrow.has_time = 0;
+        qrow.local_epoch = 0UL;
+        qrow.is_out = 0;
+        qrow.is_group = 0;
+        qrow.peer_label = "Mario";
+        qrow.own_label = "Io";
+        qrow.sender = "Mario";
+        qrow.reply_quote = "ciao";
+        tg_mtproto_chat_render_message(qcap, &qrow, &qday);
+        rewind(qcap);
+        qn = fread(qbuf, 1, sizeof(qbuf) - 1U, qcap);
+        qbuf[qn] = '\0';
+        fclose(qcap);
+        if (strstr(qbuf, "[> ciao]") == 0) {
+            printf("chat render self-test: reply quote MISMATCH: %s\n", qbuf);
+            return 2;
+        }
+    }
+    puts("chat render self-test: ok (transcript renderer golden)");
+    return 0;
+}
+
 static int tg_mtproto_auth_print_history_text_peer_on_context(
     const char *host,
     const char *port,
@@ -7978,95 +8898,90 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         return 0;
     }
     i = texts.count;
-    while (i > 0UL) {
-        --i;
-        if (texts.messages[i].id > max_seen_message_id) {
-            max_seen_message_id = texts.messages[i].id;
-        }
-        if (last_seen_message_id != 0 && only_new &&
-            texts.messages[i].id <= *last_seen_message_id) {
-            continue;
-        }
-        if (!include_outgoing && texts.messages[i].is_out) {
-            continue;
-        }
-        /* In a group/channel prefix every line with the (truncated) chat title
-           so the user keeps both the group and the sender in view. 1:1 chats
-           skip the prefix: there the peer already is the sender. */
-        if (texts.messages[i].date != 0UL) {
-            unsigned long local_epoch;
+    {
+        tg_chat_console_driver console_drv;
+        tg_chat_driver driver;
 
-            local_epoch = tg_mtproto_chat_local_epoch(
-                texts.messages[i].date, context->server_time_delta_seconds);
-            if (tg_chat_day_shown != local_epoch / 86400UL) {
-                if (tg_chat_day_shown != 0UL) {
-                    tg_mtproto_chat_print_day_separator(stream, local_epoch);
-                }
-                tg_chat_day_shown = local_epoch / 86400UL;
-            }
-            tg_mtproto_chat_print_message_time(stream, local_epoch);
-        }
-        if (is_group && peer_label != 0 && peer_label[0] != '\0') {
-            tg_console_ui_role(stream, TG_UI_ROLE_GROUP);
-            fputc('[', stream);
-            tg_mtproto_print_label_truncated(stream, peer_label,
-                                             TG_MTPROTO_GROUP_LABEL_MAX);
-            fputc(']', stream);
-            tg_console_ui_reset(stream);
-            fputc(' ', stream);
-        }
-        if (texts.messages[i].is_out) {
-            tg_console_ui_role(stream, TG_UI_ROLE_OWN);
-            if (own_label != 0 && own_label[0] != '\0') {
-                tg_mtproto_print_cache_text(stream, own_label);
-                fprintf(stream, ":");
-            } else {
-                fprintf(stream, "me:");
-            }
-            tg_console_ui_reset(stream);
-            fputc(' ', stream);
+        /* The history renderer hands each resolved row to a driver: the console
+           one (wrapping this stream + the day-separator cursor) by default, or
+           the GUI driver when a session has installed an override. */
+        if (tg_chat_message_driver_override != 0) {
+            driver = *tg_chat_message_driver_override;
         } else {
-            const char *sender = 0;
-            if (texts.messages[i].from_constructor != 0UL) {
-                for (k = 0UL; k < sender_cache.count; ++k) {
-                    if (sender_cache.entries[k].peer_constructor ==
-                            texts.messages[i].from_constructor &&
-                        sender_cache.entries[k].id_hi ==
-                            texts.messages[i].from_id_hi &&
-                        sender_cache.entries[k].id_lo ==
-                            texts.messages[i].from_id_lo) {
-                        if (sender_cache.entries[k].title[0] != '\0') {
-                            sender = sender_cache.entries[k].title;
-                        } else if (sender_cache.entries[k].username[0] !=
-                                   '\0') {
-                            sender = sender_cache.entries[k].username;
+            console_drv.stream = stream;
+            console_drv.day_shown = &tg_chat_day_shown;
+            driver.ctx = &console_drv;
+            driver.on_message = tg_chat_console_on_message;
+            driver.on_chat_list_changed = 0; /* console list via render_console */
+            driver.on_notification = 0;
+        }
+        while (i > 0UL) {
+            --i;
+            if (texts.messages[i].id > max_seen_message_id) {
+                max_seen_message_id = texts.messages[i].id;
+            }
+            if (last_seen_message_id != 0 && only_new &&
+                texts.messages[i].id <= *last_seen_message_id) {
+                continue;
+            }
+            if (!include_outgoing && texts.messages[i].is_out) {
+                continue;
+            }
+            /* In a group/channel prefix every line with the (truncated) chat
+               title so the user keeps both the group and the sender in view.
+               1:1 chats skip the prefix: there the peer already is the sender.
+               The sender name is resolved here (fetch/parse stays in the loop);
+               the resolved row is then handed to the driver. */
+            {
+                const char *sender = 0;
+                tg_chat_message_row row;
+
+                if (!texts.messages[i].is_out &&
+                    texts.messages[i].from_constructor != 0UL) {
+                    for (k = 0UL; k < sender_cache.count; ++k) {
+                        if (sender_cache.entries[k].peer_constructor ==
+                                texts.messages[i].from_constructor &&
+                            sender_cache.entries[k].id_hi ==
+                                texts.messages[i].from_id_hi &&
+                            sender_cache.entries[k].id_lo ==
+                                texts.messages[i].from_id_lo) {
+                            if (sender_cache.entries[k].title[0] != '\0') {
+                                sender = sender_cache.entries[k].title;
+                            } else if (sender_cache.entries[k].username[0] !=
+                                       '\0') {
+                                sender = sender_cache.entries[k].username;
+                            }
+                            break;
                         }
-                        break;
                     }
                 }
+                row.text = texts.messages[i].text;
+                row.has_time = (texts.messages[i].date != 0UL);
+                row.local_epoch =
+                    row.has_time
+                        ? tg_mtproto_chat_local_epoch(
+                              texts.messages[i].date,
+                              context->server_time_delta_seconds)
+                        : 0UL;
+                row.is_out = texts.messages[i].is_out;
+                row.is_group = is_group;
+                row.peer_label = peer_label;
+                row.own_label = own_label;
+                row.sender = sender;
+                /* Show the server's inline quote when the reply carries one (no
+                   extra round-trip); else no reference line. */
+                row.reply_quote =
+                    (texts.messages[i].has_reply &&
+                     texts.messages[i].reply_quote[0] != '\0')
+                        ? texts.messages[i].reply_quote
+                        : 0;
+                row.id = texts.messages[i].id;
+                row.from_id_hi = texts.messages[i].from_id_hi;
+                row.from_id_lo = texts.messages[i].from_id_lo;
+                driver.on_message(driver.ctx, &row);
             }
-            tg_console_ui_role(stream, TG_UI_ROLE_PEER);
-            if (sender != 0) {
-                tg_mtproto_print_cache_text(stream, sender);
-                fprintf(stream, ":");
-            } else if (!is_group && peer_label != 0 &&
-                       peer_label[0] != '\0') {
-                /* 1:1 chat: the peer is the sender. */
-                tg_mtproto_print_cache_text(stream, peer_label);
-                fprintf(stream, ":");
-            } else if (is_group) {
-                /* Group sender we could not resolve; the [group] prefix is
-                   already shown, so just mark the unknown author. */
-                fprintf(stream, "?:");
-            } else {
-                fprintf(stream, "them:");
-            }
-            tg_console_ui_reset(stream);
-            fputc(' ', stream);
+            ++printed;
         }
-        tg_mtproto_print_message_text(stream, texts.messages[i].text);
-        tg_console_ui_end_line(stream);
-        ++printed;
     }
     if (last_seen_message_id != 0) {
         *last_seen_message_id = max_seen_message_id;
@@ -8408,9 +9323,12 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
     const char *digits;
     const tg_chat_notify_entry *entry;
 
-    if (stream == 0 || tg_chat_notify_count == 0UL) {
-        tg_chat_notify_count = 0UL;
-        tg_chat_notify_dropped = 0UL;
+    if (tg_chat_nq == 0) {
+        return;
+    }
+    if (stream == 0 || tg_chat_nq->count == 0UL) {
+        tg_chat_nq->count = 0UL;
+        tg_chat_nq->dropped = 0UL;
         return;
     }
     current_index = 0UL;
@@ -8425,8 +9343,8 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
             current_index = 0UL;
         }
     }
-    for (i = 0UL; i < tg_chat_notify_count; ++i) {
-        entry = &tg_chat_notify_queue[i];
+    for (i = 0UL; i < tg_chat_nq->count; ++i) {
+        entry = &tg_chat_nq->queue[i];
         index = 0UL;
         label[0] = '\0';
         (void)tg_mtproto_peer_cache_find_by_id(peer_cache_file,
@@ -8470,9 +9388,9 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
         tg_console_ui_reset(stream);
         tg_console_ui_end_line(stream);
     }
-    if (tg_chat_notify_dropped > 0UL) {
+    if (tg_chat_nq->dropped > 0UL) {
         tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
-        fprintf(stream, "(+%lu more)", tg_chat_notify_dropped);
+        fprintf(stream, "(+%lu more)", tg_chat_nq->dropped);
         tg_console_ui_reset(stream);
         tg_console_ui_end_line(stream);
     }
@@ -8483,8 +9401,8 @@ static void tg_mtproto_chat_print_notify_lines(FILE *stream,
            console stream. */
         tg_platform_display_beep();
     }
-    tg_chat_notify_count = 0UL;
-    tg_chat_notify_dropped = 0UL;
+    tg_chat_nq->count = 0UL;
+    tg_chat_nq->dropped = 0UL;
     fflush(stream);
 }
 
@@ -8672,6 +9590,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     FILE *chat_quiet;
     long chat_quiet_length;
     tg_mtproto_auth_context chat_context;
+    tg_chat_engine chat_engine;
     int rc;
     int peer_command;
     int peer_history_ready;
@@ -8689,6 +9608,11 @@ int tg_mtproto_auth_chat_file(const char *host,
         return 2;
     }
     memset(&chat_context, 0, sizeof(chat_context));
+    /* Bring up the chat engine and bind the notification back-pointer before
+       anything can collect (the recv path arms only after the reset below).
+       init zeroes the updates cursor + notify queue and enables /diff. */
+    tg_chat_engine_init(&chat_engine);
+    tg_chat_nq = &chat_engine.notify;
     chat_quiet = 0;
     api_id[0] = '\0';
     saved_timeout = tg_net_connect_timeout_seconds();
@@ -8738,7 +9662,7 @@ int tg_mtproto_auth_chat_file(const char *host,
        bsdsocket link (the very scenario the wrapper exists for) and stalled
        the chat at session open on real hardware -- so no cross-chat
        notifications there until a backlog-draining strategy lands. */
-    tg_chat_notify_reset(1);
+    tg_chat_notify_reset(&chat_engine.notify, 1);
     tg_chat_day_shown = 0UL;
 #if defined(__MORPHOS__) || defined(__MORPHOS)
     tg_mtproto_set_session_updates(0);
@@ -8811,10 +9735,9 @@ int tg_mtproto_auth_chat_file(const char *host,
     tg_mtproto_chat_load_own_label(host, port, api_id, auth_file, dc_id_text,
                                    &chat_context, peer_cache_file,
                                    own_label, sizeof(own_label), stream);
-    /* The gap-handling cursor starts unprimed; the drain tick primes it
-       lazily (one query) so the fragile session-open phase on slow links
-       stays as light as before. */
-    memset(&tg_chat_updates_state, 0, sizeof(tg_chat_updates_state));
+    /* The gap-handling cursor starts unprimed (zeroed by tg_chat_engine_init
+       at session start); the drain tick primes it lazily (one query) so the
+       fragile session-open phase on slow links stays as light as before. */
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
         tg_mtproto_chat_print_system_line(stream, "Choose a chat:");
         fputc('\n', stream);
@@ -8964,7 +9887,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                (~60s) that catches whatever a dropped push missed; the
                dedupe ring absorbs the overlap with live pushes. /diff off
                turns it off everywhere. */
-            if (rc == 0 && tg_chat_diff_enabled) {
+            if (rc == 0 && chat_engine.diff_enabled) {
                 static unsigned long diff_tick = 0UL;
                 unsigned long diff_cadence;
 #if defined(__MORPHOS__) || defined(__MORPHOS)
@@ -8974,20 +9897,20 @@ int tg_mtproto_auth_chat_file(const char *host,
 #endif
                 ++diff_tick;
                 if ((diff_tick % diff_cadence) == 0UL) {
-                    if (tg_chat_updates_state.pts == 0UL) {
+                    if (chat_engine.updates_state.pts == 0UL) {
                         (void)tg_mtproto_chat_get_updates_state_on_context(
                             host, port, api_id, auth_file, dc_id_text,
-                            &chat_context, &tg_chat_updates_state, quiet);
+                            &chat_context, &chat_engine.updates_state, quiet);
                     } else {
                         (void)tg_mtproto_chat_drain_difference_on_context(
                             host, port, api_id, auth_file, dc_id_text,
-                            &chat_context, &tg_chat_updates_state, quiet);
+                            &chat_context, &chat_engine.updates_state, quiet);
                     }
                 }
             }
             have_replay = rc == 0 && printed_message_count > 0UL &&
                           (quiet == stream || chat_quiet_length > 0L);
-            if (have_replay || tg_chat_notify_count > 0UL) {
+            if (have_replay || chat_engine.notify.count > 0UL) {
                 tg_mtproto_chat_clear_input_line(stream, chat_raw);
                 if (have_replay) {
                     tg_mtproto_replay_quiet_stream_length(
@@ -9175,14 +10098,14 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (strcmp(line, "/diff") == 0 || strcmp(line, "/diff on") == 0 ||
             strcmp(line, "/diff off") == 0) {
             if (strcmp(line, "/diff on") == 0) {
-                tg_chat_diff_enabled = 1;
+                chat_engine.diff_enabled = 1;
             } else if (strcmp(line, "/diff off") == 0) {
-                tg_chat_diff_enabled = 0;
+                chat_engine.diff_enabled = 0;
             } else {
-                tg_chat_diff_enabled = !tg_chat_diff_enabled;
+                chat_engine.diff_enabled = !chat_engine.diff_enabled;
             }
             tg_mtproto_chat_print_system_line(
-                stream, tg_chat_diff_enabled
+                stream, chat_engine.diff_enabled
                             ? "Background catch-up on."
                             : "Background catch-up off.");
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
@@ -9195,21 +10118,21 @@ int tg_mtproto_auth_chat_file(const char *host,
             char diff_note[96];
             int diff_rc;
             FILE *diff_quiet = tg_mtproto_open_quiet_stream(stream);
-            if (tg_chat_updates_state.pts == 0UL) {
+            if (chat_engine.updates_state.pts == 0UL) {
                 (void)tg_mtproto_chat_get_updates_state_on_context(
                     host, port, api_id, auth_file, dc_id_text, &chat_context,
-                    &tg_chat_updates_state, diff_quiet);
+                    &chat_engine.updates_state, diff_quiet);
             }
             sprintf(diff_note, "diff: pts=%lu seq=%lu date=%lu",
-                    tg_chat_updates_state.pts, tg_chat_updates_state.seq,
-                    tg_chat_updates_state.date);
+                    chat_engine.updates_state.pts, chat_engine.updates_state.seq,
+                    chat_engine.updates_state.date);
             tg_mtproto_chat_print_system_line(stream, diff_note);
             diff_rc = tg_mtproto_chat_drain_difference_on_context(
                 host, port, api_id, auth_file, dc_id_text, &chat_context,
-                &tg_chat_updates_state, diff_quiet);
+                &chat_engine.updates_state, diff_quiet);
             tg_mtproto_close_quiet_stream(diff_quiet, stream);
             sprintf(diff_note, "diff: rc=%d queued=%lu new-pts=%lu", diff_rc,
-                    tg_chat_notify_count, tg_chat_updates_state.pts);
+                    chat_engine.notify.count, chat_engine.updates_state.pts);
             tg_mtproto_chat_print_system_line(stream, diff_note);
             {
                 FILE *tui_cap = tg_console_tui_capture_begin(stream);
@@ -10493,6 +11416,100 @@ int tg_mtproto_probe_self_test(void)
     fclose(quiet);
     (void)remove(peer_path);
 
+    /* Live "is typing" parse (updateShort -> *UserTyping -> typing action). The
+       collector writes the sink; here we drive synthetic pushes through it. */
+    {
+        tg_chat_notify typing_nq;
+        tg_chat_typing_sink typing_sink;
+        int ok;
+
+        memset(&typing_nq, 0, sizeof(typing_nq));
+        tg_chat_notify_reset(&typing_nq, 1);
+        tg_chat_nq = &typing_nq;
+        tg_chat_typing_target = &typing_sink;
+
+        /* DM: updateShort{ updateUserTyping{ user=0xABCD, typing }, date }. */
+        memset(&typing_sink, 0, sizeof(typing_sink));
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0xABCDUL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000000UL) == TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || !typing_sink.active || typing_sink.is_chat != 0 ||
+            typing_sink.peer_id_hi != 0UL ||
+            typing_sink.peer_id_lo != 0xABCDUL ||
+            typing_sink.from_id_lo != 0xABCDUL) { /* DM: typer == peer */
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            puts("probe self-test: typing DM parse wrong");
+            return 2;
+        }
+
+        /* A non-typing action (bogus action ctor) must NOT light typing. */
+        memset(&typing_sink, 0, sizeof(typing_sink));
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x11UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 0xdeadbeefUL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000000UL) == TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || typing_sink.active) {
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            puts("probe self-test: non-typing action must not light");
+            return 2;
+        }
+
+        /* Basic group: updateChatUserTyping{ chat=0x900, from user, typing }. */
+        memset(&typing_sink, 0, sizeof(typing_sink));
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x900UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_PEER_USER_CONSTRUCTOR) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x55UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer,
+                 TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000000UL) == TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || !typing_sink.active || typing_sink.is_chat != 1 ||
+            typing_sink.peer_id_lo != 0x900UL ||
+            typing_sink.from_id_lo != 0x55UL) { /* group: typer = from user */
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            puts("probe self-test: group typing parse wrong");
+            return 2;
+        }
+
+        tg_chat_nq = 0;
+        tg_chat_typing_target = 0;
+    }
+
     return 0;
 }
 
@@ -10582,5 +11599,1002 @@ int tg_mtproto_console_ui_test(FILE *stream)
     tg_mtproto_print_cache_text(stream, sample_accents);
     fputc('\n', stream);
     fflush(stream);
+    return 0;
+}
+
+/* --- Live GUI session bridge (slice 3) --------------------------------------
+ *
+ * A non-interactive front-end over the same chat core the console uses, kept in
+ * this translation unit so it reaches the static network helpers directly. It
+ * holds an authenticated connection for the window's lifetime and drains
+ * getDifference on demand, dispatching harvested notifications to the GUI
+ * driver (which bumps + flashes the matching sidebar badge). The console chat
+ * path is untouched; this is all new, additive code. Per-chat live history and
+ * sending land in later slices. One session per process (the window owns it),
+ * so the state is a file-static singleton.
+ */
+static struct {
+    tg_mtproto_auth_context context;
+    tg_chat_engine engine;
+    tg_gui_chat_driver gui_driver;
+    tg_chat_driver driver;
+    const char *host;
+    const char *port;
+    const char *dc_id_text;
+    const char *auth_file;
+    const char *peer_cache_file;
+    char api_id[32];
+    char own_label[128];
+    char current_peer_index[32];   /* the open chat (1-based number); "" = none */
+    char current_peer_label[128];
+    unsigned long last_seen_message_id;
+    unsigned long saved_timeout;
+    unsigned long diff_tick;
+    unsigned long read_outbox_tick; /* cadence for the read-receipt refresh */
+    tg_chat_typing_sink typing;     /* live "is typing" sink, armed at open */
+    unsigned long open_peer_id_hi;  /* the open chat's peer id, to match typing */
+    unsigned long open_peer_id_lo;
+    int open_peer_is_chat;
+    int open;
+    /* First-login flow state (no saved session). Threaded across the phone ->
+       code -> 2FA steps the window drives. */
+    struct {
+        int active;
+        const char *api_file;       /* paths the eventual session reopens with */
+        const char *auth_file;
+        const char *cache_file;
+        const char *host;           /* resolved endpoint (may change on migrate) */
+        const char *dc_id_text;
+        char api_id[32];            /* loaded once; api_hash stays transient */
+        char phone[64];             /* sanitized, set by send_code, used by sign_in */
+        char code_hash_file[64];    /* where send_code drops the phone_code_hash */
+    } login;
+} tg_gui_session_state;
+
+/* Crash-safe lifecycle log (--gui-live-debug): each line is opened, written,
+   flushed and closed so a hard crash/reboot still leaves the trail up to the
+   last completed step. Relative path -> the launcher's CWD (a disk dir like
+   Work:TGh, which survives a MorphOS reboot, not RAM:). Off by default. */
+static int tg_gui_log_on = 0;
+
+void tg_gui_log_enable(void)
+{
+    tg_gui_log_on = 1;
+}
+
+void tg_gui_log(const char *msg)
+{
+    FILE *f;
+
+    if (msg == 0) {
+        return;
+    }
+    /* Always emit on the unbuffered kernel-debug channel (a logtool reads it
+       live, and it survives a hard freeze). On MorphOS this also paces the
+       startup just enough to dodge a timing-sensitive freeze the bare run hit
+       -- a no-op channel elsewhere, so it costs nothing there. The disk copy is
+       opt-in (--gui-live-debug) since a write-back FS may not commit it. */
+    tg_platform_debug(msg);
+    if (!tg_gui_log_on) {
+        return;
+    }
+    /* Absolute path via PROGDIR: (the binary's dir, e.g. Work:TGh) so the log
+       lands next to the program regardless of the launcher's current dir -- a
+       relative name followed the CWD, which IconX/Ambient does not set to the
+       program's drawer, so the file ended up unreachable. */
+#if defined(__amigaos3__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
+    defined(__AROS__)
+    f = fopen("PROGDIR:tg-gui-debug.log", "a");
+#else
+    f = fopen("tg-gui-debug.log", "a");
+#endif
+    if (f != 0) {
+        fputs(msg, f);
+        fputc('\n', f);
+        fflush(f);
+        fclose(f);
+    }
+}
+
+int tg_gui_session_open(const char *api_file, const char *auth_file,
+                        const char *peer_cache_file, tg_gui_state *state,
+                        FILE *stream)
+{
+    tg_mtproto_session session;
+    unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
+    const char *host;
+    const char *dc_id_text;
+    FILE *quiet;
+    int rc;
+    static const char label[] = "gui session";
+
+    if (api_file == 0 || auth_file == 0 || peer_cache_file == 0 || state == 0 ||
+        stream == 0) {
+        return 2;
+    }
+    memset(&tg_gui_session_state, 0, sizeof(tg_gui_session_state));
+    /* Derive the production endpoint from the saved session's DC. */
+    if (tg_mtproto_session_load_authorization(auth_file, &session, auth_key) !=
+        TG_MTPROTO_SESSION_OK) {
+        return 2;
+    }
+    tg_mtproto_secure_zero(auth_key, sizeof(auth_key));
+    if (tg_mtproto_production_endpoint_for_dc(session.dc_id, &host,
+                                              &dc_id_text) != 0) {
+        return 2;
+    }
+    tg_gui_session_state.host = host;
+    tg_gui_session_state.port = "443";
+    tg_gui_session_state.dc_id_text = dc_id_text;
+    tg_gui_session_state.auth_file = auth_file;
+    tg_gui_session_state.peer_cache_file = peer_cache_file;
+
+    /* Engine + notify queue + GUI driver, mirroring the console prelude: bind
+       the notify back-pointer and arm collection before anything can recv. */
+    tg_chat_engine_init(&tg_gui_session_state.engine);
+    tg_chat_nq = &tg_gui_session_state.engine.notify;
+    tg_chat_notify_reset(&tg_gui_session_state.engine.notify, 1);
+    /* Arm the live typing sink (the push collector writes it; the tick reads it)
+       and turn ON the update push stream so "<name> is typing" arrives -- typing
+       is a transient updateShort that the getDifference drain never carries, so
+       pushes are the ONLY path. Now enabled on MorphOS too (2026-06-20): the deep
+       freeze that justified keeping pushes off there was the unserialized repaint
+       racing the layer build (now cured by the LockLayerRom bracket). CAVEAT: a
+       busy account's initial update backlog still floods the slow bsdsocket link
+       at session open -- with the layer lock that degrades to SLOW, no longer a
+       freeze, but if it is too slow on a packed account this is the first knob to
+       reconsider (a backlog-draining strategy, or pushes off again). */
+    memset(&tg_gui_session_state.typing, 0, sizeof(tg_gui_session_state.typing));
+    tg_chat_typing_target = &tg_gui_session_state.typing;
+    tg_mtproto_set_session_updates(1);
+    tg_gui_chat_driver_bind(&tg_gui_session_state.gui_driver, state,
+                            &tg_gui_session_state.driver);
+
+    /* A busy account's first connect can be slow to stream in (notably on a
+       MorphOS bsdsocket link), so allow a generous per-recv window for the
+       open; the per-tick drain later runs on a much shorter leash so the
+       window stays responsive. The original timeout is restored on close. */
+    tg_gui_session_state.saved_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(20UL);
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_load_api_id_file(api_file, tg_gui_session_state.api_id,
+                                     sizeof(tg_gui_session_state.api_id), quiet,
+                                     label);
+    if (rc == 0) {
+        rc = tg_mtproto_ensure_saved_auth_context(host, "443", auth_file,
+                                                  dc_id_text,
+                                                  &tg_gui_session_state.context,
+                                                  quiet, label);
+        if (rc != 0) {
+            /* Slow links often stall the very first open; one fresh retry, as
+               the console session does. */
+            tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+            rc = tg_mtproto_ensure_saved_auth_context(
+                host, "443", auth_file, dc_id_text,
+                &tg_gui_session_state.context, quiet, label);
+        }
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_net_set_connect_timeout_seconds(tg_gui_session_state.saved_timeout);
+    if (rc != 0) {
+        tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+        tg_chat_nq = 0;
+        tg_chat_typing_target = 0;
+        return 2;
+    }
+    tg_gui_log("open: connected");
+
+    /* This account's display name (for is_out transcript rows); start with no
+       chat open. */
+    {
+        FILE *q;
+
+        q = tg_mtproto_open_quiet_stream(stream);
+        tg_mtproto_chat_load_own_label(host, "443", tg_gui_session_state.api_id,
+                                       auth_file, dc_id_text,
+                                       &tg_gui_session_state.context,
+                                       peer_cache_file,
+                                       tg_gui_session_state.own_label,
+                                       sizeof(tg_gui_session_state.own_label),
+                                       q);
+        tg_mtproto_close_quiet_stream(q, stream);
+    }
+    tg_gui_session_state.current_peer_index[0] = '\0';
+    tg_gui_session_state.current_peer_label[0] = '\0';
+    tg_gui_session_state.last_seen_message_id = 0UL;
+
+    /* Project the current cache into the sidebar (the caller may have just
+       refreshed it from the network). */
+    {
+        tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+        int count;
+        int missing;
+
+        missing = 0;
+        count = tg_mtproto_chat_list_parse(peer_cache_file, 0UL, rows,
+                                           TG_CHAT_LIST_MAX, &missing);
+        if (tg_gui_session_state.driver.on_chat_list_changed != 0 &&
+            count > 0) {
+            tg_gui_session_state.driver.on_chat_list_changed(
+                tg_gui_session_state.driver.ctx, rows, count);
+        }
+    }
+    tg_gui_session_state.open = 1;
+    tg_gui_log("open: ready");
+    return 0;
+}
+
+int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
+{
+    FILE *quiet;
+    unsigned long printed;
+    unsigned long prev_timeout;
+    const char *history_limit;
+
+    if (!tg_gui_session_state.open || stream == 0 || peer_index == 0UL) {
+        return 0;
+    }
+    tg_gui_log("open_chat: start");
+    /* Keep the opening getHistory payload small on MorphOS's slow bsdsocket
+       link -- a large reply is the documented freeze trigger there; elsewhere
+       load a fuller backlog. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    history_limit = "12";
+#else
+    history_limit = "45";
+#endif
+    sprintf(tg_gui_session_state.current_peer_index, "%lu", peer_index);
+    if (tg_mtproto_load_peer_cache_label(
+            tg_gui_session_state.peer_cache_file,
+            tg_gui_session_state.current_peer_index,
+            tg_gui_session_state.current_peer_label,
+            sizeof(tg_gui_session_state.current_peer_label)) != 0) {
+        tg_gui_session_state.current_peer_label[0] = '\0';
+    }
+    /* Fresh transcript for the newly opened chat. */
+    if (tg_gui_session_state.gui_driver.state != 0) {
+        tg_gui_session_state.gui_driver.state->message_count = 0;
+    }
+    tg_gui_session_state.last_seen_message_id = 0UL;
+    /* Restart the read-receipt cursor: the loaded history starts as "sent",
+       then the getPeerDialogs read below promotes the read ones to "seen". */
+    tg_gui_driver_reset_read_outbox(&tg_gui_session_state.gui_driver);
+
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    /* Remember the open peer's id so the tick can match inbound typing updates
+       to this chat, and clear any stale "is typing" indicator on switch. */
+    tg_gui_session_state.open_peer_id_hi = 0UL;
+    tg_gui_session_state.open_peer_id_lo = 0UL;
+    tg_gui_session_state.open_peer_is_chat = 0;
+    tg_gui_session_state.typing.active = 0;
+    if (tg_gui_session_state.gui_driver.state != 0) {
+        tg_gui_session_state.gui_driver.state->typing[0] = '\0';
+    }
+    {
+        unsigned long pc;
+        unsigned long ph;
+        unsigned long pl;
+        unsigned long ahh;
+        unsigned long ahl;
+        int hah;
+
+        if (tg_mtproto_load_peer_cache_peer(
+                tg_gui_session_state.peer_cache_file,
+                tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+                &ahl, &hah, quiet, "gui open peer") == 0) {
+            tg_gui_session_state.open_peer_id_hi = ph;
+            tg_gui_session_state.open_peer_id_lo = pl;
+            tg_gui_session_state.open_peer_is_chat =
+                (pc != TG_MTPROTO_PEER_USER_CONSTRUCTOR) ? 1 : 0;
+        }
+    }
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(10UL); /* the recent history can stream */
+    printed = 0UL;
+    /* Route the resolved rows into the GUI transcript (in + out), then restore
+       the console default. */
+    tg_chat_message_driver_override = &tg_gui_session_state.driver;
+    (void)tg_mtproto_auth_print_history_text_peer_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+        tg_gui_session_state.peer_cache_file,
+        tg_gui_session_state.current_peer_index, history_limit, quiet,
+        &tg_gui_session_state.last_seen_message_id, &printed, 0, 1, 0,
+        tg_gui_session_state.current_peer_label,
+        tg_gui_session_state.own_label);
+    tg_chat_message_driver_override = 0;
+    /* One getPeerDialogs read so own messages already read by the peer show the
+       double-check at open (the tick refreshes it live thereafter). Now ALSO on
+       MorphOS: the freeze this was disabled for was the first-tick repaint racing
+       the layer build (cured by the LockLayerRom bracket), not the tiny reply. */
+    {
+        unsigned long read_max;
+
+        if (tg_mtproto_chat_fetch_read_outbox_on_context(
+                tg_gui_session_state.host, tg_gui_session_state.port,
+                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+                tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+                tg_gui_session_state.peer_cache_file,
+                tg_gui_session_state.current_peer_index, &read_max, quiet) == 0) {
+            (void)tg_gui_driver_set_read_outbox_max(
+                &tg_gui_session_state.gui_driver, read_max);
+        }
+    }
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_gui_log("open_chat: done");
+    return 1; /* the selection changed -> always repaint */
+}
+
+/* Re-project the peer cache into the GUI sidebar (after it changed, e.g. a search
+   result was added). Mirrors the projection in tg_gui_session_open. */
+static void tg_gui_session_reload_chats(void)
+{
+    tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+    int count;
+    int missing;
+
+    if (tg_gui_session_state.driver.on_chat_list_changed == 0) {
+        return;
+    }
+    missing = 0;
+    count = tg_mtproto_chat_list_parse(tg_gui_session_state.peer_cache_file, 0UL,
+                                       rows, TG_CHAT_LIST_MAX, &missing);
+    if (count > 0) {
+        tg_gui_session_state.driver.on_chat_list_changed(
+            tg_gui_session_state.driver.ctx, rows, count);
+    }
+}
+
+/* GUI chat search: contacts.search the query online, take the first openable
+   result, add it to the peer cache and open it. Small reply (limit 10) so it is
+   MorphOS-safe where the big getDialogs is not. Returns 0 = opened, 1 = no
+   result / network issue, 2 = bad args. The window repaints + reports on the
+   result. (First increment: opens the top match; a results picker comes later.) */
+int tg_gui_session_search_open(const char *query, FILE *stream)
+{
+    unsigned char qbuf[256];
+    char trimmed[128];
+    static tg_mtproto_peer_cache search_cache;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    FILE *quiet;
+    unsigned long i;
+    const tg_mtproto_peer_cache_entry *selected;
+    char new_index[32];
+    char new_label[TG_GUI_NAME_MAX];
+    unsigned long prev_timeout;
+    int rc;
+    static const char label[] = "gui contacts.search";
+
+    if (!tg_gui_session_state.open || stream == 0 || query == 0) {
+        return 2;
+    }
+    tg_mtproto_copy_plain_cache_text(trimmed, sizeof(trimmed), query);
+    tg_mtproto_trim_line(trimmed);
+    if (trimmed[0] == '\0') {
+        return 2;
+    }
+
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(12UL);
+    tg_mtproto_tl_writer_init(&writer, qbuf, sizeof(qbuf));
+    if (tg_mtproto_build_contacts_search(&writer, trimmed, 10UL) !=
+        TG_MTPROTO_TL_OK) {
+        tg_net_set_connect_timeout_seconds(prev_timeout);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
+    memset(&result, 0, sizeof(result));
+    rc = tg_mtproto_send_saved_query_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context, qbuf,
+        writer.length, &result, quiet, label, 200U);
+    if (rc != 0 ||
+        result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR ||
+        tg_mtproto_unpack_gzip_result(&result, quiet, label) != 0 ||
+        tg_mtproto_parse_contacts_search_peer_cache(
+            result.result_constructor, result.result_body,
+            result.result_body_length, &search_cache) != TG_MTPROTO_TL_OK) {
+        tg_net_set_connect_timeout_seconds(prev_timeout);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 1;
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+
+    selected = 0;
+    for (i = 0UL; i < search_cache.count; ++i) {
+        if (!search_cache.entries[i].is_self &&
+            tg_mtproto_peer_cache_entry_is_openable(&search_cache.entries[i])) {
+            selected = &search_cache.entries[i];
+            break;
+        }
+    }
+    if (selected == 0) {
+        tg_net_set_connect_timeout_seconds(prev_timeout);
+        return 1;
+    }
+    new_index[0] = '\0';
+    new_label[0] = '\0';
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_peer_cache_add_selected(
+        tg_gui_session_state.peer_cache_file, selected, new_index,
+        sizeof(new_index), new_label, sizeof(new_label), quiet);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    if (rc != 0 || new_index[0] == '\0') {
+        return 1;
+    }
+
+    /* Cache changed -> refresh the sidebar, then highlight + open the new chat. */
+    tg_gui_session_reload_chats();
+    {
+        unsigned long idx;
+
+        if (tg_mtproto_parse_ulong_arg(new_index, &idx) == 0 && idx != 0UL) {
+            tg_gui_state *gs = tg_gui_session_state.gui_driver.state;
+
+            if (gs != 0) {
+                int r;
+                int found = 0;
+
+                for (r = 0; r < gs->chat_count; ++r) {
+                    if (gs->chats[r].index == idx) {
+                        gs->selected_chat = r;
+                        found = 1;
+                        break;
+                    }
+                }
+                if (found) {
+                    const char *nm = gs->chats[gs->selected_chat].name;
+                    unsigned long ti;
+
+                    gs->chat_scroll_to_sel = 1; /* scroll the sidebar to it */
+                    /* Update the header title too -- the normal open path does
+                       this via apply_selection, which search bypasses. */
+                    for (ti = 0UL; ti + 1UL < sizeof(gs->title) &&
+                                   nm[ti] != '\0'; ++ti) {
+                        gs->title[ti] = nm[ti];
+                    }
+                    gs->title[ti] = '\0';
+                }
+            }
+            (void)tg_gui_session_open_chat(idx, stream);
+        }
+    }
+    return 0;
+}
+
+int tg_gui_session_send(const char *text, FILE *stream)
+{
+    FILE *quiet;
+    unsigned long sent_id;
+    unsigned long prev_timeout;
+    int rc;
+    const char *send_text;
+#if TG_MTPROTO_DISPLAY_LATIN1
+    char send_line[1024];
+#endif
+
+    if (!tg_gui_session_state.open || stream == 0 || text == 0 ||
+        text[0] == '\0' ||
+        tg_gui_session_state.current_peer_index[0] == '\0') {
+        return 2;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(10UL);
+    sent_id = 0UL;
+    send_text = text;
+#if TG_MTPROTO_DISPLAY_LATIN1
+    /* The composer text is ISO-8859-1 (Amiga keymap); convert to UTF-8 so
+       accented characters (a-grave = 0xE0, etc.) reach Telegram intact instead
+       of being sent as a lone high byte (invalid UTF-8 -> U+FFFD). Mirrors the
+       TUI send path. The composer is at most TG_GUI_TEXT_MAX bytes, so the
+       worst-case 2x expansion still fits send_line[1024]; on overflow fall back
+       to the raw text (best effort). */
+    if (tg_mtproto_latin1_to_utf8(text, send_line, sizeof(send_line))) {
+        send_text = send_line;
+    }
+#endif
+    rc = tg_mtproto_auth_send_peer_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+        tg_gui_session_state.peer_cache_file,
+        tg_gui_session_state.current_peer_index, send_text, &sent_id, quiet);
+    if (rc == 0) {
+        /* Show the sent message at once, optimistically, with no extra network
+           round-trip -- a confirm-poll is slow and unreliable on MorphOS (it
+           was the "sent but not shown" symptom). Echo the ORIGINAL Latin-1
+           `text` (NOT send_text): the GUI renderer is Latin-1, so passing the
+           UTF-8 copy would double-encode into mojibake. The open-chat poll uses
+           include_outgoing=0, so it is never re-fetched into a duplicate. */
+        tg_gui_driver_append_own(&tg_gui_session_state.gui_driver, text,
+                                 tg_gui_session_state.own_label);
+    }
+    (void)sent_id;
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    return rc;
+}
+
+int tg_gui_session_is_open(void)
+{
+    return tg_gui_session_state.open;
+}
+
+int tg_gui_session_tick(FILE *stream)
+{
+    FILE *quiet;
+    int dirty;
+
+    if (!tg_gui_session_state.open || stream == 0) {
+        return 0;
+    }
+    dirty = 0;
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    /* Run the poll on a short leash: a stalled recv must cost a brief hiccup,
+       not freeze the window. Restored right after. */
+    {
+        unsigned long prev_timeout;
+
+        prev_timeout = tg_net_connect_timeout_seconds();
+        /* On MorphOS this value is ALSO the per-recv and per-connect select()
+           timeout. 3s is too short to RECONNECT the dropped idle MTProto link,
+           so the inbound poll never re-established and nothing was received (send
+           worked because it uses 10s). Give MorphOS the same headroom the console
+           steady-state poll (20s) and GUI send (10s) already use. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+        tg_net_set_connect_timeout_seconds(12UL);
+#else
+        tg_net_set_connect_timeout_seconds(3UL);
+#endif
+    /* New messages in the open chat stream straight into the transcript. */
+    if (tg_gui_session_state.current_peer_index[0] != '\0') {
+        unsigned long printed;
+
+        printed = 0UL;
+        tg_chat_message_driver_override = &tg_gui_session_state.driver;
+        (void)tg_mtproto_auth_print_history_text_peer_on_context(
+            tg_gui_session_state.host, tg_gui_session_state.port,
+            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            tg_gui_session_state.peer_cache_file,
+            tg_gui_session_state.current_peer_index, "5", quiet,
+            &tg_gui_session_state.last_seen_message_id, &printed, 1, 0, 0,
+            tg_gui_session_state.current_peer_label,
+            tg_gui_session_state.own_label);
+        tg_chat_message_driver_override = 0;
+        if (printed > 0UL) {
+            dirty = 1;
+        }
+        /* Refresh the peer's read cursor so own messages flip to the double-
+           check once the peer reads them. Throttled: read state changes slowly
+           and getPeerDialogs is a needless round-trip on every short tick. Now
+           runs on MorphOS too: the "window opens then freezes on the first tick"
+           regression (a1aad83) this was disabled for was the unserialized repaint
+           racing the layer build, cured by the LockLayerRom bracket -- the reply
+           is one peer. Cadence kept (the round-trip still costs on the slow link). */
+        {
+            unsigned long read_cadence;
+
+            read_cadence = 5UL;
+            ++tg_gui_session_state.read_outbox_tick;
+            if ((tg_gui_session_state.read_outbox_tick % read_cadence) == 0UL) {
+                unsigned long read_max;
+
+                if (tg_mtproto_chat_fetch_read_outbox_on_context(
+                        tg_gui_session_state.host, tg_gui_session_state.port,
+                        tg_gui_session_state.api_id,
+                        tg_gui_session_state.auth_file,
+                        tg_gui_session_state.dc_id_text,
+                        &tg_gui_session_state.context,
+                        tg_gui_session_state.peer_cache_file,
+                        tg_gui_session_state.current_peer_index, &read_max,
+                        quiet) == 0) {
+                    if (tg_gui_driver_set_read_outbox_max(
+                            &tg_gui_session_state.gui_driver, read_max)) {
+                        dirty = 1;
+                    }
+                }
+            }
+        }
+    }
+    /* The cadence-gated getDifference drain harvests inbound messages into the
+       notify queue. As on the console: every tick on MorphOS (where pushes are
+       suppressed and the drain IS the path), a slower reconciliation sweep
+       elsewhere. The cursor is primed lazily on the first eligible tick. */
+    if (tg_gui_session_state.engine.diff_enabled) {
+        unsigned long diff_cadence;
+
+        /* MorphOS GUI: with pushes now ON (typing/read-receipts re-enabled) the
+           live cross-chat stream arrives via pushes, so the getDifference drain
+           reverts from every-tick to a periodic backstop (every 4th tick) that
+           recovers anything a dropped push missed. This is what lets watch_seconds
+           drop to 6 without each tick getting heavier. The open chat's own new
+           messages do not depend on this drain (the history poll carries them). */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+        diff_cadence = 4UL;
+#else
+        diff_cadence = 30UL;
+#endif
+        ++tg_gui_session_state.diff_tick;
+        if ((tg_gui_session_state.diff_tick % diff_cadence) == 0UL) {
+            /* The drain can sit in a quiet recv; on MorphOS the per-recv select()
+               timeout IS the connect timeout, so cap it short here (the history
+               poll above keeps the 12s it needs to reconnect). This stops a window
+               close from waiting ~12s on an idle drain recv. Restored after. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+            tg_net_set_connect_timeout_seconds(4UL);
+#endif
+            if (tg_gui_session_state.engine.updates_state.pts == 0UL) {
+                (void)tg_mtproto_chat_get_updates_state_on_context(
+                    tg_gui_session_state.host, tg_gui_session_state.port,
+                    tg_gui_session_state.api_id,
+                    tg_gui_session_state.auth_file,
+                    tg_gui_session_state.dc_id_text,
+                    &tg_gui_session_state.context,
+                    &tg_gui_session_state.engine.updates_state, quiet);
+            } else {
+                (void)tg_mtproto_chat_drain_difference_on_context(
+                    tg_gui_session_state.host, tg_gui_session_state.port,
+                    tg_gui_session_state.api_id,
+                    tg_gui_session_state.auth_file,
+                    tg_gui_session_state.dc_id_text,
+                    &tg_gui_session_state.context,
+                    &tg_gui_session_state.engine.updates_state, quiet);
+            }
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+            tg_net_set_connect_timeout_seconds(12UL);
+#endif
+        }
+    }
+        tg_net_set_connect_timeout_seconds(prev_timeout);
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+
+    /* Dispatch every harvested notification to the GUI driver, then clear the
+       queue (same consume semantics as the console's print_notify_lines). */
+    if (tg_gui_session_state.engine.notify.count > 0UL) {
+        unsigned long i;
+
+        for (i = 0UL; i < tg_gui_session_state.engine.notify.count; ++i) {
+            if (tg_gui_session_state.driver.on_notification != 0) {
+                tg_gui_session_state.driver.on_notification(
+                    tg_gui_session_state.driver.ctx,
+                    &tg_gui_session_state.engine.notify.queue[i]);
+            }
+        }
+        tg_gui_session_state.engine.notify.count = 0UL;
+        tg_gui_session_state.engine.notify.dropped = 0UL;
+        dirty = 1;
+    }
+
+    /* Reflect the live "is typing" sink into the open chat's header: shown only
+       for the open peer and only while fresh (the TTL); cleared otherwise. A
+       change in either direction is a repaint. */
+    {
+        tg_gui_state *gs;
+
+        gs = tg_gui_session_state.gui_driver.state;
+        if (gs != 0) {
+            const char *want;
+            char built[TG_GUI_NAME_MAX];
+            int fresh;
+            unsigned long now;
+
+            now = (unsigned long)time(0);
+            fresh = 0;
+            if (tg_gui_session_state.typing.active &&
+                now >= tg_gui_session_state.typing.seen_epoch &&
+                (now - tg_gui_session_state.typing.seen_epoch) <=
+                    TG_MTPROTO_TYPING_TTL_SECONDS) {
+                fresh = 1;
+            } else {
+                /* Stale or absent: disarm so a later identical push re-fires. */
+                tg_gui_session_state.typing.active = 0;
+            }
+            want = "";
+            if (fresh && tg_gui_session_state.current_peer_index[0] != '\0' &&
+                tg_gui_session_state.typing.peer_id_hi ==
+                    tg_gui_session_state.open_peer_id_hi &&
+                tg_gui_session_state.typing.peer_id_lo ==
+                    tg_gui_session_state.open_peer_id_lo) {
+                const char *name;
+
+                /* Name who is typing: in a DM it is the open peer; in a group
+                   match the typer's id against a recently shown sender. */
+                name = 0;
+                if (!tg_gui_session_state.open_peer_is_chat) {
+                    if (tg_gui_session_state.current_peer_label[0] != '\0') {
+                        name = tg_gui_session_state.current_peer_label;
+                    }
+                } else {
+                    int mi;
+
+                    for (mi = 0; mi < gs->message_count; ++mi) {
+                        if (!gs->messages[mi].is_own &&
+                            gs->messages[mi].from_id_hi ==
+                                tg_gui_session_state.typing.from_id_hi &&
+                            gs->messages[mi].from_id_lo ==
+                                tg_gui_session_state.typing.from_id_lo &&
+                            gs->messages[mi].sender[0] != '\0') {
+                            name = gs->messages[mi].sender;
+                            break;
+                        }
+                    }
+                }
+                if (name != 0) {
+                    static const char suffix[] = " is typing...";
+                    unsigned long di;
+                    unsigned long si;
+
+                    di = 0UL;
+                    while (di + sizeof(suffix) < sizeof(built) &&
+                           name[di] != '\0') {
+                        built[di] = name[di];
+                        ++di;
+                    }
+                    for (si = 0UL; si + 1UL < sizeof(suffix) &&
+                                   di + 1UL < sizeof(built); ++si) {
+                        built[di++] = suffix[si];
+                    }
+                    built[di] = '\0';
+                    want = built;
+                } else {
+                    want = "someone is typing...";
+                }
+            }
+            if (strcmp(gs->typing, want) != 0) {
+                unsigned long n;
+
+                n = (unsigned long)strlen(want);
+                if (n >= sizeof(gs->typing)) {
+                    n = sizeof(gs->typing) - 1UL;
+                }
+                memcpy(gs->typing, want, n);
+                gs->typing[n] = '\0';
+                dirty = 1;
+            }
+        }
+    }
+    return dirty;
+}
+
+void tg_gui_session_close(void)
+{
+    if (!tg_gui_session_state.open) {
+        tg_chat_nq = 0;
+        tg_chat_typing_target = 0;
+        return;
+    }
+    tg_gui_log("close: closing context");
+    tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+    tg_gui_log("close: context closed");
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    /* Let the bsdsocket stack drive the just-closed connection from FIN-WAIT to
+       CLOSED before we exit. On this -noixemul stack the runtime tears bsdsocket
+       down after main(), and doing that while the held connection is still in
+       transit on the slow link HARD-FREEZES the machine. The old 3s build never
+       hit this because the idle link had already died long before close. A short
+       settle reproduces that "already dead" state deterministically. */
+    tg_platform_sleep_seconds(3UL);
+    tg_gui_log("close: settle done");
+#endif
+    tg_net_set_connect_timeout_seconds(tg_gui_session_state.saved_timeout);
+    tg_chat_nq = 0;
+    tg_chat_typing_target = 0;
+    tg_gui_session_state.open = 0;
+}
+
+/* --- first-login flow (no saved session) -------------------------------- *
+ * The window drives phone -> code -> 2FA; each call is one blocking network
+ * round-trip over the console wizard's headless backend. Lives here so it can
+ * reach the static auth helpers (send_code / sign_in / check_password) and the
+ * session singleton directly. The login DH handshake is slow on m68k, so each
+ * step bumps the connect timeout while it runs. */
+
+static void tg_gui_login_copy(char *dest, unsigned long size, const char *src)
+{
+    unsigned long i;
+
+    if (dest == 0 || size == 0UL) {
+        return;
+    }
+    for (i = 0UL; i + 1UL < size && src != 0 && src[i] != '\0'; ++i) {
+        dest[i] = src[i];
+    }
+    dest[i] = '\0';
+}
+
+void tg_gui_session_login_begin(const char *api_file, const char *auth_file,
+                                const char *peer_cache_file)
+{
+    memset(&tg_gui_session_state.login, 0, sizeof(tg_gui_session_state.login));
+    tg_gui_session_state.login.active = 1;
+    tg_gui_session_state.login.api_file = api_file;
+    tg_gui_session_state.login.auth_file = auth_file;
+    tg_gui_session_state.login.cache_file = peer_cache_file;
+    /* European numbers usually live on DC4; a wrong guess just costs one
+       PHONE_MIGRATE round-trip, handled in send_code below. */
+    tg_gui_session_state.login.host = "149.154.167.91";
+    tg_gui_session_state.login.dc_id_text = "4";
+    tg_gui_login_copy(tg_gui_session_state.login.code_hash_file,
+                      sizeof(tg_gui_session_state.login.code_hash_file),
+                      "phone-code-hash.txt");
+}
+
+int tg_gui_session_login_send_code(const char *phone, FILE *stream)
+{
+    char api_id[32];
+    char api_hash[96];
+    unsigned long prev_timeout;
+    FILE *quiet;
+    int rc;
+    static const char label[] = "gui auth.sendCode";
+
+    if (!tg_gui_session_state.login.active || phone == 0 || stream == 0) {
+        return TG_GUI_LOGIN_ERROR;
+    }
+    if (tg_mtproto_load_api_credentials(tg_gui_session_state.login.api_file,
+                                        api_id, sizeof(api_id), api_hash,
+                                        sizeof(api_hash), stream, label) != 0) {
+        return TG_GUI_LOGIN_ERROR;
+    }
+    tg_gui_login_copy(tg_gui_session_state.login.phone,
+                      sizeof(tg_gui_session_state.login.phone), phone);
+    tg_mtproto_sanitize_phone(tg_gui_session_state.login.phone);
+    tg_gui_login_copy(tg_gui_session_state.login.api_id,
+                      sizeof(tg_gui_session_state.login.api_id), api_id);
+    if (tg_gui_session_state.login.phone[0] == '\0') {
+        tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
+        return TG_GUI_LOGIN_BAD_PHONE;
+    }
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(45UL); /* DH handshake is slow on m68k */
+    /* Run the DH handshake on a QUIET stream (tmpfile) + KPutStr pacing: on
+       MorphOS raw console output during network I/O hard-freezes the machine, and
+       open_auth_context fputc('.')/fprintf's the DH progress. The chat path is
+       safe precisely because it never lets net output touch CON:; the login must
+       do the same. */
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_gui_log("login: send_code start");
+    rc = tg_mtproto_auth_send_code(tg_gui_session_state.login.host, "443",
+                                   tg_gui_session_state.login.dc_id_text, api_id,
+                                   api_hash, tg_gui_session_state.login.phone,
+                                   tg_gui_session_state.login.auth_file,
+                                   tg_gui_session_state.login.code_hash_file,
+                                   quiet);
+    if (rc > TG_MTPROTO_PHONE_MIGRATE_RC_BASE) {
+        unsigned long migrate_dc;
+        const char *migrate_host;
+        const char *migrate_dc_text;
+
+        migrate_dc = (unsigned long)(rc - TG_MTPROTO_PHONE_MIGRATE_RC_BASE);
+        if (tg_mtproto_production_endpoint_for_dc(migrate_dc, &migrate_host,
+                                                  &migrate_dc_text) == 0) {
+            /* The migrated endpoint is what sign_in / checkPassword must use. */
+            tg_gui_session_state.login.host = migrate_host;
+            tg_gui_session_state.login.dc_id_text = migrate_dc_text;
+            rc = tg_mtproto_auth_send_code(
+                migrate_host, "443", migrate_dc_text, api_id, api_hash,
+                tg_gui_session_state.login.phone,
+                tg_gui_session_state.login.auth_file,
+                tg_gui_session_state.login.code_hash_file, quiet);
+        }
+    }
+    tg_gui_log("login: send_code done");
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
+    return (rc == 0) ? TG_GUI_LOGIN_OK : TG_GUI_LOGIN_BAD_PHONE;
+}
+
+int tg_gui_session_login_sign_in(const char *code, FILE *stream)
+{
+    unsigned long prev_timeout;
+    FILE *quiet;
+    int rc;
+
+    if (!tg_gui_session_state.login.active || code == 0 || stream == 0) {
+        return TG_GUI_LOGIN_ERROR;
+    }
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(45UL);
+    /* Quiet stream + pacing, as in send_code: no raw CON: output on MorphOS. */
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_gui_log("login: sign_in start");
+    rc = tg_mtproto_auth_sign_in(tg_gui_session_state.login.host, "443",
+                                 tg_gui_session_state.login.api_id,
+                                 tg_gui_session_state.login.auth_file,
+                                 tg_gui_session_state.login.phone,
+                                 tg_gui_session_state.login.code_hash_file, code,
+                                 tg_gui_session_state.login.dc_id_text, quiet);
+    tg_gui_log("login: sign_in done");
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    if (rc == 0) {
+        return TG_GUI_LOGIN_OK;
+    }
+    if (rc == TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED) {
+        return TG_GUI_LOGIN_NEED_2FA;
+    }
+    if (rc == TG_MTPROTO_SIGN_IN_CODE_INVALID) {
+        return TG_GUI_LOGIN_BAD_CODE;
+    }
+    return TG_GUI_LOGIN_ERROR;
+}
+
+int tg_gui_session_login_check_password(const char *password, FILE *stream)
+{
+    unsigned long prev_timeout;
+    FILE *quiet;
+    int rc;
+
+    if (!tg_gui_session_state.login.active || password == 0 || stream == 0) {
+        return TG_GUI_LOGIN_ERROR;
+    }
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(45UL);
+    /* Quiet stream + pacing, as in send_code: no raw CON: output on MorphOS. */
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_gui_log("login: check_password start");
+    rc = tg_mtproto_auth_check_password_text(
+        tg_gui_session_state.login.host, "443",
+        tg_gui_session_state.login.api_id, tg_gui_session_state.login.auth_file,
+        tg_gui_session_state.login.dc_id_text, password, quiet);
+    tg_gui_log("login: check_password done");
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    if (rc == 0) {
+        return TG_GUI_LOGIN_OK;
+    }
+    if (rc == TG_MTPROTO_CHECK_PASSWORD_INVALID) {
+        return TG_GUI_LOGIN_BAD_PASSWORD;
+    }
+    return TG_GUI_LOGIN_ERROR;
+}
+
+int tg_gui_session_login_activate(tg_gui_state *state, FILE *stream)
+{
+    const char *api_file;
+    const char *auth_file;
+    const char *cache_file;
+    int rc;
+
+    if (!tg_gui_session_state.login.active || state == 0 || stream == 0) {
+        return 2;
+    }
+    /* tg_gui_session_open memsets the singleton (clearing login), so snapshot
+       the paths first. */
+    api_file = tg_gui_session_state.login.api_file;
+    auth_file = tg_gui_session_state.login.auth_file;
+    cache_file = tg_gui_session_state.login.cache_file;
+    /* Pull the fresh peer list, then open the live session over the auth.bin the
+       login just wrote (session_open reloads everything from the file). */
+    (void)tg_mtproto_gui_refresh_peer_cache(api_file, auth_file, cache_file,
+                                            stream);
+    rc = tg_gui_session_open(api_file, auth_file, cache_file, state, stream);
+    if (rc != 0) {
+        return rc;
+    }
+    state->mode = TG_GUI_MODE_CHAT;
+    state->composing = 0;
+    state->input[0] = '\0';
+    state->input_masked = 0;
+    if (state->chat_count > 0) {
+        tg_gui_login_copy(state->title, sizeof(state->title),
+                          state->chats[state->selected_chat].name);
+        (void)tg_gui_session_open_chat(
+            state->chats[state->selected_chat].index, stream);
+    } else {
+        tg_gui_login_copy(state->title, sizeof(state->title), "Telegram Amiga");
+    }
+    tg_gui_login_copy(state->status, sizeof(state->status),
+                      "Live - F1-F10 chats, Q quits");
     return 0;
 }

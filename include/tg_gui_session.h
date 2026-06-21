@@ -1,0 +1,108 @@
+/*
+ * Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
+ * SPDX-License-Identifier: MIT
+ *
+ * Live GUI session bridge (Phase 5b, slice 3). A thin, non-interactive driver
+ * over the same MTProto chat core the console uses: it holds an authenticated
+ * connection for the lifetime of the GUI window and exposes a non-blocking
+ * "tick" the window event loop pumps to harvest cross-chat notifications into
+ * the sidebar badges. The implementation lives at the bottom of
+ * core/tg_mtproto_probe.c so it reaches that file's static network helpers
+ * directly -- no de-static of the network core. See docs/GUI_ARCHITECTURE.md.
+ *
+ * Single session per process (one window): the state is a file-static
+ * singleton; these calls are not re-entrant.
+ */
+
+#ifndef TG_GUI_SESSION_H
+#define TG_GUI_SESSION_H
+
+#include <stdio.h>
+
+#include "tg_gui.h" /* tg_gui_state */
+
+/* Opens a live session over a saved authorization: derives the production
+   endpoint from the auth file's DC, loads the api id, holds an authenticated
+   connection, binds the GUI driver to `state`, and projects the current peer
+   cache into the sidebar. The caller may refresh the cache from the network
+   first (tg_mtproto_gui_refresh_peer_cache). Returns 0 on success, non-zero
+   when the session could not be opened (the window can still run read-only).
+   `state` must outlive the session. */
+int tg_gui_session_open(const char *api_file, const char *auth_file,
+                        const char *peer_cache_file, tg_gui_state *state,
+                        FILE *stream);
+
+/* One non-blocking poll cycle: a cadence-gated getDifference drain harvests
+   inbound messages into the notify queue, which is then dispatched to the GUI
+   driver (bumping + flashing the matching sidebar badge). Returns 1 when the
+   GUI state changed (the caller should repaint), 0 otherwise. Safe to call
+   when no session is open (returns 0). */
+int tg_gui_session_tick(FILE *stream);
+
+/* Opens the chat at the given 1-based peer-cache index: clears the transcript,
+   fetches its recent history (incoming + outgoing) into tg_gui_state.messages
+   through the GUI driver, and marks it the open chat so tg_gui_session_tick
+   streams its new messages live. Returns 1 (always repaint) when a session is
+   open, 0 otherwise. */
+int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream);
+
+/* Sends `text` to the open chat and echoes it into the transcript. Returns 0
+   on success, non-zero on failure or when no chat is open. */
+int tg_gui_session_send(const char *text, FILE *stream);
+
+/* Searches Telegram for `query` (contacts.search), adds the first openable
+   result to the peer cache and opens it. Small reply, MorphOS-safe. Returns 0 =
+   opened, 1 = no result / network issue, 2 = bad args. */
+int tg_gui_session_search_open(const char *query, FILE *stream);
+
+/* 1 while a live session is held (so the window can enable composing). */
+int tg_gui_session_is_open(void);
+
+/* Closes the held connection and unbinds the notification queue. */
+void tg_gui_session_close(void);
+
+/* --- First-login flow (no saved session) -------------------------------- *
+ * When there is no telegram-auth.bin yet, the window drives a phone -> code
+ * -> (optional) 2FA login through these calls, each a single blocking network
+ * round-trip the window wraps with a "Connessione..." status. They reuse the
+ * console wizard's headless backend (auth.sendCode / auth.signIn / SRP
+ * checkPassword) and persist telegram-auth.bin on success. */
+
+/* Result codes for the step calls below. */
+#define TG_GUI_LOGIN_OK           0 /* step accepted; advance */
+#define TG_GUI_LOGIN_NEED_2FA     1 /* code accepted, a 2FA password is required */
+#define TG_GUI_LOGIN_BAD_CODE     2 /* the login code was rejected -- re-prompt */
+#define TG_GUI_LOGIN_BAD_PASSWORD 3 /* the 2FA password was wrong -- re-prompt */
+#define TG_GUI_LOGIN_BAD_PHONE    4 /* the number was rejected -- re-prompt */
+#define TG_GUI_LOGIN_ERROR        5 /* network/other error -- retry */
+
+/* Stores the file paths the login + the eventual session need. Call once before
+   entering a login screen (paths must outlive the session). */
+void tg_gui_session_login_begin(const char *api_file, const char *auth_file,
+                                const char *peer_cache_file);
+
+/* Requests the login code for `phone` (auth.sendCode, handling PHONE_MIGRATE by
+   re-deriving the DC). On TG_GUI_LOGIN_OK the next step is the code. */
+int tg_gui_session_login_send_code(const char *phone, FILE *stream);
+
+/* Submits the login `code` (auth.signIn). TG_GUI_LOGIN_OK = logged in (call
+   activate); TG_GUI_LOGIN_NEED_2FA = ask for the password; TG_GUI_LOGIN_BAD_CODE
+   = re-prompt. */
+int tg_gui_session_login_sign_in(const char *code, FILE *stream);
+
+/* Submits the 2FA `password` (SRP auth.checkPassword). TG_GUI_LOGIN_OK = logged
+   in (call activate); TG_GUI_LOGIN_BAD_PASSWORD = re-prompt. */
+int tg_gui_session_login_check_password(const char *password, FILE *stream);
+
+/* After a successful login, brings the window live: refreshes the peer cache,
+   opens the session into `state`, sets the title/status and opens the first
+   chat, flipping `state->mode` to TG_GUI_MODE_CHAT. Returns 0 on success. */
+int tg_gui_session_login_activate(tg_gui_state *state, FILE *stream);
+
+/* Crash-safe diagnostic log to a disk file (tg-gui-debug.log in the CWD), to
+   pin down where a hard crash happens. tg_gui_log_enable() turns it on
+   (--gui-live-debug); tg_gui_log() writes one flushed line when enabled. */
+void tg_gui_log_enable(void);
+void tg_gui_log(const char *msg);
+
+#endif

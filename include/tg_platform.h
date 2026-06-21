@@ -31,6 +31,14 @@ const char *tg_platform_default_data_dir(void);
 void tg_platform_log(const char *level, const char *message);
 
 /**
+ * Emits one line to the platform's low-level debug output (the serial / kernel
+ * debug channel a tool like Sashimi captures on MorphOS). Unlike a file or
+ * stdout it is unbuffered and survives a hard freeze, so it is used for the
+ * crash-safe GUI lifecycle log. A no-op where there is no such channel.
+ */
+void tg_platform_debug(const char *message);
+
+/**
  * Suspends execution for approximately the requested number of seconds.
  *
  * A value of zero returns immediately. This is used only by bounded polling
@@ -84,6 +92,18 @@ int tg_platform_stdin_set_raw(int enabled);
  * secrets must fail closed in that case.
  */
 int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count);
+
+/**
+ * Prepare the process for a Workbench (icon double-click) launch.
+ *
+ * Called once from main() when the program was started with no CLI (argc == 0,
+ * the Amiga C-runtime convention for a Workbench start). On the Amiga family
+ * this CurrentDir()s to PROGDIR: so the relative data files (telegram-api.txt,
+ * telegram-auth.bin, telegram-peers.txt, ...) resolve next to the binary even
+ * though Workbench did not set the drawer as the working directory. No-op on
+ * the host build and anywhere a working directory is already correct.
+ */
+void tg_platform_workbench_init(void);
 
 /*
  * Returns non-zero when the user asked to abort (Amiga family: the shell

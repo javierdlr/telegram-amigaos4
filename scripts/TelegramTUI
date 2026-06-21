@@ -1,0 +1,27 @@
+FailAt 21
+Stack 262144
+.BRA {
+.KET }
+
+Echo "Telegram Amiga (TUI)"
+Echo "Author: Michele Dipace <michele.dipace@kaffeine.net>"
+
+SET APIFILE "telegram-api.txt"
+SET AUTHFILE "telegram-auth.bin"
+SET HASHFILE "phone-code-hash.txt"
+SET PEERSFILE "telegram-peers.txt"
+
+IF EXISTS telegram-test
+    Protect telegram-test +e
+    telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
+ELSE
+    Protect RAM:telegram-test +e
+    RAM:telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
+ENDIF
+
+IF WARN
+    Echo ""
+    Echo "Telegram Amiga (TUI) terminato. Leggi i messaggi qui sopra."
+    Echo "Questa finestra resta aperta 120 secondi."
+    Wait 120
+ENDIF

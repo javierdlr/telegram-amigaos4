@@ -103,6 +103,7 @@ typedef struct tg_mtproto_dialog_peer {
     unsigned long id_lo;
     unsigned long top_message;
     unsigned long unread_count;
+    unsigned long read_outbox_max_id; /* peer has read our msgs up to this id */
 } tg_mtproto_dialog_peer;
 
 typedef struct tg_mtproto_dialog_peer_list {
@@ -157,6 +158,9 @@ typedef struct tg_mtproto_messages_summary {
 
 #define TG_MTPROTO_MESSAGE_TEXT_MAX 4096U
 #define TG_MTPROTO_MESSAGE_TEXT_LIST_MAX 8U
+/* A reply's quoted-snippet preview: one short line, capped well below the body
+   so the 8-message list stays cheap on the 8MB OS3 budget. */
+#define TG_MTPROTO_MESSAGE_REPLY_QUOTE_MAX 96U
 
 typedef struct tg_mtproto_message_text {
     unsigned long id;
@@ -168,6 +172,11 @@ typedef struct tg_mtproto_message_text {
     int is_out;
     int has_text;
     char text[TG_MTPROTO_MESSAGE_TEXT_MAX];
+    int has_reply;                  /* message replies to another (reply bit) */
+    unsigned long reply_to_msg_id;  /* id of the replied-to message, 0 if none */
+    /* Inline quote the server includes in the reply header (raw UTF-8); shown
+       as a dimmed reference line. Empty when the reply carries no quote. */
+    char reply_quote[TG_MTPROTO_MESSAGE_REPLY_QUOTE_MAX];
 } tg_mtproto_message_text;
 
 typedef struct tg_mtproto_message_text_list {
@@ -303,6 +312,15 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
     unsigned long access_hash_lo,
     int has_access_hash,
     unsigned long limit);
+
+tg_mtproto_tl_status tg_mtproto_build_messages_get_peer_dialogs(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash);
 
 tg_mtproto_tl_status tg_mtproto_build_messages_send_self(
     tg_mtproto_tl_writer *writer,

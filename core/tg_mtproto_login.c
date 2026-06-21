@@ -23,6 +23,9 @@
 #define TG_USERS_GET_USERS_CONSTRUCTOR 0x0d91a548UL
 #define TG_INPUT_USER_SELF_CONSTRUCTOR 0xf7c1b13fUL
 #define TG_MESSAGES_GET_DIALOGS_CONSTRUCTOR 0xa0f4cb4fUL
+#define TG_MESSAGES_GET_PEER_DIALOGS_CONSTRUCTOR 0xe470bcfdUL
+#define TG_INPUT_DIALOG_PEER_CONSTRUCTOR 0xfcaafeb7UL
+#define TG_MESSAGES_PEER_DIALOGS_CONSTRUCTOR 0x3371c354UL
 #define TG_MESSAGES_GET_HISTORY_CONSTRUCTOR 0x4423e6c5UL
 #define TG_MESSAGES_SEND_MESSAGE_CONSTRUCTOR 0xfe05dc9aUL
 #define TG_CONTACTS_RESOLVE_USERNAME_CONSTRUCTOR 0xf93ccba3UL
@@ -884,6 +887,43 @@ static tg_mtproto_tl_status tg_write_input_peer(
     }
 }
 
+/* messages.getPeerDialogs#e470bcfd peers:Vector<InputDialogPeer> -- one peer,
+   to refresh that chat's read_outbox_max_id (the "seen" cursor) without the
+   heavy full getDialogs. Reply is messages.peerDialogs (dialogs vector first). */
+tg_mtproto_tl_status tg_mtproto_build_messages_get_peer_dialogs(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_MESSAGES_GET_PEER_DIALOGS_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_VECTOR_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL); /* one InputDialogPeer */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer,
+                                         TG_INPUT_DIALOG_PEER_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_input_peer(writer, peer_constructor, peer_id_hi,
+                                     peer_id_lo, access_hash_hi,
+                                     access_hash_lo, has_access_hash);
+    }
+    return status;
+}
+
 tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,
@@ -1626,8 +1666,10 @@ static tg_mtproto_tl_status tg_read_dialog_peer(
         tg_read_peer_ref(reader, peer) != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(reader, &peer->top_message) !=
             TG_MTPROTO_TL_OK ||
+        /* read_inbox_max_id (skipped) then read_outbox_max_id (captured). */
         tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
-        tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(reader, &peer->read_outbox_max_id) !=
+            TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(reader, &peer->unread_count) !=
             TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
@@ -1738,13 +1780,17 @@ tg_mtproto_tl_status tg_mtproto_parse_dialog_peer_list(
             TG_MTPROTO_TL_OK) {
             return TG_MTPROTO_TL_INVALID_DATA;
         }
-    } else if (constructor != TG_MESSAGES_DIALOGS_CONSTRUCTOR) {
+    } else if (constructor != TG_MESSAGES_DIALOGS_CONSTRUCTOR &&
+               constructor != TG_MESSAGES_PEER_DIALOGS_CONSTRUCTOR) {
+        /* messages.peerDialogs#3371c354 leads with the same dialogs:Vector
+           (no slice count), so it parses through this path; the trailing
+           messages/chats/users/state are left unread. */
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if (tg_read_vector_count(&reader, &count) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    if (constructor == TG_MESSAGES_DIALOGS_CONSTRUCTOR) {
+    if (constructor != TG_MESSAGES_DIALOGS_SLICE_CONSTRUCTOR) {
         out->total_dialog_count = count;
     }
     for (i = 0UL; i < count; ++i) {
@@ -2305,30 +2351,181 @@ static tg_mtproto_tl_status tg_read_peer_cache_chat(
     }
 }
 
-static tg_mtproto_tl_status tg_skip_message_entity_vector(
-    tg_mtproto_tl_reader *reader)
+/*
+ * Message text entities (bold/italic/code/strike) are surfaced as inline ASCII
+ * markers baked into the text so every front-end -- console and the native GUI
+ * on all five targets -- shows formatting with no per-layer plumbing. Telegram
+ * entity offsets/lengths are UTF-16 code units over the UTF-8 body, so the
+ * marker pass maps them to byte positions. Real GUI font styling (SetSoftStyle)
+ * can later read structured entities; this is the smallest visible step.
+ */
+#define TG_MSG_ENT_NONE   0UL
+#define TG_MSG_ENT_BOLD   1UL
+#define TG_MSG_ENT_ITALIC 2UL
+#define TG_MSG_ENT_CODE   3UL /* inline code + pre block */
+#define TG_MSG_ENT_STRIKE 4UL
+#define TG_MSG_ENTITY_MAX 24
+
+typedef struct tg_msg_entity {
+    unsigned long type; /* TG_MSG_ENT_* */
+    unsigned long off;  /* UTF-16 code units from the start of the body */
+    unsigned long len;  /* UTF-16 code units */
+} tg_msg_entity;
+
+/* The 1-char marker for a styled entity, or 0 for entities we leave as plain
+   text (mentions, links, hashtags ... already readable as their own text). */
+static const char *tg_msg_entity_marker(unsigned long type)
 {
-    unsigned long count;
+    switch (type) {
+    case TG_MSG_ENT_BOLD:
+        return "*";
+    case TG_MSG_ENT_ITALIC:
+        return "_";
+    case TG_MSG_ENT_CODE:
+        return "`";
+    case TG_MSG_ENT_STRIKE:
+        return "~";
+    default:
+        return 0;
+    }
+}
+
+/* Length in bytes of the UTF-8 sequence starting at s[0], and how many UTF-16
+   code units it represents (2 for astral planes via a surrogate pair, else 1).
+   Malformed lead/continuation bytes are treated as a single 1-unit byte. */
+static unsigned long tg_utf8_step(const unsigned char *s,
+                                  unsigned long *utf16_units)
+{
+    unsigned char c = s[0];
+
+    if (c < 0x80U) {
+        *utf16_units = 1UL;
+        return 1UL;
+    }
+    if ((c & 0xE0U) == 0xC0U) {
+        *utf16_units = 1UL;
+        return 2UL;
+    }
+    if ((c & 0xF0U) == 0xE0U) {
+        *utf16_units = 1UL;
+        return 3UL;
+    }
+    if ((c & 0xF8U) == 0xF0U) {
+        *utf16_units = 2UL;
+        return 4UL;
+    }
+    *utf16_units = 1UL;
+    return 1UL;
+}
+
+/* Rewrite text in place, inserting open/close markers around styled spans. The
+   "opened" bookkeeping guarantees balanced markers even if a malformed entity
+   reaches past the end of the body. */
+static void tg_apply_entity_markers(char *text, unsigned long size,
+                                    const tg_msg_entity *ents, int count)
+{
+    char buf[TG_MTPROTO_MESSAGE_TEXT_MAX];
+    char opened[TG_MSG_ENTITY_MAX];
+    unsigned long bi = 0UL; /* output byte index */
+    unsigned long ti = 0UL; /* input byte index */
+    unsigned long u16 = 0UL; /* UTF-16 position in the body */
+    int e;
+
+    for (e = 0; e < count && e < TG_MSG_ENTITY_MAX; ++e) {
+        opened[e] = 0;
+    }
+    for (;;) {
+        /* Closes before opens at the same position so adjacent spans abut. */
+        for (e = 0; e < count && e < TG_MSG_ENTITY_MAX; ++e) {
+            const char *m;
+            if (opened[e] && ents[e].off + ents[e].len == u16 &&
+                (m = tg_msg_entity_marker(ents[e].type)) != 0) {
+                while (*m != '\0' && bi + 1UL < sizeof(buf)) {
+                    buf[bi++] = *m++;
+                }
+                opened[e] = 0;
+            }
+        }
+        for (e = 0; e < count && e < TG_MSG_ENTITY_MAX; ++e) {
+            const char *m;
+            if (!opened[e] && ents[e].off == u16 && ents[e].len > 0UL &&
+                (m = tg_msg_entity_marker(ents[e].type)) != 0) {
+                while (*m != '\0' && bi + 1UL < sizeof(buf)) {
+                    buf[bi++] = *m++;
+                }
+                opened[e] = 1;
+            }
+        }
+        if (text[ti] == '\0') {
+            break;
+        }
+        {
+            unsigned long units;
+            unsigned long n = tg_utf8_step((const unsigned char *)text + ti,
+                                           &units);
+            unsigned long k;
+            for (k = 0UL; k < n && text[ti] != '\0'; ++k) {
+                if (bi + 1UL < sizeof(buf)) {
+                    buf[bi++] = text[ti];
+                }
+                ++ti;
+            }
+            u16 += units;
+        }
+    }
+    /* Close any span the body ended inside of. */
+    for (e = 0; e < count && e < TG_MSG_ENTITY_MAX; ++e) {
+        const char *m;
+        if (opened[e] && (m = tg_msg_entity_marker(ents[e].type)) != 0) {
+            while (*m != '\0' && bi + 1UL < sizeof(buf)) {
+                buf[bi++] = *m++;
+            }
+        }
+    }
+    buf[bi] = '\0';
+    for (ti = 0UL; ti + 1UL < size && buf[ti] != '\0'; ++ti) {
+        text[ti] = buf[ti];
+    }
+    text[ti] = '\0';
+}
+
+/* Read a vector<MessageEntity>. When ents/count are non-NULL the styled spans
+   (bold/italic/code/strike) are captured for tg_apply_entity_markers; passing
+   NULL skips the vector (consuming its bytes). */
+static tg_mtproto_tl_status tg_read_message_entity_vector(
+    tg_mtproto_tl_reader *reader, tg_msg_entity *ents, int max, int *count)
+{
+    unsigned long n;
     unsigned long constructor;
+    unsigned long off;
+    unsigned long len;
     unsigned long scratch_hi;
     unsigned long scratch_lo;
     unsigned long i;
 
-    if (tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK) {
+    if (count != 0) {
+        *count = 0;
+    }
+    if (tg_read_vector_count(reader, &n) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    for (i = 0UL; i < count; ++i) {
+    for (i = 0UL; i < n; ++i) {
+        unsigned long type = TG_MSG_ENT_NONE;
+
         if (tg_mtproto_tl_read_u32(reader, &constructor) !=
                 TG_MTPROTO_TL_OK ||
-            tg_mtproto_tl_read_u32(reader, &scratch_lo) !=
-                TG_MTPROTO_TL_OK ||
-            tg_mtproto_tl_read_u32(reader, &scratch_lo) !=
-                TG_MTPROTO_TL_OK) {
+            tg_mtproto_tl_read_u32(reader, &off) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, &len) != TG_MTPROTO_TL_OK) {
             return TG_MTPROTO_TL_INVALID_DATA;
         }
         switch (constructor) {
-        case 0x73924be0UL: /* messageEntityPre */
-        case 0x76a6d327UL: /* messageEntityTextUrl */
+        case 0x73924be0UL: /* messageEntityPre (offset,length,language) */
+            type = TG_MSG_ENT_CODE;
+            if (tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+                return TG_MTPROTO_TL_INVALID_DATA;
+            }
+            break;
+        case 0x76a6d327UL: /* messageEntityTextUrl (offset,length,url) */
             if (tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
                 return TG_MTPROTO_TL_INVALID_DATA;
             }
@@ -2340,19 +2537,27 @@ static tg_mtproto_tl_status tg_skip_message_entity_vector(
                 return TG_MTPROTO_TL_INVALID_DATA;
             }
             break;
+        case 0xbd610bc9UL: /* messageEntityBold */
+            type = TG_MSG_ENT_BOLD;
+            break;
+        case 0x826f8b60UL: /* messageEntityItalic */
+            type = TG_MSG_ENT_ITALIC;
+            break;
+        case 0x28a20571UL: /* messageEntityCode */
+            type = TG_MSG_ENT_CODE;
+            break;
+        case 0xbf0693d4UL: /* messageEntityStrike */
+            type = TG_MSG_ENT_STRIKE;
+            break;
         case 0xbb92ba95UL: /* messageEntityUnknown */
         case 0xfa04579dUL: /* messageEntityMention */
         case 0x6f635b0dUL: /* messageEntityHashtag */
         case 0x6cef8ac7UL: /* messageEntityBotCommand */
         case 0x6ed02538UL: /* messageEntityUrl */
         case 0x64e475c2UL: /* messageEntityEmail */
-        case 0xbd610bc9UL: /* messageEntityBold */
-        case 0x826f8b60UL: /* messageEntityItalic */
-        case 0x28a20571UL: /* messageEntityCode */
         case 0x9b69e34bUL: /* messageEntityPhone */
         case 0x4c4e743fUL: /* messageEntityCashtag */
         case 0x9c4e7e8bUL: /* messageEntityUnderline */
-        case 0xbf0693d4UL: /* messageEntityStrike */
         case 0x20df5d0UL:  /* messageEntityBlockquote */
         case 0x32ca960fUL: /* messageEntitySpoiler */
         case 0x761e6af4UL: /* messageEntityBankCard */
@@ -2360,25 +2565,55 @@ static tg_mtproto_tl_status tg_skip_message_entity_vector(
         default:
             return TG_MTPROTO_TL_INVALID_DATA;
         }
+        if (type != TG_MSG_ENT_NONE && ents != 0 && count != 0 &&
+            *count < max) {
+            ents[*count].type = type;
+            ents[*count].off = off;
+            ents[*count].len = len;
+            ++(*count);
+        }
     }
     return TG_MTPROTO_TL_OK;
 }
 
-static tg_mtproto_tl_status tg_skip_message_reply_header(
+static tg_mtproto_tl_status tg_skip_message_entity_vector(
     tg_mtproto_tl_reader *reader)
+{
+    return tg_read_message_entity_vector(reader, 0, 0, 0);
+}
+
+/* messageReplyHeader#6917560b (layer 214). Field order on the wire:
+   reply_to_msg_id(flags.4), reply_to_peer_id(flags.0), reply_from(flags.5),
+   reply_media(flags.8), reply_to_top_id(flags.1), quote_text(flags.6),
+   quote_entities(flags.7), quote_offset(flags.10). When out_reply_to_msg_id /
+   out_quote are non-NULL the reply target and the inline quote are captured;
+   passing NULL just skips the header (consuming its bytes). reply_from /
+   reply_media (flags 5/8) are still rejected -- this small reader cannot walk
+   a nested fwd-header / media there. */
+static tg_mtproto_tl_status tg_read_message_reply_header(
+    tg_mtproto_tl_reader *reader, unsigned long *out_reply_to_msg_id,
+    char *out_quote, unsigned long quote_size)
 {
     unsigned long constructor;
     unsigned long flags;
     unsigned long scratch;
     tg_mtproto_dialog_peer peer;
 
+    if (out_reply_to_msg_id != 0) {
+        *out_reply_to_msg_id = 0UL;
+    }
+    if (out_quote != 0 && quote_size > 0UL) {
+        out_quote[0] = '\0';
+    }
     if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK ||
         constructor != TG_MESSAGE_REPLY_HEADER_CONSTRUCTOR ||
         tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if ((flags & (1UL << 4)) != 0UL &&
-        tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK) {
+        tg_mtproto_tl_read_u32(
+            reader, out_reply_to_msg_id != 0 ? out_reply_to_msg_id : &scratch) !=
+            TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if ((flags & 1UL) != 0UL &&
@@ -2392,9 +2627,15 @@ static tg_mtproto_tl_status tg_skip_message_reply_header(
         tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    if ((flags & (1UL << 6)) != 0UL &&
-        tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_INVALID_DATA;
+    if ((flags & (1UL << 6)) != 0UL) {
+        if (out_quote != 0 && quote_size > 0UL) {
+            if (tg_read_string_copy(reader, out_quote, quote_size) !=
+                TG_MTPROTO_TL_OK) {
+                return TG_MTPROTO_TL_INVALID_DATA;
+            }
+        } else if (tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
     }
     if ((flags & (1UL << 7)) != 0UL &&
         tg_skip_message_entity_vector(reader) != TG_MTPROTO_TL_OK) {
@@ -2409,6 +2650,12 @@ static tg_mtproto_tl_status tg_skip_message_reply_header(
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     return TG_MTPROTO_TL_OK;
+}
+
+static tg_mtproto_tl_status tg_skip_message_reply_header(
+    tg_mtproto_tl_reader *reader)
+{
+    return tg_read_message_reply_header(reader, 0, 0, 0UL);
 }
 
 static tg_mtproto_tl_status tg_skip_message_fwd_header(
@@ -2741,6 +2988,24 @@ static tg_mtproto_tl_status tg_skip_common_message(
     return TG_MTPROTO_TL_OK;
 }
 
+/* A short bracketed placeholder for a media-only message (no caption), so the
+   transcript shows "[Photo]" instead of an empty bubble. The client does not
+   download media -- this is awareness only. Constructor ids verified against the
+   Telegram TL schema (core.telegram.org); anything else falls back to "[Media]". */
+static const char *tg_mtproto_media_label(unsigned long constructor)
+{
+    switch (constructor) {
+    case 0x695150d7UL: /* messageMediaPhoto */
+        return "[Photo]";
+    case 0x52d8ccd9UL: /* messageMediaDocument (file/video/voice/sticker/gif) */
+        return "[File]";
+    case 0x56e0d474UL: /* messageMediaGeo */
+        return "[Location]";
+    default:
+        return "[Media]";
+    }
+}
+
 static tg_mtproto_tl_status tg_read_common_message_text(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_message_text *out,
@@ -2822,9 +3087,14 @@ static tg_mtproto_tl_status tg_read_common_message_text(
             TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    if ((flags & 8UL) != 0UL &&
-        tg_skip_message_reply_header(reader) != TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_INVALID_DATA;
+    if ((flags & 8UL) != 0UL) {
+        if (tg_read_message_reply_header(reader, &out->reply_to_msg_id,
+                                         out->reply_quote,
+                                         sizeof(out->reply_quote)) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        out->has_reply = 1;
     }
     if (tg_mtproto_tl_read_u32(reader, &out->date) != TG_MTPROTO_TL_OK ||
         tg_read_string_copy(reader, out->text, sizeof(out->text)) !=
@@ -2838,11 +3108,42 @@ static tg_mtproto_tl_status tg_read_common_message_text(
      */
     if ((flags & 64UL) != 0UL || (flags & 512UL) != 0UL ||
         (flags2 & 8UL) != 0UL || (flags2 & 128UL) != 0UL) {
+        /* media (flag.9) is the first tail field after the text in the TL. For a
+           media-only message (no caption) read JUST its constructor for a
+           "[Photo]"/"[File]"/... placeholder, then bail on the rest of the tail
+           (we do not walk the full MessageMedia). Reading one u32 here cannot
+           corrupt the parse -- we return immediately after, exactly as before. */
+        if ((flags & 512UL) != 0UL && !out->has_text) {
+            unsigned long media_ctor;
+
+            if (tg_mtproto_tl_read_u32(reader, &media_ctor) == TG_MTPROTO_TL_OK) {
+                const char *label = tg_mtproto_media_label(media_ctor);
+                unsigned long li = 0UL;
+
+                while (label[li] != '\0' && li + 1UL < sizeof(out->text)) {
+                    out->text[li] = label[li];
+                    ++li;
+                }
+                out->text[li] = '\0';
+                out->has_text = 1;
+            }
+        }
         return TG_MTPROTO_TL_OK;
     }
-    if ((flags & 128UL) != 0UL &&
-        tg_skip_message_entity_vector(reader) != TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_OK;
+
+    if ((flags & 128UL) != 0UL) {
+        tg_msg_entity ents[TG_MSG_ENTITY_MAX];
+        int ent_count = 0;
+
+        if (tg_read_message_entity_vector(reader, ents, TG_MSG_ENTITY_MAX,
+                                          &ent_count) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_OK;
+        }
+        if (ent_count > 0 && out->has_text) {
+            tg_apply_entity_markers(out->text, sizeof(out->text), ents,
+                                    ent_count);
+            out->has_text = out->text[0] != '\0';
+        }
     }
     if ((flags & (1UL << 10)) != 0UL) {
         if (tg_mtproto_tl_read_u32(reader, &scratch_lo) !=
@@ -3363,6 +3664,63 @@ int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor)
            constructor == TG_AUTH_AUTHORIZATION_SIGNUP_REQUIRED_CONSTRUCTOR;
 }
 
+/* Directly exercises tg_apply_entity_markers, including the UTF-16 -> UTF-8
+   offset mapping that the TL-level "*group* reply" case does not reach. */
+static int tg_entity_marker_case(const char *in, const tg_msg_entity *ents,
+                                 int count, const char *expect)
+{
+    char buf[TG_MTPROTO_MESSAGE_TEXT_MAX];
+    unsigned long i;
+
+    for (i = 0UL; i + 1UL < sizeof(buf) && in[i] != '\0'; ++i) {
+        buf[i] = in[i];
+    }
+    buf[i] = '\0';
+    tg_apply_entity_markers(buf, sizeof(buf), ents, count);
+    return strcmp(buf, expect) == 0;
+}
+
+static int tg_entity_marker_self_test(void)
+{
+    tg_msg_entity e[2];
+
+    /* Two non-overlapping spans, plain ASCII. */
+    e[0].type = TG_MSG_ENT_BOLD;
+    e[0].off = 0UL;
+    e[0].len = 5UL;
+    e[1].type = TG_MSG_ENT_ITALIC;
+    e[1].off = 6UL;
+    e[1].len = 5UL;
+    if (!tg_entity_marker_case("group reply", e, 2, "*group* _reply_")) {
+        return 2;
+    }
+    /* Inline code marker. */
+    e[0].type = TG_MSG_ENT_CODE;
+    e[0].off = 0UL;
+    e[0].len = 4UL;
+    if (!tg_entity_marker_case("code here", e, 1, "`code` here")) {
+        return 2;
+    }
+    /* UTF-16 offset 1 sits AFTER a 2-byte UTF-8 char (U+00E9 'e-acute'); the
+       bold span must land on 'b', not be byte-mapped to mid-sequence. */
+    e[0].type = TG_MSG_ENT_BOLD;
+    e[0].off = 1UL;
+    e[0].len = 1UL;
+    if (!tg_entity_marker_case("\xC3\xA9" "b", e, 1, "\xC3\xA9" "*b*")) {
+        return 2;
+    }
+    /* An astral emoji (U+1F600) is 2 UTF-16 units; the span on the next char
+       must start at offset 2, not 1. */
+    e[0].type = TG_MSG_ENT_BOLD;
+    e[0].off = 2UL;
+    e[0].len = 1UL;
+    if (!tg_entity_marker_case("\xF0\x9F\x98\x80" "X", e, 1,
+                               "\xF0\x9F\x98\x80" "*X*")) {
+        return 2;
+    }
+    return 0;
+}
+
 int tg_mtproto_login_self_test(void)
 {
     static const unsigned char expected_send_code[] = {
@@ -3408,6 +3766,9 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_user_summary user;
     tg_mtproto_tl_writer writer;
 
+    if (tg_entity_marker_self_test() != 0) {
+        return 2;
+    }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_auth_send_code(&writer, "+1234567890", 42UL,
                                         "apihash1") != TG_MTPROTO_TL_OK ||
@@ -3595,6 +3956,39 @@ int tg_mtproto_login_self_test(void)
         query[18] != 0x3bU || query[19] != 0x7fU ||
         query[20] != 20U) {
         return 2;
+    }
+    /* messages.getPeerDialogs builder: one user InputDialogPeer, read back to
+       confirm the wire layout (constructor / vector / inputDialogPeer / peer). */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_peer_dialogs(
+            &writer, TG_PEER_USER_CONSTRUCTOR, 0UL, 0x00ABCDEFUL, 0x11223344UL,
+            0x55667788UL, 1) != TG_MTPROTO_TL_OK ||
+        writer.length != 36UL) {
+        return 2;
+    }
+    {
+        tg_mtproto_tl_reader reader;
+        unsigned long w0, w1, w2, w3, w4;
+        unsigned long id_hi, id_lo, ah_hi, ah_lo;
+
+        tg_mtproto_tl_reader_init(&reader, query, writer.length);
+        if (tg_mtproto_tl_read_u32(&reader, &w0) != TG_MTPROTO_TL_OK ||
+            w0 != TG_MESSAGES_GET_PEER_DIALOGS_CONSTRUCTOR ||
+            tg_mtproto_tl_read_u32(&reader, &w1) != TG_MTPROTO_TL_OK ||
+            w1 != TG_VECTOR_CONSTRUCTOR ||
+            tg_mtproto_tl_read_u32(&reader, &w2) != TG_MTPROTO_TL_OK ||
+            w2 != 1UL ||
+            tg_mtproto_tl_read_u32(&reader, &w3) != TG_MTPROTO_TL_OK ||
+            w3 != TG_INPUT_DIALOG_PEER_CONSTRUCTOR ||
+            tg_mtproto_tl_read_u32(&reader, &w4) != TG_MTPROTO_TL_OK ||
+            w4 != TG_INPUT_PEER_USER_CONSTRUCTOR ||
+            tg_mtproto_tl_read_u64(&reader, &id_hi, &id_lo) != TG_MTPROTO_TL_OK ||
+            id_hi != 0UL || id_lo != 0x00ABCDEFUL ||
+            tg_mtproto_tl_read_u64(&reader, &ah_hi, &ah_lo) !=
+                TG_MTPROTO_TL_OK ||
+            ah_hi != 0x11223344UL || ah_lo != 0x55667788UL) {
+            return 2;
+        }
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_get_history_self(&writer, 10UL) !=
@@ -3847,11 +4241,24 @@ int tg_mtproto_login_self_test(void)
         peer_list.peers[0].peer_constructor != TG_PEER_USER_CONSTRUCTOR ||
         peer_list.peers[0].id_lo != 0x12345678UL ||
         peer_list.peers[0].top_message != 11UL ||
+        peer_list.peers[0].read_outbox_max_id != 10UL ||
         peer_list.peers[0].unread_count != 3UL ||
         peer_list.peers[1].peer_constructor != TG_PEER_CHAT_CONSTRUCTOR ||
         peer_list.peers[1].id_lo != 0x87654321UL ||
         peer_list.peers[1].top_message != 21UL ||
+        peer_list.peers[1].read_outbox_max_id != 20UL ||
         peer_list.peers[1].unread_count != 4UL) {
+        return 2;
+    }
+    /* The same body parses under messages.peerDialogs too -- the getPeerDialogs
+       reply leads with the dialogs vector, so the read_outbox cursor (the "seen"
+       source) is reachable without a dedicated peerDialogs parser. */
+    if (tg_mtproto_parse_dialog_peer_list(TG_MESSAGES_PEER_DIALOGS_CONSTRUCTOR,
+                                          peer_rpc, writer.length,
+                                          &peer_list) != TG_MTPROTO_TL_OK ||
+        peer_list.count != 2UL ||
+        peer_list.peers[0].read_outbox_max_id != 10UL ||
+        peer_list.peers[1].read_outbox_max_id != 20UL) {
         return 2;
     }
 
@@ -4223,8 +4630,10 @@ int tg_mtproto_login_self_test(void)
         tg_mtproto_tl_write_u32(&writer,
                                 TG_MESSAGE_REPLY_HEADER_CONSTRUCTOR) !=
             TG_MTPROTO_TL_OK ||
-        tg_mtproto_tl_write_u32(&writer, 1UL << 4) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, (1UL << 4) | (1UL << 6)) !=
+            TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_write_u32(&writer, 1002UL) != TG_MTPROTO_TL_OK ||
+        tg_write_string(&writer, "reply quote") != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_write_u32(&writer, 2224UL) != TG_MTPROTO_TL_OK ||
         tg_write_string(&writer, "group reply") != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_write_u32(&writer, TG_VECTOR_CONSTRUCTOR) !=
@@ -4259,7 +4668,12 @@ int tg_mtproto_login_self_test(void)
         text_list.messages[3].id != 1003UL ||
         text_list.messages[3].date != 2224UL ||
         text_list.messages[3].is_out ||
-        strcmp(text_list.messages[3].text, "group reply") != 0) {
+        /* messageEntityBold over "group" (offset 0, len 5) -> inline markers. */
+        strcmp(text_list.messages[3].text, "*group* reply") != 0 ||
+        /* reply header: reply_to_msg_id (flags.4) + quote_text (flags.6). */
+        !text_list.messages[3].has_reply ||
+        text_list.messages[3].reply_to_msg_id != 1002UL ||
+        strcmp(text_list.messages[3].reply_quote, "reply quote") != 0) {
         return 2;
     }
 

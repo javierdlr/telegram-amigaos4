@@ -72,9 +72,28 @@ const char *tg_platform_default_data_dir(void)
     return "PROGDIR:";
 }
 
+void tg_platform_workbench_init(void)
+{
+#if defined(__amigaos4__)
+    /* Workbench start: anchor the CWD to the binary's drawer so the relative
+       data files resolve. The lock is process-lifetime (freed at exit). */
+    BPTR progdir = Lock((CONST_STRPTR)"PROGDIR:", SHARED_LOCK);
+    if (progdir != 0) {
+        /* AmigaOS 4.x renamed dos.library's CurrentDir() to SetCurrentDir();
+           the classic name is not in the OS4 inline set (Lock() kept its name). */
+        SetCurrentDir(progdir);
+    }
+#endif
+}
+
 void tg_platform_log(const char *level, const char *message)
 {
     printf("[amigaos4:%s] %s\n", level, message);
+}
+
+void tg_platform_debug(const char *message)
+{
+    (void)message; /* no dedicated kernel-debug channel used here */
 }
 
 void tg_platform_sleep_seconds(unsigned long seconds)

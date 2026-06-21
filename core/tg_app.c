@@ -14,8 +14,12 @@
 #include "tg_config.h"
 #include "tg_console.h"
 #include "tg_console_ui.h"
+#include "tg_chat_engine.h"
 #include "tg_console_tui.h"
 #include "tg_file.h"
+#include "tg_gui.h"
+#include "tg_gui_driver.h"
+#include "tg_gui_session.h"
 #include "tg_https.h"
 #include "tg_http.h"
 #include "tg_json.h"
@@ -3953,6 +3957,200 @@ int tg_app_run(int argc, char **argv)
 
     if (config.run_platform_rng_test) {
         return tg_run_platform_rng_test();
+    }
+
+    if (config.run_gui_self_test) {
+        return tg_gui_self_test();
+    }
+
+    if (config.run_chat_engine_self_test) {
+        return tg_chat_engine_self_test();
+    }
+
+    if (config.run_chat_render_self_test) {
+        return tg_mtproto_chat_render_self_test();
+    }
+
+    if (config.run_chat_list_self_test) {
+        return tg_mtproto_chat_list_self_test();
+    }
+
+    if (config.run_gui_driver_self_test) {
+        return tg_gui_driver_self_test();
+    }
+
+    if (config.run_gui_window) {
+        tg_gui_state gui_demo;
+
+        tg_gui_demo_state(&gui_demo);
+        return tg_gui_run_window(&gui_demo);
+    }
+
+    if (config.run_gui_live) {
+        /* Static, not stack: at MSG_TEXT_MAX=4096 this struct is ~340 KB; keeping
+           it off the stack leaves the full GUI stack for the first-login DH. */
+        static tg_gui_state gui;
+        int rc;
+
+        memset(&gui, 0, sizeof(gui));
+        gui.theme = TG_GUI_THEME_DARK;
+        if (config.run_gui_live_debug) {
+            tg_gui_log_enable();
+        }
+        tg_gui_log("live: start");
+        /* Best-effort network refresh of the chat list, then open the live
+           session (it projects the sidebar and enables the notification poll).
+           If the session cannot open, fall back to a read-only sidebar so the
+           window still shows the cached chats. */
+        tg_gui_log("live: refresh peers start");
+        tg_mtproto_gui_refresh_peer_cache(config.mtproto_auth_api_file,
+                                          config.mtproto_auth_file,
+                                          config.gui_chats_cache_file, stdout);
+        tg_gui_log("live: refresh peers done");
+        tg_gui_log("live: session open start");
+        rc = tg_gui_session_open(config.mtproto_auth_api_file,
+                                 config.mtproto_auth_file,
+                                 config.gui_chats_cache_file, &gui, stdout);
+        tg_gui_log(rc == 0 ? "live: session open OK" : "live: session open FAIL");
+        if (rc != 0) {
+            FILE *auth_probe;
+
+            /* No saved session at all -> drive the first-login flow in the
+               window. An existing-but-unusable auth (network down, expired)
+               keeps the read-only cached sidebar instead. */
+            auth_probe = fopen(config.mtproto_auth_file, "rb");
+            if (auth_probe == 0) {
+                tg_gui_log("live: no auth -> login flow");
+                tg_gui_session_login_begin(config.mtproto_auth_api_file,
+                                           config.mtproto_auth_file,
+                                           config.gui_chats_cache_file);
+                gui.mode = TG_GUI_MODE_LOGIN_PHONE;
+            } else {
+                tg_gui_chat_driver gui_driver;
+                tg_chat_driver driver;
+                tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+                int count;
+                int missing;
+
+                fclose(auth_probe);
+                memset(&driver, 0, sizeof(driver));
+                missing = 0;
+                tg_gui_chat_driver_bind(&gui_driver, &gui, &driver);
+                count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file,
+                                                   0UL, rows, TG_CHAT_LIST_MAX,
+                                                   &missing);
+                if (driver.on_chat_list_changed != 0 && count > 0) {
+                    driver.on_chat_list_changed(driver.ctx, rows, count);
+                }
+            }
+        }
+        if (gui.mode == TG_GUI_MODE_LOGIN_PHONE) {
+            strcpy(gui.title, "Telegram Amiga");
+            strcpy(gui.status, "Enter your phone number (+...)");
+        } else {
+            if (gui.chat_count > 0) {
+                const char *name;
+                unsigned long k;
+
+                name = gui.chats[0].name;
+                for (k = 0UL; k + 1UL < (unsigned long)sizeof(gui.title) &&
+                              name[k] != '\0'; ++k) {
+                    gui.title[k] = name[k];
+                }
+                gui.title[k] = '\0';
+            } else {
+                strcpy(gui.title, "Telegram Amiga");
+            }
+            strcpy(gui.status, rc == 0 ? "Live - F1-F10 chats, Q quits"
+                                       : "Offline (cache) - Q quits");
+        }
+        /* Open the selected (first) chat up front so the transcript is
+           populated on launch instead of waiting for the first key press. */
+        if (rc == 0 && gui.chat_count > 0) {
+            tg_gui_log("live: open first chat start");
+            (void)tg_gui_session_open_chat(
+                gui.chats[gui.selected_chat].index, stdout);
+            tg_gui_log("live: open first chat done");
+        }
+        tg_gui_log("live: run_window start");
+        rc = tg_gui_run_window(&gui);
+        tg_gui_log("live: run_window returned");
+        tg_gui_session_close();
+        tg_gui_log("live: session_close done");
+        return rc;
+    }
+
+    if (config.run_gui_session_tick_self) {
+        tg_gui_state gui;
+        int i;
+        int rc;
+
+        memset(&gui, 0, sizeof(gui));
+        gui.theme = TG_GUI_THEME_DARK;
+        rc = tg_gui_session_open(config.mtproto_auth_api_file,
+                                 config.mtproto_auth_file,
+                                 config.gui_chats_cache_file, &gui, stdout);
+        if (rc != 0) {
+            puts("gui session tick self-test: open failed (needs a live "
+                 "telegram-api.txt + telegram-auth.bin)");
+            return rc;
+        }
+        printf("gui session tick self-test: open ok, %d chats; ticking...\n",
+               gui.chat_count);
+        for (i = 0; i < 35; ++i) {
+            (void)tg_gui_session_tick(stdout);
+        }
+        tg_gui_session_close();
+        puts("gui session tick self-test: done");
+        return 0;
+    }
+
+    if (config.run_gui_chats) {
+        tg_gui_state gui;
+        tg_gui_chat_driver gui_driver;
+        tg_chat_driver driver;
+        tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+        int count;
+        int missing;
+
+        memset(&gui, 0, sizeof(gui));
+        memset(&driver, 0, sizeof(driver));
+        gui.theme = TG_GUI_THEME_DARK;
+        missing = 0;
+        /* --gui-chats-live: pull a fresh chat list from the network into the
+           cache first (best-effort -- on failure we still open the window over
+           whatever cache exists). --gui-chats stays cache-only. */
+        if (config.run_gui_chats_live) {
+            tg_mtproto_gui_refresh_peer_cache(config.mtproto_auth_api_file,
+                                              config.mtproto_auth_file,
+                                              config.gui_chats_cache_file,
+                                              stdout);
+        }
+        /* Project the peer cache into the sidebar through the same GUI driver
+           the live client will use. */
+        tg_gui_chat_driver_bind(&gui_driver, &gui, &driver);
+        count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file, 0UL,
+                                           rows, TG_CHAT_LIST_MAX, &missing);
+        if (driver.on_chat_list_changed != 0 && count > 0) {
+            driver.on_chat_list_changed(driver.ctx, rows, count);
+        }
+        if (gui.chat_count > 0) {
+            const char *name;
+            unsigned long k;
+
+            name = gui.chats[0].name;
+            for (k = 0UL; k + 1UL < (unsigned long)sizeof(gui.title) &&
+                          name[k] != '\0'; ++k) {
+                gui.title[k] = name[k];
+            }
+            gui.title[k] = '\0';
+            strcpy(gui.status, "Read-only - F1-F10 chats, Q quits");
+        } else {
+            strcpy(gui.title, "Telegram Amiga");
+            strcpy(gui.status, missing ? "Cache chat non trovata"
+                                       : "Nessuna chat in cache");
+        }
+        return tg_gui_run_window(&gui);
     }
 
     if (config.run_console_ui_test) {

@@ -120,9 +120,27 @@ const char *tg_platform_default_data_dir(void)
     return "PROGDIR:";
 }
 
+void tg_platform_workbench_init(void)
+{
+#if defined(__amigaos3__)
+    /* Workbench start has no current drawer set to the binary's home, so the
+       relative data files would miss. Anchor the CWD to PROGDIR:. The lock is
+       held for the process lifetime (the OS frees it at exit). */
+    BPTR progdir = Lock((CONST_STRPTR)"PROGDIR:", SHARED_LOCK);
+    if (progdir != 0) {
+        CurrentDir(progdir);
+    }
+#endif
+}
+
 void tg_platform_log(const char *level, const char *message)
 {
     printf("[amigaos3:%s] %s\n", level, message);
+}
+
+void tg_platform_debug(const char *message)
+{
+    (void)message; /* no dedicated kernel-debug channel used here */
 }
 
 void tg_platform_sleep_seconds(unsigned long seconds)

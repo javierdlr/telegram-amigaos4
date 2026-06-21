@@ -22,6 +22,16 @@ jobs:
         run: make -f Makefile.host all
       - name: MTProto self-test (TL / crypto / SRP / session)
         run: ./build/host/telegram-test --mtproto-self-test
+      - name: GUI layout self-test
+        run: ./build/host/telegram-test --gui-self-test
+      - name: Chat engine self-test
+        run: ./build/host/telegram-test --chat-engine-self-test
+      - name: Chat transcript renderer golden
+        run: ./build/host/telegram-test --chat-render-self-test
+      - name: Chat list renderer golden
+        run: ./build/host/telegram-test --chat-list-self-test
+      - name: GUI driver projection self-test
+        run: ./build/host/telegram-test --gui-driver-self-test
       - name: Platform RNG self-test
         run: |
           ./build/host/telegram-test --platform-rng-test
