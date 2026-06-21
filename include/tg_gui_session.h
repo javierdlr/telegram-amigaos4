@@ -50,6 +50,11 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream);
    on success, non-zero on failure or when no chat is open. */
 int tg_gui_session_send(const char *text, FILE *stream);
 
+/* Searches Telegram for `query` (contacts.search), adds the first openable
+   result to the peer cache and opens it. Small reply, MorphOS-safe. Returns 0 =
+   opened, 1 = no result / network issue, 2 = bad args. */
+int tg_gui_session_search_open(const char *query, FILE *stream);
+
 /* 1 while a live session is held (so the window can enable composing). */
 int tg_gui_session_is_open(void);
 

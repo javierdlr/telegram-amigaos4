@@ -11832,6 +11832,132 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     return 1; /* the selection changed -> always repaint */
 }
 
+/* Re-project the peer cache into the GUI sidebar (after it changed, e.g. a search
+   result was added). Mirrors the projection in tg_gui_session_open. */
+static void tg_gui_session_reload_chats(void)
+{
+    tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+    int count;
+    int missing;
+
+    if (tg_gui_session_state.driver.on_chat_list_changed == 0) {
+        return;
+    }
+    missing = 0;
+    count = tg_mtproto_chat_list_parse(tg_gui_session_state.peer_cache_file, 0UL,
+                                       rows, TG_CHAT_LIST_MAX, &missing);
+    if (count > 0) {
+        tg_gui_session_state.driver.on_chat_list_changed(
+            tg_gui_session_state.driver.ctx, rows, count);
+    }
+}
+
+/* GUI chat search: contacts.search the query online, take the first openable
+   result, add it to the peer cache and open it. Small reply (limit 10) so it is
+   MorphOS-safe where the big getDialogs is not. Returns 0 = opened, 1 = no
+   result / network issue, 2 = bad args. The window repaints + reports on the
+   result. (First increment: opens the top match; a results picker comes later.) */
+int tg_gui_session_search_open(const char *query, FILE *stream)
+{
+    unsigned char qbuf[256];
+    char trimmed[128];
+    static tg_mtproto_peer_cache search_cache;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    FILE *quiet;
+    unsigned long i;
+    const tg_mtproto_peer_cache_entry *selected;
+    char new_index[32];
+    char new_label[TG_GUI_NAME_MAX];
+    unsigned long prev_timeout;
+    int rc;
+    static const char label[] = "gui contacts.search";
+
+    if (!tg_gui_session_state.open || stream == 0 || query == 0) {
+        return 2;
+    }
+    tg_mtproto_copy_plain_cache_text(trimmed, sizeof(trimmed), query);
+    tg_mtproto_trim_line(trimmed);
+    if (trimmed[0] == '\0') {
+        return 2;
+    }
+
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(12UL);
+    tg_mtproto_tl_writer_init(&writer, qbuf, sizeof(qbuf));
+    if (tg_mtproto_build_contacts_search(&writer, trimmed, 10UL) !=
+        TG_MTPROTO_TL_OK) {
+        tg_net_set_connect_timeout_seconds(prev_timeout);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
+    memset(&result, 0, sizeof(result));
+    rc = tg_mtproto_send_saved_query_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context, qbuf,
+        writer.length, &result, quiet, label, 200U);
+    if (rc != 0 ||
+        result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR ||
+        tg_mtproto_unpack_gzip_result(&result, quiet, label) != 0 ||
+        tg_mtproto_parse_contacts_search_peer_cache(
+            result.result_constructor, result.result_body,
+            result.result_body_length, &search_cache) != TG_MTPROTO_TL_OK) {
+        tg_net_set_connect_timeout_seconds(prev_timeout);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 1;
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+
+    selected = 0;
+    for (i = 0UL; i < search_cache.count; ++i) {
+        if (!search_cache.entries[i].is_self &&
+            tg_mtproto_peer_cache_entry_is_openable(&search_cache.entries[i])) {
+            selected = &search_cache.entries[i];
+            break;
+        }
+    }
+    if (selected == 0) {
+        tg_net_set_connect_timeout_seconds(prev_timeout);
+        return 1;
+    }
+    new_index[0] = '\0';
+    new_label[0] = '\0';
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_peer_cache_add_selected(
+        tg_gui_session_state.peer_cache_file, selected, new_index,
+        sizeof(new_index), new_label, sizeof(new_label), quiet);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    if (rc != 0 || new_index[0] == '\0') {
+        return 1;
+    }
+
+    /* Cache changed -> refresh the sidebar, then highlight + open the new chat. */
+    tg_gui_session_reload_chats();
+    {
+        unsigned long idx;
+
+        if (tg_mtproto_parse_ulong_arg(new_index, &idx) == 0 && idx != 0UL) {
+            tg_gui_state *gs = tg_gui_session_state.gui_driver.state;
+
+            if (gs != 0) {
+                int r;
+
+                for (r = 0; r < gs->chat_count; ++r) {
+                    if (gs->chats[r].index == idx) {
+                        gs->selected_chat = r;
+                        break;
+                    }
+                }
+            }
+            (void)tg_gui_session_open_chat(idx, stream);
+        }
+    }
+    return 0;
+}
+
 int tg_gui_session_send(const char *text, FILE *stream)
 {
     FILE *quiet;

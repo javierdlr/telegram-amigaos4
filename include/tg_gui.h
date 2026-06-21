@@ -85,6 +85,7 @@ struct tg_gui_backend {
 #define TG_GUI_TIME_MAX 8
 #define TG_GUI_INITIALS_MAX 4
 #define TG_GUI_REPLY_MAX 96
+#define TG_GUI_SEARCH_MAX 64
 
 /* Width of the custom-drawn vertical scrollbars; shared with the event loop so
    a click maps to the same strip the painter drew. */
@@ -163,6 +164,13 @@ typedef struct tg_gui_state {
     int history_count;
     int history_pos;   /* -1 = not recalling; else index into history[] */
     char history_draft[TG_GUI_MSG_TEXT_MAX]; /* live text stashed on first UP */
+    /* Chat search (the sidebar "Search chats..." box). search_active = the box is
+       focused (typing); in_search = the sidebar currently shows online search
+       results instead of the cached chat list (ESC restores it). */
+    int search_active;
+    int search_caret;
+    char search_query[TG_GUI_SEARCH_MAX];
+    int in_search;
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used
@@ -185,6 +193,7 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend);
 #define TG_GUI_HIT_NONE (-1)
 #define TG_GUI_HIT_INPUT (-2) /* the message input field: start composing */
 #define TG_GUI_HIT_SEND (-3)  /* the Send button */
+#define TG_GUI_HIT_SEARCH (-4) /* the sidebar search box: focus it */
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
 

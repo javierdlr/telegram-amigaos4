@@ -318,8 +318,30 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                        tg_gui_make_rect(0, 0, sidebar_w, content_h));
 
     search_h = lh + 10;
-    backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, 10, (search_h / 2) + 4,
-                       "Search chats...", 15UL);
+    {
+        int sbase = (search_h / 2) + 4;
+
+        if (state->search_query[0] != '\0') {
+            backend->draw_text(backend, TG_GUI_PEN_TEXT, 10, sbase,
+                               state->search_query,
+                               (unsigned long)strlen(state->search_query));
+        } else {
+            backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, 10, sbase,
+                               state->search_active ? "Type a name, ENTER..."
+                                                    : "Search chats...",
+                               state->search_active ? 20UL : 15UL);
+        }
+        /* Caret while the search box is focused (blinks via cursor_on). */
+        if (state->search_active && state->cursor_on) {
+            int cx;
+
+            cx = 10 + backend->text_width(
+                          backend, state->search_query,
+                          (unsigned long)strlen(state->search_query)) + 1;
+            backend->fill_rect(backend, TG_GUI_PEN_TEXT,
+                               tg_gui_make_rect(cx, sbase - lh + 2, 2, lh));
+        }
+    }
 
     row_h = (2 * lh) + 12;
     view_rows = (row_h > 0) ? ((content_h - search_h) / row_h) : 0;
@@ -1125,6 +1147,8 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
             if (row >= 0 && row < state->chat_count) {
                 return row;
             }
+        } else {
+            return TG_GUI_HIT_SEARCH; /* the search box strip at the top */
         }
     }
     return TG_GUI_HIT_NONE;

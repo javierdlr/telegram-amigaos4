@@ -960,6 +960,56 @@ int tg_gui_run_window(tg_gui_state *state)
                 /* A login screen owns the keyboard until the session opens. */
                 tg_gui_window_login_key(state, msg_code, &backend, &done,
                                         &caret_ticks);
+            } else if (msg_class == IDCMP_VANILLAKEY && state->search_active) {
+                /* The sidebar search box owns the keyboard while focused: type a
+                   name, ENTER runs an online search and opens the top match,
+                   ESC cancels, BACKSPACE deletes. */
+                if (msg_code == 27) { /* ESC */
+                    state->search_active = 0;
+                    state->search_query[0] = '\0';
+                    tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "Live - F1-F10 chats, Q quits");
+                    tg_gui_window_paint(state, &backend);
+                } else if (msg_code == 8 || msg_code == 127) { /* BACKSPACE */
+                    unsigned long n;
+
+                    n = (unsigned long)strlen(state->search_query);
+                    if (n > 0UL) {
+                        state->search_query[n - 1UL] = '\0';
+                        tg_gui_window_paint(state, &backend);
+                    }
+                } else if (msg_code == 13 || msg_code == 10) { /* ENTER: search */
+                    if (state->search_query[0] != '\0') {
+                        int src;
+
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Searching Telegram...");
+                        tg_gui_window_paint(state, &backend);
+                        src = tg_gui_session_search_open(state->search_query,
+                                                         stdout);
+                        state->search_active = 0;
+                        if (src == 0) {
+                            state->search_query[0] = '\0';
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status),
+                                               "Live - F1-F10 chats, Q quits");
+                        } else {
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                "No match - try a name or @username");
+                        }
+                        tg_gui_window_paint(state, &backend);
+                    }
+                } else if (msg_code >= 32 && msg_code < 256) { /* printable */
+                    unsigned long n;
+
+                    n = (unsigned long)strlen(state->search_query);
+                    if (n + 1UL < sizeof(state->search_query)) {
+                        state->search_query[n] = (char)msg_code;
+                        state->search_query[n + 1UL] = '\0';
+                        tg_gui_window_paint(state, &backend);
+                    }
+                }
             } else if (msg_class == IDCMP_VANILLAKEY && state->composing) {
                 /* Composing: keys edit the input line; RETURN sends, ESC
                    cancels, BACKSPACE deletes. */
@@ -1298,6 +1348,7 @@ int tg_gui_run_window(tg_gui_state *state)
                                           ctx.line_h, hx, hy);
                     if (hit >= 0) {
                         /* Click a chat row: select + open it (drop any draft). */
+                        state->search_active = 0; /* leaving the search box */
                         if (state->composing) {
                             state->composing = 0;
                             state->input[0] = '\0';
@@ -1311,6 +1362,17 @@ int tg_gui_run_window(tg_gui_state *state)
                         } else {
                             tg_gui_window_paint(state, &backend);
                         }
+                    } else if (hit == TG_GUI_HIT_SEARCH &&
+                               tg_gui_session_is_open()) {
+                        /* Click the sidebar search box to focus it for typing. */
+                        state->composing = 0;
+                        state->search_active = 1;
+                        state->cursor_on = 1;
+                        caret_ticks = 0;
+                        tg_gui_window_copy(
+                            state->status, sizeof(state->status),
+                            "Search: type a name, ENTER to find, ESC cancels");
+                        tg_gui_window_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
                         if (state->input[0] != '\0') {
                             if (tg_gui_session_send(state->input, stdout) == 0) {
