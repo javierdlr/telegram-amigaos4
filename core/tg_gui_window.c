@@ -1396,7 +1396,10 @@ int tg_gui_run_window(tg_gui_state *state)
                     } else if ((hit == TG_GUI_HIT_INPUT ||
                                 hit == TG_GUI_HIT_SEND) &&
                                !state->composing && tg_gui_session_is_open()) {
-                        /* Click the input field (or Send) to start composing. */
+                        /* Click the input field (or Send) to start composing --
+                           leave the search box so only one caret is focused. */
+                        state->search_active = 0;
+                        state->search_query[0] = '\0';
                         state->composing = 1;
                         state->input_caret = (int)strlen(state->input);
                         state->cursor_on = 1;
