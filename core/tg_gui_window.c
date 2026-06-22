@@ -530,6 +530,28 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
         return;
     }
 
+    /* Never submit an EMPTY login field. sendCode/signIn block for several
+       seconds, during which a held/auto-repeating RETURN queues a second submit;
+       once the step has advanced to the code, that stray RETURN fired signIn with
+       an empty code -> a cryptic "query-build-failed" before the user could type
+       it (the code had already arrived on the phone). Re-prompt instead. */
+    if ((state->mode == TG_GUI_MODE_LOGIN_PHONE ||
+         state->mode == TG_GUI_MODE_LOGIN_CODE ||
+         state->mode == TG_GUI_MODE_LOGIN_2FA) &&
+        state->input[0] == '\0') {
+        tg_gui_window_copy(
+            state->status, sizeof(state->status),
+            state->mode == TG_GUI_MODE_LOGIN_PHONE
+                ? "Enter your phone (+ country code)"
+                : (state->mode == TG_GUI_MODE_LOGIN_CODE
+                       ? "Enter the code you received"
+                       : "Enter your 2FA password"));
+        state->cursor_on = 1;
+        *caret_ticks = 0;
+        tg_gui_window_paint(state, backend);
+        return;
+    }
+
     /* RETURN: submit the current field. Show progress first -- the DH/RPC round
        trip blocks the window for several seconds on a slow link. */
     tg_gui_window_copy(state->status, sizeof(state->status),
