@@ -8018,15 +8018,35 @@ static void tg_mtproto_capture_quiet_error(FILE *quiet, FILE *fallback,
             strstr(line, "nvalid") != 0 || strstr(line, "FLOOD") != 0 ||
             strstr(line, "MIGRATE") != 0 || strstr(line, "BANNED") != 0 ||
             strstr(line, "imeout") != 0 || strstr(line, "onnect") != 0) {
-            strncpy(out, line, out_size - 1UL);
-            out[out_size - 1UL] = '\0';
+            unsigned long copy_len;
+
+            copy_len = n;
+            if (copy_len >= out_size) {
+                copy_len = out_size - 1UL;
+            }
+            memcpy(out, line, (size_t)copy_len);
+            out[copy_len] = '\0';
         }
-        strncpy(last, line, sizeof(last) - 1UL);
-        last[sizeof(last) - 1UL] = '\0';
+        {
+            unsigned long copy_len;
+
+            copy_len = n;
+            if (copy_len >= (unsigned long)sizeof(last)) {
+                copy_len = (unsigned long)sizeof(last) - 1UL;
+            }
+            memcpy(last, line, (size_t)copy_len);
+            last[copy_len] = '\0';
+        }
     }
     if (out[0] == '\0' && last[0] != '\0') {
-        strncpy(out, last, out_size - 1UL);
-        out[out_size - 1UL] = '\0';
+        unsigned long copy_len;
+
+        copy_len = (unsigned long)strlen(last);
+        if (copy_len >= out_size) {
+            copy_len = out_size - 1UL;
+        }
+        memcpy(out, last, (size_t)copy_len);
+        out[copy_len] = '\0';
     }
 }
 
