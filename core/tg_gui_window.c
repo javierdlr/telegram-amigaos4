@@ -1108,6 +1108,8 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->search_dirty = 1; /* re-search after the pause */
                         search_idle_ticks = 0;   /* restart the debounce */
                         last_key_time = time(0);
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Searching when you pause...");
                         tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 13 || msg_code == 10) { /* ENTER: search */
@@ -1122,6 +1124,8 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->search_dirty = 1; /* re-search after the pause */
                         search_idle_ticks = 0;   /* restart the debounce */
                         last_key_time = time(0);
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Searching when you pause...");
                         tg_gui_window_paint(state, &backend);
                     }
                 }
@@ -1526,7 +1530,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(
                             state->status, sizeof(state->status),
-                            "Search: type a name, ENTER to find, ESC cancels");
+                            "Search: type then PAUSE to auto-find (or ENTER)");
                         tg_gui_window_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
                         if (state->input[0] != '\0') {
