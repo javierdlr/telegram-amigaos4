@@ -406,6 +406,18 @@ static void tg_gui_window_paint_caret(const tg_gui_state *state,
     }
 }
 
+/* How many extra older pages the open may auto-pull to make the backlog overflow
+   the window (so a scrollbar appears) when the first page kept only a few text
+   rows. Bounded per platform: MorphOS smallest (bsdsocket freeze risk on many
+   replies), m68k modest, PPC/AROS a bit more. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+#define TG_GUI_TOPUP_MAX 1
+#elif defined(__m68k__)
+#define TG_GUI_TOPUP_MAX 2
+#else
+#define TG_GUI_TOPUP_MAX 3
+#endif
+
 /* Switch to chat `sel`: show its header + an empty transcript at once, then
    fetch the history. The instant first paint keeps the switch responsive on a
    slow link instead of the window appearing frozen on the old chat until the
@@ -428,6 +440,27 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
         (void)tg_gui_session_open_chat(state->chats[sel].index, stdout);
     }
     tg_gui_window_paint(state, backend);
+    /* Auto-top-up: some chats keep only a few text rows at open (service/empty
+       messages dropped, or a media-tail aborting the parse), so the backlog fits
+       the window and no scrollbar is drawn -- the user then can't tell there is
+       more history. While the content fits (sb_tr_max==0) and the chat start is
+       not reached, pull older pages via the proven load_older path (newest stays
+       on screen, so allow_drop=0) until it overflows and a scrollbar appears;
+       normal scroll/wheel paging takes over from there. Bounded per platform.
+       transcript_scroll stays 0 so the newest message remains pinned at bottom. */
+    if (tg_gui_session_is_open()) {
+        int topup;
+
+        for (topup = 0; topup < TG_GUI_TOPUP_MAX; ++topup) {
+            if (state->sb_tr_max > 0) {
+                break; /* already overflows -> a scrollbar is present */
+            }
+            if (tg_gui_session_load_older(stdout, 0) <= 0) {
+                break; /* chat start reached (0) or transient fetch failure (<0) */
+            }
+            tg_gui_window_paint(state, backend);
+        }
+    }
 }
 
 /* Bounded copy into a fixed UI buffer (status/title) -- never overflows even if

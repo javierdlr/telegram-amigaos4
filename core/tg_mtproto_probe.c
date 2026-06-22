@@ -339,6 +339,15 @@ static const tg_chat_driver *tg_chat_message_driver_override = 0;
    it when building the query; every other caller leaves it 0 (newest-pinned). */
 static unsigned long tg_mtproto_history_offset_id_override = 0UL;
 
+/* Last getHistory parse stats, for the "only 2-3 messages at open" diagnostic:
+   the open path surfaces them in the chat subtitle when rows were dropped, so a
+   failing chat can be reported without a debug build. kept = text rows shown,
+   total = messages in the fetched page, abort = the constructor that stopped the
+   parser (0 = clean). */
+static unsigned long tg_gui_last_hist_kept = 0UL;
+static unsigned long tg_gui_last_hist_total = 0UL;
+static unsigned long tg_gui_last_hist_abort = 0UL;
+
 /* tg_chat_notify_reset / tg_chat_notify_seen now live in tg_chat_engine.c and
    operate on the engine's notify queue (reached here via tg_chat_nq). */
 
@@ -8982,6 +8991,22 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
             texts.count, texts.total_message_count, texts.abort_constructor);
     fflush(stream);
 #endif
+    /* Diagnostic for the "only 2-3 messages at open" reports: kept = text rows
+       displayed, total = messages in the fetched page, abort = the TL constructor
+       that stopped the parser (0 = clean; 0x7a800e0a = messageService;
+       0x9815cec8 = a message whose media/reply field could not be read). Reaches
+       the disk log only under --gui-live-debug, plus the kernel-debug channel. */
+    {
+        char histdiag[176];
+        sprintf(histdiag,
+                "hist[%s]: kept=%lu total=%lu trunc=%d abort=0x%08lx body=%lu",
+                label, texts.count, texts.total_message_count, texts.truncated,
+                texts.abort_constructor, result.result_body_length);
+        tg_gui_log(histdiag);
+    }
+    tg_gui_last_hist_kept = texts.count;
+    tg_gui_last_hist_total = texts.total_message_count;
+    tg_gui_last_hist_abort = texts.abort_constructor;
     tg_mtproto_close_quiet_stream(quiet, stream);
 
     /* Resolve group-message senders from the response's users/chats. */
@@ -12009,6 +12034,18 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.current_peer_label,
         tg_gui_session_state.own_label);
     tg_chat_message_driver_override = 0;
+    /* Diagnostic surfaced in the subtitle ONLY when the open dropped rows (a
+       parser shortfall: messageService / unreadable media-tail), so the user can
+       report the exact kept/total/abort for a "shows only 2-3 messages" chat
+       without a debug build. Normal chats (kept==total, no abort) keep the title's
+       own subtitle. */
+    if (tg_gui_session_state.gui_driver.state != 0 &&
+        (tg_gui_last_hist_abort != 0UL ||
+         tg_gui_last_hist_kept < tg_gui_last_hist_total)) {
+        sprintf(tg_gui_session_state.gui_driver.state->subtitle,
+                "shown %lu/%lu ab=%08lx", tg_gui_last_hist_kept,
+                tg_gui_last_hist_total, tg_gui_last_hist_abort);
+    }
     /* One getPeerDialogs read so own messages already read by the peer show the
        double-check at open (the tick refreshes it live thereafter). Now ALSO on
        MorphOS: the freeze this was disabled for was the first-tick repaint racing
