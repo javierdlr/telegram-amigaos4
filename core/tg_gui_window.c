@@ -695,6 +695,93 @@ static void tg_gui_window_save_size(int w, int h)
     }
 }
 
+/* Load the last online search's openable results into the sidebar list so the
+   existing renderer + click hit-test present them as a picker. chats[] is
+   restored from the cache (tg_gui_session_refresh_chats) on cancel/open. */
+static void tg_gui_window_load_search_results(tg_gui_state *state)
+{
+    int n;
+    int k;
+
+    n = tg_gui_session_search_count();
+    if (n > TG_GUI_MAX_CHATS) {
+        n = TG_GUI_MAX_CHATS;
+    }
+    for (k = 0; k < n; ++k) {
+        const char *nm = tg_gui_session_search_name(k);
+        char c;
+
+        tg_gui_window_copy(state->chats[k].name, sizeof(state->chats[k].name),
+                           nm);
+        state->chats[k].preview[0] = '\0';
+        state->chats[k].time[0] = '\0';
+        c = nm[0];
+        if (c >= 'a' && c <= 'z') {
+            c = (char)(c - 32);
+        }
+        state->chats[k].initials[0] = (c != '\0') ? c : '?';
+        state->chats[k].initials[1] = '\0';
+        state->chats[k].avatar_color = k % TG_GUI_AVATAR_COLORS;
+        state->chats[k].unread = 0;
+        state->chats[k].index = (unsigned long)(k + 1);
+        state->chats[k].peer_id_hi = 0UL;
+        state->chats[k].peer_id_lo = 0UL;
+        state->chats[k].flash = 0;
+    }
+    state->chat_count = n;
+    state->selected_chat = 0;
+    state->in_search = 1;
+}
+
+/* Run an online search for the current query and show the matches in the sidebar
+   as a picker (click one to open). With auto_open_single, a lone match opens
+   straight away -- that is what ENTER wants; the as-you-type debounce passes 0 so
+   it never opens behind the user's back while typing. Restores the real chat list
+   when the query is empty or yields nothing. */
+static void tg_gui_window_run_search(tg_gui_state *state, tg_gui_backend *backend,
+                                     int auto_open_single)
+{
+    int cnt;
+
+    state->search_dirty = 0;
+    if (state->search_query[0] == '\0') {
+        if (state->in_search) {
+            state->in_search = 0;
+            tg_gui_session_refresh_chats();
+            tg_gui_window_paint(state, backend);
+        }
+        return;
+    }
+    tg_gui_window_copy(state->status, sizeof(state->status),
+                       "Searching Telegram...");
+    tg_gui_window_paint(state, backend);
+    cnt = tg_gui_session_search_run(state->search_query, stdout);
+    if (cnt == 1 && auto_open_single) {
+        (void)tg_gui_session_search_open_result(0, stdout);
+        state->in_search = 0;
+        state->search_active = 0;
+        state->search_query[0] = '\0';
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Live - F1-F10 chats, Q quits");
+    } else if (cnt >= 1) {
+        /* Show the matches in the sidebar; keep the search box focused so ESC
+           cancels and more typing refines. The user clicks a result to open it. */
+        tg_gui_window_load_search_results(state);
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Pick a result - click it (ESC cancels)");
+    } else {
+        /* None / error: drop any stale picker and restore the real chat list. */
+        if (state->in_search) {
+            state->in_search = 0;
+            tg_gui_session_refresh_chats();
+        }
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           cnt < 0 ? "Search failed (network?)"
+                                   : "No match - try a name or @username");
+    }
+    tg_gui_window_paint(state, backend);
+}
+
 int tg_gui_run_window(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
@@ -1003,6 +1090,10 @@ int tg_gui_run_window(tg_gui_state *state)
                 if (msg_code == 27) { /* ESC */
                     state->search_active = 0;
                     state->search_query[0] = '\0';
+                    if (state->in_search) { /* cancel the picker -> restore chats */
+                        state->in_search = 0;
+                        tg_gui_session_refresh_chats();
+                    }
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_window_paint(state, &backend);
@@ -1012,30 +1103,12 @@ int tg_gui_run_window(tg_gui_state *state)
                     n = (unsigned long)strlen(state->search_query);
                     if (n > 0UL) {
                         state->search_query[n - 1UL] = '\0';
+                        state->search_dirty = 1; /* re-search after the pause */
+                        last_key_time = time(0);
                         tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 13 || msg_code == 10) { /* ENTER: search */
-                    if (state->search_query[0] != '\0') {
-                        int src;
-
-                        tg_gui_window_copy(state->status, sizeof(state->status),
-                                           "Searching Telegram...");
-                        tg_gui_window_paint(state, &backend);
-                        src = tg_gui_session_search_open(state->search_query,
-                                                         stdout);
-                        state->search_active = 0;
-                        if (src == 0) {
-                            state->search_query[0] = '\0';
-                            tg_gui_window_copy(state->status,
-                                               sizeof(state->status),
-                                               "Live - F1-F10 chats, Q quits");
-                        } else {
-                            tg_gui_window_copy(
-                                state->status, sizeof(state->status),
-                                "No match - try a name or @username");
-                        }
-                        tg_gui_window_paint(state, &backend);
-                    }
+                    tg_gui_window_run_search(state, &backend, 1);
                 } else if (msg_code >= 32 && msg_code < 256) { /* printable */
                     unsigned long n;
 
@@ -1043,6 +1116,8 @@ int tg_gui_run_window(tg_gui_state *state)
                     if (n + 1UL < sizeof(state->search_query)) {
                         state->search_query[n] = (char)msg_code;
                         state->search_query[n + 1UL] = '\0';
+                        state->search_dirty = 1; /* re-search after the pause */
+                        last_key_time = time(0);
                         tg_gui_window_paint(state, &backend);
                     }
                 }
@@ -1207,9 +1282,11 @@ int tg_gui_run_window(tg_gui_state *state)
                     }
                 }
             } else if (msg_class == IDCMP_RAWKEY && !state->composing &&
-                       state->mode == TG_GUI_MODE_CHAT) {
+                       !state->in_search && state->mode == TG_GUI_MODE_CHAT) {
                 /* F1..F10 (rawkey 0x50..0x59) pick chats 1..10; Shift adds 10
-                   for 11..20 -- matching the console's F-key selection. */
+                   for 11..20 -- matching the console's F-key selection. (Disabled
+                   while the search picker is up: its rows are not real chats, so
+                   an F-key would open a bogus chat and strand the picker.) */
                 if (msg_code >= 0x50 && msg_code <= 0x59 &&
                     state->chat_count > 0) {
                     int idx;
@@ -1307,6 +1384,16 @@ int tg_gui_run_window(tg_gui_state *state)
                        for TG_GUI_COMPOSE_IDLE_POLL_SECONDS; skip it entirely when
                        a close/quit is already queued this drain. */
                     now = time(0);
+                    /* As-you-type search: once the user pauses typing in the
+                       sidebar box, run the online search and show the picker.
+                       Debounced (>= 2s idle) so a slow link / MorphOS is not
+                       hammered per keystroke; auto_open_single=0 so it never opens
+                       behind the user while they are still typing. */
+                    if (state->search_active && state->search_dirty &&
+                        now != (time_t)-1 &&
+                        (unsigned long)(now - last_key_time) >= 2UL) {
+                        tg_gui_window_run_search(state, &backend, 0);
+                    }
                     /* Effective interval: hold the conservative boot cadence until
                        the startup network burst has had WATCH_BOOT_GRACE seconds to
                        settle, then use the faster steady-state interval. */
@@ -1395,7 +1482,17 @@ int tg_gui_run_window(tg_gui_state *state)
 
                     hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
                                           ctx.line_h, hx, hy);
-                    if (hit >= 0) {
+                    if (hit >= 0 && state->in_search) {
+                        /* Picker: click a search result -> add it to the cache +
+                           open it. open_result reloads the real chat list. */
+                        state->in_search = 0;
+                        state->search_active = 0;
+                        state->search_query[0] = '\0';
+                        (void)tg_gui_session_search_open_result(hit, stdout);
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Live - F1-F10 chats, Q quits");
+                        tg_gui_window_paint(state, &backend);
+                    } else if (hit >= 0) {
                         /* Click a chat row: select + open it (drop any draft). */
                         state->search_active = 0; /* leaving the search box */
                         if (state->composing) {
@@ -1416,6 +1513,8 @@ int tg_gui_run_window(tg_gui_state *state)
                         /* Click the sidebar search box to focus it for typing. */
                         state->composing = 0;
                         state->search_active = 1;
+                        state->search_dirty = 0; /* no pending debounce on focus */
+                        last_key_time = time(0);
                         state->cursor_on = 1;
                         caret_ticks = 0;
                         tg_gui_window_copy(
@@ -1447,6 +1546,10 @@ int tg_gui_run_window(tg_gui_state *state)
                            leave the search box so only one caret is focused. */
                         state->search_active = 0;
                         state->search_query[0] = '\0';
+                        if (state->in_search) { /* abandon the picker, restore chats */
+                            state->in_search = 0;
+                            tg_gui_session_refresh_chats();
+                        }
                         state->composing = 1;
                         state->input_caret = (int)strlen(state->input);
                         state->cursor_on = 1;

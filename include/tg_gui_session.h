@@ -55,6 +55,20 @@ int tg_gui_session_send(const char *text, FILE *stream);
    opened, 1 = no result / network issue, 2 = bad args. */
 int tg_gui_session_search_open(const char *query, FILE *stream);
 
+/* Run contacts.search for `query` and KEEP the openable results (does not open
+   or touch the cache) so the window can show a picker. Returns the openable
+   count (>= 0), -1 on failure. */
+int tg_gui_session_search_run(const char *query, FILE *stream);
+/* Count / display name of the last search's openable results (0-based). */
+int tg_gui_session_search_count(void);
+const char *tg_gui_session_search_name(int index);
+/* Open the index-th openable result of the last search. 0 = opened. */
+int tg_gui_session_search_open_result(int index, FILE *stream);
+
+/* Rebuild the sidebar from the cached chat list (no network) -- restores the
+   real list after cancelling the search picker. */
+void tg_gui_session_refresh_chats(void);
+
 /* 1 while a live session is held (so the window can enable composing). */
 int tg_gui_session_is_open(void);
 

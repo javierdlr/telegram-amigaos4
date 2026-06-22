@@ -383,6 +383,11 @@ static void tg_gui_driver_on_notification(void *ctx,
         return;
     }
     state = gui->state;
+    /* While the search picker is up, state->chats[] holds transient search
+       results (peer id 0), not the real sidebar -- nothing to badge here. */
+    if (state->in_search) {
+        return;
+    }
     for (i = 0; i < state->chat_count; ++i) {
         tg_gui_chat *chat;
 

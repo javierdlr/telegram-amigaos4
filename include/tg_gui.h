@@ -172,6 +172,7 @@ typedef struct tg_gui_state {
     int search_caret;
     char search_query[TG_GUI_SEARCH_MAX];
     int in_search;
+    int search_dirty;     /* query changed since the last online search (debounce) */
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used
