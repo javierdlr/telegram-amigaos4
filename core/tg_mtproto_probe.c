@@ -11913,11 +11913,12 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     tg_gui_log("open_chat: start");
     /* Keep the opening getHistory payload small on MorphOS's slow bsdsocket
        link -- a large reply is the documented freeze trigger there; elsewhere
-       load a fuller backlog. */
+       load a deep backlog (capped by TG_GUI_MAX_MESSAGES=100, a bit of headroom
+       for live messages). 90 = a one-time open cost on m68k, fine on PPC/AROS. */
 #if defined(__MORPHOS__) || defined(__MORPHOS)
     history_limit = "12";
 #else
-    history_limit = "45";
+    history_limit = "90";
 #endif
     sprintf(tg_gui_session_state.current_peer_index, "%lu", peer_index);
     if (tg_mtproto_load_peer_cache_label(

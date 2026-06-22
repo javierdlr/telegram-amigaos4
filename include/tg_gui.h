@@ -68,7 +68,8 @@ struct tg_gui_backend {
 };
 
 #define TG_GUI_MAX_CHATS 32
-#define TG_GUI_MAX_MESSAGES 64
+#define TG_GUI_MAX_MESSAGES 100 /* deeper backlog at open (was 64); the open
+                                   getHistory loads ~90, leaving room for live ones */
 #define TG_GUI_NAME_MAX 48
 #define TG_GUI_TEXT_MAX 256
 /* Received-message body buffer, decoupled from the 256-byte preview/input/name
