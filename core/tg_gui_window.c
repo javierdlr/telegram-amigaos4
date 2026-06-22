@@ -799,6 +799,7 @@ int tg_gui_run_window(tg_gui_state *state)
     int i;
     int done;
     int caret_ticks;
+    int search_idle_ticks; /* INTUITICKS since the search query last changed */
     unsigned long watch_seconds;
     unsigned long watch_boot_seconds;
     unsigned long watch_boot_grace;
@@ -1045,6 +1046,7 @@ int tg_gui_run_window(tg_gui_state *state)
     /* A login screen shows its caret from the first frame. */
     state->cursor_on = (state->mode != TG_GUI_MODE_CHAT) ? 1 : 0;
     caret_ticks = 0;
+    search_idle_ticks = 0;
     while (!done) {
         struct IntuiMessage *msg;
         int session_dirty;
@@ -1104,6 +1106,7 @@ int tg_gui_run_window(tg_gui_state *state)
                     if (n > 0UL) {
                         state->search_query[n - 1UL] = '\0';
                         state->search_dirty = 1; /* re-search after the pause */
+                        search_idle_ticks = 0;   /* restart the debounce */
                         last_key_time = time(0);
                         tg_gui_window_paint(state, &backend);
                     }
@@ -1117,6 +1120,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->search_query[n] = (char)msg_code;
                         state->search_query[n + 1UL] = '\0';
                         state->search_dirty = 1; /* re-search after the pause */
+                        search_idle_ticks = 0;   /* restart the debounce */
                         last_key_time = time(0);
                         tg_gui_window_paint(state, &backend);
                     }
@@ -1384,15 +1388,17 @@ int tg_gui_run_window(tg_gui_state *state)
                        for TG_GUI_COMPOSE_IDLE_POLL_SECONDS; skip it entirely when
                        a close/quit is already queued this drain. */
                     now = time(0);
-                    /* As-you-type search: once the user pauses typing in the
-                       sidebar box, run the online search and show the picker.
-                       Debounced (>= 2s idle) so a slow link / MorphOS is not
-                       hammered per keystroke; auto_open_single=0 so it never opens
-                       behind the user while they are still typing. */
-                    if (state->search_active && state->search_dirty &&
-                        now != (time_t)-1 &&
-                        (unsigned long)(now - last_key_time) >= 2UL) {
-                        tg_gui_window_run_search(state, &backend, 0);
+                    /* As-you-type search: count INTUITICKS since the query last
+                       changed and fire once the user pauses (~12 ticks ~= 1.2s).
+                       Tick-based, NOT wall-clock: stray VM/RustDesk key events kept
+                       resetting a time() debounce so it never tripped. The window
+                       still ticks (the caret blinks), so the counter advances.
+                       auto_open_single=0 -> never opens behind the user mid-type. */
+                    if (state->search_active && state->search_dirty) {
+                        if (++search_idle_ticks >= 12) {
+                            search_idle_ticks = 0;
+                            tg_gui_window_run_search(state, &backend, 0);
+                        }
                     }
                     /* Effective interval: hold the conservative boot cadence until
                        the startup network burst has had WATCH_BOOT_GRACE seconds to
@@ -1514,6 +1520,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->composing = 0;
                         state->search_active = 1;
                         state->search_dirty = 0; /* no pending debounce on focus */
+                        search_idle_ticks = 0;
                         last_key_time = time(0);
                         state->cursor_on = 1;
                         caret_ticks = 0;
