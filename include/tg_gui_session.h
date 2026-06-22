@@ -94,6 +94,10 @@ int tg_gui_session_login_sign_in(const char *code, FILE *stream);
    in (call activate); TG_GUI_LOGIN_BAD_PASSWORD = re-prompt. */
 int tg_gui_session_login_check_password(const char *password, FILE *stream);
 
+/* The real reason the last send_code/sign_in failed (the GUI has no console:
+   stdout is NIL: on a Workbench launch). Empty string if none captured. */
+const char *tg_gui_session_login_last_error(void);
+
 /* After a successful login, brings the window live: refreshes the peer cache,
    opens the session into `state`, sets the title/status and opens the first
    chat, flipping `state->mode` to TG_GUI_MODE_CHAT. Returns 0 on success. */

@@ -7976,6 +7976,60 @@ static void tg_mtproto_replay_quiet_stream(FILE *quiet, FILE *fallback)
     }
 }
 
+/* Pull the most useful error line out of the quiet stream into `out`, so the GUI
+   (which has no console -- stdout is NIL: on a Workbench launch) can show WHY a
+   login step failed instead of a generic message. Prefer a line that names an
+   error; otherwise keep the last substantive line (the DH progress is just dots). */
+static void tg_mtproto_capture_quiet_error(FILE *quiet, FILE *fallback,
+                                           char *out, unsigned long out_size)
+{
+    char line[256];
+    char last[256];
+
+    if (out == 0 || out_size == 0UL) {
+        return;
+    }
+    out[0] = '\0';
+    last[0] = '\0';
+    if (quiet == 0 || quiet == fallback) {
+        return;
+    }
+    rewind(quiet);
+    while (fgets(line, sizeof(line), quiet) != 0) {
+        unsigned long n;
+        unsigned long i;
+        int substantive;
+
+        n = (unsigned long)strlen(line);
+        while (n > 0UL && (line[n - 1UL] == '\n' || line[n - 1UL] == '\r')) {
+            line[--n] = '\0';
+        }
+        substantive = 0;
+        for (i = 0UL; i < n; ++i) {
+            if (line[i] != '.' && line[i] != ' ' && line[i] != '\t') {
+                substantive = 1;
+                break;
+            }
+        }
+        if (!substantive) {
+            continue;
+        }
+        if (strstr(line, "rror") != 0 || strstr(line, "ail") != 0 ||
+            strstr(line, "nvalid") != 0 || strstr(line, "FLOOD") != 0 ||
+            strstr(line, "MIGRATE") != 0 || strstr(line, "BANNED") != 0 ||
+            strstr(line, "imeout") != 0 || strstr(line, "onnect") != 0) {
+            strncpy(out, line, out_size - 1UL);
+            out[out_size - 1UL] = '\0';
+        }
+        strncpy(last, line, sizeof(last) - 1UL);
+        last[sizeof(last) - 1UL] = '\0';
+    }
+    if (out[0] == '\0' && last[0] != '\0') {
+        strncpy(out, last, out_size - 1UL);
+        out[out_size - 1UL] = '\0';
+    }
+}
+
 static void tg_mtproto_reset_quiet_stream(FILE *quiet, FILE *fallback)
 {
     if (quiet != 0 && quiet != fallback) {
@@ -11648,6 +11702,8 @@ static struct {
         char api_id[32];            /* loaded once; api_hash stays transient */
         char phone[64];             /* sanitized, set by send_code, used by sign_in */
         char code_hash_file[64];    /* where send_code drops the phone_code_hash */
+        char last_error[192];       /* real send_code/sign_in failure, for the GUI
+                                       (no console: stdout is NIL: on a WB launch) */
     } login;
 } tg_gui_session_state;
 
@@ -12440,9 +12496,13 @@ int tg_gui_session_login_send_code(const char *phone, FILE *stream)
     if (!tg_gui_session_state.login.active || phone == 0 || stream == 0) {
         return TG_GUI_LOGIN_ERROR;
     }
+    tg_gui_session_state.login.last_error[0] = '\0';
     if (tg_mtproto_load_api_credentials(tg_gui_session_state.login.api_file,
                                         api_id, sizeof(api_id), api_hash,
                                         sizeof(api_hash), stream, label) != 0) {
+        strncpy(tg_gui_session_state.login.last_error,
+                "Cannot read telegram-api.txt",
+                sizeof(tg_gui_session_state.login.last_error) - 1UL);
         return TG_GUI_LOGIN_ERROR;
     }
     tg_gui_login_copy(tg_gui_session_state.login.phone,
@@ -12451,6 +12511,9 @@ int tg_gui_session_login_send_code(const char *phone, FILE *stream)
     tg_gui_login_copy(tg_gui_session_state.login.api_id,
                       sizeof(tg_gui_session_state.login.api_id), api_id);
     if (tg_gui_session_state.login.phone[0] == '\0') {
+        strncpy(tg_gui_session_state.login.last_error,
+                "Empty phone number (enter digits with country code)",
+                sizeof(tg_gui_session_state.login.last_error) - 1UL);
         tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
         return TG_GUI_LOGIN_BAD_PHONE;
     }
@@ -12488,6 +12551,11 @@ int tg_gui_session_login_send_code(const char *phone, FILE *stream)
         }
     }
     tg_gui_log("login: send_code done");
+    if (rc != 0) {
+        tg_mtproto_capture_quiet_error(
+            quiet, stream, tg_gui_session_state.login.last_error,
+            sizeof(tg_gui_session_state.login.last_error));
+    }
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_secure_zero(api_hash, sizeof(api_hash));
@@ -12503,6 +12571,7 @@ int tg_gui_session_login_sign_in(const char *code, FILE *stream)
     if (!tg_gui_session_state.login.active || code == 0 || stream == 0) {
         return TG_GUI_LOGIN_ERROR;
     }
+    tg_gui_session_state.login.last_error[0] = '\0';
     prev_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(45UL);
     /* Quiet stream + pacing, as in send_code: no raw CON: output on MorphOS. */
@@ -12515,6 +12584,12 @@ int tg_gui_session_login_sign_in(const char *code, FILE *stream)
                                  tg_gui_session_state.login.code_hash_file, code,
                                  tg_gui_session_state.login.dc_id_text, quiet);
     tg_gui_log("login: sign_in done");
+    if (rc != 0 && rc != TG_MTPROTO_SIGN_IN_PASSWORD_NEEDED &&
+        rc != TG_MTPROTO_SIGN_IN_CODE_INVALID) {
+        tg_mtproto_capture_quiet_error(
+            quiet, stream, tg_gui_session_state.login.last_error,
+            sizeof(tg_gui_session_state.login.last_error));
+    }
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_net_set_connect_timeout_seconds(prev_timeout);
     if (rc == 0) {
@@ -12527,6 +12602,11 @@ int tg_gui_session_login_sign_in(const char *code, FILE *stream)
         return TG_GUI_LOGIN_BAD_CODE;
     }
     return TG_GUI_LOGIN_ERROR;
+}
+
+const char *tg_gui_session_login_last_error(void)
+{
+    return tg_gui_session_state.login.last_error;
 }
 
 int tg_gui_session_login_check_password(const char *password, FILE *stream)

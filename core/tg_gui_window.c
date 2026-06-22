@@ -547,8 +547,10 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
             tg_gui_window_copy(state->status, sizeof(state->status),
                                "Enter the code you received");
         } else {
+            const char *e = tg_gui_session_login_last_error();
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Invalid number - try again");
+                               (e != 0 && e[0] != '\0')
+                                   ? e : "Invalid number - try again");
         }
     } else if (state->mode == TG_GUI_MODE_LOGIN_CODE) {
         int rc;
@@ -566,8 +568,10 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
             tg_gui_window_copy(state->status, sizeof(state->status),
                                "Wrong code - try again");
         } else {
+            const char *e = tg_gui_session_login_last_error();
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "Error - try the code again");
+                               (e != 0 && e[0] != '\0')
+                                   ? e : "Error - try the code again");
         }
     } else { /* TG_GUI_MODE_LOGIN_2FA */
         int rc;
