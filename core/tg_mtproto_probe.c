@@ -139,7 +139,25 @@
 #define TG_MTPROTO_AUTH_SENT_CODE_PAYMENT_REQUIRED_CONSTRUCTOR 0xd7a2fcf9UL
 #define TG_MTPROTO_CONFIG_CONSTRUCTOR 0xcc1a241eUL
 #define TG_MTPROTO_ACCOUNT_PASSWORD_CONSTRUCTOR 0x957b50fbUL
+/* Unpacked-reply buffer for a gzip_packed container. A getHistory page of 60
+   messages (non-m68k) with the referenced users/chats can unpack past 64 KiB on
+   a busy group; size it to 128 KiB there. m68k fetches 30 and keeps 64 KiB to
+   respect its tighter box. Pairs with TG_MTPROTO_REPLY_RECV_MAX below. */
+#if defined(__m68k__)
 #define TG_MTPROTO_GZIP_UNPACKED_MAX 65536UL
+#else
+#define TG_MTPROTO_GZIP_UNPACKED_MAX 131072UL
+#endif
+/* Receive buffer for one decrypted reply frame handed to recv_abridged_packet.
+   The old 32 KiB was sized for a 5-message page; the deep-backlog open now asks
+   for 60 (non-m68k) / 30 (m68k), and a busy group's frame overruns 32 KiB, so
+   recv_abridged_packet rejected it ("Could not read messages now") and the chat
+   loaded few/no messages. Size it to the page we actually request. */
+#if defined(__m68k__)
+#define TG_MTPROTO_REPLY_RECV_MAX 49152U
+#else
+#define TG_MTPROTO_REPLY_RECV_MAX 131072U
+#endif
 #define TG_MTPROTO_PEER_USER_CONSTRUCTOR 0x59511722UL
 #define TG_MTPROTO_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
@@ -1077,8 +1095,9 @@ static int tg_mtproto_send_encrypted_query_limited(
     /* getHistory of a busy group can return several messages plus the referenced
        users/chats; a too-small buffer makes recv_abridged_packet reject the
        frame (payload > capacity) and the read hard-fails with "Could not read
-       messages now." 32 KiB comfortably holds a 5-message page with metadata. */
-    static unsigned char response[32768];
+       messages now." Sized by TG_MTPROTO_REPLY_RECV_MAX for the deep-backlog page
+       we now request (60 non-m68k / 30 m68k), not the old 5-message page. */
+    static unsigned char response[TG_MTPROTO_REPLY_RECV_MAX];
     unsigned long encrypted_padding_length;
     unsigned long payload_length;
     unsigned long response_length;
