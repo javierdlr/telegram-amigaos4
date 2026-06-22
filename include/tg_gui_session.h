@@ -46,6 +46,13 @@ int tg_gui_session_tick(FILE *stream);
    open, 0 otherwise. */
 int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream);
 
+/* Pages OLDER history at the top of the open chat: fetches the getHistory page
+   just below the oldest message currently shown and PREPENDS it to the transcript
+   (newest tail dropped when the ring is full). Call once when a scroll-up reaches
+   the very top. Returns the number of older messages added (0 = none / reached
+   the chat start / nothing pageable). */
+int tg_gui_session_load_older(FILE *stream);
+
 /* Sends `text` to the open chat and echoes it into the transcript. Returns 0
    on success, non-zero on failure or when no chat is open. */
 int tg_gui_session_send(const char *text, FILE *stream);

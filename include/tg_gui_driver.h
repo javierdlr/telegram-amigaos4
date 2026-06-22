@@ -20,6 +20,11 @@
 
 typedef struct tg_gui_chat_driver {
     tg_gui_state *state; /* the GUI model this driver appends messages to */
+    /* Insert position for the load-older paging path: -1 (default) appends the
+       row at the end (newest); >= 0 inserts it at that index and advances, so an
+       oldest-first batch lands in order ABOVE the existing transcript. The
+       newest tail is dropped when the ring is full so older content can lead. */
+    int prepend_at;
 } tg_gui_chat_driver;
 
 /* Binds chat_driver (the engine-facing vtable) so its on_message appends to

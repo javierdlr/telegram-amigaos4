@@ -136,16 +136,40 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
     }
     state = gui->state;
 
-    /* Keep the most recent TG_GUI_MAX_MESSAGES: drop the oldest when full. */
-    if (state->message_count >= TG_GUI_MAX_MESSAGES) {
+    if (gui->prepend_at >= 0) {
+        /* Load-older paging: insert this (older) row at prepend_at, shifting the
+           existing block down one, then advance. The batch is routed oldest-first
+           so successive inserts at 0,1,2,... land in order above the transcript.
+           When the ring is full, drop the NEWEST (tail) to make room for older
+           content -- the user is scrolling up, and reopening re-pins the newest. */
+        int at = gui->prepend_at;
         int i;
 
-        for (i = 1; i < TG_GUI_MAX_MESSAGES; ++i) {
-            state->messages[i - 1] = state->messages[i];
+        if (state->message_count >= TG_GUI_MAX_MESSAGES) {
+            state->message_count = TG_GUI_MAX_MESSAGES - 1;
         }
-        state->message_count = TG_GUI_MAX_MESSAGES - 1;
+        if (at > state->message_count) {
+            at = state->message_count;
+        }
+        for (i = state->message_count; i > at; --i) {
+            state->messages[i] = state->messages[i - 1];
+        }
+        message = &state->messages[at];
+        gui->prepend_at = at + 1;
+        state->message_count += 1;
+    } else {
+        /* Keep the most recent TG_GUI_MAX_MESSAGES: drop the oldest when full. */
+        if (state->message_count >= TG_GUI_MAX_MESSAGES) {
+            int i;
+
+            for (i = 1; i < TG_GUI_MAX_MESSAGES; ++i) {
+                state->messages[i - 1] = state->messages[i];
+            }
+            state->message_count = TG_GUI_MAX_MESSAGES - 1;
+        }
+        message = &state->messages[state->message_count];
+        state->message_count += 1;
     }
-    message = &state->messages[state->message_count];
     memset(message, 0, sizeof(*message));
 
     message->is_own = row->is_out ? 1 : 0;
@@ -193,8 +217,7 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
             sprintf(message->time, "%02d:%02d", parts->tm_hour, parts->tm_min);
         }
     }
-
-    state->message_count += 1;
+    /* message_count was advanced by the prepend/append prologue above. */
 }
 
 void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
@@ -413,6 +436,7 @@ void tg_gui_chat_driver_bind(tg_gui_chat_driver *gui, tg_gui_state *state,
         return;
     }
     gui->state = state;
+    gui->prepend_at = -1; /* append by default; load-older flips it transiently */
     chat_driver->ctx = gui;
     chat_driver->on_message = tg_gui_driver_on_message;
     chat_driver->on_chat_list_changed = tg_gui_driver_on_chat_list_changed;

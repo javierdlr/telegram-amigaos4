@@ -333,6 +333,12 @@ static unsigned long tg_chat_day_shown = 0UL;
    byte-identical. */
 static const tg_chat_driver *tg_chat_message_driver_override = 0;
 
+/* getHistory offset_id for the next history fetch. 0 (default) = newest page;
+   tg_gui_session_load_older sets it to the oldest message currently shown so the
+   server returns the page BELOW it, then restores 0. The print-history path reads
+   it when building the query; every other caller leaves it 0 (newest-pinned). */
+static unsigned long tg_mtproto_history_offset_id_override = 0UL;
+
 /* tg_chat_notify_reset / tg_chat_notify_seen now live in tg_chat_engine.c and
    operate on the engine's notify queue (reached here via tg_chat_nq). */
 
@@ -7581,7 +7587,7 @@ int tg_mtproto_auth_get_history_peer_file(const char *host,
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_get_history_peer(
             &writer, peer_constructor, peer_id_hi, peer_id_lo,
-            access_hash_hi, access_hash_lo, has_access_hash, limit) !=
+            access_hash_hi, access_hash_lo, has_access_hash, 0UL, limit) !=
         TG_MTPROTO_TL_OK) {
         fprintf(stream, "%s: query-build-failed\n", label);
         return 2;
@@ -8936,7 +8942,8 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_get_history_peer(
             &writer, peer_constructor, peer_id_hi, peer_id_lo,
-            access_hash_hi, access_hash_lo, has_access_hash, limit) !=
+            access_hash_hi, access_hash_lo, has_access_hash,
+            tg_mtproto_history_offset_id_override, limit) !=
         TG_MTPROTO_TL_OK) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
@@ -12023,6 +12030,79 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_gui_log("open_chat: done");
     return 1; /* the selection changed -> always repaint */
+}
+
+/* Public: page OLDER history at the top of the open chat. Fetches the getHistory
+   page just below the oldest message currently shown and PREPENDS it to the
+   transcript, so the user can scroll back beyond the open backlog. The window
+   loop calls this once when a scroll-up lands at the very top. Returns the number
+   of older messages added (0 = none / reached the chat start / not pageable). */
+int tg_gui_session_load_older(FILE *stream)
+{
+    FILE *quiet;
+    unsigned long prev_timeout;
+    unsigned long offset_id;
+    unsigned long dummy_last_seen;
+    unsigned long dummy_printed;
+    const char *older_limit;
+    tg_gui_state *gst;
+    int loaded;
+
+    if (!tg_gui_session_state.open || stream == 0) {
+        return 0;
+    }
+    gst = tg_gui_session_state.gui_driver.state;
+    if (gst == 0 || gst->message_count <= 0) {
+        return 0;
+    }
+    if (tg_gui_session_state.current_peer_index[0] == '\0') {
+        return 0; /* no chat opened in this session yet */
+    }
+    /* The oldest row currently shown is the paging cursor; an optimistic echo
+       (id 0) sitting at the top means there is nothing real to page below. */
+    offset_id = gst->messages[0].id;
+    if (offset_id == 0UL) {
+        return 0;
+    }
+    /* Smaller page than the open: MorphOS stays tiny (bsdsocket freeze guard),
+       m68k modest, PPC/AROS a touch more. All ride the resized reply buffer. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    older_limit = "10";
+#elif defined(__m68k__)
+    older_limit = "20";
+#else
+    older_limit = "30";
+#endif
+    tg_gui_log("load_older: start");
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(10UL);
+
+    dummy_last_seen = 0UL;
+    dummy_printed = 0UL;
+    /* Insert the (oldest-first) batch above the transcript; tell the renderer to
+       fetch the page below offset_id. Both overrides are restored right after. */
+    tg_gui_session_state.gui_driver.prepend_at = 0;
+    tg_mtproto_history_offset_id_override = offset_id;
+    tg_chat_message_driver_override = &tg_gui_session_state.driver;
+    (void)tg_mtproto_auth_print_history_text_peer_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+        tg_gui_session_state.peer_cache_file,
+        tg_gui_session_state.current_peer_index, older_limit, quiet,
+        &dummy_last_seen, &dummy_printed, 0, 1, 0,
+        tg_gui_session_state.current_peer_label,
+        tg_gui_session_state.own_label);
+    tg_chat_message_driver_override = 0;
+    tg_mtproto_history_offset_id_override = 0UL;
+    loaded = tg_gui_session_state.gui_driver.prepend_at; /* rows inserted above */
+    tg_gui_session_state.gui_driver.prepend_at = -1;     /* back to append mode */
+
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_gui_log("load_older: done");
+    return loaded;
 }
 
 /* Re-project the peer cache into the GUI sidebar (after it changed, e.g. a search

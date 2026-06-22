@@ -319,6 +319,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
     unsigned long access_hash_hi,
     unsigned long access_hash_lo,
     int has_access_hash,
+    unsigned long offset_id, /* page older: server returns id < offset_id; 0 = newest */
     unsigned long limit);
 
 tg_mtproto_tl_status tg_mtproto_build_messages_get_peer_dialogs(

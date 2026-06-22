@@ -932,6 +932,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
     unsigned long access_hash_hi,
     unsigned long access_hash_lo,
     int has_access_hash,
+    unsigned long offset_id,
     unsigned long limit)
 {
     tg_mtproto_tl_status status;
@@ -947,7 +948,9 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
                                      access_hash_lo, has_access_hash);
     }
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_mtproto_tl_write_u32(writer, 0UL);
+        /* offset_id: with 0 the server pins the newest; the load-older paging
+           passes the oldest message currently shown to fetch the page below it. */
+        status = tg_mtproto_tl_write_u32(writer, offset_id);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u32(writer, 0UL);
@@ -980,7 +983,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_user(
 {
     return tg_mtproto_build_messages_get_history_peer(
         writer, TG_PEER_USER_CONSTRUCTOR, user_id_hi, user_id_lo,
-        access_hash_hi, access_hash_lo, 1, limit);
+        access_hash_hi, access_hash_lo, 1, 0UL, limit);
 }
 
 tg_mtproto_tl_status tg_mtproto_build_messages_send_self(
@@ -4024,7 +4027,7 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_get_history_peer(
             &writer, TG_PEER_CHAT_CONSTRUCTOR, 0x01020304UL, 0x05060708UL,
-            0UL, 0UL, 0, 10UL) != TG_MTPROTO_TL_OK ||
+            0UL, 0UL, 0, 0UL, 10UL) != TG_MTPROTO_TL_OK ||
         writer.length != 48UL ||
         query[0] != 0xc5U || query[1] != 0xe6U ||
         query[2] != 0x23U || query[3] != 0x44U ||
@@ -4040,7 +4043,7 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_get_history_peer(
             &writer, TG_PEER_CHANNEL_CONSTRUCTOR, 0x01020304UL,
-            0x05060708UL, 0x11121314UL, 0x15161718UL, 1, 10UL) !=
+            0x05060708UL, 0x11121314UL, 0x15161718UL, 1, 0UL, 10UL) !=
             TG_MTPROTO_TL_OK ||
         writer.length != 56UL ||
         query[4] != 0xfcU || query[5] != 0xbbU ||

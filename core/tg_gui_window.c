@@ -800,6 +800,7 @@ int tg_gui_run_window(tg_gui_state *state)
     int done;
     int caret_ticks;
     int search_idle_ticks; /* INTUITICKS since the search query last changed */
+    int older_exhausted;   /* load-older reached the chat start; re-armed off-top */
     unsigned long watch_seconds;
     unsigned long watch_boot_seconds;
     unsigned long watch_boot_grace;
@@ -1047,13 +1048,16 @@ int tg_gui_run_window(tg_gui_state *state)
     state->cursor_on = (state->mode != TG_GUI_MODE_CHAT) ? 1 : 0;
     caret_ticks = 0;
     search_idle_ticks = 0;
+    older_exhausted = 0;
     while (!done) {
         struct IntuiMessage *msg;
         int session_dirty;
         int scroll_dirty;
+        int want_older; /* a transcript scroll-up reached the very top this wake */
 
         session_dirty = 0;
         scroll_dirty = 0;
+        want_older = 0;
         (void)Wait(1L << ctx.window->UserPort->mp_SigBit);
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
@@ -1230,6 +1234,9 @@ int tg_gui_run_window(tg_gui_state *state)
                     if (state->transcript_scroll < 0) {
                         state->transcript_scroll = 0;
                     }
+                    if (msg_code == 0x7A) {
+                        want_older = 1; /* may have reached the top: paged below */
+                    }
                 }
                 scroll_dirty = 1;
             } else if (msg_class == IDCMP_RAWKEY && state->composing &&
@@ -1310,6 +1317,7 @@ int tg_gui_run_window(tg_gui_state *state)
                     }
                 } else if (msg_code == 0x4C) { /* cursor up: older messages */
                     state->transcript_scroll += 3 * ctx.line_h;
+                    want_older = 1;
                     scroll_dirty = 1;
                 } else if (msg_code == 0x4D) { /* cursor down: newer messages */
                     state->transcript_scroll -= 3 * ctx.line_h;
@@ -1454,6 +1462,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         }
                         if (hy < state->sb_tr_ky) {
                             state->transcript_scroll += page;
+                            want_older = 1;
                         } else {
                             state->transcript_scroll -= page;
                             if (state->transcript_scroll < 0) {
@@ -1599,6 +1608,9 @@ int tg_gui_run_window(tg_gui_state *state)
                             if (state->transcript_scroll < 0) {
                                 state->transcript_scroll = 0;
                             }
+                            /* Dragged the knob to the very top -> page older
+                               (the handler gates on transcript_scroll >= max). */
+                            want_older = 1;
                         }
                     } else {
                         span = state->sb_list_th - state->sb_list_kh;
@@ -1618,8 +1630,28 @@ int tg_gui_run_window(tg_gui_state *state)
                 }
             }
         }
+        /* Load-older paging: a scroll-up reached the very top of the transcript
+           (transcript_scroll, pre-clamp, is at/over the last paint's sb_tr_max).
+           Fetch the page below the oldest shown and prepend it. Synchronous, like
+           open_chat. Stops at the chat start (older_exhausted), re-armed once the
+           user scrolls back off the top (the check after the paint below). */
+        if (want_older && !older_exhausted && state->sb_tr_max > 0 &&
+            state->transcript_scroll >= state->sb_tr_max &&
+            tg_gui_session_is_open()) {
+            if (tg_gui_session_load_older(stdout) > 0) {
+                scroll_dirty = 1; /* new rows above -> repaint with them */
+            } else {
+                older_exhausted = 1; /* reached the chat start */
+            }
+        }
         if (session_dirty || scroll_dirty) {
             tg_gui_window_paint(state, &backend);
+        }
+        /* The paint refreshed sb_tr_max for the (possibly grown) transcript:
+           re-arm paging once the view is no longer pinned to the top. */
+        if (state->sb_tr_max == 0 ||
+            state->transcript_scroll < state->sb_tr_max) {
+            older_exhausted = 0;
         }
     }
 
