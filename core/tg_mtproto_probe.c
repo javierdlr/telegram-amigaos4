@@ -12035,9 +12035,13 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
 /* Public: page OLDER history at the top of the open chat. Fetches the getHistory
    page just below the oldest message currently shown and PREPENDS it to the
    transcript, so the user can scroll back beyond the open backlog. The window
-   loop calls this once when a scroll-up lands at the very top. Returns the number
-   of older messages added (0 = none / reached the chat start / not pageable). */
-int tg_gui_session_load_older(FILE *stream)
+   loop calls this once when a scroll-up lands at the top. allow_drop_newest = 1
+   lets the full ring evict its newest tail to make room (safe only when those
+   rows are off-screen); 0 keeps them. Tri-state return: > 0 = that many older
+   messages prepended; 0 = the server confirmed NO older message (real chat
+   start); < 0 = could not page right now (fetch failed, or nothing pageable yet)
+   -- the caller must NOT treat < 0 as the chat start. */
+int tg_gui_session_load_older(FILE *stream, int allow_drop_newest)
 {
     FILE *quiet;
     unsigned long prev_timeout;
@@ -12047,22 +12051,24 @@ int tg_gui_session_load_older(FILE *stream)
     const char *older_limit;
     tg_gui_state *gst;
     int loaded;
+    int rc;
 
     if (!tg_gui_session_state.open || stream == 0) {
-        return 0;
+        return -1;
     }
     gst = tg_gui_session_state.gui_driver.state;
     if (gst == 0 || gst->message_count <= 0) {
-        return 0;
+        return -1;
     }
     if (tg_gui_session_state.current_peer_index[0] == '\0') {
-        return 0; /* no chat opened in this session yet */
+        return -1; /* no chat opened in this session yet */
     }
     /* The oldest row currently shown is the paging cursor; an optimistic echo
-       (id 0) sitting at the top means there is nothing real to page below. */
+       (id 0) at the top is transient (a just-sent message awaiting its server
+       id) -- report 'try later' (< 0), never the chat start. */
     offset_id = gst->messages[0].id;
     if (offset_id == 0UL) {
-        return 0;
+        return -1;
     }
     /* Smaller page than the open: MorphOS stays tiny (bsdsocket freeze guard),
        m68k modest, PPC/AROS a touch more. All ride the resized reply buffer. */
@@ -12083,9 +12089,10 @@ int tg_gui_session_load_older(FILE *stream)
     /* Insert the (oldest-first) batch above the transcript; tell the renderer to
        fetch the page below offset_id. Both overrides are restored right after. */
     tg_gui_session_state.gui_driver.prepend_at = 0;
+    tg_gui_session_state.gui_driver.prepend_allow_drop = allow_drop_newest ? 1 : 0;
     tg_mtproto_history_offset_id_override = offset_id;
     tg_chat_message_driver_override = &tg_gui_session_state.driver;
-    (void)tg_mtproto_auth_print_history_text_peer_on_context(
+    rc = tg_mtproto_auth_print_history_text_peer_on_context(
         tg_gui_session_state.host, tg_gui_session_state.port,
         tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
         tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
@@ -12098,11 +12105,18 @@ int tg_gui_session_load_older(FILE *stream)
     tg_mtproto_history_offset_id_override = 0UL;
     loaded = tg_gui_session_state.gui_driver.prepend_at; /* rows inserted above */
     tg_gui_session_state.gui_driver.prepend_at = -1;     /* back to append mode */
+    tg_gui_session_state.gui_driver.prepend_allow_drop = 0;
 
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_gui_log("load_older: done");
-    return loaded;
+    /* > 0 rows actually prepended -> report them (even a ring-full partial fill).
+       0 rows: distinguish a clean 'no older messages' (rc 0 = chat start) from a
+       failed fetch (rc != 0 -> < 0 so the caller does not latch the chat start). */
+    if (loaded > 0) {
+        return loaded;
+    }
+    return (rc == 0) ? 0 : -1;
 }
 
 /* Re-project the peer cache into the GUI sidebar (after it changed, e.g. a search

@@ -47,11 +47,13 @@ int tg_gui_session_tick(FILE *stream);
 int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream);
 
 /* Pages OLDER history at the top of the open chat: fetches the getHistory page
-   just below the oldest message currently shown and PREPENDS it to the transcript
-   (newest tail dropped when the ring is full). Call once when a scroll-up reaches
-   the very top. Returns the number of older messages added (0 = none / reached
-   the chat start / nothing pageable). */
-int tg_gui_session_load_older(FILE *stream);
+   just below the oldest message currently shown and PREPENDS it to the transcript.
+   allow_drop_newest = 1 lets a full ring evict its newest tail to make room (only
+   safe when those rows are off-screen); 0 keeps them (paging then stops at the
+   ring's capacity). Tri-state return: > 0 = older messages added; 0 = server
+   confirmed the chat start (no older); < 0 = could not page now (fetch failed /
+   nothing pageable) -- the caller must NOT treat < 0 as the chat start. */
+int tg_gui_session_load_older(FILE *stream, int allow_drop_newest);
 
 /* Sends `text` to the open chat and echoes it into the transcript. Returns 0
    on success, non-zero on failure or when no chat is open. */

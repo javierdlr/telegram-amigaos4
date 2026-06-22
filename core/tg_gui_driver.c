@@ -146,7 +146,13 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
         int i;
 
         if (state->message_count >= TG_GUI_MAX_MESSAGES) {
-            state->message_count = TG_GUI_MAX_MESSAGES - 1;
+            if (!gui->prepend_allow_drop) {
+                /* Ring full and the newest rows are on-screen: refuse rather than
+                   evict them. prepend_at does not advance, so load_older sees the
+                   batch stop here and reports how many actually fit. */
+                return;
+            }
+            state->message_count = TG_GUI_MAX_MESSAGES - 1; /* drop newest tail */
         }
         if (at > state->message_count) {
             at = state->message_count;
@@ -437,6 +443,7 @@ void tg_gui_chat_driver_bind(tg_gui_chat_driver *gui, tg_gui_state *state,
     }
     gui->state = state;
     gui->prepend_at = -1; /* append by default; load-older flips it transiently */
+    gui->prepend_allow_drop = 0;
     chat_driver->ctx = gui;
     chat_driver->on_message = tg_gui_driver_on_message;
     chat_driver->on_chat_list_changed = tg_gui_driver_on_chat_list_changed;
@@ -564,6 +571,56 @@ int tg_gui_driver_self_test(void)
         puts("gui driver self-test: newest not retained after overflow");
         return 2;
     }
+
+    /* Load-older PREPEND path. (1) Non-full ring: a batch routed oldest-first
+       (O1 then O2) lands in order ABOVE the existing rows. */
+    memset(&state, 0, sizeof(state));
+    tg_gui_chat_driver_bind(&gui, &state, &driver);
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "A");
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "B");
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "C");
+    gui.prepend_at = 0;
+    gui.prepend_allow_drop = 0;
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "O1");
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "O2");
+    gui.prepend_at = -1;
+    if (state.message_count != 5 ||
+        strcmp(state.messages[0].text, "O1") != 0 ||
+        strcmp(state.messages[1].text, "O2") != 0 ||
+        strcmp(state.messages[2].text, "A") != 0 ||
+        strcmp(state.messages[4].text, "C") != 0) {
+        puts("gui driver self-test: prepend order wrong");
+        return 2;
+    }
+    /* (2) FULL ring, allow_drop=0: the insert is REFUSED so the on-screen newest
+       is never evicted, and prepend_at does not advance. */
+    memset(&state, 0, sizeof(state));
+    tg_gui_chat_driver_bind(&gui, &state, &driver);
+    for (i = 0; i < TG_GUI_MAX_MESSAGES - 1; ++i) {
+        tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "old");
+    }
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "NEWEST");
+    gui.prepend_at = 0;
+    gui.prepend_allow_drop = 0;
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "refused");
+    if (state.message_count != TG_GUI_MAX_MESSAGES || gui.prepend_at != 0 ||
+        strcmp(state.messages[TG_GUI_MAX_MESSAGES - 1].text, "NEWEST") != 0) {
+        puts("gui driver self-test: full-ring prepend must refuse (keep newest)");
+        return 2;
+    }
+    /* (3) Same FULL ring, allow_drop=1: the older row leads the buffer and the
+       newest tail is evicted to make room. */
+    gui.prepend_at = 0;
+    gui.prepend_allow_drop = 1;
+    tg_gui_driver_emit(&driver, 0UL, 0, 0, 0, "P", "Io", 0, "OLDEST");
+    if (state.message_count != TG_GUI_MAX_MESSAGES || gui.prepend_at != 1 ||
+        strcmp(state.messages[0].text, "OLDEST") != 0 ||
+        strcmp(state.messages[TG_GUI_MAX_MESSAGES - 1].text, "NEWEST") == 0) {
+        puts("gui driver self-test: full-ring prepend (drop newest) wrong");
+        return 2;
+    }
+    gui.prepend_at = -1;
+    gui.prepend_allow_drop = 0;
 
     /* Chat-list projection: rows -> tg_gui_state.chats (the sidebar). */
     {

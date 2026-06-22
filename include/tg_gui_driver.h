@@ -22,9 +22,13 @@ typedef struct tg_gui_chat_driver {
     tg_gui_state *state; /* the GUI model this driver appends messages to */
     /* Insert position for the load-older paging path: -1 (default) appends the
        row at the end (newest); >= 0 inserts it at that index and advances, so an
-       oldest-first batch lands in order ABOVE the existing transcript. The
-       newest tail is dropped when the ring is full so older content can lead. */
+       oldest-first batch lands in order ABOVE the existing transcript. */
     int prepend_at;
+    /* When prepending into a FULL ring: 1 drops the newest tail to make room
+       (safe only when the newest is off-screen, i.e. a scrollbar scrolled to the
+       top); 0 refuses the insert so on-screen newest rows are never evicted (the
+       fits-the-window case) -- paging then simply stops at the ring's capacity. */
+    int prepend_allow_drop;
 } tg_gui_chat_driver;
 
 /* Binds chat_driver (the engine-facing vtable) so its on_message appends to

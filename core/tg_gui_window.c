@@ -800,7 +800,9 @@ int tg_gui_run_window(tg_gui_state *state)
     int done;
     int caret_ticks;
     int search_idle_ticks; /* INTUITICKS since the search query last changed */
-    int older_exhausted;   /* load-older reached the chat start; re-armed off-top */
+    int older_exhausted;   /* load-older confirmed the chat start; re-armed off-top / on open */
+    int older_cooldown;    /* wakes to wait before another load-older (slow-link breather) */
+    int prev_selected;     /* last selected_chat: a change means a (re)opened chat -> re-arm */
     unsigned long watch_seconds;
     unsigned long watch_boot_seconds;
     unsigned long watch_boot_grace;
@@ -1049,15 +1051,22 @@ int tg_gui_run_window(tg_gui_state *state)
     caret_ticks = 0;
     search_idle_ticks = 0;
     older_exhausted = 0;
+    older_cooldown = 0;
+    prev_selected = state->selected_chat;
     while (!done) {
         struct IntuiMessage *msg;
         int session_dirty;
         int scroll_dirty;
-        int want_older; /* a transcript scroll-up reached the very top this wake */
+        int want_older;     /* a transcript scroll-up reached the top this wake */
+        int reveal_older;   /* a fits-window load happened: scroll to show it */
 
         session_dirty = 0;
         scroll_dirty = 0;
         want_older = 0;
+        reveal_older = 0;
+        if (older_cooldown > 0) {
+            older_cooldown -= 1;
+        }
         (void)Wait(1L << ctx.window->UserPort->mp_SigBit);
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
@@ -1630,28 +1639,63 @@ int tg_gui_run_window(tg_gui_state *state)
                 }
             }
         }
-        /* Load-older paging: a scroll-up reached the very top of the transcript
-           (transcript_scroll, pre-clamp, is at/over the last paint's sb_tr_max).
-           Fetch the page below the oldest shown and prepend it. Synchronous, like
-           open_chat. Stops at the chat start (older_exhausted), re-armed once the
-           user scrolls back off the top (the check after the paint below). */
-        if (want_older && !older_exhausted && state->sb_tr_max > 0 &&
-            state->transcript_scroll >= state->sb_tr_max &&
-            tg_gui_session_is_open()) {
-            if (tg_gui_session_load_older(stdout) > 0) {
-                scroll_dirty = 1; /* new rows above -> repaint with them */
-            } else {
-                older_exhausted = 1; /* reached the chat start */
+        /* Load-older paging: a scroll-up reached the top of the transcript. "Top"
+           INCLUDES the case where the whole backlog FITS the window (sb_tr_max==0,
+           no scrollbar drawn): a wheel/cursor up there still means "load older",
+           otherwise those chats could never page back (the reported bug -- the
+           user had to shrink the window to make a scrollbar appear). The post-drain
+           transcript_scroll is used so a drag/wheel that lands at the top fires in
+           one gesture; the painter clamps it to sb_tr_max, so the >= test means
+           "at the top". Synchronous fetch, like open_chat; a small cooldown keeps a
+           fast wheel from hammering a slow link. */
+        {
+            int was_fits = (state->sb_tr_max == 0);
+            int at_top = was_fits || (state->transcript_scroll >= state->sb_tr_max);
+            if (want_older && !older_exhausted && older_cooldown == 0 && at_top &&
+                tg_gui_session_is_open()) {
+                /* Let the ring drop its newest tail ONLY when the newest is
+                   off-screen (a scrollable transcript scrolled to the top); when
+                   everything fits, the newest rows are visible -- never evict
+                   them (would also lose their read-receipt state). */
+                int got = tg_gui_session_load_older(stdout, state->sb_tr_max > 0);
+                if (got > 0) {
+                    scroll_dirty = 1;     /* new rows above -> repaint with them */
+                    older_cooldown = 2;   /* breather before the next page */
+                    if (was_fits) {
+                        reveal_older = 1; /* fits-case: scroll to show the older */
+                    }
+                } else if (got == 0) {
+                    older_exhausted = 1;  /* confirmed chat start / buffer full */
+                }
+                /* got < 0: transient fetch failure -> do NOT latch; retry later. */
             }
         }
         if (session_dirty || scroll_dirty) {
             tg_gui_window_paint(state, &backend);
         }
-        /* The paint refreshed sb_tr_max for the (possibly grown) transcript:
-           re-arm paging once the view is no longer pinned to the top. */
-        if (state->sb_tr_max == 0 ||
+        /* A fits-window load left the older rows above the pinned-newest view: if
+           it now overflows, scroll to the top to reveal them (the paint above
+           refreshed sb_tr_max). If it still fits, they are already on screen. */
+        if (reveal_older && state->sb_tr_max > 0) {
+            state->transcript_scroll = state->sb_tr_max;
+            tg_gui_window_paint(state, &backend);
+        }
+        /* Re-arm paging once the user scrolls back off the top of a SCROLLABLE
+           transcript. When everything fits (sb_tr_max==0) there is no off-top to
+           return to, so the latch persists until the chat is reopened -- correct,
+           because with the tri-state return only a real chat-start sets it (a
+           transient fetch failure returns < 0 and never latches). */
+        if (state->sb_tr_max > 0 &&
             state->transcript_scroll < state->sb_tr_max) {
             older_exhausted = 0;
+        }
+        /* A (re)opened chat -- every open path moves selected_chat (F-keys, a row
+           click, a search result) -- starts paging fresh, including the fits-case
+           where the off-top re-arm above can never fire. */
+        if (state->selected_chat != prev_selected) {
+            older_exhausted = 0;
+            older_cooldown = 0;
+            prev_selected = state->selected_chat;
         }
     }
 
