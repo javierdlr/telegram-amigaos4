@@ -8044,6 +8044,93 @@ static int tg_mtproto_chat_fetch_read_outbox_on_context(
     return 0;
 }
 
+/* Fetch a supergroup's recent members and parse their id->name into out_members,
+   for the typing indicator. v1: peerChannel only (basic groups have no access_hash
+   and would need messages.getFullChat). MorphOS SKIPS entirely -- a large
+   participants reply is the documented bsdsocket freeze trigger. Returns 0 on a
+   parsed reply, non-zero otherwise (caller falls back to "someone"). */
+static int tg_mtproto_gui_fetch_group_members(
+    const char *host,
+    const char *port,
+    const char *api_id,
+    const char *auth_file,
+    const char *dc_id_text,
+    tg_mtproto_auth_context *context,
+    const char *peer_cache_file,
+    const char *peer_index_text,
+    tg_mtproto_peer_cache *out_members,
+    FILE *stream)
+{
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    (void)host; (void)port; (void)api_id; (void)auth_file; (void)dc_id_text;
+    (void)context; (void)peer_cache_file; (void)peer_index_text; (void)stream;
+    if (out_members != 0) {
+        memset(out_members, 0, sizeof(*out_members));
+    }
+    return 2; /* never fetch on MorphOS (freeze guard) */
+#else
+    unsigned char query[64];
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    int has_access_hash;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    static const char label[] = "mtproto channels.getParticipants";
+#if defined(__m68k__)
+    const unsigned long member_limit = 24UL; /* tighter box */
+#else
+    const unsigned long member_limit = 64UL; /* == peer-cache capacity */
+#endif
+
+    if (out_members != 0) {
+        memset(out_members, 0, sizeof(*out_members));
+    }
+    if (stream == 0 || out_members == 0) {
+        return 2;
+    }
+    if (tg_mtproto_load_peer_cache_peer(peer_cache_file, peer_index_text,
+                                        &peer_constructor, &peer_id_hi,
+                                        &peer_id_lo, &access_hash_hi,
+                                        &access_hash_lo, &has_access_hash,
+                                        stream, label) != 0) {
+        return 2;
+    }
+    /* Supergroups/channels only: basic groups (peerChat) carry no access_hash and
+       need messages.getFullChat (deferred). */
+    if (peer_constructor != TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR ||
+        !has_access_hash) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_channels_get_participants_recent(
+            &writer, peer_id_hi, peer_id_lo, access_hash_hi, access_hash_lo,
+            member_limit) != TG_MTPROTO_TL_OK) {
+        return 2;
+    }
+    memset(&result, 0, sizeof(result));
+    if (tg_mtproto_send_saved_query_on_context(
+            host, port, api_id, auth_file, dc_id_text, context, query,
+            writer.length, &result, stream, label, 4U) != 0) {
+        return 1;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        (void)tg_mtproto_print_rpc_error(label, &result, stream);
+        return 1;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
+        return 1;
+    }
+    /* channels.channelParticipants carries users:Vector<User>; the generic scanner
+       extracts each user's id + name (title) into out_members. */
+    tg_mtproto_parse_message_peers(result.result_body, result.result_body_length,
+                                   out_members);
+    return 0;
+#endif
+}
+
 static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
 {
     FILE *quiet;
@@ -11825,6 +11912,15 @@ static struct {
     unsigned long open_peer_id_hi;  /* the open chat's peer id, to match typing */
     unsigned long open_peer_id_lo;
     int open_peer_is_chat;
+    /* Group member id->name cache for the typing indicator: lazily filled from
+       channels.getParticipants(recent) when an open supergroup's typer cannot be
+       resolved from the loaded transcript. member_fetch_done = attempted for THIS
+       open group (one shot, reset on chat switch); member_for_* = the group it
+       holds, so a re-open of a different group re-fetches. */
+    tg_mtproto_peer_cache member_cache;
+    int member_fetch_done;
+    unsigned long member_for_id_hi;
+    unsigned long member_for_id_lo;
     int open;
     /* First-login flow state (no saved session). Threaded across the phone ->
        code -> 2FA steps the window drives. */
@@ -12062,6 +12158,9 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     tg_gui_session_state.open_peer_id_lo = 0UL;
     tg_gui_session_state.open_peer_is_chat = 0;
     tg_gui_session_state.typing.active = 0;
+    /* Fresh group -> re-attempt the member-name fetch once for the typing names. */
+    tg_gui_session_state.member_fetch_done = 0;
+    tg_gui_session_state.member_cache.count = 0UL;
     if (tg_gui_session_state.gui_driver.state != 0) {
         tg_gui_session_state.gui_driver.state->typing[0] = '\0';
     }
@@ -12610,6 +12709,58 @@ int tg_gui_session_is_open(void)
     return tg_gui_session_state.open;
 }
 
+/* Resolve the open group's typing member id->name. Tries the lazily-fetched
+   member cache first; if empty and not yet attempted for this group, fetches the
+   recent members ONCE (peerChannel + off-MorphOS) and re-scans. Returns a pointer
+   into the member cache (valid until the next open/fetch) or 0 for "someone". */
+static const char *tg_gui_session_resolve_typing_member(FILE *stream)
+{
+    unsigned long fh;
+    unsigned long fl;
+    unsigned long ci;
+
+    fh = tg_gui_session_state.typing.from_id_hi;
+    fl = tg_gui_session_state.typing.from_id_lo;
+    for (ci = 0UL; ci < tg_gui_session_state.member_cache.count; ++ci) {
+        if (tg_gui_session_state.member_cache.entries[ci].id_hi == fh &&
+            tg_gui_session_state.member_cache.entries[ci].id_lo == fl &&
+            tg_gui_session_state.member_cache.entries[ci].title[0] != '\0') {
+            return tg_gui_session_state.member_cache.entries[ci].title;
+        }
+    }
+    if (!tg_gui_session_state.member_fetch_done) {
+        FILE *fq;
+
+        /* Mark BEFORE the call so a miss/failure never re-fetches this open. */
+        tg_gui_session_state.member_fetch_done = 1;
+        tg_gui_session_state.member_for_id_hi =
+            tg_gui_session_state.open_peer_id_hi;
+        tg_gui_session_state.member_for_id_lo =
+            tg_gui_session_state.open_peer_id_lo;
+        fq = tg_mtproto_open_quiet_stream(stream);
+        if (tg_mtproto_gui_fetch_group_members(
+                tg_gui_session_state.host, tg_gui_session_state.port,
+                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+                tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+                tg_gui_session_state.peer_cache_file,
+                tg_gui_session_state.current_peer_index,
+                &tg_gui_session_state.member_cache, fq) == 0) {
+            tg_mtproto_close_quiet_stream(fq, stream);
+            for (ci = 0UL; ci < tg_gui_session_state.member_cache.count; ++ci) {
+                if (tg_gui_session_state.member_cache.entries[ci].id_hi == fh &&
+                    tg_gui_session_state.member_cache.entries[ci].id_lo == fl &&
+                    tg_gui_session_state.member_cache.entries[ci].title[0] !=
+                        '\0') {
+                    return tg_gui_session_state.member_cache.entries[ci].title;
+                }
+            }
+        } else {
+            tg_mtproto_close_quiet_stream(fq, stream);
+        }
+    }
+    return 0;
+}
+
 int tg_gui_session_tick(FILE *stream)
 {
     FILE *quiet;
@@ -12802,6 +12953,7 @@ int tg_gui_session_tick(FILE *stream)
                 } else {
                     int mi;
 
+                    /* (1) a recently shown sender (cheap, already loaded). */
                     for (mi = 0; mi < gs->message_count; ++mi) {
                         if (!gs->messages[mi].is_own &&
                             gs->messages[mi].from_id_hi ==
@@ -12812,6 +12964,11 @@ int tg_gui_session_tick(FILE *stream)
                             name = gs->messages[mi].sender;
                             break;
                         }
+                    }
+                    /* (2)/(3) otherwise the lazily-fetched member list (supergroups,
+                       off-MorphOS); one synchronous fetch per open group. */
+                    if (name == 0) {
+                        name = tg_gui_session_resolve_typing_member(stream);
                     }
                 }
                 if (name != 0) {

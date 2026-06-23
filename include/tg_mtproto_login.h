@@ -325,6 +325,16 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
     unsigned long offset_id, /* page older: server returns id < offset_id; 0 = newest */
     unsigned long limit);
 
+/* channels.getParticipants(channelParticipantsRecent) for a supergroup -- resolves
+   member id->name for the typing indicator. The reply carries users:Vector<User>. */
+tg_mtproto_tl_status tg_mtproto_build_channels_get_participants_recent(
+    tg_mtproto_tl_writer *writer,
+    unsigned long channel_id_hi,
+    unsigned long channel_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    unsigned long limit);
+
 tg_mtproto_tl_status tg_mtproto_build_messages_get_peer_dialogs(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,

@@ -36,6 +36,12 @@
 #define TG_INPUT_PEER_USER_CONSTRUCTOR 0xdde8a54cUL
 #define TG_INPUT_PEER_CHAT_CONSTRUCTOR 0x35a95cb9UL
 #define TG_INPUT_PEER_CHANNEL_CONSTRUCTOR 0x27bcbbfcUL
+/* channels.getParticipants(channelParticipantsRecent) -- resolve a supergroup
+   member id->name for the typing indicator (TL layer 214, verified on
+   core.telegram.org). */
+#define TG_CHANNELS_GET_PARTICIPANTS_CONSTRUCTOR 0x77ced9d0UL
+#define TG_INPUT_CHANNEL_CONSTRUCTOR 0xf35aec28UL
+#define TG_CHANNEL_PARTICIPANTS_RECENT_CONSTRUCTOR 0xde3f3c79UL
 #define TG_PEER_USER_CONSTRUCTOR 0x59511722UL
 #define TG_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
@@ -969,6 +975,52 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_peer(
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u64(writer, 0UL, 0UL);
+    }
+    return status;
+}
+
+/* channels.getParticipants#77ced9d0 channel:InputChannel
+   filter:ChannelParticipantsFilter offset:int limit:int hash:long. Used to resolve
+   a supergroup member's id->name for the typing indicator; the reply's
+   users:Vector<User> is scanned by the generic tg_mtproto_parse_message_peers. */
+tg_mtproto_tl_status tg_mtproto_build_channels_get_participants_recent(
+    tg_mtproto_tl_writer *writer,
+    unsigned long channel_id_hi,
+    unsigned long channel_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    unsigned long limit)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || limit == 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_CHANNELS_GET_PARTICIPANTS_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        /* channel: inputChannel#f35aec28 channel_id:long access_hash:long */
+        status = tg_mtproto_tl_write_u32(writer, TG_INPUT_CHANNEL_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, channel_id_hi, channel_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, access_hash_hi, access_hash_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        /* filter: channelParticipantsRecent#de3f3c79 (no fields) */
+        status = tg_mtproto_tl_write_u32(
+            writer, TG_CHANNEL_PARTICIPANTS_RECENT_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* offset:int */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, limit); /* limit:int */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, 0UL, 0UL); /* hash:long = 0 */
     }
     return status;
 }
@@ -4081,6 +4133,27 @@ int tg_mtproto_login_self_test(void)
         query[4] != 0xfcU || query[5] != 0xbbU ||
         query[6] != 0xbcU || query[7] != 0x27U ||
         query[36] != 10U) {
+        return 2;
+    }
+    /* channels.getParticipants(recent): lock the verified layer-214 hashes + the
+       LE int64 (lo-then-hi) layout. channel_id=0x1122334455667788,
+       access_hash=0x99AABBCCDDEEFF00, limit=32 -> exactly 44 bytes. */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_channels_get_participants_recent(
+            &writer, 0x11223344UL, 0x55667788UL, 0x99AABBCCUL, 0xDDEEFF00UL,
+            32UL) != TG_MTPROTO_TL_OK ||
+        writer.length != 44UL ||
+        query[0] != 0xd0U || query[1] != 0xd9U || query[2] != 0xceU ||
+        query[3] != 0x77U ||                                  /* method */
+        query[4] != 0x28U || query[5] != 0xecU || query[6] != 0x5aU ||
+        query[7] != 0xf3U ||                                  /* inputChannel */
+        query[8] != 0x88U || query[11] != 0x55U ||            /* channel_id lo */
+        query[12] != 0x44U || query[15] != 0x11U ||           /* channel_id hi */
+        query[16] != 0x00U || query[19] != 0xddU ||           /* access_hash lo */
+        query[20] != 0xccU || query[23] != 0x99U ||           /* access_hash hi */
+        query[24] != 0x79U || query[25] != 0x3cU || query[26] != 0x3fU ||
+        query[27] != 0xdeU ||                                 /* filter */
+        query[28] != 0x00U || query[32] != 0x20U) {           /* offset 0, limit 32 */
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
