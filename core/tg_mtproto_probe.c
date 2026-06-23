@@ -347,6 +347,9 @@ static unsigned long tg_mtproto_history_offset_id_override = 0UL;
 static unsigned long tg_gui_last_hist_kept = 0UL;
 static unsigned long tg_gui_last_hist_total = 0UL;
 static unsigned long tg_gui_last_hist_abort = 0UL;
+static unsigned long tg_gui_last_hist_page = 0UL;
+static unsigned long tg_gui_last_hist_rsok = 0UL;
+static unsigned long tg_gui_last_hist_rsatt = 0UL;
 
 /* tg_chat_notify_reset / tg_chat_notify_seen now live in tg_chat_engine.c and
    operate on the engine's notify queue (reached here via tg_chat_nq). */
@@ -8997,16 +9000,21 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
        0x9815cec8 = a message whose media/reply field could not be read). Reaches
        the disk log only under --gui-live-debug, plus the kernel-debug channel. */
     {
-        char histdiag[176];
+        char histdiag[208];
         sprintf(histdiag,
-                "hist[%s]: kept=%lu total=%lu trunc=%d abort=0x%08lx body=%lu",
-                label, texts.count, texts.total_message_count, texts.truncated,
-                texts.abort_constructor, result.result_body_length);
+                "hist[%s]: kept=%lu page=%lu total=%lu trunc=%d abort=0x%08lx "
+                "resync=%lu/%lu body=%lu",
+                label, texts.count, texts.page_count, texts.total_message_count,
+                texts.truncated, texts.abort_constructor, texts.resync_ok,
+                texts.resync_attempts, result.result_body_length);
         tg_gui_log(histdiag);
     }
     tg_gui_last_hist_kept = texts.count;
     tg_gui_last_hist_total = texts.total_message_count;
     tg_gui_last_hist_abort = texts.abort_constructor;
+    tg_gui_last_hist_page = texts.page_count;
+    tg_gui_last_hist_rsok = texts.resync_ok;
+    tg_gui_last_hist_rsatt = texts.resync_attempts;
     tg_mtproto_close_quiet_stream(quiet, stream);
 
     /* Resolve group-message senders from the response's users/chats. */
@@ -12039,12 +12047,15 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
        report the exact kept/total/abort for a "shows only 2-3 messages" chat
        without a debug build. Normal chats (kept==total, no abort) keep the title's
        own subtitle. */
-    if (tg_gui_session_state.gui_driver.state != 0 &&
-        (tg_gui_last_hist_abort != 0UL ||
-         tg_gui_last_hist_kept < tg_gui_last_hist_total)) {
+    if (tg_gui_session_state.gui_driver.state != 0) {
+        /* v8 marker confirms which binary is running; kept/page = rows shown vs
+           the fetched vector; ab = first constructor that stalled the walk; r =
+           resync ok/attempts (so I can see whether the id-validated resync runs
+           and re-lands). Always set so the build is verifiable from any chat. */
         sprintf(tg_gui_session_state.gui_driver.state->subtitle,
-                "shown %lu/%lu ab=%08lx", tg_gui_last_hist_kept,
-                tg_gui_last_hist_total, tg_gui_last_hist_abort);
+                "v8 %lu/%lu ab=%08lx r=%lu/%lu", tg_gui_last_hist_kept,
+                tg_gui_last_hist_page, tg_gui_last_hist_abort,
+                tg_gui_last_hist_rsok, tg_gui_last_hist_rsatt);
     }
     /* One getPeerDialogs read so own messages already read by the peer show the
        double-check at open (the tick refreshes it live thereafter). Now ALSO on

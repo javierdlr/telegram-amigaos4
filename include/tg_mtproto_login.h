@@ -192,6 +192,9 @@ typedef struct tg_mtproto_message_text_list {
     unsigned long total_message_count;
     int truncated;
     unsigned long abort_constructor; /* msg constructor that stopped the walk, else 0 */
+    unsigned long page_count;     /* messages in the fetched vector (page size) -- diag */
+    unsigned long resync_attempts;/* times the walk had to resync past a bad item -- diag */
+    unsigned long resync_ok;      /* of those, how many re-landed on a message -- diag */
     tg_mtproto_message_text messages[TG_MTPROTO_MESSAGE_TEXT_LIST_MAX];
 } tg_mtproto_message_text_list;
 

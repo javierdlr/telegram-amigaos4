@@ -3620,6 +3620,7 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
     if (constructor == TG_MESSAGES_MESSAGES_CONSTRUCTOR) {
         out->total_message_count = count;
     }
+    out->page_count = count; /* diag: messages actually in the fetched vector */
     i = 0UL;
     while (i < count && reader.offset < reader.length) {
         unsigned long peek_constructor =
@@ -3633,9 +3634,13 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
              * messageMediaDocument. Try to resync to the next TL Message
              * constructor so /history can keep showing the surrounding text.
              */
-            out->abort_constructor = peek_constructor;
+            if (out->abort_constructor == 0UL) {
+                out->abort_constructor = peek_constructor;
+            }
+            ++out->resync_attempts;
             if (tg_message_text_resync(&reader, message_start + 4UL,
                                        last_seen_id)) {
+                ++out->resync_ok;
                 continue;
             }
             return TG_MTPROTO_TL_OK;
