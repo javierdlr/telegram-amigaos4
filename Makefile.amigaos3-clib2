@@ -66,12 +66,17 @@ all: $(TARGET)
 # trailing per-object -O wins.
 OBJDIR := build/amigaos3-clib2/obj
 OBJS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRC))
+# Per-object build: every .o MUST depend on every header, or an incremental
+# `make all` after a struct/cap change in a header (e.g. tg_gui.h, tg_chat_engine.h)
+# leaves stale .o with mismatched struct offsets -> runtime memory corruption
+# (a Guru wild-jump). The wildcard catches current and future headers.
+HEADERS := $(wildcard include/*.h) third_party/puff/puff.h
 OPT := -O0
 O2_OBJS := $(OBJDIR)/core/tg_mtproto_rsa.o $(OBJDIR)/core/tg_mtproto_crypto.o \
            $(OBJDIR)/core/tg_mtproto_srp.o $(OBJDIR)/core/tg_mtproto_encrypted.o
 $(O2_OBJS): OPT := -O2
 
-$(OBJDIR)/%.o: %.c | build/amigaos3-clib2
+$(OBJDIR)/%.o: %.c $(HEADERS) | build/amigaos3-clib2
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(OPT) -c $< -o $@
 
