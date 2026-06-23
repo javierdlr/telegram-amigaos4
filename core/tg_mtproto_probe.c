@@ -12106,7 +12106,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
 
         q = tg_mtproto_open_quiet_stream(stream);
         prev = 0UL;
-        for (iter = 0; iter < 6; ++iter) {
+        for (iter = 0; iter < 8; ++iter) { /* 8 x 30 covers the 128-entry cache */
             if (tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
                                                 dc_id_text, "30", peer_cache_file,
                                                 q) != 0) {

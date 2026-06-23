@@ -67,7 +67,14 @@ struct tg_gui_backend {
     void (*set_style)(tg_gui_backend *backend, int style);
 };
 
-#define TG_GUI_MAX_CHATS 32
+/* Sidebar capacity. Raised from 32 so a congested account shows far more of its
+   chats at once; m68k stays lower for its tighter RAM box. Must stay <=
+   TG_CHAT_LIST_MAX and TG_MTPROTO_PEER_CACHE_MAX (the display is their min). */
+#if defined(__m68k__)
+#define TG_GUI_MAX_CHATS 64
+#else
+#define TG_GUI_MAX_CHATS 128
+#endif
 #define TG_GUI_MAX_MESSAGES 100 /* deeper backlog at open (was 64); the open
                                    getHistory loads ~90, leaving room for live ones */
 #define TG_GUI_NAME_MAX 48

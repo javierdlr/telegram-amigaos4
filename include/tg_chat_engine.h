@@ -90,7 +90,14 @@ typedef struct tg_chat_message_row {
    kind for grouping, unread and the open-chat marker); a driver renders them --
    the console driver prints the grouped list, the GUI driver fills
    tg_gui_state.chats. */
+/* Intermediate chat-list row capacity (cache file -> rows -> sidebar). Kept >=
+   TG_GUI_MAX_CHATS so the projection never truncates below what the sidebar shows;
+   m68k stays lower for RAM. */
+#if defined(__m68k__)
 #define TG_CHAT_LIST_MAX 64
+#else
+#define TG_CHAT_LIST_MAX 128
+#endif
 #define TG_CHAT_LIST_NAME_MAX 128
 
 typedef struct tg_chat_list_row {
