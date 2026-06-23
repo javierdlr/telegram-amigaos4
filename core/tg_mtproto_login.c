@@ -3202,10 +3202,13 @@ static tg_mtproto_tl_status tg_read_common_message_text(
 }
 
 static int tg_message_text_resync(tg_mtproto_tl_reader *reader,
-                                  unsigned long start_offset)
+                                  unsigned long start_offset,
+                                  unsigned long max_id)
 {
     unsigned long pos;
     unsigned long constructor;
+    unsigned long id_off;
+    unsigned long cand_id;
 
     if (reader == 0 || start_offset >= reader->length) {
         return 0;
@@ -3216,8 +3219,27 @@ static int tg_message_text_resync(tg_mtproto_tl_reader *reader,
         if (constructor == TG_MESSAGE_CONSTRUCTOR ||
             constructor == TG_MESSAGE_EMPTY_CONSTRUCTOR ||
             constructor == TG_MESSAGE_SERVICE_CONSTRUCTOR) {
-            reader->offset = pos;
-            return 1;
+            /* Validate the candidate by its message id. A getHistory page is
+               strictly newest-first, so the next real message has 0 < id < the
+               last one we read. This rejects the stray 4-byte matches inside a
+               media/forward payload the parser bailed on without consuming -- the
+               cause of the "shown 4/977 ab=695150d7" reports, where a photo
+               constructor matched mid-payload and the bare scan resynced onto
+               garbage. With no bound yet (max_id 0) accept the first match. */
+            if (max_id == 0UL) {
+                reader->offset = pos;
+                return 1;
+            }
+            /* message: ctor,flags,flags2,id -> id at +12; messageEmpty /
+               messageService: ctor,flags,id -> id at +8. */
+            id_off = (constructor == TG_MESSAGE_CONSTRUCTOR) ? 12UL : 8UL;
+            if (pos + id_off + 4UL <= reader->length) {
+                cand_id = tg_read_u32_le(reader->buffer + pos + id_off);
+                if (cand_id != 0UL && cand_id < max_id) {
+                    reader->offset = pos;
+                    return 1;
+                }
+            }
         }
         pos += 4UL;
     }
@@ -3548,6 +3570,7 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
     unsigned long scratch;
     unsigned long i;
     unsigned long message_start;
+    unsigned long last_seen_id = 0UL; /* id of the last message read; resync bound */
 
     if (body == 0 || out == 0) {
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
@@ -3611,10 +3634,14 @@ tg_mtproto_tl_status tg_mtproto_parse_message_text_list(
              * constructor so /history can keep showing the surrounding text.
              */
             out->abort_constructor = peek_constructor;
-            if (tg_message_text_resync(&reader, message_start + 4UL)) {
+            if (tg_message_text_resync(&reader, message_start + 4UL,
+                                       last_seen_id)) {
                 continue;
             }
             return TG_MTPROTO_TL_OK;
+        }
+        if (message.id != 0UL) {
+            last_seen_id = message.id; /* descending; bounds the next resync */
         }
         if (message.has_text) {
             if (out->count < TG_MTPROTO_MESSAGE_TEXT_LIST_MAX) {
@@ -4734,5 +4761,5 @@ int tg_mtproto_resync_message_text(tg_mtproto_tl_reader *reader,
     if (reader == 0) {
         return 0;
     }
-    return tg_message_text_resync(reader, fallback_offset);
+    return tg_message_text_resync(reader, fallback_offset, 0UL);
 }
