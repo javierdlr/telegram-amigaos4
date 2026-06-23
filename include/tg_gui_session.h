@@ -89,6 +89,10 @@ int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream);
 int tg_gui_session_reorder_chat(unsigned long src_index, unsigned long dst_index,
                                 FILE *stream);
 
+/* Persist the sidebar unread badges (cleared on open, incremented live) to the
+   chat cache so they survive a restart. Writes only when a count changed. */
+void tg_gui_session_persist_unread(void);
+
 /* 1 while a live session is held (so the window can enable composing). */
 int tg_gui_session_is_open(void);
 

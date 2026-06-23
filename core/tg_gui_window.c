@@ -462,6 +462,9 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
             tg_gui_window_paint(state, backend);
         }
     }
+    /* The unread badge was just cleared (you are reading this chat) -- persist it
+       so it does not snap back to the snapshot count after a restart. */
+    tg_gui_session_persist_unread();
 }
 
 /* Bounded copy into a fixed UI buffer (status/title) -- never overflows even if

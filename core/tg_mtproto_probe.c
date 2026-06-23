@@ -12313,6 +12313,57 @@ int tg_gui_session_reorder_chat(unsigned long src_index, unsigned long dst_index
     return 0;
 }
 
+/* Public: sync the in-memory sidebar unread badges to the persisted chat cache, so
+   a read (badge cleared on open) and live increments survive a restart instead of
+   snapping back to the getDialogs snapshot. Matches GUI chats to cache entries by
+   (immutable) peer id and writes ONLY when something actually changed -- cheap to
+   call after an open or after a notification batch. */
+void tg_gui_session_persist_unread(void)
+{
+    tg_mtproto_peer_cache cache;
+    tg_gui_state *gst;
+    unsigned long i;
+    int changed;
+
+    if (!tg_gui_session_state.open) {
+        return;
+    }
+    gst = tg_gui_session_state.gui_driver.state;
+    if (gst == 0) {
+        return;
+    }
+    if (tg_mtproto_load_peer_cache_file(tg_gui_session_state.peer_cache_file,
+                                        &cache) != 0) {
+        return;
+    }
+    changed = 0;
+    for (i = 0UL; i < cache.count; ++i) {
+        int k;
+
+        if (cache.entries[i].is_self) {
+            continue;
+        }
+        for (k = 0; k < gst->chat_count; ++k) {
+            if (gst->chats[k].peer_id_hi == cache.entries[i].id_hi &&
+                gst->chats[k].peer_id_lo == cache.entries[i].id_lo) {
+                unsigned long u = (gst->chats[k].unread > 0)
+                                      ? (unsigned long)gst->chats[k].unread
+                                      : 0UL;
+
+                if (cache.entries[i].unread_count != u) {
+                    cache.entries[i].unread_count = u;
+                    changed = 1;
+                }
+                break;
+            }
+        }
+    }
+    if (changed) {
+        (void)tg_mtproto_save_peer_cache_file(
+            tg_gui_session_state.peer_cache_file, &cache, 0, "chat cache");
+    }
+}
+
 /* Results of the last GUI contacts.search, kept so the window can show a picker
    (choose among several matches) instead of always opening the top one. */
 static tg_mtproto_peer_cache tg_gui_search_results;
@@ -12704,6 +12755,9 @@ int tg_gui_session_tick(FILE *stream)
         tg_gui_session_state.engine.notify.count = 0UL;
         tg_gui_session_state.engine.notify.dropped = 0UL;
         dirty = 1;
+        /* Live unread increments just landed -> persist so the badges are correct
+           after a restart (no-op write when nothing actually changed). */
+        tg_gui_session_persist_unread();
     }
 
     /* Reflect the live "is typing" sink into the open chat's header: shown only
