@@ -3207,8 +3207,6 @@ static int tg_message_text_resync(tg_mtproto_tl_reader *reader,
 {
     unsigned long pos;
     unsigned long constructor;
-    unsigned long id_off;
-    unsigned long cand_id;
 
     if (reader == 0 || start_offset >= reader->length) {
         return 0;
@@ -3216,26 +3214,28 @@ static int tg_message_text_resync(tg_mtproto_tl_reader *reader,
     pos = (start_offset + 3UL) & ~3UL;
     while (pos + 4UL <= reader->length) {
         constructor = tg_read_u32_le(reader->buffer + pos);
-        if (constructor == TG_MESSAGE_CONSTRUCTOR ||
-            constructor == TG_MESSAGE_EMPTY_CONSTRUCTOR ||
-            constructor == TG_MESSAGE_SERVICE_CONSTRUCTOR) {
-            /* Validate the candidate by its message id. A getHistory page is
-               strictly newest-first, so the next real message has 0 < id < the
-               last one we read. This rejects the stray 4-byte matches inside a
-               media/forward payload the parser bailed on without consuming -- the
-               cause of the "shown 4/977 ab=695150d7" reports, where a photo
-               constructor matched mid-payload and the bare scan resynced onto
-               garbage. With no bound yet (max_id 0) accept the first match. */
+        if (constructor == TG_MESSAGE_CONSTRUCTOR) {
+            /* A bare 4-byte constructor match is not enough: the same bytes occur
+               by chance inside a skipped photo/document/keyboard payload, and the
+               id-only check still let garbage through (Amici showed "60/60 r=17/17"
+               but rendered blank rows). Trial-PARSE the candidate on a throwaway
+               reader: only a real Message parses to a valid, strictly-descending id
+               (0 < id < the last one read) -- the parse walks flags/from_id/peer_id
+               and bails out on garbage. With no bound yet (max_id 0) accept the
+               first structural match. */
             if (max_id == 0UL) {
                 reader->offset = pos;
                 return 1;
             }
-            /* message: ctor,flags,flags2,id -> id at +12; messageEmpty /
-               messageService: ctor,flags,id -> id at +8. */
-            id_off = (constructor == TG_MESSAGE_CONSTRUCTOR) ? 12UL : 8UL;
-            if (pos + id_off + 4UL <= reader->length) {
-                cand_id = tg_read_u32_le(reader->buffer + pos + id_off);
-                if (cand_id != 0UL && cand_id < max_id) {
+            {
+                tg_mtproto_tl_reader trial;
+                tg_mtproto_message_text probe;
+
+                trial = *reader;
+                trial.offset = pos;
+                if (tg_read_common_message_text(&trial, &probe, 0) ==
+                        TG_MTPROTO_TL_OK &&
+                    probe.id != 0UL && probe.id < max_id) {
                     reader->offset = pos;
                     return 1;
                 }

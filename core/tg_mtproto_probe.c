@@ -12053,7 +12053,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
            resync ok/attempts (so I can see whether the id-validated resync runs
            and re-lands). Always set so the build is verifiable from any chat. */
         sprintf(tg_gui_session_state.gui_driver.state->subtitle,
-                "v8 %lu/%lu ab=%08lx r=%lu/%lu", tg_gui_last_hist_kept,
+                "v9 %lu/%lu ab=%08lx r=%lu/%lu", tg_gui_last_hist_kept,
                 tg_gui_last_hist_page, tg_gui_last_hist_abort,
                 tg_gui_last_hist_rsok, tg_gui_last_hist_rsatt);
     }
