@@ -83,6 +83,12 @@ void tg_gui_session_refresh_chats(void);
    Returns 0 on success, non-zero otherwise. */
 int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream);
 
+/* Move the chat at sidebar row src_index to dst_index (both 1-based, == row + 1),
+   persist the new order, reproject the sidebar, and keep the open chat selected.
+   No network fetch. Returns 0 on success, non-zero otherwise. */
+int tg_gui_session_reorder_chat(unsigned long src_index, unsigned long dst_index,
+                                FILE *stream);
+
 /* 1 while a live session is held (so the window can enable composing). */
 int tg_gui_session_is_open(void);
 

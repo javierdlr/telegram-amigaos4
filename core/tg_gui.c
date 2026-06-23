@@ -417,6 +417,11 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
             backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
                                tg_gui_make_rect(0, y, 3, row_h));
         }
+        /* The row being dragged for reorder gets a tint so it reads as "lifted". */
+        if (state->drag_active && i == state->drag_src) {
+            backend->fill_rect(backend, TG_GUI_PEN_SELECT,
+                               tg_gui_make_rect(0, y, sidebar_w, row_h));
+        }
 
         avatar = (2 * lh);
         backend->avatar_fill(backend, chat->avatar_color,
@@ -531,6 +536,23 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
         st->sb_list_max = state->chat_count - view_rows;
     } else {
         st->sb_list_max = 0;
+    }
+    /* Drag-drop insertion line: a 2px accent bar at the gap the drop would land in
+       (same target math as tg_gui_chat_drop_target), clamped to the visible band. */
+    if (state->drag_active) {
+        int target = tg_gui_chat_drop_target(state, lh, state->drag_cur_y);
+        int vis = target - state->chat_scroll;
+        int bar_y;
+
+        if (vis < 0) {
+            vis = 0;
+        }
+        if (vis > view_rows) {
+            vis = view_rows;
+        }
+        bar_y = search_h + (vis * row_h);
+        backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                           tg_gui_make_rect(0, bar_y - 1, list_w, 2));
     }
 }
 
@@ -1143,6 +1165,40 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     }
 
     tg_gui_paint_input_row(state, backend);
+}
+
+/* Cursor Y (inner-relative) -> drag-drop insert-before target in [0, chat_count].
+   Mirrors tg_gui_paint_sidebar's search_h/row_h/chat_scroll, rounding to the
+   nearest inter-row gap so the drop lands where the insertion line is drawn. */
+int tg_gui_chat_drop_target(const tg_gui_state *state, int lh, int y)
+{
+    int search_h;
+    int row_h;
+    int rel;
+    int slot;
+    int target;
+
+    if (state == 0) {
+        return 0;
+    }
+    search_h = lh + 10;       /* keep in sync with tg_gui_paint_sidebar */
+    row_h = (2 * lh) + 12;
+    if (row_h < 1) {
+        row_h = 1;
+    }
+    rel = y - search_h;
+    slot = (rel + (row_h / 2)) / row_h;
+    if (slot < 0) {
+        slot = 0;
+    }
+    target = state->chat_scroll + slot;
+    if (target < 0) {
+        target = 0;
+    }
+    if (target > state->chat_count) {
+        target = state->chat_count;
+    }
+    return target;
 }
 
 /* Sidebar width for a given window width -- shared by the painter and the

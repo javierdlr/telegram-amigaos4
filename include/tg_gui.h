@@ -151,6 +151,15 @@ typedef struct tg_gui_state {
     int sb_tr_x, sb_tr_ty, sb_tr_th, sb_tr_ky, sb_tr_kh, sb_tr_max;
     int sb_drag;    /* 0 none, 1 chat list, 2 transcript -- a knob being dragged */
     int sb_grab_dy; /* cursor y within the knob when the drag began */
+    /* Drag-and-drop reorder of the sidebar chat list. drag_src = the armed source
+       row (chats[] index, >= 0); -1 = idle (doubles as the armed flag). drag_active
+       flips on once the gesture passes the click/drag threshold (then the painter
+       draws the insertion line + dims the source row). drag_press_y / drag_cur_y
+       are window-inner-relative cursor Y (mouse_y - origin_y) at press and now. */
+    int drag_src;
+    int drag_active;
+    int drag_press_y;
+    int drag_cur_y;
     char input[TG_GUI_MSG_TEXT_MAX];
     char status[TG_GUI_NAME_MAX];
     int theme;
@@ -205,6 +214,13 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend);
 #define TG_GUI_HIT_SEARCH (-4) /* the sidebar search box: focus it */
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
+
+/* Maps a cursor Y (window-inner-relative) to a drag-and-drop INSERT-BEFORE target
+   in [0, chat_count] for the sidebar list (chat_count == drop at the end). Uses
+   the same search_h/row_h/chat_scroll geometry the painter uses, rounded to the
+   nearest gap. Shared by the event loop (on drop) and the painter (insertion line)
+   so they never disagree. */
+int tg_gui_chat_drop_target(const tg_gui_state *state, int lh, int y);
 
 /* The sidebar (chat-list) width for a window width -- shared with the event
    loop so a mouse-wheel can tell which panel the pointer is over. */

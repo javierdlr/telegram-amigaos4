@@ -1163,6 +1163,8 @@ int tg_gui_run_window(tg_gui_state *state)
     state->chat_scroll = 0;
     state->transcript_scroll = 0;
     state->sb_drag = 0;
+    state->drag_src = -1; /* no row-reorder drag armed */
+    state->drag_active = 0;
     /* A login screen shows its caret from the first frame. */
     state->cursor_on = (state->mode != TG_GUI_MODE_CHAT) ? 1 : 0;
     caret_ticks = 0;
@@ -1576,6 +1578,53 @@ int tg_gui_run_window(tg_gui_state *state)
                 hy = (int)mouse_y - ctx.origin_y;
                 if (msg_code == SELECTUP) {
                     state->sb_drag = 0;
+                    if (state->drag_src >= 0) {
+                        if (!state->drag_active) {
+                            /* CLICK (never crossed the threshold): open the chat,
+                               same logic that used to run on SELECTDOWN. */
+                            int hit = state->drag_src;
+
+                            state->search_active = 0;
+                            if (state->composing) {
+                                state->composing = 0;
+                                state->input[0] = '\0';
+                                state->input_caret = 0;
+                                state->history_pos = -1;
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Live - F1-F10 chats, Q quits");
+                            }
+                            if (hit >= 0 && hit < state->chat_count &&
+                                hit != state->selected_chat) {
+                                tg_gui_window_open_selection(state, hit, &backend);
+                            } else {
+                                tg_gui_window_paint(state, &backend);
+                            }
+                        } else {
+                            /* DRAG: reorder. Map the cursor to an insert-before
+                               target, convert to a final 0-based destination row,
+                               persist + reproject if it actually moves. */
+                            int target = tg_gui_chat_drop_target(
+                                state, ctx.line_h, state->drag_cur_y);
+                            int dest = (target > state->drag_src) ? (target - 1)
+                                                                  : target;
+
+                            if (dest < 0) {
+                                dest = 0;
+                            }
+                            if (dest >= state->chat_count) {
+                                dest = state->chat_count - 1;
+                            }
+                            if (dest != state->drag_src) {
+                                (void)tg_gui_session_reorder_chat(
+                                    (unsigned long)(state->drag_src + 1),
+                                    (unsigned long)(dest + 1), stdout);
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        }
+                        state->drag_src = -1;
+                        state->drag_active = 0;
+                    }
                 } else if (msg_code == SELECTDOWN && state->sb_tr_max > 0 &&
                            hx >= state->sb_tr_x &&
                            hx < state->sb_tr_x + TG_GUI_SCROLLBAR_W &&
@@ -1643,21 +1692,14 @@ int tg_gui_run_window(tg_gui_state *state)
                                            "Live - F1-F10 chats, Q quits");
                         tg_gui_window_paint(state, &backend);
                     } else if (hit >= 0) {
-                        /* Click a chat row: select + open it (drop any draft). */
-                        state->search_active = 0; /* leaving the search box */
-                        if (state->composing) {
-                            state->composing = 0;
-                            state->input[0] = '\0';
-                            state->input_caret = 0;
-                            state->history_pos = -1;
-                            tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - F1-F10 chats, Q quits");
-                        }
-                        if (hit != state->selected_chat) {
-                            tg_gui_window_open_selection(state, hit, &backend);
-                        } else {
-                            tg_gui_window_paint(state, &backend);
-                        }
+                        /* Press on a chat row: ARM a reorder drag. The open is
+                           deferred to SELECTUP -- a press that never crosses the
+                           drag threshold opens the chat (click), a press that does
+                           reorders the list (drag). drag_src doubles as the flag. */
+                        state->drag_src = hit;
+                        state->drag_active = 0;
+                        state->drag_press_y = hy;
+                        state->drag_cur_y = hy;
                     } else if (hit == TG_GUI_HIT_SEARCH &&
                                tg_gui_session_is_open()) {
                         /* Click the sidebar search box to focus it for typing. */
@@ -1758,6 +1800,28 @@ int tg_gui_run_window(tg_gui_state *state)
                         }
                     }
                     scroll_dirty = 1;
+                } else if (state->drag_src >= 0) {
+                    /* Row-reorder drag: promote once the gesture passes the
+                       click/drag threshold (row_h/2), then track the cursor so the
+                       painter redraws the insertion line. Gated on drag_src>=0 so
+                       idle pointer motion (REPORTMOUSE is on) never reorders. */
+                    int hy = (int)mouse_y - ctx.origin_y;
+                    int thresh = ((2 * ctx.line_h) + 12) / 2;
+
+                    state->drag_cur_y = hy;
+                    if (!state->drag_active) {
+                        int dy = hy - state->drag_press_y;
+
+                        if (dy < 0) {
+                            dy = -dy;
+                        }
+                        if (dy >= thresh) {
+                            state->drag_active = 1;
+                        }
+                    }
+                    if (state->drag_active) {
+                        scroll_dirty = 1;
+                    }
                 }
             }
         }

@@ -7172,6 +7172,75 @@ static int tg_mtproto_peer_cache_remove_public_index(
     return 0;
 }
 
+/* Move the chat at public index src_public to public index dst_public (both
+   1-based, == sidebar row + 1, skipping the is_self entry) and persist. The new
+   array order of the non-self entries IS the new on-disk/sidebar order (save emits
+   them in array order, renumbered 1..N). Mirrors remove_public_index's
+   load/mutate/save shape. Returns 0 on success. */
+static int tg_mtproto_peer_cache_reorder_public_index(
+    const char *path,
+    unsigned long src_public,
+    unsigned long dst_public,
+    FILE *stream)
+{
+    tg_mtproto_peer_cache cache;
+    unsigned long pub[TG_MTPROTO_PEER_CACHE_MAX];
+    unsigned long n;
+    unsigned long i;
+    unsigned long src_arr;
+    unsigned long dst_arr;
+    tg_mtproto_peer_cache_entry moved;
+
+    if (path == 0 || src_public == 0UL || dst_public == 0UL) {
+        return 2;
+    }
+    if (src_public == dst_public) {
+        return 0; /* no-op */
+    }
+    if (tg_mtproto_load_peer_cache_file(path, &cache) != 0) {
+        if (stream != 0) {
+            fprintf(stream, "No cached chats to reorder.\n");
+        }
+        return 2;
+    }
+    /* Array indices of the non-self entries, in public order (self is at index 0
+       after a save/load round-trip and is skipped on save, so it keeps its slot). */
+    n = 0UL;
+    for (i = 0UL; i < cache.count; ++i) {
+        if (!cache.entries[i].is_self) {
+            if (n < TG_MTPROTO_PEER_CACHE_MAX) {
+                pub[n] = i;
+            }
+            ++n;
+        }
+    }
+    if (n == 0UL || n > TG_MTPROTO_PEER_CACHE_MAX ||
+        src_public > n || dst_public > n) {
+        return 2;
+    }
+    src_arr = pub[src_public - 1UL];
+    dst_arr = pub[dst_public - 1UL];
+    moved = cache.entries[src_arr];
+    if (src_arr < dst_arr) {
+        for (i = src_arr; i < dst_arr; ++i) {
+            cache.entries[i] = cache.entries[i + 1UL];
+        }
+    } else {
+        for (i = src_arr; i > dst_arr; --i) {
+            cache.entries[i] = cache.entries[i - 1UL];
+        }
+    }
+    cache.entries[dst_arr] = moved;
+    tg_mtproto_recount_peer_cache(&cache);
+    if (tg_mtproto_save_peer_cache_file(path, &cache, 0, "chat cache") != 0) {
+        if (stream != 0) {
+            fprintf(stream, "Could not save chat order.\n");
+        }
+        return 2;
+    }
+    return 0;
+}
+
 static const char *tg_mtproto_peer_cache_entry_kind(
     const tg_mtproto_peer_cache_entry *entry)
 {
@@ -12200,6 +12269,48 @@ int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_reload_chats(); /* reproject the sidebar from the saved file */
     }
     return rc;
+}
+
+/* Public: move the chat at sidebar row src_index to dst_index (both 1-based,
+   == row + 1), persist the new order, reproject the sidebar, and re-select the
+   chat that was open (reload_chats zeroes selected_chat, so re-find it by peer id).
+   No network fetch -- the transcript is untouched. Returns 0 on success. */
+int tg_gui_session_reorder_chat(unsigned long src_index, unsigned long dst_index,
+                                FILE *stream)
+{
+    FILE *quiet;
+    int rc;
+    tg_gui_state *gst;
+
+    if (!tg_gui_session_state.open || stream == 0 ||
+        src_index == 0UL || dst_index == 0UL) {
+        return 2;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_peer_cache_reorder_public_index(
+        tg_gui_session_state.peer_cache_file, src_index, dst_index, quiet);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    if (rc != 0) {
+        return rc;
+    }
+    tg_gui_session_reload_chats(); /* reprojects sidebar; resets selected_chat to 0 */
+    /* Re-find the open chat by its (immutable) peer id and reselect it, since the
+       reproject lost the selection and the row indices were renumbered. */
+    gst = tg_gui_session_state.gui_driver.state;
+    if (gst != 0 && (tg_gui_session_state.open_peer_id_hi != 0UL ||
+                     tg_gui_session_state.open_peer_id_lo != 0UL)) {
+        int k;
+        for (k = 0; k < gst->chat_count; ++k) {
+            if (gst->chats[k].peer_id_hi ==
+                    tg_gui_session_state.open_peer_id_hi &&
+                gst->chats[k].peer_id_lo ==
+                    tg_gui_session_state.open_peer_id_lo) {
+                gst->selected_chat = k;
+                break;
+            }
+        }
+    }
+    return 0;
 }
 
 /* Results of the last GUI contacts.search, kept so the window can show a picker
