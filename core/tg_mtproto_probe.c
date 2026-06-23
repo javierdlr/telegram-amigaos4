@@ -339,17 +339,10 @@ static const tg_chat_driver *tg_chat_message_driver_override = 0;
    it when building the query; every other caller leaves it 0 (newest-pinned). */
 static unsigned long tg_mtproto_history_offset_id_override = 0UL;
 
-/* Last getHistory parse stats, for the "only 2-3 messages at open" diagnostic:
-   the open path surfaces them in the chat subtitle when rows were dropped, so a
-   failing chat can be reported without a debug build. kept = text rows shown,
-   total = messages in the fetched page, abort = the constructor that stopped the
-   parser (0 = clean). */
-static unsigned long tg_gui_last_hist_kept = 0UL;
+/* Server-side total message count for the last getHistory, used by the open path
+   to arm the forced "pull older" scrollbar when the chat has more history than the
+   loaded page (see tg_gui_state.more_above). */
 static unsigned long tg_gui_last_hist_total = 0UL;
-static unsigned long tg_gui_last_hist_abort = 0UL;
-static unsigned long tg_gui_last_hist_page = 0UL;
-static unsigned long tg_gui_last_hist_rsok = 0UL;
-static unsigned long tg_gui_last_hist_rsatt = 0UL;
 
 /* tg_chat_notify_reset / tg_chat_notify_seen now live in tg_chat_engine.c and
    operate on the engine's notify queue (reached here via tg_chat_nq). */
@@ -9009,12 +9002,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                 texts.resync_attempts, result.result_body_length);
         tg_gui_log(histdiag);
     }
-    tg_gui_last_hist_kept = texts.count;
     tg_gui_last_hist_total = texts.total_message_count;
-    tg_gui_last_hist_abort = texts.abort_constructor;
-    tg_gui_last_hist_page = texts.page_count;
-    tg_gui_last_hist_rsok = texts.resync_ok;
-    tg_gui_last_hist_rsatt = texts.resync_attempts;
     tg_mtproto_close_quiet_stream(quiet, stream);
 
     /* Resolve group-message senders from the response's users/chats. */
@@ -12042,23 +12030,12 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.current_peer_label,
         tg_gui_session_state.own_label);
     tg_chat_message_driver_override = 0;
-    /* Diagnostic surfaced in the subtitle ONLY when the open dropped rows (a
-       parser shortfall: messageService / unreadable media-tail), so the user can
-       report the exact kept/total/abort for a "shows only 2-3 messages" chat
-       without a debug build. Normal chats (kept==total, no abort) keep the title's
-       own subtitle. */
+    /* Older history exists beyond the loaded rows when the server's total for this
+       peer exceeds what we show -- arm the forced "pull older" scrollbar so the
+       user can fetch more even when the loaded page fits the window. The subtitle
+       is cleared (the per-chat header status line is unused for now). */
     if (tg_gui_session_state.gui_driver.state != 0) {
-        /* v8 marker confirms which binary is running; kept/page = rows shown vs
-           the fetched vector; ab = first constructor that stalled the walk; r =
-           resync ok/attempts (so I can see whether the id-validated resync runs
-           and re-lands). Always set so the build is verifiable from any chat. */
-        sprintf(tg_gui_session_state.gui_driver.state->subtitle,
-                "v9 %lu/%lu ab=%08lx r=%lu/%lu", tg_gui_last_hist_kept,
-                tg_gui_last_hist_page, tg_gui_last_hist_abort,
-                tg_gui_last_hist_rsok, tg_gui_last_hist_rsatt);
-        /* Older history exists beyond the loaded rows when the server's total for
-           this peer exceeds what we show -- arm the forced scrollbar so the user
-           can pull more even when the loaded page fits the window. */
+        tg_gui_session_state.gui_driver.state->subtitle[0] = '\0';
         tg_gui_session_state.gui_driver.state->more_above =
             (tg_gui_last_hist_total >
              (unsigned long)tg_gui_session_state.gui_driver.state->message_count)
