@@ -12253,7 +12253,7 @@ void tg_gui_session_refresh_chats(void)
    success, non-zero otherwise. */
 int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
 {
-    char index_text[16];
+    char index_text[24]; /* fits %lu of a 64-bit unsigned long (20 digits + NUL) */
     FILE *quiet;
     int rc;
 
