@@ -5660,7 +5660,9 @@ static int tg_mtproto_load_peer_cache_file(const char *path,
 
 static int tg_mtproto_peer_cache_available(const char *path)
 {
-    tg_mtproto_peer_cache cache;
+    /* static, not on the stack: a peer_cache is ~32 KiB at the raised cap and this
+       runs at startup -- a stack copy here helped overflow the TUI's stack. */
+    static tg_mtproto_peer_cache cache;
 
     return tg_mtproto_load_peer_cache_file(path, &cache) == 0 &&
            tg_mtproto_peer_cache_public_count(&cache) > 0UL;

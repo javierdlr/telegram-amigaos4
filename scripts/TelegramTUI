@@ -1,5 +1,5 @@
 FailAt 21
-Stack 262144
+Stack 1048576
 .BRA {
 .KET }
 
