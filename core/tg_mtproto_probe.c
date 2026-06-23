@@ -12056,6 +12056,13 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
                 "v9 %lu/%lu ab=%08lx r=%lu/%lu", tg_gui_last_hist_kept,
                 tg_gui_last_hist_page, tg_gui_last_hist_abort,
                 tg_gui_last_hist_rsok, tg_gui_last_hist_rsatt);
+        /* Older history exists beyond the loaded rows when the server's total for
+           this peer exceeds what we show -- arm the forced scrollbar so the user
+           can pull more even when the loaded page fits the window. */
+        tg_gui_session_state.gui_driver.state->more_above =
+            (tg_gui_last_hist_total >
+             (unsigned long)tg_gui_session_state.gui_driver.state->message_count)
+                ? 1 : 0;
     }
     /* One getPeerDialogs read so own messages already read by the peer show the
        double-check at open (the tick refreshes it live thereafter). Now ALSO on

@@ -1699,6 +1699,7 @@ int tg_gui_run_window(tg_gui_state *state)
                     }
                 } else if (got == 0) {
                     older_exhausted = 1;  /* confirmed chat start / buffer full */
+                    state->more_above = 0; /* nothing older -> drop the forced bar */
                 }
                 /* got < 0: transient fetch failure -> do NOT latch; retry later. */
             }

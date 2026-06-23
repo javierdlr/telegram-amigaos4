@@ -1070,33 +1070,52 @@ static void tg_gui_paint_main(const tg_gui_state *state,
             total += tg_gui_message_height(backend, &state->messages[j], area_w,
                                            lh);
         }
-        max_scroll = (total > avail) ? (total - avail) : 0;
-        /* The painter owns the geometry: clamp the offset the event loop
-           advanced freely (cast away const to write the model's own field). */
-        st = (tg_gui_state *)state;
-        if (st->transcript_scroll > max_scroll) {
-            st->transcript_scroll = max_scroll;
-        }
-        if (st->transcript_scroll < 0) {
-            st->transcript_scroll = 0;
-        }
-        /* Oldest message's top y; scroll == 0 pins the newest to the bottom. */
-        y = transcript_bottom - total + st->transcript_scroll;
-        if (max_scroll > 0) {
-            int ky;
-            int kh;
+        {
+            int real_max = (total > avail) ? (total - avail) : 0;
+            /* Forced "pull older" range: when the loaded rows fit (no real scroll)
+               but the chat has older history, add a small phantom range so a
+               scrollbar is drawn and a drag-up / wheel-up can trigger load_older. */
+            int forced = (real_max == 0 && state->more_above &&
+                          state->message_count > 0) ? lh : 0;
+            int content_scroll;
 
-            tg_gui_paint_scrollbar(backend, width - TG_GUI_SCROLLBAR_W,
-                                   transcript_top, avail, total, avail,
-                                   max_scroll - st->transcript_scroll, &ky, &kh);
-            st->sb_tr_x = width - TG_GUI_SCROLLBAR_W;
-            st->sb_tr_ty = transcript_top;
-            st->sb_tr_th = avail;
-            st->sb_tr_ky = ky;
-            st->sb_tr_kh = kh;
-            st->sb_tr_max = max_scroll;
-        } else {
-            st->sb_tr_max = 0;
+            max_scroll = real_max + forced;
+            /* The painter owns the geometry: clamp the offset the event loop
+               advanced freely (cast away const to write the model's own field). */
+            st = (tg_gui_state *)state;
+            if (st->transcript_scroll > max_scroll) {
+                st->transcript_scroll = max_scroll;
+            }
+            if (st->transcript_scroll < 0) {
+                st->transcript_scroll = 0;
+            }
+            /* Content scroll uses only the REAL range, so a phantom bar keeps the
+               newest pinned to the bottom -- the phantom is a load-older handle,
+               not an actual scroll into blank space. */
+            content_scroll = (st->transcript_scroll < real_max) ?
+                             st->transcript_scroll : real_max;
+            /* Oldest message's top y; scroll == 0 pins the newest to the bottom. */
+            y = transcript_bottom - total + content_scroll;
+            if (max_scroll > 0) {
+                int ky;
+                int kh;
+
+                /* Knob sized against avail+max_scroll: a real overflow gives
+                   `total` (unchanged); a phantom range leaves a small gap at the
+                   top so there is a knob to grab and drag up. */
+                tg_gui_paint_scrollbar(backend, width - TG_GUI_SCROLLBAR_W,
+                                       transcript_top, avail, avail + max_scroll,
+                                       avail, max_scroll - st->transcript_scroll,
+                                       &ky, &kh);
+                st->sb_tr_x = width - TG_GUI_SCROLLBAR_W;
+                st->sb_tr_ty = transcript_top;
+                st->sb_tr_th = avail;
+                st->sb_tr_ky = ky;
+                st->sb_tr_kh = kh;
+                st->sb_tr_max = max_scroll;
+            } else {
+                st->sb_tr_max = 0;
+            }
         }
     }
     for (i = 0; i < state->message_count; ++i) {

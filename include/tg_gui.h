@@ -174,6 +174,12 @@ typedef struct tg_gui_state {
     char search_query[TG_GUI_SEARCH_MAX];
     int in_search;
     int search_dirty;     /* query changed since the last online search (debounce) */
+    /* The open chat has older history beyond what is loaded (server total > shown).
+       When the loaded rows fit the window (no real scrollbar), the painter still
+       draws a short scrollbar so the user has a handle to drag up / wheel up and
+       pull the previous page -- needed for media-heavy chats the server returns a
+       few messages at a time. Cleared once the chat start is reached. */
+    int more_above;
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used
