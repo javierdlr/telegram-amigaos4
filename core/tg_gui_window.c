@@ -657,7 +657,7 @@ static struct NewMenu tg_gui_newmenu[] = {
     { NM_ITEM,  (STRPTR)"About...", 0, 0, 0, (APTR)TG_MENU_ABOUT },
     { NM_ITEM,  (STRPTR)"Help...",  0, 0, 0, (APTR)TG_MENU_HELP },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
-    { NM_ITEM,  (STRPTR)"Remove chat from list (Del)", 0, 0, 0,
+    { NM_ITEM,  (STRPTR)"Remove chat from list", (STRPTR)"R", 0, 0,
       (APTR)TG_MENU_REMOVE },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
@@ -675,10 +675,10 @@ static const char tg_gui_help_text[] =
     "Chat selection:\n"
     "  F1 - F10          chats 1 to 10\n"
     "  Shift + F1 - F10  chats 11 to 20\n\n"
-    "ENTER   write a message to the open chat\n"
-    "Del     remove the selected chat from the list\n"
-    "ESC     cancel\n"
-    "Q       quit";
+    "ENTER        write a message to the open chat\n"
+    "Del / A+R    remove the selected chat from the list\n"
+    "ESC          cancel\n"
+    "Q            quit";
 
 /* Shows a one-button info requester (About / Help). No printf args, so the
    text is passed verbatim (it carries no '%'). */
