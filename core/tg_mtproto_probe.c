@@ -8133,33 +8133,24 @@ static int tg_mtproto_gui_fetch_group_members(
 #endif
 }
 
-#if defined(__m68k__)
-/* clib2's tmpfile() is unreliable on AmigaOS 3.x: it needs a working T: temp dir
-   that many CoffinOS/Vampire CF setups do not have, and then returns a broken
-   non-NULL FILE* that FAULTS on the first write -- which is exactly the GUI login
-   path (the DH handshake fputc('.')s its progress into this stream), so a fresh
-   GUI login Gurus ("Line 1010") during "Connecting to Telegram...". Anchor the
-   capture next to the binary in PROGDIR: instead -- the same workaround the seed
-   file already uses. Only ONE quiet stream is ever open at a time (login/chat ops
-   are sequential, never nested), so a single fixed path is safe; remove it on
-   close so no litter is left behind. The TUI never hit this because it passes the
-   real CON: stream (safe on m68k), not a tmpfile. */
-#define TG_QUIET_TMP_PATH "PROGDIR:telegram-quiet.tmp"
-#endif
-
 static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
 {
-    FILE *quiet;
-
 #if defined(__m68k__)
-    quiet = fopen(TG_QUIET_TMP_PATH, "w+b");
-    if (quiet != 0) {
-        return quiet;
-    }
-    /* PROGDIR: not writable (e.g. a CD/locked launch) -> fall back to the real
-       stream: NIL: on a Workbench launch, a safe console on m68k. */
+    /* AmigaOS 3.x m68k (clib2): do NOT redirect login/chat net-progress into a
+       stdio capture file. clib2's file stdio faults when written during bsdsocket
+       I/O -- tmpfile() hands back a broken FILE*, and even an explicit PROGDIR:
+       file Gurus on the very first fputc('.') the DH emits ("Line 1010 Emulator
+       error", A2/A3 = NULL), which is the crash a fresh GUI login hit at
+       "Connecting to Telegram...". The capture only exists to keep progress off
+       CON: on MorphOS, where raw console output during net I/O hard-freezes the
+       machine; m68k has no such freeze, so write straight to the real stream --
+       exactly what the (working) TUI login does. fallback is stdout, which the GUI
+       launcher redirects to NIL:, so the dots are simply discarded. Error-capture
+       is forgone on m68k (capture_quiet_error no-ops when quiet == fallback). */
     return fallback;
 #else
+    FILE *quiet;
+
     quiet = tmpfile();
     if (quiet == 0) {
         return fallback;
@@ -8172,9 +8163,6 @@ static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback)
 {
     if (quiet != 0 && quiet != fallback) {
         fclose(quiet);
-#if defined(__m68k__)
-        remove(TG_QUIET_TMP_PATH);
-#endif
     }
 }
 
