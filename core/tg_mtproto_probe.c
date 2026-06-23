@@ -12178,6 +12178,30 @@ void tg_gui_session_refresh_chats(void)
     tg_gui_session_reload_chats();
 }
 
+/* Public: remove the chat at `peer_index` (the 1-based sidebar number, == the
+   peer-cache public index) from telegram-peers.txt, persist it, then reproject
+   the sidebar. The user can re-add the chat later via search. Returns 0 on
+   success, non-zero otherwise. */
+int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
+{
+    char index_text[16];
+    FILE *quiet;
+    int rc;
+
+    if (!tg_gui_session_state.open || stream == 0 || peer_index == 0UL) {
+        return 2;
+    }
+    sprintf(index_text, "%lu", peer_index);
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_peer_cache_remove_public_index(
+        tg_gui_session_state.peer_cache_file, index_text, 0, 0UL, quiet);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    if (rc == 0) {
+        tg_gui_session_reload_chats(); /* reproject the sidebar from the saved file */
+    }
+    return rc;
+}
+
 /* Results of the last GUI contacts.search, kept so the window can show a picker
    (choose among several matches) instead of always opening the top one. */
 static tg_mtproto_peer_cache tg_gui_search_results;

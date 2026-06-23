@@ -78,6 +78,11 @@ int tg_gui_session_search_open_result(int index, FILE *stream);
    real list after cancelling the search picker. */
 void tg_gui_session_refresh_chats(void);
 
+/* Remove the chat at `peer_index` (the 1-based sidebar number) from the cached
+   chat list, persist the change, and reproject the sidebar. Re-addable via search.
+   Returns 0 on success, non-zero otherwise. */
+int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream);
+
 /* 1 while a live session is held (so the window can enable composing). */
 int tg_gui_session_is_open(void);
 

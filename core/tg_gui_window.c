@@ -85,9 +85,10 @@ struct Library *GadToolsBase = 0;
 #endif
 
 /* Menu item ids (GadTools NM_USERDATA), decoded on IDCMP_MENUPICK. */
-#define TG_MENU_ABOUT 1
-#define TG_MENU_HELP  2
-#define TG_MENU_QUIT  3
+#define TG_MENU_ABOUT  1
+#define TG_MENU_HELP   2
+#define TG_MENU_QUIT   3
+#define TG_MENU_REMOVE 4
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -656,6 +657,9 @@ static struct NewMenu tg_gui_newmenu[] = {
     { NM_ITEM,  (STRPTR)"About...", 0, 0, 0, (APTR)TG_MENU_ABOUT },
     { NM_ITEM,  (STRPTR)"Help...",  0, 0, 0, (APTR)TG_MENU_HELP },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Remove chat from list (Del)", 0, 0, 0,
+      (APTR)TG_MENU_REMOVE },
+    { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
     { NM_END,   0, 0, 0, 0, 0 }
 };
@@ -672,6 +676,7 @@ static const char tg_gui_help_text[] =
     "  F1 - F10          chats 1 to 10\n"
     "  Shift + F1 - F10  chats 11 to 20\n\n"
     "ENTER   write a message to the open chat\n"
+    "Del     remove the selected chat from the list\n"
     "ESC     cancel\n"
     "Q       quit";
 
@@ -688,6 +693,85 @@ static void tg_gui_amiga_easyreq(struct Window *win, const char *title,
     es.es_TextFormat = (STRPTR)body;
     es.es_GadgetFormat = (STRPTR)"OK";
     (void)EasyRequestArgs(win, &es, 0, 0);
+}
+
+/* Two-button confirm for removing a chat. Returns 1 = Remove, 0 = Cancel. The
+   chat name is baked into the body with any '%' dropped, so EasyRequest (which
+   treats es_TextFormat as a printf format) never reads phantom args -- safer than
+   passing the name as a pointer arg, which would also be size-fragile on 64-bit
+   AROS. */
+static int tg_gui_amiga_confirm_remove(struct Window *win, const char *name)
+{
+    struct EasyStruct es;
+    char body[TG_GUI_NAME_MAX + 80];
+    const char *pre = "Remove this chat from the list?\n\n";
+    const char *post = "\n\n(re-add it later via Search)";
+    const char *p;
+    int n;
+
+    n = 0;
+    for (p = pre; *p != '\0' && n < (int)sizeof(body) - 1; ++p) {
+        body[n++] = *p;
+    }
+    if (name != 0) {
+        for (p = name; *p != '\0' && n < (int)sizeof(body) - 1; ++p) {
+            if (*p != '%') {
+                body[n++] = *p;
+            }
+        }
+    }
+    for (p = post; *p != '\0' && n < (int)sizeof(body) - 1; ++p) {
+        body[n++] = *p;
+    }
+    body[n] = '\0';
+
+    es.es_StructSize = (ULONG)sizeof(struct EasyStruct);
+    es.es_Flags = 0UL;
+    es.es_Title = (STRPTR)"Remove chat";
+    es.es_TextFormat = (STRPTR)body;
+    es.es_GadgetFormat = (STRPTR)"Remove|Cancel";
+    return (int)EasyRequestArgs(win, &es, 0, 0);
+}
+
+/* Confirm + remove the selected chat from the sidebar, persist it, then land on
+   a neighbouring chat (or an empty transcript if the list is now empty). Shared
+   by the menu item and the Del key. No-op outside chat mode / with no selection. */
+static void tg_gui_window_remove_selected(tg_gui_state *state,
+                                          struct Window *win,
+                                          tg_gui_backend *backend)
+{
+    int sel;
+    unsigned long idx;
+
+    if (state->mode != TG_GUI_MODE_CHAT || !tg_gui_session_is_open()) {
+        return;
+    }
+    sel = state->selected_chat;
+    if (sel < 0 || sel >= state->chat_count) {
+        return;
+    }
+    idx = state->chats[sel].index;
+    if (idx == 0UL) {
+        return;
+    }
+    if (tg_gui_amiga_confirm_remove(win, state->chats[sel].name) != 1) {
+        return; /* cancelled */
+    }
+    if (tg_gui_session_remove_chat(idx, stdout) != 0) {
+        return; /* nothing removed */
+    }
+    /* remove_chat reprojected the sidebar (chat_count updated). Open a neighbour
+       so the user is never left on the now-gone chat. */
+    if (state->chat_count > 0) {
+        int nsel = (sel < state->chat_count) ? sel : (state->chat_count - 1);
+        tg_gui_window_open_selection(state, nsel, backend);
+    } else {
+        state->selected_chat = 0;
+        state->message_count = 0;
+        state->title[0] = '\0';
+        state->subtitle[0] = '\0';
+        tg_gui_window_paint(state, backend);
+    }
 }
 
 /* Persist the last window size to a small file next to the binary (Work:TGh,
@@ -1367,6 +1451,8 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->transcript_scroll = 0;
                     }
                     scroll_dirty = 1;
+                } else if (msg_code == 0x46) { /* Del: remove selected chat (confirm) */
+                    tg_gui_window_remove_selected(state, ctx.window, &backend);
                 }
             } else if (msg_class == IDCMP_MENUPICK) {
                 UWORD mnum;
@@ -1390,6 +1476,9 @@ int tg_gui_run_window(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_HELP) {
                             tg_gui_amiga_easyreq(ctx.window, "Telegram Amiga Help",
                                                  tg_gui_help_text);
+                        } else if (ud == (APTR)TG_MENU_REMOVE) {
+                            tg_gui_window_remove_selected(state, ctx.window,
+                                                          &backend);
                         } else if (ud == (APTR)TG_MENU_QUIT) {
                             done = 1;
                         }
