@@ -12091,6 +12091,39 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     tg_gui_session_state.current_peer_label[0] = '\0';
     tg_gui_session_state.last_seen_message_id = 0UL;
 
+    /* First launch after a fresh login: no curated cache file yet -> fetch the
+       FULL dialog list once (paged + merged) so the sidebar starts populated.
+       Every later launch reuses the persisted, user-curated cache (the drag-drop
+       order + the removals), so we never refetch and never clobber that curation.
+       MorphOS SKIPS getDialogs (the documented bsdsocket freeze on the reply) --
+       there the list starts empty and Search adds chats. */
+    if (!tg_mtproto_peer_cache_available(peer_cache_file)) {
+#if !(defined(__MORPHOS__) || defined(__MORPHOS))
+        static tg_mtproto_peer_cache probe_cache; /* 16K -- off the stack */
+        FILE *q;
+        int iter;
+        unsigned long prev;
+
+        q = tg_mtproto_open_quiet_stream(stream);
+        prev = 0UL;
+        for (iter = 0; iter < 6; ++iter) {
+            if (tg_mtproto_auth_list_peers_file(host, "443", api_file, auth_file,
+                                                dc_id_text, "30", peer_cache_file,
+                                                q) != 0) {
+                break; /* a page failed -> keep whatever pages already landed */
+            }
+            if (tg_mtproto_load_peer_cache_file(peer_cache_file,
+                                                &probe_cache) != 0 ||
+                probe_cache.count <= prev ||
+                probe_cache.count >= TG_MTPROTO_PEER_CACHE_MAX) {
+                break; /* no new dialogs this page, or the cache is full */
+            }
+            prev = probe_cache.count;
+        }
+        tg_mtproto_close_quiet_stream(q, stream);
+#endif
+    }
+
     /* Project the current cache into the sidebar (the caller may have just
        refreshed it from the network). */
     {
