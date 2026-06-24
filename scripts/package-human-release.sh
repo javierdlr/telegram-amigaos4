@@ -18,6 +18,8 @@ DATE_STAMP=${DATE_STAMP:-$(date +%Y%m%d)}
 COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 VERSION=${VERSION:-0.0.2}
 
+md5of() { if command -v md5 >/dev/null 2>&1; then md5 -q "$1"; else md5sum "$1" | awk '{print $1}'; fi; }
+
 AMIGAOS3_BINARY=${AMIGAOS3_BINARY:-"$ROOT_DIR/build/amigaos3-clib2/telegram-test"}
 MORPHOS_BINARY=${MORPHOS_BINARY:-"$ROOT_DIR/build/morphos-cross/telegram-test"}
 AMIGAOS4_BINARY=${AMIGAOS4_BINARY:-"$ROOT_DIR/build/amigaos4/telegram-test"}
@@ -273,6 +275,20 @@ package_one() {
         *) echo "Unknown expected type: $expected" >&2; exit 1 ;;
     esac
 
+    # Staleness guard: a binary OLDER than the sources means a forgotten rebuild
+    # -- exactly how 0.0.2 shipped the previous OS4 binary. Override: ALLOW_STALE=1.
+    if [ -z "${ALLOW_STALE:-}" ]; then
+        newer=$(find "$ROOT_DIR/core" "$ROOT_DIR/include" "$ROOT_DIR/src" \
+                     "$ROOT_DIR/third_party" "$ROOT_DIR/platforms" -type f \
+                     -newer "$binary" 2>/dev/null | head -3)
+        if [ -n "$newer" ]; then
+            echo "ERROR $platform: $binary is OLDER than the sources -- rebuild it first." >&2
+            echo "$newer" | sed 's/^/  newer source: /' >&2
+            echo "  (set ALLOW_STALE=1 to override)" >&2
+            exit 1
+        fi
+    fi
+
     drawer="Telegram-$suffix-$DATE_STAMP"
     dest="$PACKAGE_ROOT/$drawer"
     rm -rf "$dest"
@@ -294,7 +310,17 @@ package_one() {
 
     if command -v zip >/dev/null 2>&1; then
         (cd "$PACKAGE_ROOT" && rm -f "$drawer.zip" && zip -qr "$drawer.zip" "$drawer")
-        echo "$PACKAGE_ROOT/$drawer.zip"
+        # Post-zip guard: the archive must hold THIS binary and no private file.
+        unzip -p "$PACKAGE_ROOT/$drawer.zip" "*/telegram-test" > "$PACKAGE_ROOT/.zipbin" 2>/dev/null
+        if [ "$(md5of "$PACKAGE_ROOT/.zipbin")" != "$(md5of "$binary")" ]; then
+            rm -f "$PACKAGE_ROOT/.zipbin"
+            echo "ERROR $platform: packaged binary != built binary ($binary)" >&2; exit 1
+        fi
+        rm -f "$PACKAGE_ROOT/.zipbin"
+        if unzip -l "$PACKAGE_ROOT/$drawer.zip" | grep -qiE "telegram-(auth|peers|seed|password|token)|phone-code-hash"; then
+            echo "ERROR $platform: SESSION FILE LEAK in $drawer.zip" >&2; exit 1
+        fi
+        echo "$PACKAGE_ROOT/$drawer.zip  [bin $(md5of "$binary" | cut -c1-8)]"
     else
         echo "$dest"
     fi
