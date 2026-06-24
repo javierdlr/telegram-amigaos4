@@ -1,9 +1,0 @@
-; MTProto read-only cached-peer history helper for Amiga shells.
-
-KEY TGHOST/A,TGPORT/A,TGDC/A,APIFILE/A,AUTHFILE/A,PEERSFILE/A,PEERINDEX/A,TGLIMIT/A,TGPROGRAM/K
-
-IF "$TGPROGRAM" EQ ""
-    SET TGPROGRAM telegram-test
-ENDIF
-
-$TGPROGRAM --mtproto-auth-get-history-peer-file "$TGHOST" "$TGPORT" "$APIFILE" "$AUTHFILE" "$TGDC" "$PEERSFILE" "$PEERINDEX" "$TGLIMIT"

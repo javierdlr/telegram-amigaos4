@@ -12,14 +12,21 @@ cryptography (RSA, Diffie-Hellman, SRP/2FA, AES, SHA) is built in.
 
 Two front-ends share one engine:
 
-- **TelegramGUI** — a native Intuition/GadTools GUI: chat list + conversation,
-  scrollbars (wheel, knob drag, arrow keys), click-to-compose, live receive,
-  "is typing", read receipts. Drawn by the client itself on a RastPort.
+- **TelegramGUI** — a native Intuition/GadTools GUI: chat list with persistent
+  unread badges, conversation view, scrollbars (wheel, knob drag, arrow keys,
+  pixel scroll), scroll-to-top history paging, click-to-compose with multi-line
+  wrap, online chat search, drag-and-drop reorder and remove, live receive,
+  "&lt;name&gt; is typing", read receipts. A double-click starts it with no
+  flashing console (flashless Workbench launch). Drawn by the client itself on a
+  RastPort.
 - **TelegramTUI** — a full-screen text/console client for low-end and
   mouse-less setups.
 
-Status: **alpha 0.0.1** — everyday direct-message and group chat works on all
-five platforms below; rough edges are expected.
+Status: **alpha 0.0.2** — everyday direct-message and group chat works on all
+five platforms below. 0.0.2 adds scroll-back history paging, online chat search,
+persistent unread badges, drag-reorder / remove of chats, group typing names,
+the full chat list on first login, long & multi-line messages, and the flashless
+Workbench launch.
 
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:
@@ -27,16 +34,16 @@ community. Development diary:
 
 ## Platforms & releases
 
-Each package bundles both clients, icons, a public `telegram-api.txt` and IT/EN
-manuals — and **no private files**.
+Each package bundles both clients, icons, a public `telegram-api.txt` and
+per-architecture IT/EN manuals — and **no private files**.
 
 | Platform | CPU | Release |
 |---|---|---|
-| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.1](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.1) |
-| AmigaOS 4.x | PPC | [os4-alpha-0.0.1](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.1) |
-| MorphOS | PPC | [morphos-alpha-0.0.1](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.1) |
-| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.1](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.1) |
-| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.1](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.1) |
+| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.2) |
+| AmigaOS 4.x | PPC | [os4-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.2) |
+| MorphOS | PPC | [morphos-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.2) |
+| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.2) |
+| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.2) |
 
 All releases: <https://github.com/kaffeine1/telegram-amiga/releases>
 
@@ -49,7 +56,8 @@ build.
 
 1. Download your platform's package and copy the drawer to a **writable**
    volume (e.g. `Work:`) — it writes its files next to itself, so not the CD.
-2. Double-click **TelegramGUI** (graphical) or **TelegramTUI** (console).
+2. Double-click **TelegramGUI** — it opens the GUI directly, with no flashing
+   console window — or **TelegramTUI** for the console client.
 3. First run signs you in: phone number → login code → optional 2FA password. A
    `telegram-auth.bin` session is saved; later runs go straight to your chats.
 
@@ -64,10 +72,13 @@ Full IT/EN instructions are inside each package.
 ## What works
 
 - MTProto auth-key creation, phone/code login wizard, 2FA, saved session.
-- Chat list (users, basic groups, channels/supergroups) from a local cache.
-- Reading history and sending text where the account has permission.
-- Native GUI scrolling (wheel / scrollbar / arrows), remembered window size,
-  dark theme.
+- Chat list (users, basic groups, channels/supergroups): the full list is
+  fetched once on first login, then your curation wins — drag-reorder, remove
+  (menu / Del / right-Amiga+R), online search to add, persistent unread badges.
+- Reading history with scroll-to-top paging (load older on demand) and sending
+  long, multi-line text where the account has permission.
+- Native GUI scrolling (wheel / scrollbar / arrows / pixel), remembered window
+  size, dark theme, flashless Workbench launch.
 - Live receive, **"&lt;name&gt; is typing…"**, **read receipts (v / vv)**,
   message styling/entities, reply quotes, cross-chat notifications.
 - `gzip_packed` responses decoded in-tree (embedded `puff`, no zlib needed).

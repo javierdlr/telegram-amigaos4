@@ -3,9 +3,12 @@
 # Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
 # SPDX-License-Identifier: MIT
 #
-# Build minimal human-facing packages. These artifacts intentionally contain
-# only the program, one Workbench/Ambient/Wanderer launcher, its icon, the
-# public Telegram API app credentials and one user README.
+# Build the human-facing release packages for Telegram Amiga 0.0.2.
+#
+# Each package contains ONLY the program, the two launchers (GUI + TUI) with
+# their icons, the PUBLIC Telegram API app credentials and per-architecture
+# IT/EN manuals. No user session is ever bundled: telegram-auth.bin and the
+# peer cache are created locally by the user on first login (see the manual).
 
 set -eu
 
@@ -13,10 +16,8 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/human-releases"}
 DATE_STAMP=${DATE_STAMP:-$(date +%Y%m%d)}
 COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
+VERSION=${VERSION:-0.0.2}
 
-# Default to the AmiSSL-free m68k build (in-tree crypto, no AmiSSL needed).
-# Default to the no-ixemul (clib2) m68k build: in-tree crypto, no AmiSSL and no
-# ixemul.library required at runtime. Build it with Makefile.amigaos3-clib2.
 AMIGAOS3_BINARY=${AMIGAOS3_BINARY:-"$ROOT_DIR/build/amigaos3-clib2/telegram-test"}
 MORPHOS_BINARY=${MORPHOS_BINARY:-"$ROOT_DIR/build/morphos-cross/telegram-test"}
 AMIGAOS4_BINARY=${AMIGAOS4_BINARY:-"$ROOT_DIR/build/amigaos4/telegram-test"}
@@ -24,256 +25,230 @@ AROS_I386_BINARY=${AROS_I386_BINARY:-"$ROOT_DIR/build/aros-i386-abiv0/telegram-t
 AROS_X86_64_BINARY=${AROS_X86_64_BINARY:-"$ROOT_DIR/build/aros-x86_64/telegram-test"}
 
 mkdir -p "$PACKAGE_ROOT"
-# Short community-facing names: Telegram-<platform>-<date>.zip (the commit id is
-# kept inside README.txt as "Build:" and in the GitHub tag, not in the filename).
 rm -f "$PACKAGE_ROOT"/Telegram-*-"$DATE_STAMP".zip
 rm -rf "$PACKAGE_ROOT"/Telegram-*-"$DATE_STAMP"
-# Also clear any leftovers from the previous long naming scheme.
-rm -f "$PACKAGE_ROOT"/telegram-amiga-*-human-"$DATE_STAMP"-*.zip
-rm -rf "$PACKAGE_ROOT"/telegram-amiga-*-human-"$DATE_STAMP"-*
 
-write_launcher() {
-    launcher_path=$1
-    cat > "$launcher_path" <<'EOF'
-; Telegram Amiga human launcher.
+# --- per-architecture text blocks -------------------------------------------
+# requirements_en / requirements_it / notes_en / notes_it are filled per
+# platform; the rest of each manual is shared.
+fill_platform_text() {
+    case "$1" in
+    "AmigaOS 3.x")
+        req_en="- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) with a TCP/IP stack (Roadshow, AmiTCP,
+  Miami/MiamiDx) providing bsdsocket.library, and an internet connection.
+- A 68020 or better CPU (this build uses the 68020 32x32 multiply and will
+  NOT run on a plain 68000). Tested on 68080/Vampire; 020/030/040/060 welcome.
+- A few MB of free RAM. No ixemul.library and no AmiSSL are needed."
+        notes_en="Notes for AmigaOS 3.x
+---------------------
+- Photos/files are shown as [Photo] / [File] labels (no image decoding on 68k).
+- The cloud-password (2FA) step is heavy on a 68k (PBKDF2) and can take a while.
+- First login: on some 68k setups the in-GUI fresh login is still rough. The
+  reliable path is to log in ONCE with TelegramTUI (the console launcher), then
+  use TelegramGUI from then on (it reuses the saved login).
+- Emoji are drawn as text emoticons (:) :D <3); the console has no emoji font."
+        req_it="- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) con uno stack TCP/IP (Roadshow, AmiTCP,
+  Miami/MiamiDx) che fornisca bsdsocket.library, e una connessione internet.
+- Una CPU 68020 o superiore (questa build usa la moltiplicazione 32x32 del
+  68020 e NON gira su un 68000 liscio). Provata su 68080/Vampire; 020/030/040/060
+  benvenute.
+- Qualche MB di RAM libera. Non servono ixemul.library ne' AmiSSL."
+        notes_it="Note per AmigaOS 3.x
+--------------------
+- Foto/file appaiono come etichette [Photo] / [File] (niente decodifica immagini
+  sul 68k).
+- Il passo della password cloud (2FA) e' pesante su 68k (PBKDF2) e puo' metterci
+  un po'.
+- Primo accesso: su alcune configurazioni 68k il login fresco dentro la GUI e'
+  ancora instabile. La via affidabile e' accedere UNA volta con TelegramTUI (il
+  launcher console), poi usare TelegramGUI (riusa il login salvato)."
+        ;;
+    "MorphOS")
+        req_en="- MorphOS (3.x) with its TCP/IP stack and an internet connection.
+- A few MB of free RAM."
+        notes_en="Notes for MorphOS
+-----------------
+- The chat list is built with Search: getDialogs is not auto-loaded here (it
+  stalls MorphOS' TCP stack), so type a name in the search box to find/add a
+  chat. Removed/reordered chats and unread badges still persist.
+- In groups the typing line shows \"someone is typing\" (the per-member name
+  fetch is skipped on MorphOS on purpose, to avoid a freeze).
+- Auto-read runs at a gentle pace; emoji are text emoticons."
+        req_it="- MorphOS (3.x) con il suo stack TCP/IP e una connessione internet.
+- Qualche MB di RAM libera."
+        notes_it="Note per MorphOS
+----------------
+- La lista chat si costruisce con la Ricerca: qui getDialogs non viene caricato
+  in automatico (blocca lo stack TCP di MorphOS), quindi digita un nome nella
+  casella di ricerca per trovare/aggiungere una chat. Rimozioni/riordino e
+  badge non letti restano comunque persistenti.
+- Nei gruppi la riga di scrittura mostra \"someone is typing\" (il recupero del
+  nome del membro e' disattivato su MorphOS apposta, per evitare un freeze)."
+        ;;
+    *)
+        req_en="- $1 with a working TCP/IP stack (bsdsocket) and an internet connection.
+- A few MB of free RAM."
+        notes_en="Notes for $1
+-----------------
+- Full feature set, including read receipts, typing names and history paging."
+        req_it="- $1 con uno stack TCP/IP funzionante (bsdsocket) e una connessione internet.
+- Qualche MB di RAM libera."
+        notes_it="Note per $1
+-----------------
+- Set completo di funzioni: read receipt, nomi di chi scrive, paginazione storia."
+        ;;
+    esac
+}
 
-FailAt 21
-Stack 262144
-.BRA {
-.KET }
+write_manual_en() {
+    cat > "$1" <<EOF
+Telegram Amiga -- User Manual (English)
+=======================================
 
-Echo "Telegram Amiga"
-Echo "Author: Michele Dipace <michele.dipace@kaffeine.net>"
+Platform: $2
+Version: $VERSION   Build: $COMMIT_ID
 
-SET APIFILE "telegram-api.txt"
-SET AUTHFILE "telegram-auth.bin"
-SET HASHFILE "phone-code-hash.txt"
-SET PEERSFILE "telegram-peers.txt"
+Telegram Amiga is a from-scratch, native MTProto Telegram client. You log in
+with a normal Telegram account, see your chats and exchange messages. There are
+no external dependencies (no MUI, no ixemul, no AmiSSL): all the cryptography
+(RSA, Diffie-Hellman, SRP/2FA, AES, SHA) is built in.
 
-IF EXISTS telegram-test
-    Protect telegram-test +e
-    telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
-ELSE
-    Protect RAM:telegram-test +e
-    RAM:telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
-ENDIF
+System requirements
+-------------------
+$req_en
 
-IF WARN
-    Echo ""
-    Echo "Telegram Amiga ended. Read any message above."
-    Echo "This window will stay open for 120 seconds."
-    Wait 120
-ENDIF
+Two launchers
+-------------
+- TelegramGUI -- the native Intuition/GadTools GUI (chat list + conversation).
+  Double-click it: it starts the GUI directly, with no flashing console window.
+- TelegramTUI -- a full-screen text/console client for low-end or mouse-less
+  setups. Both share the same login and the same saved session.
+
+First start (logging in)
+------------------------
+1. Unpack the drawer and double-click TelegramGUI (or TelegramTUI).
+2. If there is no saved login, a login panel appears. Enter your phone number
+   in full international form (for example +39 333 1234567), then the code
+   Telegram sends you. If your account has a cloud password (2FA), type it on
+   the masked screen.
+3. The client logs in and writes telegram-auth.bin in this drawer. After that
+   it reuses the saved login -- you are not asked for the phone/code again.
+
+Using the GUI
+-------------
+- Left: your chat list, with an unread count badge per chat (it persists across
+  restarts and clears when you open the chat).
+- Click a chat to open it; the conversation is on the right.
+- Scroll with the wheel, the scrollbar knob or the arrow keys. Scroll to the
+  very top to load older history (it pulls the previous page and keeps your
+  place).
+- Click the input line and type to compose; long messages wrap over several
+  lines. Press Enter to send. Your sent messages show a delivery mark: "v" sent,
+  "vv" read by the other side. Replies show the quoted line above the message.
+- F1..F10 jump to chats 1..10 (Shift+F1..F10 to 11..20).
+- Search box (top-left): type a name and press Enter to find a chat on Telegram
+  and add it to the list -- useful for chats not shown yet.
+- Remove a chat from the list: the Telegram menu (right mouse button), the Del
+  key, or right-Amiga+R (with a confirm). Re-add it later via Search.
+- Reorder the list by drag and drop. Removals, order and unread badges persist.
+- In groups, "<name> is typing..." appears while someone writes.
+
+Emoji and styling
+-----------------
+Emoji are shown as classic text emoticons (:) :D <3) because Amiga fonts have no
+emoji glyphs; bold/italic/code formatting is rendered with the system font.
+
+$notes_en
+
+Privacy and safety
+------------------
+telegram-auth.bin holds the saved authorization for your Telegram account: keep
+it private and never share it. Do not download or copy anyone else's
+telegram-auth.bin. When sharing screenshots, hide phone numbers, login codes,
+passwords and private messages.
+
+Advanced: the bundled telegram-api.txt holds public Telegram API app
+credentials. Advanced users may replace it with their own (two lines: api_id
+then api_hash).
+
+License: MIT -- a non-commercial community project. Diary:
+https://androidlab.it/telegram-amiga-diario-sviluppo-client-mtproto/
 EOF
 }
 
-write_readme() {
-    readme_path=$1
-    readme_platform=$2
+write_manual_it() {
+    cat > "$1" <<EOF
+Telegram Amiga -- Manuale Utente (Italiano)
+===========================================
 
-    case "$readme_platform" in
-    "AmigaOS 3.x")
-        readme_requirements="System requirements
--------------------
+Piattaforma: $2
+Versione: $VERSION   Build: $COMMIT_ID
 
-- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) with a working TCP/IP stack
-  (Roadshow, AmiTCP, Miami/MiamiDx) providing bsdsocket.library, plus a
-  working internet connection.
-- A 68020 or better CPU. This build uses 68020 instructions (hardware 32x32
-  multiply) and will NOT run on a plain 68000. Tested on 68080/Vampire;
-  community testing on 68020/030/040/060 is welcome.
-- A few MB of free RAM; the launcher requests Stack 262144.
+Telegram Amiga e' un client MTProto per Telegram scritto da zero, nativo. Accedi
+con un normale account Telegram, vedi le tue chat e scambi messaggi. Nessuna
+dipendenza esterna (niente MUI, niente ixemul, niente AmiSSL): tutta la
+crittografia (RSA, Diffie-Hellman, SRP/2FA, AES, SHA) e' integrata.
 
-NO ixemul.library and NO AmiSSL needed: this is a native build (clib2 C
-runtime, bsdsocket.library directly) with all cryptography (RSA,
-Diffie-Hellman, SRP 2FA, AES, SHA) built in. Just unpack and double-click. The
-first login does some heavy big-number math and may take a minute on slower
-68k CPUs; this is a one-time cost (the saved login is reused afterwards) and
-normal chatting stays fast.
-"
-        ;;
-    "AROS x86_64")
-        readme_requirements="System requirements
--------------------
+Requisiti di sistema
+--------------------
+$req_it
 
-- AROS x86_64 with a working TCP/IP stack (bsdsocket) and a working
-  internet connection.
-- A kickstart/SDK pairing from the current trunk line. The validated
-  reference is hosted AROS x86_64 (Linux-hosted). AROS One v0.38 pairs a
-  different kickstart and does NOT run this binary (it stops before the
-  program starts; that is the system pairing, not a client crash).
-- A few MB of free RAM; the launcher requests Stack 262144.
-"
-        ;;
-    *)
-        readme_requirements="System requirements
--------------------
-
-- $readme_platform with a working TCP/IP stack (bsdsocket) and a working
-  internet connection.
-- A few MB of free RAM; the launcher requests Stack 262144.
-"
-        ;;
-    esac
-
-    cat > "$readme_path" <<EOF
-Telegram Amiga
-==============
-
-Platform: $readme_platform
-Build: $COMMIT_ID
-
-Telegram Amiga is an early text-mode Telegram client for Amiga-like systems.
-This package is meant for human testing: open the drawer and double-click the
-TelegramAmiga icon.
-
-$readme_requirements
-Included files
+I due launcher
 --------------
+- TelegramGUI -- la GUI nativa Intuition/GadTools (lista chat + conversazione).
+  Doppio click: avvia direttamente la GUI, senza finestra console che lampeggia.
+- TelegramTUI -- un client testuale a schermo intero per macchine leggere o
+  senza mouse. Condividono lo stesso login e la stessa sessione salvata.
 
-- telegram-test: the client binary
-- TelegramAmiga: the launcher used by the icon
-- TelegramAmiga.info: Workbench/Ambient/Wanderer project icon
-- telegram-api.txt: public Telegram API app id/hash for TelegramAmiga
-- README.txt: this guide
-
-Private files created locally
------------------------------
-
-These files are NOT included and must never be published:
-
-- telegram-auth.bin
-- phone-code-hash.txt
-- telegram-password.txt
-- telegram-peers.txt
-- telegram-token.txt
-- telegram-seed.bin (random-number seed the program keeps between runs)
-
-telegram-auth.bin is especially sensitive. It contains the saved MTProto
-authorization for a Telegram account. Sharing it can give someone else access
-to that logged-in session.
-
-How telegram-auth.bin is created
---------------------------------
-
-Do not download telegram-auth.bin from anyone and do not copy another user's
-file. TelegramAmiga creates it locally on your Amiga-like system after a
-successful login.
-
-On first start:
-
-1. TelegramAmiga uses the bundled telegram-api.txt.
-2. It asks for your phone number.
-3. Telegram sends a login code to your Telegram account.
-4. You type that code into TelegramAmiga.
-5. If Telegram asks for 2FA, you type the password locally.
-6. TelegramAmiga writes telegram-auth.bin in this drawer.
-
-After that, the same telegram-auth.bin is reused so the wizard does not ask for
-the phone/code every time.
-
-First start
------------
-
-1. Double-click TelegramAmiga.
-
-2. If no saved login exists, the login wizard starts automatically.
-   Enter the phone number, then the Telegram login code when requested.
-   If Telegram asks for a 2FA password, enter it only on a private screen.
-
-3. After login, choose a chat number.
-
-Advanced API override
+Primo avvio (accesso)
 ---------------------
+1. Scompatta il drawer e fai doppio click su TelegramGUI (o TelegramTUI).
+2. Se non c'e' un login salvato, compare il pannello di accesso. Inserisci il
+   numero di telefono in formato internazionale completo (es. +39 333 1234567),
+   poi il codice che Telegram ti invia. Se il tuo account ha una password cloud
+   (2FA), digitala sulla schermata mascherata.
+3. Il client accede e scrive telegram-auth.bin in questo drawer. Da li' in poi
+   riusa il login salvato -- non ti richiede piu' telefono/codice.
 
-The bundled telegram-api.txt is meant for normal users. Advanced testers may
-replace it with their own Telegram API id/hash file using the same two-line
-format:
-
-  <api_id>
-  <api_hash>
-
-Using chat
-----------
-
-Type text and press Enter to send to the selected chat. New messages from the
-open chat appear automatically every few seconds, even while you are typing.
-
-Switching chats is fast:
-
-  F1..F10       jump straight to chat 1..10 from the list
-                (Shift+F1..F10 reaches chats 11..20)
-  Tab           jump back to the previous chat
-  <number>      type a chat number and press Enter
-  /swap         same as Tab
-
-Commands:
-
-  /peers        show the chat list (the open chat is marked with *)
-  /search text  find a cached chat by name
-  /add name     search Telegram and add a new chat
-  /remove n     remove chat n from the list
-  /history      show recent messages again
-  /watch sec    change the auto-read interval (/watch off disables it)
-  /resize       redraw the layout after a window resize
-  /diff         toggle the background catch-up (MorphOS notifications)
-  /color        toggle colours (also /color on or /color off)
-  /bell         toggle the notification flash/bell
-  /help         show commands
-  /quit         exit
-
-Up/Down arrows recall what you typed before.
-
-When a message arrives in ANOTHER chat -- a contact, a group or a channel --
-a highlighted line shows it without leaving the current one:
-
-  [3] Mario Rossi: see you tomorrow...
-
-The number is the chat-list position: press F3 (or type 3 and Enter) to jump
-there. The console flashes too; /bell off disables that.
-
-How it looks
+Usare la GUI
 ------------
+- A sinistra: la lista chat, con un badge dei messaggi non letti per chat
+  (persiste al riavvio e si azzera quando apri la chat).
+- Clicca una chat per aprirla; la conversazione e' a destra.
+- Scorri con la rotella, il cursore della barra o le frecce. Scorri fino in cima
+  per caricare la storia piu' vecchia (tira la pagina precedente mantenendo la
+  posizione).
+- Clicca la riga di input e scrivi; i messaggi lunghi vanno a capo su piu' righe.
+  Premi Invio per inviare. I tuoi messaggi mostrano il segno di consegna: "v"
+  inviato, "vv" letto dall'altro. Le risposte mostrano la citazione sopra.
+- F1..F10 saltano alle chat 1..10 (Shift+F1..F10 alle 11..20).
+- Casella di ricerca (in alto a sinistra): scrivi un nome e premi Invio per
+  trovare una chat su Telegram e aggiungerla alla lista -- utile per chat non
+  ancora mostrate.
+- Rimuovi una chat dalla lista: menu Telegram (tasto destro), tasto Del, oppure
+  Amiga-destro+R (con conferma). La riaggiungi poi con la Ricerca.
+- Riordina la lista col trascinamento. Rimozioni, ordine e badge persistono.
+- Nei gruppi compare "<nome> sta scrivendo..." mentre qualcuno scrive.
 
-The chat runs full screen: a status bar with the open chat's name at the
-top, the conversation scrolling in the middle, and your typing on a fixed
-input line at the bottom. Sender names are bold (your contact in the accent
-colour, you in white), every message line starts with its [HH:MM] time, a
-separator marks day changes, and multi-line messages keep their line breaks.
-Resize the window whenever you like: the layout re-fits itself and keeps
-the recent conversation (type /resize if your console does not announce
-resizes). --ui-tui off returns to the classic line-by-line flow.
+Emoji e stile
+-------------
+Le emoji appaiono come emoticon testuali classiche (:) :D <3) perche' i font
+Amiga non hanno glifi emoji; grassetto/corsivo/code usano il font di sistema.
 
-On MorphOS the chat keeps a slower auto-read pace (its TCP stack streams
-large replies slowly) and cross-chat notifications arrive within ~12
-seconds, drained gently to protect that link (/diff off disables them);
-colours are off there too. Emoji are shown as classic
-text emoticons like :) :D <3 (y) because Amiga consoles cannot draw emoji
-glyphs; flags become their two country letters (IT, DE) and other symbols a
-small generic mark. A bold [ok] confirms every sent message.
+$notes_it
 
-Prefer the normal window colours? Start the client with --ui-theme plain, or
-type /color off inside the chat.
+Privacy e sicurezza
+-------------------
+telegram-auth.bin contiene l'autorizzazione salvata del tuo account Telegram:
+tienilo privato e non condividerlo mai. Non scaricare ne' copiare il
+telegram-auth.bin di altri. Negli screenshot nascondi numeri di telefono, codici
+di accesso, password e messaggi privati.
 
-The text size is the system console font: make it bigger in the OS font
-preferences (AmigaOS 4: Prefs -> Fonts; AmigaOS 3: Prefs -> Font; MorphOS and
-AROS: font preferences) and TelegramAmiga follows it.
+Avanzato: il telegram-api.txt incluso contiene credenziali API pubbliche. Gli
+utenti avanzati possono sostituirlo col proprio (due righe: api_id poi api_hash).
 
-Notes
------
-
-Private-message sends may be refused by Telegram with PEER_FLOOD for new or
-restricted accounts. If that happens, stop retrying for a while. Group chats
-can still be used as the write test path.
-
-If typed keys do not match the characters shown on screen, check the operating
-system keymap first. TelegramAmiga reads from the system console; keyboard
-layout is handled by the Amiga-like OS, not by the client. Set the correct
-layout in the system input preferences or startup files before testing accented
-characters.
-
-Keep screenshots clean: do not show phone numbers, login codes, passwords,
-tokens, telegram-auth.bin, or private messages.
+Licenza: MIT -- progetto di comunita' non commerciale. Diario:
+https://androidlab.it/telegram-amiga-diario-sviluppo-client-mtproto/
 EOF
 }
 
@@ -290,40 +265,12 @@ package_one() {
 
     file_output=$(file "$binary")
     case "$expected" in
-        amigaos3)
-            echo "$file_output" | grep -q "AmigaOS loadseg" || {
-                echo "Skipping $platform: unexpected binary: $file_output" >&2
-                return 0
-            }
-            ;;
-        morphos)
-            echo "$file_output" | grep -q "ELF 32-bit MSB relocatable, PowerPC" || {
-                echo "Skipping $platform: unexpected binary: $file_output" >&2
-                return 0
-            }
-            ;;
-        amigaos4)
-            echo "$file_output" | grep -q "ELF 32-bit MSB executable, PowerPC" || {
-                echo "Skipping $platform: unexpected binary: $file_output" >&2
-                return 0
-            }
-            ;;
-        aros-i386)
-            echo "$file_output" | grep -q "ELF 32-bit LSB relocatable, Intel 80386.*AROS" || {
-                echo "Skipping $platform: unexpected binary: $file_output" >&2
-                return 0
-            }
-            ;;
-        aros-x86_64)
-            echo "$file_output" | grep -q "ELF 64-bit LSB relocatable, x86-64.*AROS" || {
-                echo "Skipping $platform: unexpected binary: $file_output" >&2
-                return 0
-            }
-            ;;
-        *)
-            echo "Unknown expected type: $expected" >&2
-            exit 1
-            ;;
+        amigaos3)   echo "$file_output" | grep -q "AmigaOS loadseg" || { echo "Skipping $platform: $file_output" >&2; return 0; } ;;
+        morphos)    echo "$file_output" | grep -q "ELF 32-bit MSB relocatable, PowerPC" || { echo "Skipping $platform: $file_output" >&2; return 0; } ;;
+        amigaos4)   echo "$file_output" | grep -q "ELF 32-bit MSB executable, PowerPC" || { echo "Skipping $platform: $file_output" >&2; return 0; } ;;
+        aros-i386)  echo "$file_output" | grep -q "ELF 32-bit LSB relocatable, Intel 80386.*AROS" || { echo "Skipping $platform: $file_output" >&2; return 0; } ;;
+        aros-x86_64) echo "$file_output" | grep -q "ELF 64-bit LSB relocatable, x86-64.*AROS" || { echo "Skipping $platform: $file_output" >&2; return 0; } ;;
+        *) echo "Unknown expected type: $expected" >&2; exit 1 ;;
     esac
 
     drawer="Telegram-$suffix-$DATE_STAMP"
@@ -332,18 +279,18 @@ package_one() {
     mkdir -p "$dest"
 
     cp "$binary" "$dest/telegram-test"
-    write_launcher "$dest/TelegramAmiga"
-    # Use the richer 64x64 colour icon (originally the OS4 one) on every platform.
-    # It is a standard project icon (do_Type=4, default tool C:IconX, same launch)
-    # with an appended colour icon, and carries a planar fallback, so OS3.x /
-    # MorphOS / AROS / OS4 all show it. Falls back to the basic icon if missing.
-    if [ -f "$ROOT_DIR/assets/TelegramAmigaOS4.info" ]; then
-        cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$dest/TelegramAmiga.info"
-    else
-        cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
-    fi
+    # Launchers (shared with the repo). TelegramGUI's icon is flashless
+    # (DefaultTool = telegram-test, Stack 1 MiB): a double-click starts the GUI
+    # directly. TelegramTUI keeps the IconX console launcher.
+    cp "$ROOT_DIR/scripts/TelegramGUI" "$dest/TelegramGUI"
+    cp "$ROOT_DIR/scripts/TelegramTUI" "$dest/TelegramTUI"
+    cp "$ROOT_DIR/assets/TelegramGUI.info" "$dest/TelegramGUI.info"
+    cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$dest/TelegramTUI.info"
     cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/telegram-api.txt"
-    write_readme "$dest/README.txt" "$platform"
+
+    fill_platform_text "$platform"
+    write_manual_en "$dest/Manual-EN.txt" "$platform"
+    write_manual_it "$dest/Manuale-IT.txt" "$platform"
 
     if command -v zip >/dev/null 2>&1; then
         (cd "$PACKAGE_ROOT" && rm -f "$drawer.zip" && zip -qr "$drawer.zip" "$drawer")
