@@ -39,6 +39,11 @@ OBJ += $(OBJ_DIR)/third_party/puff/puff.o
 HEADERS += third_party/puff/puff.h
 endif
 
+# tg_chat_engine.h carries the per-platform chat-list cap (TG_CHAT_LIST_MAX);
+# without it in HEADERS a per-object incremental build after a cap change leaves
+# stale .o with mismatched struct offsets. (clean all stays the safe default.)
+HEADERS += include/tg_chat_engine.h
+
 .PHONY: all clean
 
 all: $(TARGET)
