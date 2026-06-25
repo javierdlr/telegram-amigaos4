@@ -133,6 +133,12 @@ typedef struct tg_gui_amiga_ctx {
     LONG avatar_pens[TG_GUI_AVATAR_COLORS];
     LONG avatar_obtained[TG_GUI_AVATAR_COLORS];
     int pens_held;
+    /* Off-screen double-buffer (flicker-free paint). buf_ok==0 => direct render. */
+    struct BitMap *buf_bm;   /* friend of window->RPort->BitMap; 0 if none */
+    struct RastPort buf_rp;  /* layerless RastPort over buf_bm */
+    int buf_w;               /* allocated buffer width  (== inner_w when valid) */
+    int buf_h;               /* allocated buffer height (== inner_h when valid) */
+    int buf_ok;              /* 1 iff buf_bm and buf_rp.Font are valid */
 } tg_gui_amiga_ctx;
 
 static int tg_gui_amiga_width(tg_gui_backend *backend)
@@ -376,34 +382,153 @@ static void tg_gui_window_apply_selection(tg_gui_state *state)
    the LockLayer autodoc forbids) and rport->Layer is the window's layer for our
    non-GIMMEZEROZERO window. The IDCMP_REFRESHWINDOW path does NOT use these: it
    already runs inside BeginRefresh()'s own layer lock. */
+/* Free the off-screen double-buffer if present. Safe when buf_bm==0. */
+static void tg_gui_amiga_buffer_free(tg_gui_amiga_ctx *ctx)
+{
+    if (ctx->buf_bm != 0) {
+        FreeBitMap(ctx->buf_bm);
+        ctx->buf_bm = 0;
+    }
+    ctx->buf_ok = 0;
+    ctx->buf_w = 0;
+    ctx->buf_h = 0;
+}
+
+/* (Re)allocate the off-screen buffer to the CURRENT inner_w/inner_h as a friend
+   of the window bitmap, so depth/format/placement match (chunky on a gfx card,
+   planar on AGA) and the blit is native. Frees any old buffer first. On any
+   failure leaves buf_ok==0 so the paint path falls back to direct rendering.
+   MUST run after tg_gui_amiga_measure_geometry() so the geometry is current. */
+static void tg_gui_amiga_buffer_alloc(tg_gui_amiga_ctx *ctx)
+{
+    struct BitMap *src;
+    struct BitMap *bm;
+    int w;
+    int h;
+
+    tg_gui_amiga_buffer_free(ctx);
+    if (ctx->window == 0 || ctx->rport == 0 || ctx->rport->BitMap == 0) {
+        return;
+    }
+    src = ctx->rport->BitMap;
+    w = ctx->inner_w;
+    h = ctx->inner_h;
+    if (w < 8 || h < 8) {
+        return; /* below the window minimum: skip buffering */
+    }
+    bm = AllocBitMap((ULONG)w, (ULONG)h,
+                     (ULONG)GetBitMapAttr(src, BMA_DEPTH), 0UL, src);
+    if (bm == 0) {
+        tg_gui_log("window: double-buffer alloc failed, direct render");
+        return;
+    }
+    InitRastPort(&ctx->buf_rp);
+    ctx->buf_rp.BitMap = bm;
+    /* InitRastPort does NOT inherit a font; text_width()/draw_text() read it from
+       ctx->rport (== &buf_rp during the off-screen pass), so set it now. */
+    SetFont(&ctx->buf_rp, ctx->rport->Font);
+    if (ctx->buf_rp.Font == 0) {
+        FreeBitMap(bm);
+        tg_gui_log("window: double-buffer has no font, direct render");
+        return;
+    }
+    ctx->buf_bm = bm;
+    ctx->buf_w = w;
+    ctx->buf_h = h;
+    ctx->buf_ok = 1;
+}
+
+/* Full-window paint. With the off-screen buffer, render the whole frame INTO it
+   (no layer, no lock), then copy it to the window in ONE BltBitMapRastPort under
+   the same LockLayerRom discipline the direct path used -- the window only ever
+   shows complete frames, so the clear-then-draw flicker is gone. Falls back to
+   the direct render when no buffer is available (alloc failed / window too
+   small). */
 static void tg_gui_window_paint(const tg_gui_state *state,
                                 tg_gui_backend *backend)
 {
     tg_gui_amiga_ctx *c = (tg_gui_amiga_ctx *)backend->context;
-    struct Layer *layer = (c != 0 && c->rport != 0) ? c->rport->Layer : 0;
+    struct Layer *layer;
 
-    if (layer != 0) {
-        LockLayerRom(layer);
+    if (c == 0 || c->rport == 0) {
+        return;
     }
-    tg_gui_paint(state, backend);
-    if (layer != 0) {
-        UnlockLayerRom(layer);
+    layer = c->rport->Layer;
+    if (c->buf_ok && c->buf_bm != 0) {
+        struct RastPort *saved_rport = c->rport;
+        int saved_ox = c->origin_x;
+        int saved_oy = c->origin_y;
+
+        c->rport = &c->buf_rp;
+        c->origin_x = 0;
+        c->origin_y = 0;
+        tg_gui_paint(state, backend);
+        c->rport = saved_rport;
+        c->origin_x = saved_ox;
+        c->origin_y = saved_oy;
+
+        if (layer != 0) {
+            LockLayerRom(layer);
+        }
+        BltBitMapRastPort(c->buf_bm, 0, 0, c->rport, saved_ox, saved_oy,
+                          c->inner_w, c->inner_h, 0xC0);
+        if (layer != 0) {
+            UnlockLayerRom(layer);
+        }
+    } else {
+        if (layer != 0) {
+            LockLayerRom(layer);
+        }
+        tg_gui_paint(state, backend);
+        if (layer != 0) {
+            UnlockLayerRom(layer);
+        }
     }
 }
 
-/* Caret-only blink repaint, same layer-lock discipline as tg_gui_window_paint(). */
+/* Caret-only blink repaint. With the buffer, re-render just the focused strip
+   into it (tg_gui_paint_caret touches only that strip), then blit the whole
+   already-current buffer -- correct and flicker-free; the blink only runs while a
+   field is focused, so the 2 Hz full copy is cheap. */
 static void tg_gui_window_paint_caret(const tg_gui_state *state,
                                       tg_gui_backend *backend)
 {
     tg_gui_amiga_ctx *c = (tg_gui_amiga_ctx *)backend->context;
-    struct Layer *layer = (c != 0 && c->rport != 0) ? c->rport->Layer : 0;
+    struct Layer *layer;
 
-    if (layer != 0) {
-        LockLayerRom(layer);
+    if (c == 0 || c->rport == 0) {
+        return;
     }
-    tg_gui_paint_caret(state, backend);
-    if (layer != 0) {
-        UnlockLayerRom(layer);
+    layer = c->rport->Layer;
+    if (c->buf_ok && c->buf_bm != 0) {
+        struct RastPort *saved_rport = c->rport;
+        int saved_ox = c->origin_x;
+        int saved_oy = c->origin_y;
+
+        c->rport = &c->buf_rp;
+        c->origin_x = 0;
+        c->origin_y = 0;
+        tg_gui_paint_caret(state, backend);
+        c->rport = saved_rport;
+        c->origin_x = saved_ox;
+        c->origin_y = saved_oy;
+
+        if (layer != 0) {
+            LockLayerRom(layer);
+        }
+        BltBitMapRastPort(c->buf_bm, 0, 0, c->rport, saved_ox, saved_oy,
+                          c->inner_w, c->inner_h, 0xC0);
+        if (layer != 0) {
+            UnlockLayerRom(layer);
+        }
+    } else {
+        if (layer != 0) {
+            LockLayerRom(layer);
+        }
+        tg_gui_paint_caret(state, backend);
+        if (layer != 0) {
+            UnlockLayerRom(layer);
+        }
     }
 }
 
@@ -1100,6 +1225,7 @@ int tg_gui_run_window(tg_gui_state *state)
     cmap = ctx.window->WScreen->ViewPort.ColorMap;
     tg_gui_amiga_obtain_pens(&ctx, cmap);
     tg_gui_amiga_measure_geometry(&ctx);
+    tg_gui_amiga_buffer_alloc(&ctx); /* off-screen double-buffer (flicker-free) */
 
     /* Right-button menu via GadTools (optional: a missing gadtools.library or a
        layout failure just leaves the window menu-less). */
@@ -1559,15 +1685,24 @@ int tg_gui_run_window(tg_gui_state *state)
                 }
             } else if (msg_class == IDCMP_NEWSIZE) {
                 tg_gui_amiga_measure_geometry(&ctx);
+                tg_gui_amiga_buffer_alloc(&ctx); /* realloc buffer to new size */
                 tg_gui_window_paint(state, &backend);
             } else if (msg_class == IDCMP_REFRESHWINDOW) {
                 /* BeginRefresh() already holds this window's layer locked for the
-                   whole bracket (it wraps the Layers BeginUpdate() locking
-                   protocol), so paint RAW here -- tg_gui_window_paint() would take
-                   a second, redundant LockLayerRom on top of it. */
+                   whole bracket, so no LockLayerRom here. With the buffer -- and
+                   only while it still matches the current size -- copy it into the
+                   exposed clip region (BltBitMapRastPort honours the ClipRects, so
+                   just the damaged area is touched). Otherwise re-render raw. */
                 BeginRefresh(ctx.window);
                 tg_gui_amiga_measure_geometry(&ctx);
-                tg_gui_paint(state, &backend);
+                if (ctx.buf_ok && ctx.buf_bm != 0 &&
+                    ctx.buf_w == ctx.inner_w && ctx.buf_h == ctx.inner_h) {
+                    BltBitMapRastPort(ctx.buf_bm, 0, 0, ctx.rport,
+                                      ctx.origin_x, ctx.origin_y,
+                                      ctx.inner_w, ctx.inner_h, 0xC0);
+                } else {
+                    tg_gui_paint(state, &backend);
+                }
                 EndRefresh(ctx.window, TRUE);
             } else if (msg_class == IDCMP_INTUITICKS) {
                 if (state->mode != TG_GUI_MODE_CHAT) {
@@ -1989,6 +2124,7 @@ int tg_gui_run_window(tg_gui_state *state)
         CloseLibrary(GadToolsBase);
         GadToolsBase = 0;
     }
+    tg_gui_amiga_buffer_free(&ctx); /* free the off-screen double-buffer */
     tg_gui_log("window: releasing pens");
     tg_gui_amiga_release_pens(&ctx, cmap);
     tg_gui_window_save_size(ctx.inner_w, ctx.inner_h);
