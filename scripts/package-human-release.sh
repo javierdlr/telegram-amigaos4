@@ -160,6 +160,13 @@ Emoji and styling
 Emoji are shown as classic text emoticons (:) :D <3) because Amiga fonts have no
 emoji glyphs; bold/italic/code formatting is rendered with the system font.
 
+Message times
+-------------
+Message times follow your system clock -- the client just mirrors it. If they
+look off by an hour, set your Amiga's clock (and summer time / DST) to your
+correct local time in the system preferences; many setups leave the clock on
+standard time year-round, which then reads one hour behind in summer.
+
 $notes_en
 
 Privacy and safety
@@ -236,6 +243,14 @@ Emoji e stile
 -------------
 Le emoji appaiono come emoticon testuali classiche (:) :D <3) perche' i font
 Amiga non hanno glifi emoji; grassetto/corsivo/code usano il font di sistema.
+
+Orari dei messaggi
+------------------
+Gli orari dei messaggi seguono l'orologio di sistema -- il client lo rispecchia e
+basta. Se sono sfasati di un'ora, imposta l'orologio dell'Amiga (e l'ora legale)
+all'ora locale corretta nelle preferenze di sistema; molte configurazioni
+lasciano l'orologio sull'ora solare tutto l'anno, e d'estate risulta un'ora
+indietro.
 
 $notes_it
 
