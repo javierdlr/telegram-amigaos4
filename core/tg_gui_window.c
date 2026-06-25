@@ -1054,7 +1054,14 @@ int tg_gui_run_window(tg_gui_state *state)
     tags[i].ti_Tag = WA_IDCMP;
     tags[i++].ti_Data = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_RAWKEY |
                         IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS |
-                        IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_MENUPICK;
+                        IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_MENUPICK
+#if defined(__amigaos4__)
+                        /* OS4: the wheel arrives as IDCMP_EXTENDEDMOUSE -- the only
+                           form QEMU's emulated mouse emits. Real hardware and the
+                           other platforms also send the NewMouse RAWKEY 0x7A/0x7B. */
+                        | IDCMP_EXTENDEDMOUSE
+#endif
+                        ;
     /* MOUSEMOVE is only delivered with REPORTMOUSE (or a follow-mouse gadget),
        so the scrollbar knob-drag needs this. The handler ignores moves unless a
        knob is grabbed, so the extra reports cost nothing when idle. */
@@ -1231,12 +1238,23 @@ int tg_gui_run_window(tg_gui_state *state)
             UWORD msg_qual;
             WORD mouse_x;
             WORD mouse_y;
+#if defined(__amigaos4__)
+            WORD wheel_y = 0;
+#endif
 
             msg_class = msg->Class;
             msg_code = msg->Code;
             msg_qual = msg->Qualifier;
             mouse_x = msg->MouseX;
             mouse_y = msg->MouseY;
+#if defined(__amigaos4__)
+            /* Read the wheel delta BEFORE ReplyMsg: the IntuiWheelData behind
+               IAddress is only guaranteed valid until the message is replied. */
+            if (msg_class == IDCMP_EXTENDEDMOUSE &&
+                msg_code == IMSGCODE_INTUIWHEELDATA && msg->IAddress != 0) {
+                wheel_y = ((struct IntuiWheelData *)msg->IAddress)->WheelY;
+            }
+#endif
             ReplyMsg((struct Message *)msg);
 
             /* Remember the last keystroke so the live poll can defer the
@@ -1245,6 +1263,18 @@ int tg_gui_run_window(tg_gui_state *state)
             if (msg_class == IDCMP_VANILLAKEY || msg_class == IDCMP_RAWKEY) {
                 last_key_time = time(0);
             }
+#if defined(__amigaos4__)
+            /* QEMU's emulated OS4 mouse delivers the wheel only as
+               IDCMP_EXTENDEDMOUSE, not the NewMouse RAWKEY 0x7A/0x7B that real
+               hardware + the other platforms send (iBrowse handles
+               IDCMP_EXTENDEDMOUSE, which is why it scrolls under QEMU and we did
+               not). Translate it into those RAWKEY codes so the wheel handler
+               below reuses all its panel/scroll logic unchanged. */
+            if (msg_class == IDCMP_EXTENDEDMOUSE && wheel_y != 0) {
+                msg_class = IDCMP_RAWKEY;
+                msg_code = (wheel_y < 0) ? (UWORD)0x7A : (UWORD)0x7B;
+            }
+#endif
 
             if (msg_class == IDCMP_CLOSEWINDOW) {
                 tg_gui_log("window: close gadget");
