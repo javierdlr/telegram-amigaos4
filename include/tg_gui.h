@@ -196,6 +196,18 @@ typedef struct tg_gui_state {
        pull the previous page -- needed for media-heavy chats the server returns a
        few messages at a time. Cleared once the chat start is reached. */
     int more_above;
+
+    /* Scroll-to-bottom button (Telegram's floating down-arrow), Amiga-adapted.
+       newest_dropped: set by the driver when a load-older prepend EVICTS the
+       true-newest tail from the full ring -- transcript_scroll==0 is then NOT the
+       real newest, so a jump must RELOAD. Cleared centrally in
+       tg_gui_session_open_chat (every newest-reload path funnels through it).
+       unread_below: live messages appended while NOT at the true bottom (the
+       button's badge). jb_*: button rect the painter caches each frame for the
+       event-loop hit-test (jb_w == 0 means no button this frame). */
+    int newest_dropped;
+    int unread_below;
+    int jb_x, jb_y, jb_w, jb_h;
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used
@@ -219,6 +231,7 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend);
 #define TG_GUI_HIT_INPUT (-2) /* the message input field: start composing */
 #define TG_GUI_HIT_SEND (-3)  /* the Send button */
 #define TG_GUI_HIT_SEARCH (-4) /* the sidebar search box: focus it */
+#define TG_GUI_HIT_JUMP_BOTTOM (-5) /* the floating scroll-to-bottom button */
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
 

@@ -153,6 +153,7 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
                 return;
             }
             state->message_count = TG_GUI_MAX_MESSAGES - 1; /* drop newest tail */
+            state->newest_dropped = 1; /* ring-bottom now stale -> jump must reload */
         }
         if (at > state->message_count) {
             at = state->message_count;
@@ -175,6 +176,13 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
         }
         message = &state->messages[state->message_count];
         state->message_count += 1;
+        /* A live message arrived while the user is NOT at the true newest: count
+           it for the scroll-to-bottom button's badge. (Own sends jump to the
+           bottom, so they are never "unread"; the painter resets this on a jump
+           and tg_gui_session_open_chat clears it on any reload.) */
+        if (state->transcript_scroll > 0 || state->newest_dropped) {
+            state->unread_below += 1;
+        }
     }
     memset(message, 0, sizeof(*message));
 

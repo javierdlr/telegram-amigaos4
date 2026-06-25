@@ -12177,9 +12177,15 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
             sizeof(tg_gui_session_state.current_peer_label)) != 0) {
         tg_gui_session_state.current_peer_label[0] = '\0';
     }
-    /* Fresh transcript for the newly opened chat. */
+    /* Fresh transcript for the newly opened chat: reset the ring AND the
+       scroll-to-bottom state. Every newest-reload path (open_selection, search
+       open, notification open) funnels through here, so clearing the flags in
+       this one spot guarantees no path leaves a stale newest_dropped or a phantom
+       unread badge. */
     if (tg_gui_session_state.gui_driver.state != 0) {
         tg_gui_session_state.gui_driver.state->message_count = 0;
+        tg_gui_session_state.gui_driver.state->newest_dropped = 0;
+        tg_gui_session_state.gui_driver.state->unread_below = 0;
     }
     tg_gui_session_state.last_seen_message_id = 0UL;
     /* Restart the read-receipt cursor: the loaded history starts as "sent",

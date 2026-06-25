@@ -1026,6 +1026,45 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
                        box_top + lh + 2, "Send", 4UL);
 }
 
+/* The floating "scroll to newest" button: an accent square with a filled
+   down-triangle (the bitmap fonts carry no arrow glyph and the backend has only
+   fill_rect/draw_text). When `unread` > 0 a small badge with the count (clamped
+   to "9+") sits at the top-right. */
+static void tg_gui_paint_jump_button(tg_gui_backend *backend, int x, int y,
+                                     int w, int h, int unread)
+{
+    int cx = x + (w / 2);
+    int arm = w / 4;             /* half-width of the triangle's top edge */
+    int ty = y + (h / 2) - (arm / 2);
+    int r;
+
+    backend->fill_rect(backend, TG_GUI_PEN_ACCENT, tg_gui_make_rect(x, y, w, h));
+    for (r = 0; r <= arm; ++r) {
+        int half = arm - r;      /* wide at top, narrowing to a point downward */
+        backend->fill_rect(backend, TG_GUI_PEN_ACCENT_TEXT,
+                           tg_gui_make_rect(cx - half, ty + r, (2 * half) + 1, 1));
+    }
+    if (unread > 0) {
+        char num[4];
+        int bw = backend->line_height(backend);
+        int bx = x + w - bw + 2;
+        int by = y - 2;
+
+        if (unread > 9) {
+            num[0] = '9';
+            num[1] = '+';
+            num[2] = '\0';
+        } else {
+            num[0] = (char)('0' + unread);
+            num[1] = '\0';
+        }
+        backend->fill_rect(backend, TG_GUI_PEN_BADGE,
+                           tg_gui_make_rect(bx, by, bw, bw));
+        backend->draw_text(backend, TG_GUI_PEN_BADGE_TEXT, bx + 2,
+                           by + bw - 2, num, (unsigned long)strlen(num));
+    }
+}
+
 static void tg_gui_paint_main(const tg_gui_state *state,
                               tg_gui_backend *backend, int sidebar_w,
                               int width, int content_h, int lh)
@@ -1137,6 +1176,36 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                 st->sb_tr_max = max_scroll;
             } else {
                 st->sb_tr_max = 0;
+            }
+            /* Scroll-to-bottom button: draw only when NOT at the true newest AND
+               a REAL scroll exists. at_true_bottom = (transcript_scroll==0 &&
+               !newest_dropped). The phantom pull-older range (real_max==0,
+               forced=lh) does NOT count -- there the newest is already pinned to
+               the visual bottom, so a jump button would be noise. When the newest
+               was evicted by paging, real_max>0 (the stale ring overflows), so the
+               button correctly appears even at transcript_scroll==0. */
+            {
+                int at_true_bottom = (st->transcript_scroll == 0 &&
+                                      !st->newest_dropped);
+                if (!at_true_bottom && real_max > 0) {
+                    int jbw = lh + 8;
+                    int jbh = lh + 8;
+                    int gap = 4;
+                    int jbx = width - TG_GUI_SCROLLBAR_W - jbw - gap;
+                    int jby = transcript_bottom - jbh - gap;
+
+                    if (jbx < area_x) {
+                        jbx = area_x;
+                    }
+                    tg_gui_paint_jump_button(backend, jbx, jby, jbw, jbh,
+                                             st->unread_below);
+                    st->jb_x = jbx;
+                    st->jb_y = jby;
+                    st->jb_w = jbw;
+                    st->jb_h = jbh;
+                } else {
+                    st->jb_w = 0;
+                }
             }
         }
     }

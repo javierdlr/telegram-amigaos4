@@ -467,6 +467,40 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
     tg_gui_session_persist_unread();
 }
 
+/* Jump the open transcript to the true newest message (Telegram's down-arrow).
+   If the ring-bottom is STALE (newest_dropped: a load-older paging evicted the
+   true-newest tail), the only way back is to RELOAD via open_selection -- it
+   re-fetches the newest history, exactly what re-entering the chat does, and
+   tg_gui_session_open_chat then clears the flags centrally. Otherwise the newest
+   is already in the ring, so just re-pin (transcript_scroll = 0). */
+static void tg_gui_window_jump_to_bottom(tg_gui_state *state,
+                                         tg_gui_backend *backend,
+                                         int *older_exhausted,
+                                         int *older_cooldown)
+{
+    if (state == 0) {
+        return;
+    }
+    if (state->newest_dropped && state->selected_chat >= 0 &&
+        state->selected_chat < state->chat_count && tg_gui_session_is_open()) {
+        /* Reload path. open_selection on the SAME chat does not change
+           selected_chat, so the loop's open-time re-arm of the paging latches
+           would not fire -- reset them here. */
+        tg_gui_window_open_selection(state, state->selected_chat, backend);
+        if (older_exhausted != 0) {
+            *older_exhausted = 0;
+        }
+        if (older_cooldown != 0) {
+            *older_cooldown = 0;
+        }
+    } else {
+        state->transcript_scroll = 0;
+        state->unread_below = 0;
+        state->newest_dropped = 0;
+        tg_gui_window_paint(state, backend);
+    }
+}
+
 /* Bounded copy into a fixed UI buffer (status/title) -- never overflows even if
    a future string grows past the field. */
 static void tg_gui_window_copy(char *dest, unsigned long size, const char *src)
@@ -1271,6 +1305,9 @@ int tg_gui_run_window(tg_gui_state *state)
                     if (state->input[0] != '\0') {
                         if (tg_gui_session_send(state->input, stdout) == 0) {
                             tg_gui_history_add(state, state->input);
+                            tg_gui_window_jump_to_bottom(state, &backend,
+                                                         &older_exhausted,
+                                                         &older_cooldown);
                         }
                         state->input[0] = '\0';
                     }
@@ -1628,6 +1665,16 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->drag_src = -1;
                         state->drag_active = 0;
                     }
+                } else if (msg_code == SELECTDOWN && state->jb_w > 0 &&
+                           hx >= state->jb_x &&
+                           hx < state->jb_x + state->jb_w &&
+                           hy >= state->jb_y &&
+                           hy < state->jb_y + state->jb_h) {
+                    /* Floating scroll-to-bottom button: jump to the true newest.
+                       jb_w == 0 when the painter did not draw it this frame, so a
+                       click in that area then falls through to the normal hits. */
+                    tg_gui_window_jump_to_bottom(state, &backend,
+                                                 &older_exhausted, &older_cooldown);
                 } else if (msg_code == SELECTDOWN && state->sb_tr_max > 0 &&
                            hx >= state->sb_tr_x &&
                            hx < state->sb_tr_x + TG_GUI_SCROLLBAR_W &&
@@ -1721,6 +1768,9 @@ int tg_gui_run_window(tg_gui_state *state)
                         if (state->input[0] != '\0') {
                             if (tg_gui_session_send(state->input, stdout) == 0) {
                                 tg_gui_history_add(state, state->input);
+                                tg_gui_window_jump_to_bottom(state, &backend,
+                                                             &older_exhausted,
+                                                             &older_cooldown);
                             }
                             state->input[0] = '\0';
                         }
