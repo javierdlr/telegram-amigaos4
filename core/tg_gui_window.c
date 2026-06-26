@@ -108,7 +108,8 @@ static const tg_gui_rgb tg_gui_dark_pens[TG_GUI_PEN_COUNT] = {
     {0xf0, 0xf6, 0xff}, /* ACCENT_TEXT */
     {0x1a, 0x2c, 0x44}, /* SELECT */
     {0x18, 0x5f, 0xa5}, /* BADGE */
-    {0xe6, 0xf1, 0xfb}  /* BADGE_TEXT */
+    {0xe6, 0xf1, 0xfb}, /* BADGE_TEXT */
+    {0x4d, 0xc2, 0xff}  /* READ - read-receipt double check, pops on the blue bubble */
 };
 
 static const tg_gui_rgb tg_gui_avatar_rgb[TG_GUI_AVATAR_COLORS] = {

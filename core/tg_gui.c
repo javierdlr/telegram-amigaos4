@@ -608,20 +608,95 @@ static void tg_gui_draw_markup(tg_gui_backend *backend, int pen, int x,
     }
 }
 
-/* The read-receipt mark drawn after an own message's timestamp. ASCII, since
-   the bitmap fonts carry no Unicode check glyph: "v" = delivered (sent), "vv" =
-   read by the peer (seen). Empty for incoming messages and unsent echoes. */
-static const char *tg_gui_read_mark(const tg_gui_message *message)
+/* The read-receipt mark drawn after an own message's timestamp. The bitmap fonts
+   carry no check glyph, so we draw a real tick by hand (like the jump button's
+   triangle): 1 check = sent (in the cloud), 2 = read by the peer. Telegram has no
+   distinct "delivered to device" state for cloud chats, so there is no third
+   mark. Returns 0 (none) / 1 (sent) / 2 (read) -- 0 for incoming + unsent echoes. */
+static int tg_gui_check_count(const tg_gui_message *message)
 {
     if (message->is_own) {
         if (message->read_state == TG_GUI_READ_SEEN) {
-            return "vv";
+            return 2;
         }
         if (message->read_state == TG_GUI_READ_SENT) {
-            return "v";
+            return 1;
         }
     }
-    return "";
+    return 0;
+}
+
+/* One check's side length for a given line height (a tick is ~square). */
+static int tg_gui_check_size(int lh)
+{
+    int ch = lh - 3;
+
+    return (ch < 5) ? 5 : ch;
+}
+
+/* Pixel width the status line must reserve for `count` checks: the second check
+   overlaps the first by half (Telegram-style), so two are 1.5 ticks wide. */
+static int tg_gui_check_width(int count, int lh)
+{
+    int ch = tg_gui_check_size(lh);
+
+    if (count <= 0) {
+        return 0;
+    }
+    return (count >= 2) ? (ch + ((ch + 1) / 2)) : ch;
+}
+
+/* A short axis-aligned-stepped line (the backend has only fill_rect / draw_text),
+   `t` px thick -- enough to render a clean tick at status-line sizes. */
+static void tg_gui_draw_seg(tg_gui_backend *backend, int pen, int x0, int y0,
+                            int x1, int y1, int t)
+{
+    int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
+    int dy = (y1 > y0) ? (y1 - y0) : (y0 - y1);
+    int steps = (dx > dy) ? dx : dy;
+    int i;
+
+    if (steps < 1) {
+        steps = 1;
+    }
+    for (i = 0; i <= steps; ++i) {
+        int x = x0 + (((x1 - x0) * i) / steps);
+        int y = y0 + (((y1 - y0) * i) / steps);
+
+        backend->fill_rect(backend, pen, tg_gui_make_rect(x, y, t, t));
+    }
+}
+
+/* One tick with its top-left at (x, top), side `ch`: a short down-right arm into
+   the bottom vertex, then a long up-right arm. */
+static void tg_gui_draw_one_check(tg_gui_backend *backend, int pen, int x,
+                                  int top, int ch, int t)
+{
+    int vx = x + ((ch * 2) / 5); /* the bottom vertex, ~0.4 from the left */
+    int vy = top + ch - 1;
+
+    tg_gui_draw_seg(backend, pen, x, top + ((ch + 1) / 2), vx, vy, t);
+    tg_gui_draw_seg(backend, pen, vx, vy, x + ch - 1, top, t);
+}
+
+/* The receipt mark sitting on the status baseline: one tick for sent, two for
+   read. The read pair is drawn in the azure read pen so it changes colour when
+   the peer reads the message (the sent tick uses the dim timestamp pen). */
+static void tg_gui_draw_checks(tg_gui_backend *backend, int x, int baseline,
+                               int lh, int count, int sent_pen)
+{
+    int ch = tg_gui_check_size(lh);
+    int t = (ch >= 9) ? 2 : 1;
+    int top = baseline - ch;
+    int pen = (count >= 2) ? TG_GUI_PEN_READ : sent_pen;
+
+    if (count <= 0) {
+        return;
+    }
+    tg_gui_draw_one_check(backend, pen, x, top, ch, t);
+    if (count >= 2) {
+        tg_gui_draw_one_check(backend, pen, x + ((ch + 1) / 2), top, ch, t);
+    }
 }
 
 static int tg_gui_paint_bubble(tg_gui_backend *backend,
@@ -647,7 +722,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     int time_w;
     int has_reply;
     int reply_h;
-    const char *read_mark;
+    int check_count;
     int read_mark_w;
     int has_mark;
     int has_status;
@@ -682,10 +757,9 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
                       : 0;
     /* The bottom line carries the timestamp and, for own messages, the read
        receipt mark to its right (a 4px gap between them when both show). */
-    read_mark = tg_gui_read_mark(message);
-    has_mark = (read_mark[0] != '\0');
-    read_mark_w = has_mark ? backend->text_width(backend, read_mark,
-                                                 (unsigned long)strlen(read_mark))
+    check_count = tg_gui_check_count(message);
+    has_mark = (check_count > 0);
+    read_mark_w = has_mark ? tg_gui_check_width(check_count, lh)
                            : 0;
     has_status = has_time || has_mark;
     status_w = time_w + read_mark_w + ((has_time && has_mark) ? 4 : 0);
@@ -815,9 +889,8 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
                 int mark_x;
 
                 mark_x = status_x + time_w + ((has_time) ? 4 : 0);
-                backend->draw_text(backend, time_pen, mark_x, status_baseline,
-                                   read_mark,
-                                   (unsigned long)strlen(read_mark));
+                tg_gui_draw_checks(backend, mark_x, status_baseline, lh,
+                                   check_count, time_pen);
             }
         }
     }
@@ -861,7 +934,7 @@ static int tg_gui_message_height(tg_gui_backend *backend,
     has_time = (message->time[0] != '\0');
     /* The status line also shows for an own message's read-receipt mark even
        when it has no timestamp (the optimistic echo). */
-    has_status = has_time || (tg_gui_read_mark(message)[0] != '\0');
+    has_status = has_time || (tg_gui_check_count(message) > 0);
     reply_h = (message->reply_text[0] != '\0') ? lh : 0;
     /* bubble_h + 6, mirroring tg_gui_paint_bubble's return (incl. reply line). */
     return header_h + reply_h + (line_count * lh) + (has_status ? lh : 0) + 6 + 6;
@@ -1713,7 +1786,7 @@ typedef struct tg_gui_record {
     int min_y;
     int max_x;
     int max_y;
-    int read_marks; /* draw_text calls that emitted a "v"/"vv" receipt mark */
+    int read_marks; /* set when a fill in the READ pen (the read double-check) drew */
     const char *forbidden; /* a string that must NEVER be drawn (e.g. a password) */
     int forbidden_hits;    /* how many draw_text calls contained `forbidden` */
 } tg_gui_record;
@@ -1762,9 +1835,14 @@ static void tg_gui_rec_fill(tg_gui_backend *backend, int pen, tg_gui_rect rect)
 {
     tg_gui_record *record;
 
-    (void)pen;
     record = (tg_gui_record *)backend->context;
     record->fills += 1;
+    /* The read double-check is the only thing drawn in the azure READ pen, so a
+       fill in that pen proves the receipt mark rendered (its many tick segments
+       just set the flag idempotently). */
+    if (pen == TG_GUI_PEN_READ) {
+        record->read_marks = 1;
+    }
     tg_gui_rec_track(record, rect.x, rect.y);
     tg_gui_rec_track(record, rect.x + rect.w, rect.y + rect.h);
 }
@@ -1790,17 +1868,8 @@ static void tg_gui_rec_text(tg_gui_backend *backend, int pen, int x,
     (void)pen;
     record = (tg_gui_record *)backend->context;
     record->texts += 1;
-    /* A bare "v" / "vv" run is the read-receipt mark (no other demo string is
-       just v's), so count it to prove the mark reaches the backend. */
-    if (text != 0 && length >= 1UL && length <= 2UL) {
-        unsigned long n;
-
-        for (n = 0UL; n < length && text[n] == 'v'; ++n) {
-        }
-        if (n == length) {
-            record->read_marks += 1;
-        }
-    }
+    /* The read receipt is no longer text -- it is drawn as ticks in the READ pen
+       and counted in tg_gui_rec_fill. */
     /* Guard that a forbidden string (a masked password) never reaches draw. */
     if (record->forbidden != 0 && record->forbidden[0] != '\0' && text != 0) {
         unsigned long flen;

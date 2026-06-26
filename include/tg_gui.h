@@ -27,7 +27,8 @@
 #define TG_GUI_PEN_SELECT 6      /* selected chat-row tint */
 #define TG_GUI_PEN_BADGE 7       /* unread badge fill */
 #define TG_GUI_PEN_BADGE_TEXT 8  /* unread badge number */
-#define TG_GUI_PEN_COUNT 9
+#define TG_GUI_PEN_READ 9        /* read-receipt double check (azure on own bubble) */
+#define TG_GUI_PEN_COUNT 10
 
 /* Distinct avatar / sender tints, resolved by the backend like the pens. */
 #define TG_GUI_AVATAR_COLORS 6
