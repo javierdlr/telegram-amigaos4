@@ -354,6 +354,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_peer_dialogs(
 tg_mtproto_tl_status tg_mtproto_build_messages_send_self(
     tg_mtproto_tl_writer *writer,
     const char *message,
+    unsigned long reply_to_msg_id,
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 
@@ -364,6 +365,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_user(
     unsigned long access_hash_hi,
     unsigned long access_hash_lo,
     const char *message,
+    unsigned long reply_to_msg_id,
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 
@@ -376,6 +378,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
     unsigned long access_hash_lo,
     int has_access_hash,
     const char *message,
+    unsigned long reply_to_msg_id,
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 

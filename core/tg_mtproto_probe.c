@@ -7732,7 +7732,7 @@ int tg_mtproto_auth_send_self(const char *host,
     random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
 
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if (tg_mtproto_build_messages_send_self(&writer, message, random_id_hi,
+    if (tg_mtproto_build_messages_send_self(&writer, message, 0UL, random_id_hi,
                                             random_id_lo) !=
         TG_MTPROTO_TL_OK) {
         fprintf(stream, "%s: query-build-failed\n", label);
@@ -7829,7 +7829,7 @@ int tg_mtproto_auth_send_peer_file(const char *host,
     if (tg_mtproto_build_messages_send_peer(
             &writer, peer_constructor, peer_id_hi, peer_id_lo,
             access_hash_hi, access_hash_lo, has_access_hash, message,
-            random_id_hi, random_id_lo) != TG_MTPROTO_TL_OK) {
+            0UL, random_id_hi, random_id_lo) != TG_MTPROTO_TL_OK) {
         fprintf(stream, "%s: query-build-failed\n", label);
         return 2;
     }
@@ -7876,6 +7876,7 @@ static int tg_mtproto_auth_send_peer_on_context(
     const char *peer_cache_file,
     const char *peer_index_text,
     const char *message,
+    unsigned long reply_to_msg_id,
     unsigned long *sent_message_id,
     FILE *stream)
 {
@@ -7929,7 +7930,7 @@ static int tg_mtproto_auth_send_peer_on_context(
     if (tg_mtproto_build_messages_send_peer(
             &writer, peer_constructor, peer_id_hi, peer_id_lo,
             access_hash_hi, access_hash_lo, has_access_hash, message,
-            random_id_hi, random_id_lo) != TG_MTPROTO_TL_OK) {
+            reply_to_msg_id, random_id_hi, random_id_lo) != TG_MTPROTO_TL_OK) {
         fprintf(stream, "%s: query-build-failed\n", label);
         return 2;
     }
@@ -10837,7 +10838,7 @@ int tg_mtproto_auth_chat_file(const char *host,
 #endif
             rc = tg_mtproto_auth_send_peer_on_context(
                 host, port, api_id, auth_file, dc_id_text, &chat_context,
-                peer_cache_file, peer_index, send_text, &sent_message_id,
+                peer_cache_file, peer_index, send_text, 0UL, &sent_message_id,
                 quiet);
         }
         if (rc == 0) {
@@ -12186,6 +12187,10 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.gui_driver.state->message_count = 0;
         tg_gui_session_state.gui_driver.state->newest_dropped = 0;
         tg_gui_session_state.gui_driver.state->unread_below = 0;
+        /* A reply target points into the OLD chat -- never carry it across. */
+        tg_gui_session_state.gui_driver.state->reply_to_id = 0UL;
+        tg_gui_session_state.gui_driver.state->reply_sender[0] = '\0';
+        tg_gui_session_state.gui_driver.state->reply_snippet[0] = '\0';
     }
     tg_gui_session_state.last_seen_message_id = 0UL;
     /* Restart the read-receipt cursor: the loaded history starts as "sent",
@@ -12691,7 +12696,8 @@ int tg_gui_session_search_open(const char *query, FILE *stream)
     return tg_gui_session_search_open_result(0, stream) == 0 ? 0 : 1;
 }
 
-int tg_gui_session_send(const char *text, FILE *stream)
+int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
+                        FILE *stream)
 {
     FILE *quiet;
     unsigned long sent_id;
@@ -12728,7 +12734,8 @@ int tg_gui_session_send(const char *text, FILE *stream)
         tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
         tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
         tg_gui_session_state.peer_cache_file,
-        tg_gui_session_state.current_peer_index, send_text, &sent_id, quiet);
+        tg_gui_session_state.current_peer_index, send_text, reply_to_msg_id,
+        &sent_id, quiet);
     if (rc == 0) {
         /* Show the sent message at once, optimistically, with no extra network
            round-trip -- a confirm-poll is slow and unreliable on MorphOS (it
@@ -12737,7 +12744,12 @@ int tg_gui_session_send(const char *text, FILE *stream)
            UTF-8 copy would double-encode into mojibake. The open-chat poll uses
            include_outgoing=0, so it is never re-fetched into a duplicate. */
         tg_gui_driver_append_own(&tg_gui_session_state.gui_driver, text,
-                                 tg_gui_session_state.own_label);
+                                 tg_gui_session_state.own_label,
+                                 (reply_to_msg_id != 0UL &&
+                                  tg_gui_session_state.gui_driver.state != 0)
+                                     ? tg_gui_session_state.gui_driver.state
+                                           ->reply_snippet
+                                     : 0);
     }
     (void)sent_id;
     tg_net_set_connect_timeout_seconds(prev_timeout);

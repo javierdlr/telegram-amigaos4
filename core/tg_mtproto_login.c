@@ -28,6 +28,12 @@
 #define TG_MESSAGES_PEER_DIALOGS_CONSTRUCTOR 0x3371c354UL
 #define TG_MESSAGES_GET_HISTORY_CONSTRUCTOR 0x4423e6c5UL
 #define TG_MESSAGES_SEND_MESSAGE_CONSTRUCTOR 0xfe05dc9aUL
+/* inputReplyToMessage, layer 214 -- verified on core.telegram.org/constructor/
+   inputReplyToMessage (current schema page self-reports Layer 214). For a plain
+   reply we serialize flags=0 + reply_to_msg_id only, so the newest fields
+   (monoforum/todo/quote) never hit the wire; only this 4-byte ctor id matters,
+   and a wrong id surfaces as a visible RPC error (non-destructive). */
+#define TG_INPUT_REPLY_TO_MESSAGE_CONSTRUCTOR 0x869fbe10UL
 #define TG_CONTACTS_RESOLVE_USERNAME_CONSTRUCTOR 0xf93ccba3UL
 #define TG_CONTACTS_RESOLVE_USERNAME_FLAGS_CONSTRUCTOR 0x725afbbcUL
 #define TG_CONTACTS_SEARCH_CONSTRUCTOR 0x11f812d8UL
@@ -1038,9 +1044,28 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_history_user(
         access_hash_hi, access_hash_lo, 1, 0UL, limit);
 }
 
+/* inputReplyToMessage#869fbe10 flags:# reply_to_msg_id:int ... (layer 214).
+   Plain reply: flags=0, so no top_msg_id/quote/monoforum/todo are serialized. */
+static tg_mtproto_tl_status tg_write_input_reply_to_message(
+    tg_mtproto_tl_writer *writer, unsigned long reply_to_msg_id)
+{
+    tg_mtproto_tl_status status;
+
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_INPUT_REPLY_TO_MESSAGE_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* flags = 0 */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, reply_to_msg_id);
+    }
+    return status;
+}
+
 tg_mtproto_tl_status tg_mtproto_build_messages_send_self(
     tg_mtproto_tl_writer *writer,
     const char *message,
+    unsigned long reply_to_msg_id,
     unsigned long random_id_hi,
     unsigned long random_id_lo)
 {
@@ -1052,10 +1077,14 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_self(
     status = tg_mtproto_tl_write_u32(writer,
                                      TG_MESSAGES_SEND_MESSAGE_CONSTRUCTOR);
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_mtproto_tl_write_u32(writer, 0UL);
+        status = tg_mtproto_tl_write_u32(writer,
+                                         (reply_to_msg_id != 0UL) ? 1UL : 0UL);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u32(writer, TG_INPUT_PEER_SELF_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK && reply_to_msg_id != 0UL) {
+        status = tg_write_input_reply_to_message(writer, reply_to_msg_id);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_write_string(writer, message);
@@ -1073,6 +1102,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_user(
     unsigned long access_hash_hi,
     unsigned long access_hash_lo,
     const char *message,
+    unsigned long reply_to_msg_id,
     unsigned long random_id_hi,
     unsigned long random_id_lo)
 {
@@ -1084,11 +1114,15 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_user(
     status = tg_mtproto_tl_write_u32(writer,
                                      TG_MESSAGES_SEND_MESSAGE_CONSTRUCTOR);
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_mtproto_tl_write_u32(writer, 0UL);
+        status = tg_mtproto_tl_write_u32(writer,
+                                         (reply_to_msg_id != 0UL) ? 1UL : 0UL);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_write_input_peer_user(writer, user_id_hi, user_id_lo,
                                           access_hash_hi, access_hash_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK && reply_to_msg_id != 0UL) {
+        status = tg_write_input_reply_to_message(writer, reply_to_msg_id);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_write_string(writer, message);
@@ -1108,6 +1142,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
     unsigned long access_hash_lo,
     int has_access_hash,
     const char *message,
+    unsigned long reply_to_msg_id,
     unsigned long random_id_hi,
     unsigned long random_id_lo)
 {
@@ -1119,12 +1154,16 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
     status = tg_mtproto_tl_write_u32(writer,
                                      TG_MESSAGES_SEND_MESSAGE_CONSTRUCTOR);
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_mtproto_tl_write_u32(writer, 0UL);
+        status = tg_mtproto_tl_write_u32(writer,
+                                         (reply_to_msg_id != 0UL) ? 1UL : 0UL);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_write_input_peer(writer, peer_constructor, peer_id_hi,
                                      peer_id_lo, access_hash_hi,
                                      access_hash_lo, has_access_hash);
+    }
+    if (status == TG_MTPROTO_TL_OK && reply_to_msg_id != 0UL) {
+        status = tg_write_input_reply_to_message(writer, reply_to_msg_id);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_write_string(writer, message);
@@ -4157,7 +4196,7 @@ int tg_mtproto_login_self_test(void)
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if (tg_mtproto_build_messages_send_self(&writer, "hi", 0x11223344UL,
+    if (tg_mtproto_build_messages_send_self(&writer, "hi", 0UL, 0x11223344UL,
                                             0x55667788UL) !=
             TG_MTPROTO_TL_OK ||
         writer.length != 24UL ||
@@ -4172,7 +4211,7 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_send_user(
             &writer, 0x01020304UL, 0x05060708UL, 0x11121314UL,
-            0x15161718UL, "hi", 0x11223344UL, 0x55667788UL) !=
+            0x15161718UL, "hi", 0UL, 0x11223344UL, 0x55667788UL) !=
             TG_MTPROTO_TL_OK ||
         writer.length != 40UL ||
         query[0] != 0x9aU || query[1] != 0xdcU ||
@@ -4188,7 +4227,7 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_send_peer(
             &writer, TG_PEER_CHAT_CONSTRUCTOR, 0x01020304UL, 0x05060708UL,
-            0UL, 0UL, 0, "hi", 0x11223344UL, 0x55667788UL) !=
+            0UL, 0UL, 0, "hi", 0UL, 0x11223344UL, 0x55667788UL) !=
             TG_MTPROTO_TL_OK ||
         writer.length != 32UL ||
         query[8] != 0xb9U || query[9] != 0x5cU ||
@@ -4203,7 +4242,7 @@ int tg_mtproto_login_self_test(void)
     if (tg_mtproto_build_messages_send_peer(
             &writer, TG_PEER_CHANNEL_CONSTRUCTOR, 0x01020304UL,
             0x05060708UL, 0x11121314UL, 0x15161718UL, 1, "hi",
-            0x11223344UL, 0x55667788UL) != TG_MTPROTO_TL_OK ||
+            0UL, 0x11223344UL, 0x55667788UL) != TG_MTPROTO_TL_OK ||
         writer.length != 40UL ||
         query[8] != 0xfcU || query[9] != 0xbbU ||
         query[10] != 0xbcU || query[11] != 0x27U ||
@@ -4211,6 +4250,26 @@ int tg_mtproto_login_self_test(void)
         query[30] != 'i' ||
         query[32] != 0x88U || query[33] != 0x77U ||
         query[34] != 0x66U || query[35] != 0x55U) {
+        return 2;
+    }
+    /* REPLY: flags bit 0 set + inputReplyToMessage#869fbe10 (flags=0,
+       reply_to_msg_id=0x0A0B0C0D) inserted between peer and message -> 44 bytes.
+       Pins the layer-214 ctor id + the wire position of the reply. */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_send_peer(
+            &writer, TG_PEER_CHAT_CONSTRUCTOR, 0x01020304UL, 0x05060708UL,
+            0UL, 0UL, 0, "hi", 0x0A0B0C0DUL, 0x11223344UL, 0x55667788UL) !=
+            TG_MTPROTO_TL_OK ||
+        writer.length != 44UL ||
+        query[4] != 0x01U || query[5] != 0x00U ||            /* flags bit 0 */
+        query[8] != 0xb9U || query[11] != 0x35U ||           /* inputPeerChat */
+        query[20] != 0x10U || query[21] != 0xbeU ||
+        query[22] != 0x9fU || query[23] != 0x86U ||          /* inputReplyToMessage */
+        query[24] != 0x00U ||                                /* reply flags 0 */
+        query[28] != 0x0dU || query[29] != 0x0cU ||
+        query[30] != 0x0bU || query[31] != 0x0aU ||          /* reply_to_msg_id LE */
+        query[32] != 0x02U || query[33] != 'h' || query[34] != 'i' ||
+        query[36] != 0x88U || query[39] != 0x55U) {          /* random_id lo */
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));

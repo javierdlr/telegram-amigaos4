@@ -235,7 +235,7 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
 }
 
 void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
-                              const char *own_label)
+                              const char *own_label, const char *reply_snippet)
 {
     tg_gui_state *state;
     tg_gui_message *message;
@@ -265,6 +265,12 @@ void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
     /* Optimistic echo: delivered ("sent"), no server id yet so it cannot be
        promoted to "seen" until the real message arrives via history. */
     message->read_state = TG_GUI_READ_SENT;
+    /* Mirror the reply quote locally so the sent message shows its "> ..." line
+       (own messages are never re-fetched, so the echo is the only local copy). */
+    if (reply_snippet != 0 && reply_snippet[0] != '\0') {
+        tg_gui_driver_copy(message->reply_text, sizeof(message->reply_text),
+                           reply_snippet);
+    }
     /* No server timestamp on the optimistic echo (memset left time empty). */
     state->message_count += 1;
 }
@@ -781,7 +787,7 @@ int tg_gui_driver_self_test(void)
             return 2;
         }
         /* The optimistic echo is delivered ("sent") with no server id yet. */
-        tg_gui_driver_append_own(&rg, "eco", "Io");
+        tg_gui_driver_append_own(&rg, "eco", "Io", 0);
         if (rs.messages[rs.message_count - 1].read_state != TG_GUI_READ_SENT ||
             rs.messages[rs.message_count - 1].id != 0UL) {
             puts("gui driver self-test: optimistic echo state wrong");

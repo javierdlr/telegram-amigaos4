@@ -1459,8 +1459,12 @@ int tg_gui_run_window(tg_gui_state *state)
                    cancels, BACKSPACE deletes. */
                 if (msg_code == 13 || msg_code == 10) {
                     if (state->input[0] != '\0') {
-                        if (tg_gui_session_send(state->input, stdout) == 0) {
+                        if (tg_gui_session_send(state->input, state->reply_to_id,
+                                                stdout) == 0) {
                             tg_gui_history_add(state, state->input);
+                            state->reply_to_id = 0UL; /* clear only on success */
+                            state->reply_sender[0] = '\0';
+                            state->reply_snippet[0] = '\0';
                             tg_gui_window_jump_to_bottom(state, &backend,
                                                          &older_exhausted,
                                                          &older_cooldown);
@@ -1483,6 +1487,10 @@ int tg_gui_run_window(tg_gui_state *state)
                     state->input_caret = 0;
                     state->history_pos = -1;
                     state->composing = 0;
+                    /* Leaving the composer drops any pending reply target too. */
+                    state->reply_to_id = 0UL;
+                    state->reply_sender[0] = '\0';
+                    state->reply_snippet[0] = '\0';
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_window_paint(state, &backend);
@@ -1931,8 +1939,13 @@ int tg_gui_run_window(tg_gui_state *state)
                         tg_gui_window_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
                         if (state->input[0] != '\0') {
-                            if (tg_gui_session_send(state->input, stdout) == 0) {
+                            if (tg_gui_session_send(state->input,
+                                                    state->reply_to_id,
+                                                    stdout) == 0) {
                                 tg_gui_history_add(state, state->input);
+                                state->reply_to_id = 0UL; /* clear on success */
+                                state->reply_sender[0] = '\0';
+                                state->reply_snippet[0] = '\0';
                                 tg_gui_window_jump_to_bottom(state, &backend,
                                                              &older_exhausted,
                                                              &older_cooldown);
@@ -1968,6 +1981,42 @@ int tg_gui_run_window(tg_gui_state *state)
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                "Type - ENTER sends, ESC cancels");
                         tg_gui_window_paint(state, &backend);
+                    } else if (hit == TG_GUI_HIT_REPLY_CANCEL) {
+                        /* The composer's reply header "X": drop the reply target
+                           (composer shrinks, transcript grows back). */
+                        state->reply_to_id = 0UL;
+                        state->reply_sender[0] = '\0';
+                        state->reply_snippet[0] = '\0';
+                        tg_gui_window_paint(state, &backend);
+                    } else if (hit <= TG_GUI_HIT_MESSAGE_BASE &&
+                               tg_gui_session_is_open() && !state->in_search) {
+                        /* Click a transcript bubble to reply to it: latch its id +
+                           a "<sender>: <snippet>" reference and focus the composer
+                           so the next send carries reply_to_msg_id. */
+                        int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
+
+                        if (mi >= 0 && mi < state->message_count) {
+                            const tg_gui_message *m = &state->messages[mi];
+
+                            if (!m->is_system && m->id != 0UL) {
+                                state->reply_to_id = m->id;
+                                tg_gui_window_copy(state->reply_sender,
+                                                   sizeof(state->reply_sender),
+                                                   m->sender);
+                                tg_gui_window_copy(state->reply_snippet,
+                                                   sizeof(state->reply_snippet),
+                                                   m->text);
+                                state->search_active = 0;
+                                state->composing = 1;
+                                state->input_caret = (int)strlen(state->input);
+                                state->cursor_on = 1;
+                                caret_ticks = 0;
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Reply - ENTER sends, ESC cancels");
+                                tg_gui_window_paint(state, &backend);
+                            }
+                        }
                     }
                 }
             } else if (msg_class == IDCMP_MOUSEMOVE) {

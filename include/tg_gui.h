@@ -208,6 +208,16 @@ typedef struct tg_gui_state {
     int newest_dropped;
     int unread_below;
     int jb_x, jb_y, jb_w, jb_h;
+
+    /* Reply compose: which message the next send threads to (0 = no reply).
+       Invariant: reply_to_id==0 <=> reply_sender[0]=='\0' && reply_snippet[0]=='\0'.
+       msg_top[] caches each rendered row's y-top (newest-first hit-test), valid
+       only when msg_cached == message_count for the frame just painted. */
+    unsigned long reply_to_id;
+    char reply_sender[TG_GUI_NAME_MAX];
+    char reply_snippet[TG_GUI_REPLY_MAX];
+    int msg_top[TG_GUI_MAX_MESSAGES];
+    int msg_cached;
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used
@@ -232,6 +242,9 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend);
 #define TG_GUI_HIT_SEND (-3)  /* the Send button */
 #define TG_GUI_HIT_SEARCH (-4) /* the sidebar search box: focus it */
 #define TG_GUI_HIT_JUMP_BOTTOM (-5) /* the floating scroll-to-bottom button */
+#define TG_GUI_HIT_REPLY_CANCEL (-6) /* the "Replying to ..." composer header */
+/* Transcript message pick: message i -> (TG_GUI_HIT_MESSAGE_BASE - i). */
+#define TG_GUI_HIT_MESSAGE_BASE (-100)
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
 

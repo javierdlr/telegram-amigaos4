@@ -55,9 +55,11 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream);
    nothing pageable) -- the caller must NOT treat < 0 as the chat start. */
 int tg_gui_session_load_older(FILE *stream, int allow_drop_newest);
 
-/* Sends `text` to the open chat and echoes it into the transcript. Returns 0
-   on success, non-zero on failure or when no chat is open. */
-int tg_gui_session_send(const char *text, FILE *stream);
+/* Sends `text` to the open chat and echoes it into the transcript. When
+   reply_to_msg_id != 0 the message is sent as a reply to that message id.
+   Returns 0 on success, non-zero on failure or when no chat is open. */
+int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
+                        FILE *stream);
 
 /* Searches Telegram for `query` (contacts.search), adds the first openable
    result to the peer cache and opens it. Small reply, MorphOS-safe. Returns 0 =

@@ -918,7 +918,11 @@ static int tg_gui_input_rows(const tg_gui_state *state, tg_gui_backend *backend,
 static int tg_gui_input_h(const tg_gui_state *state, tg_gui_backend *backend,
                           int width, int sidebar_w, int lh)
 {
-    return (tg_gui_input_rows(state, backend, width, sidebar_w) * lh) + 14;
+    int h = (tg_gui_input_rows(state, backend, width, sidebar_w) * lh) + 14;
+    if (state->reply_to_id != 0UL) {
+        h += lh + 4; /* room for the "Replying to ..." header strip above the box */
+    }
+    return h;
 }
 
 /* Draws just the bottom composer row: the input box (now wrapped to multiple
@@ -953,6 +957,40 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
     rows = tg_gui_input_rows(state, backend, width, sidebar_w);
     input_h = (rows * lh) + 14;
     box_top = content_h - input_h;
+
+    /* When replying, a dim header strip sits ABOVE the box (the box itself does
+       not move -- tg_gui_input_h reserved the extra line so the transcript
+       shrank instead). It shows "<sender>: <snippet>" with an accent quote bar
+       on the left and an "X" cancel hot-spot on the right. */
+    if (state->reply_to_id != 0UL) {
+        int strip_y = box_top - (lh + 4);
+        char head[TG_GUI_NAME_MAX + TG_GUI_REPLY_MAX + 4];
+        unsigned long hp = 0UL;
+        const char *s;
+
+        backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
+                           tg_gui_make_rect(sidebar_w + 8, strip_y,
+                                            width - sidebar_w - 16, lh + 2));
+        backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                           tg_gui_make_rect(sidebar_w + 8, strip_y, 3, lh + 2));
+        s = state->reply_sender;
+        while (*s != '\0' && hp + 2UL < sizeof(head)) {
+            head[hp++] = *s++;
+        }
+        if (hp + 2UL < sizeof(head)) {
+            head[hp++] = ':';
+            head[hp++] = ' ';
+        }
+        s = state->reply_snippet;
+        while (*s != '\0' && hp + 1UL < sizeof(head)) {
+            head[hp++] = *s++;
+        }
+        head[hp] = '\0';
+        tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT_DIM, sidebar_w + 16,
+                            strip_y + lh, head, width - sidebar_w - 16 - 26);
+        backend->draw_text(backend, TG_GUI_PEN_TEXT, width - 22, strip_y + lh,
+                           "X", 1UL);
+    }
 
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                        tg_gui_make_rect(sidebar_w + 8, box_top,
@@ -1209,11 +1247,15 @@ static void tg_gui_paint_main(const tg_gui_state *state,
             }
         }
     }
+    ((tg_gui_state *)state)->msg_cached = state->message_count;
     for (i = 0; i < state->message_count; ++i) {
         const tg_gui_message *message;
         int h;
 
         message = &state->messages[i];
+        /* Cache this row's top (renderer space, scroll already applied) for the
+           click-to-reply hit-test; the bottom is the next row's top. */
+        ((tg_gui_state *)state)->msg_top[i] = y;
         h = tg_gui_message_height(backend, message, area_w, lh);
         /* Draw only messages intersecting the viewport; each part is clipped to
            [transcript_top, transcript_bottom] inside the bubble. */
@@ -1310,6 +1352,14 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
     input_h = (state->input_h > 0) ? state->input_h : (lh + 14);
     /* The input row / Send button live along the bottom of the right pane. */
     if (y >= content_h - input_h && y < content_h - 4 && x >= sidebar_w) {
+        /* When replying, the top line of the region is the "<sender>: <snippet>"
+           header; its far-right "X" cancels the reply, the rest just focuses. */
+        if (state->reply_to_id != 0UL && y < content_h - input_h + lh + 4) {
+            if (x >= width - 26) {
+                return TG_GUI_HIT_REPLY_CANCEL;
+            }
+            return TG_GUI_HIT_INPUT;
+        }
         if (x >= width - 64) {
             return TG_GUI_HIT_SEND;
         }
@@ -1331,6 +1381,33 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
             }
         } else {
             return TG_GUI_HIT_SEARCH; /* the search box strip at the top */
+        }
+    }
+    /* A click on a transcript bubble picks it as the reply target. Use the row
+       tops cached by the last paint (msg_top[]/msg_cached); scan newest-first so
+       the topmost row wins when the cached bounds touch. System lines and the
+       not-yet-acked optimistic echo (id == 0) cannot be replied to. */
+    if (x >= sidebar_w && y >= 0 && y < content_h - input_h
+        && state->msg_cached > 0) {
+        int last = state->msg_cached;
+        int mi;
+
+        if (last > state->message_count) {
+            last = state->message_count;
+        }
+        for (mi = last - 1; mi >= 0; --mi) {
+            int top = state->msg_top[mi];
+            int bot = (mi + 1 < last) ? state->msg_top[mi + 1]
+                                      : (content_h - input_h);
+
+            if (y >= top && y < bot) {
+                const tg_gui_message *m = &state->messages[mi];
+
+                if (m->is_system || m->id == 0UL) {
+                    return TG_GUI_HIT_NONE;
+                }
+                return TG_GUI_HIT_MESSAGE_BASE - mi;
+            }
         }
     }
     return TG_GUI_HIT_NONE;
