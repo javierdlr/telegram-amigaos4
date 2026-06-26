@@ -313,6 +313,24 @@ void tg_gui_driver_reset_read_outbox(tg_gui_chat_driver *gui)
     }
 }
 
+int tg_gui_driver_has_unseen_own(const tg_gui_chat_driver *gui)
+{
+    int i;
+
+    if (gui == 0 || gui->state == 0) {
+        return 0;
+    }
+    for (i = 0; i < gui->state->message_count; ++i) {
+        const tg_gui_message *message = &gui->state->messages[i];
+
+        if (message->is_own && message->id != 0UL &&
+            message->read_state == TG_GUI_READ_SENT) {
+            return 1; /* an own message still awaiting the peer's read receipt */
+        }
+    }
+    return 0;
+}
+
 /* Derives 1-2 uppercase initials from a display name (skipping a leading '@'):
    first letter of the first word, plus the first letter of the second word if
    present. "Mario Rossi" -> "MR", "Anna" -> "A", "" -> "?". */

@@ -60,6 +60,12 @@ int tg_gui_driver_set_read_outbox_max(tg_gui_chat_driver *gui,
    value rather than being pinned by the monotonic advance above). */
 void tg_gui_driver_reset_read_outbox(tg_gui_chat_driver *gui);
 
+/* 1 if any shown own message is still "sent" (awaiting the peer's read receipt).
+   The live poll uses this to tighten the read-cursor refresh cadence while a
+   double-check is pending, so it updates near real-time instead of every Nth
+   tick, then relaxes once everything is read. */
+int tg_gui_driver_has_unseen_own(const tg_gui_chat_driver *gui);
+
 /* Host-CI self-test: feeds synthetic rows through the driver and asserts the
    resulting tg_gui_state (sender, text, time, is_own, colour, ring overflow).
    Returns 0 on success. */

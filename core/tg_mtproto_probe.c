@@ -12869,7 +12869,15 @@ int tg_gui_session_tick(FILE *stream)
         {
             unsigned long read_cadence;
 
-            read_cadence = 5UL;
+            /* Adaptive: while an own message is still "sent" (we are waiting for
+               the peer to read it), refresh the read cursor EVERY tick so the
+               single->double check flips near real-time; once everything is read,
+               relax to every 5th tick (read state then changes rarely and the
+               one-peer getPeerDialogs is a needless round-trip on the slow link). */
+            read_cadence = tg_gui_driver_has_unseen_own(
+                               &tg_gui_session_state.gui_driver)
+                               ? 1UL
+                               : 5UL;
             ++tg_gui_session_state.read_outbox_tick;
             if ((tg_gui_session_state.read_outbox_tick % read_cadence) == 0UL) {
                 unsigned long read_max;

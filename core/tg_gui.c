@@ -626,10 +626,13 @@ static int tg_gui_check_count(const tg_gui_message *message)
     return 0;
 }
 
-/* One check's side length for a given line height (a tick is ~square). */
+/* One check's side length for a given line height (a tick is ~square). Kept to
+   ~half the line so it sits on the timestamp baseline without out-growing the
+   digits and bleeding into the text line above (was lh-3, too tall on big OS4
+   fonts). */
 static int tg_gui_check_size(int lh)
 {
-    int ch = lh - 3;
+    int ch = lh / 2;
 
     return (ch < 5) ? 5 : ch;
 }
