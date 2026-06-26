@@ -1565,6 +1565,95 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend)
     }
 }
 
+/* --- Right-click context menu (popup at the pointer) ------------------- */
+
+static const char *const tg_gui_ctx_items[TG_GUI_CTX_ITEMS] = { "Reply" };
+
+/* Shared geometry for the popup: box rect + per-item height, clamped so the box
+   stays fully inside the window. Backend-free so the hit-test can reuse it. */
+static void tg_gui_context_box(const tg_gui_state *state, int width, int height,
+                               int lh, int *bx, int *by, int *bw, int *bh,
+                               int *item_h)
+{
+    int ih = lh + 4;
+    int w = TG_GUI_CTX_W;
+    int h = (TG_GUI_CTX_ITEMS * ih) + 4;
+    int x = state->ctx_x;
+    int y = state->ctx_y;
+
+    if (x + w > width) {
+        x = width - w;
+    }
+    if (x < 0) {
+        x = 0;
+    }
+    if (y + h > height) {
+        y = height - h;
+    }
+    if (y < 0) {
+        y = 0;
+    }
+    *bx = x;
+    *by = y;
+    *bw = w;
+    *bh = h;
+    *item_h = ih;
+}
+
+/* Draws the context menu on top of everything when open: an accent frame, a
+   surface fill, and each item's label. */
+static void tg_gui_paint_context_menu(const tg_gui_state *state,
+                                      tg_gui_backend *backend)
+{
+    int width;
+    int height;
+    int lh;
+    int bx, by, bw, bh, ih, i;
+
+    if (!state->ctx_visible) {
+        return;
+    }
+    width = backend->width(backend);
+    height = backend->height(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || height <= 0 || lh <= 0) {
+        return;
+    }
+    tg_gui_context_box(state, width, height, lh, &bx, &by, &bw, &bh, &ih);
+    backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                       tg_gui_make_rect(bx - 1, by - 1, bw + 2, bh + 2));
+    backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
+                       tg_gui_make_rect(bx, by, bw, bh));
+    for (i = 0; i < TG_GUI_CTX_ITEMS; ++i) {
+        backend->draw_text(backend, TG_GUI_PEN_TEXT, bx + 8,
+                           by + 2 + (i * ih) + lh, tg_gui_ctx_items[i],
+                           (unsigned long)strlen(tg_gui_ctx_items[i]));
+    }
+}
+
+int tg_gui_context_menu_hit(const tg_gui_state *state, int width, int height,
+                            int lh, int x, int y)
+{
+    int bx, by, bw, bh, ih, i;
+
+    if (state == 0 || !state->ctx_visible || lh <= 0 || width <= 0 ||
+        height <= 0) {
+        return -1;
+    }
+    tg_gui_context_box(state, width, height, lh, &bx, &by, &bw, &bh, &ih);
+    if (x < bx || x >= bx + bw || y < by || y >= by + bh) {
+        return -1; /* outside the box -> dismiss */
+    }
+    i = (y - (by + 2)) / ih;
+    if (i < 0) {
+        i = 0;
+    }
+    if (i >= TG_GUI_CTX_ITEMS) {
+        i = TG_GUI_CTX_ITEMS - 1;
+    }
+    return i;
+}
+
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
 {
     int width;
@@ -1606,6 +1695,10 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
                        tg_gui_make_rect(0, content_h, width, status_h));
     backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, 10, content_h + lh,
                        state->status, (unsigned long)strlen(state->status));
+    /* Drawn last so it overlays the transcript/status; part of the off-screen
+       render, so the double-buffer blit carries it and a repaint with
+       ctx_visible==0 cleanly removes it. */
+    tg_gui_paint_context_menu(state, backend);
 }
 
 /* --- Recording backend for the self-test ------------------------------- */

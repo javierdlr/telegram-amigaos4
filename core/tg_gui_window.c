@@ -842,6 +842,26 @@ static const char tg_gui_help_text[] =
     "ESC          cancel\n"
     "Q            quit";
 
+/* EasyRequest runs its OWN modal input loop and never answers our
+   IDCMP_MENUVERIFY handshake, so a right-click while it is up would stall every
+   app's menus on the whole screen (RKRM: drop the verify bits around a
+   requester). Bracket the call with ModifyIDCMP and restore the original flags
+   after. */
+static LONG tg_gui_amiga_easyreq_args(struct Window *win, struct EasyStruct *es)
+{
+    ULONG saved = win->IDCMPFlags;
+    LONG result;
+
+    if ((saved & IDCMP_MENUVERIFY) != 0UL) {
+        ModifyIDCMP(win, saved & ~(ULONG)IDCMP_MENUVERIFY);
+    }
+    result = EasyRequestArgs(win, es, 0, 0);
+    if ((saved & IDCMP_MENUVERIFY) != 0UL) {
+        ModifyIDCMP(win, saved);
+    }
+    return result;
+}
+
 /* Shows a one-button info requester (About / Help). No printf args, so the
    text is passed verbatim (it carries no '%'). */
 static void tg_gui_amiga_easyreq(struct Window *win, const char *title,
@@ -854,7 +874,7 @@ static void tg_gui_amiga_easyreq(struct Window *win, const char *title,
     es.es_Title = (STRPTR)title;
     es.es_TextFormat = (STRPTR)body;
     es.es_GadgetFormat = (STRPTR)"OK";
-    (void)EasyRequestArgs(win, &es, 0, 0);
+    (void)tg_gui_amiga_easyreq_args(win, &es);
 }
 
 /* Two-button confirm for removing a chat. Returns 1 = Remove, 0 = Cancel. The
@@ -892,7 +912,7 @@ static int tg_gui_amiga_confirm_remove(struct Window *win, const char *name)
     es.es_Title = (STRPTR)"Remove chat";
     es.es_TextFormat = (STRPTR)body;
     es.es_GadgetFormat = (STRPTR)"Remove|Cancel";
-    return (int)EasyRequestArgs(win, &es, 0, 0);
+    return (int)tg_gui_amiga_easyreq_args(win, &es);
 }
 
 /* Confirm + remove the selected chat from the sidebar, persist it, then land on
@@ -1180,6 +1200,10 @@ int tg_gui_run_window(tg_gui_state *state)
     tags[i++].ti_Data = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY | IDCMP_RAWKEY |
                         IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS |
                         IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_MENUPICK
+                        /* MENUVERIFY: intercept a right-click over a message to
+                           pop our own context menu (and MENUCANCEL the standard
+                           one) instead of the top menu bar. */
+                        | IDCMP_MENUVERIFY
 #if defined(__amigaos4__)
                         /* OS4: the wheel arrives as IDCMP_EXTENDEDMOUSE -- the only
                            form QEMU's emulated mouse emits. Real hardware and the
@@ -1367,6 +1391,7 @@ int tg_gui_run_window(tg_gui_state *state)
 #if defined(__amigaos4__)
             WORD wheel_y = 0;
 #endif
+            int ctx_repaint = 0; /* our context menu opened this MENUVERIFY */
 
             msg_class = msg->Class;
             msg_code = msg->Code;
@@ -1381,6 +1406,37 @@ int tg_gui_run_window(tg_gui_state *state)
                 wheel_y = ((struct IntuiWheelData *)msg->IAddress)->WheelY;
             }
 #endif
+            /* MENUVERIFY (right button pressed): if the pointer is over a real
+               message bubble, pop OUR context menu there and CANCEL the standard
+               "Telegram" menu by setting Code = MENUCANCEL; otherwise leave it so
+               the normal menu opens. Must run BEFORE ReplyMsg -- input.device
+               blocks on the verify until we answer, so keep it minimal. */
+            if (msg_class == IDCMP_MENUVERIFY && msg_code == MENUHOT &&
+                state->mode == TG_GUI_MODE_CHAT) {
+                /* MENUHOT == we are the ACTIVE window and so MAY cancel; an
+                   inactive window gets MENUWAITING and must reply without
+                   cancelling (Intuition would ignore the cancel anyway). */
+                int hx = (int)mouse_x - ctx.origin_x;
+                int hy = (int)mouse_y - ctx.origin_y;
+                int hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
+                                          ctx.line_h, hx, hy);
+
+                state->ctx_visible = 0; /* default: let the normal menu open */
+                if (hit <= TG_GUI_HIT_MESSAGE_BASE) {
+                    int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
+
+                    if (mi >= 0 && mi < state->message_count &&
+                        !state->messages[mi].is_system &&
+                        state->messages[mi].id != 0UL) {
+                        state->ctx_visible = 1;
+                        state->ctx_msg = mi;
+                        state->ctx_x = hx;
+                        state->ctx_y = hy;
+                        msg->Code = MENUCANCEL;
+                        ctx_repaint = 1;
+                    }
+                }
+            }
             ReplyMsg((struct Message *)msg);
 
             /* Remember the last keystroke so the live poll can defer the
@@ -1401,6 +1457,16 @@ int tg_gui_run_window(tg_gui_state *state)
                 msg_code = (wheel_y < 0) ? (UWORD)0x7A : (UWORD)0x7B;
             }
 #endif
+
+            /* A keystroke (or wheel, already mapped to RAWKEY above) while the
+               context menu is open simply closes it and is consumed -- standard
+               menu behaviour, and it avoids ESC also quitting the app. */
+            if (state->ctx_visible &&
+                (msg_class == IDCMP_VANILLAKEY || msg_class == IDCMP_RAWKEY)) {
+                state->ctx_visible = 0;
+                tg_gui_window_paint(state, &backend);
+                continue;
+            }
 
             if (msg_class == IDCMP_CLOSEWINDOW) {
                 tg_gui_log("window: close gadget");
@@ -1660,6 +1726,12 @@ int tg_gui_run_window(tg_gui_state *state)
                 } else if (msg_code == 0x46) { /* Del: remove selected chat (confirm) */
                     tg_gui_window_remove_selected(state, ctx.window, &backend);
                 }
+            } else if (msg_class == IDCMP_MENUVERIFY) {
+                /* Decided pre-ReplyMsg above; repaint only when WE opened our
+                   popup (the standard menu was cancelled, so drawing is safe). */
+                if (ctx_repaint) {
+                    tg_gui_window_paint(state, &backend);
+                }
             } else if (msg_class == IDCMP_MENUPICK) {
                 UWORD mnum;
 
@@ -1789,7 +1861,41 @@ int tg_gui_run_window(tg_gui_state *state)
 
                 hx = (int)mouse_x - ctx.origin_x;
                 hy = (int)mouse_y - ctx.origin_y;
-                if (msg_code == SELECTUP) {
+                if (msg_code == SELECTDOWN && state->ctx_visible) {
+                    /* A left click while the context menu is open: pick the item
+                       under the pointer, or dismiss when the click is outside. */
+                    int it = tg_gui_context_menu_hit(state, ctx.inner_w,
+                                                     ctx.inner_h, ctx.line_h,
+                                                     hx, hy);
+
+                    state->ctx_visible = 0;
+                    if (it == TG_GUI_CTX_REPLY) {
+                        int mi = state->ctx_msg;
+
+                        if (mi >= 0 && mi < state->message_count) {
+                            const tg_gui_message *m = &state->messages[mi];
+
+                            if (!m->is_system && m->id != 0UL) {
+                                state->reply_to_id = m->id;
+                                tg_gui_window_copy(state->reply_sender,
+                                                   sizeof(state->reply_sender),
+                                                   m->sender);
+                                tg_gui_window_copy(state->reply_snippet,
+                                                   sizeof(state->reply_snippet),
+                                                   m->text);
+                                state->search_active = 0;
+                                state->composing = 1;
+                                state->input_caret = (int)strlen(state->input);
+                                state->cursor_on = 1;
+                                caret_ticks = 0;
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Reply - ENTER sends, ESC cancels");
+                            }
+                        }
+                    }
+                    tg_gui_window_paint(state, &backend);
+                } else if (msg_code == SELECTUP) {
                     state->sb_drag = 0;
                     if (state->drag_src >= 0) {
                         if (!state->drag_active) {

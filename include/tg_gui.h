@@ -218,6 +218,14 @@ typedef struct tg_gui_state {
     char reply_snippet[TG_GUI_REPLY_MAX];
     int msg_top[TG_GUI_MAX_MESSAGES];
     int msg_cached;
+
+    /* Right-click context menu: a small popup at the pointer over a message
+       bubble. ctx_visible gates the paint + hit-test; ctx_msg is the target
+       message index captured when the menu opened; ctx_x/ctx_y is the pointer
+       (window-inner coords) the box anchors to (clamped into the window). */
+    int ctx_visible;
+    int ctx_msg;
+    int ctx_x, ctx_y;
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used
@@ -247,6 +255,18 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend);
 #define TG_GUI_HIT_MESSAGE_BASE (-100)
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
+
+/* Right-click context-menu geometry/items. Fixed width keeps the hit-test
+   backend-free (no text measuring). One item for now; the list is laid out so
+   more (Copy/Edit/Delete) can follow the roadmap. */
+#define TG_GUI_CTX_W 108
+#define TG_GUI_CTX_REPLY 0
+#define TG_GUI_CTX_ITEMS 1
+/* Maps a click at renderer-space (x, y) to a context-menu item index
+   [0, TG_GUI_CTX_ITEMS) when the popup is open, or -1 when the click is
+   outside it (the caller then dismisses the menu). */
+int tg_gui_context_menu_hit(const tg_gui_state *state, int width, int height,
+                            int lh, int x, int y);
 
 /* Maps a cursor Y (window-inner-relative) to a drag-and-drop INSERT-BEFORE target
    in [0, chat_count] for the sidebar list (chat_count == drop at the end). Uses
