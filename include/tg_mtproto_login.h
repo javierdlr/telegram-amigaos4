@@ -382,6 +382,35 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 
+/* messages.editMessage#dfd14005: edit an own message's text (flags.11 message,
+   peer, id, message). */
+tg_mtproto_tl_status tg_mtproto_build_messages_edit_message(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long message_id,
+    const char *message);
+
+/* messages.deleteMessages#e58e95d2: delete one message (revoke = for everyone).
+   For channels/supergroups use the channels.* form below. */
+tg_mtproto_tl_status tg_mtproto_build_messages_delete_messages(
+    tg_mtproto_tl_writer *writer,
+    int revoke,
+    unsigned long message_id);
+
+/* channels.deleteMessages#84c1fd4e: delete one message in a channel/supergroup. */
+tg_mtproto_tl_status tg_mtproto_build_channels_delete_messages(
+    tg_mtproto_tl_writer *writer,
+    unsigned long channel_id_hi,
+    unsigned long channel_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    unsigned long message_id);
+
 tg_mtproto_tl_status tg_mtproto_build_msgs_ack(
     tg_mtproto_tl_writer *writer,
     const unsigned long *msg_id_hi,

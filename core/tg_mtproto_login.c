@@ -34,6 +34,14 @@
    (monoforum/todo/quote) never hit the wire; only this 4-byte ctor id matters,
    and a wrong id surfaces as a visible RPC error (non-destructive). */
 #define TG_INPUT_REPLY_TO_MESSAGE_CONSTRUCTOR 0x869fbe10UL
+/* edit/delete (layer 214, hashes verified on core.telegram.org/method/...):
+   messages.editMessage#dfd14005 flags:# ... peer:InputPeer id:int message:flags.11?string ...
+   messages.deleteMessages#e58e95d2 flags:# revoke:flags.0?true id:Vector<int>
+   channels.deleteMessages#84c1fd4e channel:InputChannel id:Vector<int> */
+#define TG_MESSAGES_EDIT_MESSAGE_CONSTRUCTOR 0xdfd14005UL
+#define TG_MESSAGES_DELETE_MESSAGES_CONSTRUCTOR 0xe58e95d2UL
+#define TG_CHANNELS_DELETE_MESSAGES_CONSTRUCTOR 0x84c1fd4eUL
+#define TG_MESSAGES_EDIT_MESSAGE_FLAG_MESSAGE 0x800UL /* flags.11 = message present */
 #define TG_CONTACTS_RESOLVE_USERNAME_CONSTRUCTOR 0xf93ccba3UL
 #define TG_CONTACTS_RESOLVE_USERNAME_FLAGS_CONSTRUCTOR 0x725afbbcUL
 #define TG_CONTACTS_SEARCH_CONSTRUCTOR 0x11f812d8UL
@@ -1170,6 +1178,111 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u64(writer, random_id_hi, random_id_lo);
+    }
+    return status;
+}
+
+/* messages.editMessage#dfd14005 -- edit an OWN message's text. Minimal text
+   edit: flags = message-present (flags.11), peer, id, message. */
+tg_mtproto_tl_status tg_mtproto_build_messages_edit_message(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long message_id,
+    const char *message)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || message == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_MESSAGES_EDIT_MESSAGE_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer,
+                                         TG_MESSAGES_EDIT_MESSAGE_FLAG_MESSAGE);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_input_peer(writer, peer_constructor, peer_id_hi,
+                                     peer_id_lo, access_hash_hi, access_hash_lo,
+                                     has_access_hash);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, message_id);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, message);
+    }
+    return status;
+}
+
+/* messages.deleteMessages#e58e95d2 -- delete ONE message. revoke = delete for
+   everyone (flags.0); 0 = delete only for me. id is a Vector<int> of one. */
+tg_mtproto_tl_status tg_mtproto_build_messages_delete_messages(
+    tg_mtproto_tl_writer *writer,
+    int revoke,
+    unsigned long message_id)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_MESSAGES_DELETE_MESSAGES_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, revoke ? 1UL : 0UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_VECTOR_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL); /* one id */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, message_id);
+    }
+    return status;
+}
+
+/* channels.deleteMessages#84c1fd4e -- delete ONE message in a channel/supergroup
+   (always for everyone). channel:InputChannel id:Vector<int> of one. */
+tg_mtproto_tl_status tg_mtproto_build_channels_delete_messages(
+    tg_mtproto_tl_writer *writer,
+    unsigned long channel_id_hi,
+    unsigned long channel_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    unsigned long message_id)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer,
+                                     TG_CHANNELS_DELETE_MESSAGES_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_INPUT_CHANNEL_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, channel_id_hi, channel_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, access_hash_hi, access_hash_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_VECTOR_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, message_id);
     }
     return status;
 }
@@ -4270,6 +4383,52 @@ int tg_mtproto_login_self_test(void)
         query[30] != 0x0bU || query[31] != 0x0aU ||          /* reply_to_msg_id LE */
         query[32] != 0x02U || query[33] != 'h' || query[34] != 'i' ||
         query[36] != 0x88U || query[39] != 0x55U) {          /* random_id lo */
+        return 2;
+    }
+    /* EDIT: messages.editMessage#dfd14005 flags=0x800(message) peer=chat id=hi
+       message="hi" -> 28 bytes. Pins the ctor id + flags + wire order. */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_edit_message(
+            &writer, TG_PEER_CHAT_CONSTRUCTOR, 0x01020304UL, 0x05060708UL,
+            0UL, 0UL, 0, 0x0A0B0C0DUL, "hi") != TG_MTPROTO_TL_OK ||
+        writer.length != 28UL ||
+        query[0] != 0x05U || query[1] != 0x40U ||
+        query[2] != 0xd1U || query[3] != 0xdfU ||            /* editMessage ctor */
+        query[4] != 0x00U || query[5] != 0x08U ||            /* flags 0x800 */
+        query[8] != 0xb9U || query[11] != 0x35U ||           /* inputPeerChat */
+        query[20] != 0x0dU || query[23] != 0x0aU ||          /* id LE */
+        query[24] != 0x02U || query[25] != 'h' || query[26] != 'i') {
+        return 2;
+    }
+    /* DELETE (peer): messages.deleteMessages#e58e95d2 revoke=1 id=[hi] ->
+       ctor + flags + vector + count + id = 20 bytes. */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_delete_messages(&writer, 1, 0x0A0B0C0DUL) !=
+            TG_MTPROTO_TL_OK ||
+        writer.length != 20UL ||
+        query[0] != 0xd2U || query[1] != 0x95U ||
+        query[2] != 0x8eU || query[3] != 0xe5U ||            /* deleteMessages ctor */
+        query[4] != 0x01U ||                                 /* revoke flag */
+        query[8] != 0x15U || query[11] != 0x1cU ||           /* vector ctor */
+        query[12] != 0x01U ||                                /* count 1 */
+        query[16] != 0x0dU || query[19] != 0x0aU) {          /* id LE */
+        return 2;
+    }
+    /* DELETE (channel): channels.deleteMessages#84c1fd4e inputChannel id=[hi] ->
+       ctor + inputChannel(ctor+id8+hash8) + vector + count + id = 36 bytes. */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_channels_delete_messages(
+            &writer, 0x01020304UL, 0x05060708UL, 0x11121314UL, 0x15161718UL,
+            0x0A0B0C0DUL) != TG_MTPROTO_TL_OK ||
+        writer.length != 36UL ||
+        query[0] != 0x4eU || query[1] != 0xfdU ||
+        query[2] != 0xc1U || query[3] != 0x84U ||            /* channels.deleteMessages ctor */
+        query[4] != 0x28U || query[7] != 0xf3U ||            /* inputChannel ctor */
+        query[8] != 0x08U || query[15] != 0x01U ||           /* channel_id lo..hi */
+        query[16] != 0x18U || query[23] != 0x11U ||          /* access_hash lo..hi */
+        query[24] != 0x15U || query[27] != 0x1cU ||          /* vector ctor */
+        query[28] != 0x01U ||                                /* count 1 */
+        query[32] != 0x0dU || query[35] != 0x0aU) {          /* id LE */
         return 2;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
