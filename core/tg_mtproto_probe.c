@@ -12741,8 +12741,10 @@ int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
            round-trip -- a confirm-poll is slow and unreliable on MorphOS (it
            was the "sent but not shown" symptom). Echo the ORIGINAL Latin-1
            `text` (NOT send_text): the GUI renderer is Latin-1, so passing the
-           UTF-8 copy would double-encode into mojibake. The open-chat poll uses
-           include_outgoing=0, so it is never re-fetched into a duplicate. */
+           UTF-8 copy would double-encode into mojibake. The open-chat poll now
+           includes outgoing (for multi-device), and the driver dedups/reconciles
+           this echo by server id (or by text until the id is known), so it is
+           never re-fetched into a duplicate. */
         tg_gui_driver_append_own(&tg_gui_session_state.gui_driver, text,
                                  tg_gui_session_state.own_label,
                                  (reply_to_msg_id != 0UL &&
@@ -12852,7 +12854,7 @@ int tg_gui_session_tick(FILE *stream)
             tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
             tg_gui_session_state.peer_cache_file,
             tg_gui_session_state.current_peer_index, "5", quiet,
-            &tg_gui_session_state.last_seen_message_id, &printed, 1, 0, 0,
+            &tg_gui_session_state.last_seen_message_id, &printed, 1, 1, 0,
             tg_gui_session_state.current_peer_label,
             tg_gui_session_state.own_label);
         tg_chat_message_driver_override = 0;

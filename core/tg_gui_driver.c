@@ -136,6 +136,46 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
     }
     state = gui->state;
 
+    /* Multi-device dedup/reconcile: the open-chat poll now includes outgoing, so
+       a message sent from ANOTHER session/device of this account shows up here.
+       But our own just-sent message is already on screen as the optimistic echo,
+       so never let it double:
+         - server-id already present  -> it's a re-fetch, skip;
+         - outgoing row matching an own echo that has no server id yet (sent_id
+           was 0, e.g. a group/channel send whose response carried no
+           updateShortSentMessage) -> adopt the id onto that echo;
+         - otherwise fall through and append (a genuinely new message, e.g. one
+           sent from the other device).
+       Text is compared in the stored Latin-1 form (both the echo and the row end
+       up Latin-1), so it matches regardless of the wire UTF-8. */
+    if (row->id != 0UL) {
+        char row_latin1[TG_GUI_MSG_TEXT_MAX];
+        int have_l1 = 0;
+        int di;
+
+        for (di = 0; di < state->message_count; ++di) {
+            tg_gui_message *m = &state->messages[di];
+
+            if (m->id == row->id) {
+                return; /* already shown (server id match) */
+            }
+            if (row->is_out && m->is_own && m->id == 0UL) {
+                if (!have_l1) {
+                    tg_gui_driver_copy_latin1(row_latin1, sizeof(row_latin1),
+                                              row->text);
+                    have_l1 = 1;
+                }
+                if (strcmp(m->text, row_latin1) == 0) {
+                    m->id = row->id; /* the echo finally learns its server id */
+                    if (m->id <= state->open_read_outbox_max) {
+                        m->read_state = TG_GUI_READ_SEEN;
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     if (gui->prepend_at >= 0) {
         /* Load-older paging: insert this (older) row at prepend_at, shifting the
            existing block down one, then advance. The batch is routed oldest-first
@@ -830,6 +870,53 @@ int tg_gui_driver_self_test(void)
         }
         if (tg_gui_driver_has_unseen_own(&rg)) {
             puts("gui driver self-test: no unseen-own after read");
+            return 2;
+        }
+    }
+
+    /* Multi-device dedup/reconcile: with include_outgoing the open-chat poll
+       re-delivers our own messages; the driver must not double them. */
+    {
+        tg_gui_state ds;
+        tg_gui_chat_driver dg;
+        tg_chat_driver dd;
+        tg_chat_message_row row;
+
+        memset(&ds, 0, sizeof(ds));
+        tg_gui_chat_driver_bind(&dg, &ds, &dd);
+
+        /* Echo of a 1:1 send (server id known) + a re-fetch of it via the poll. */
+        tg_gui_driver_append_own(&dg, "ciao", "Io", 0, 500UL);
+        memset(&row, 0, sizeof(row));
+        row.own_label = "Io";
+        row.is_out = 1;
+        row.id = 500UL;
+        row.text = "ciao";
+        dd.on_message(dd.ctx, &row); /* same id -> deduped */
+        if (ds.message_count != 1) {
+            puts("gui driver self-test: re-fetched own echo must dedup by id");
+            return 2;
+        }
+        /* A message sent from ANOTHER session (unknown id) -> appended. */
+        row.id = 600UL;
+        row.text = "da altro device";
+        dd.on_message(dd.ctx, &row);
+        if (ds.message_count != 2 || ds.messages[1].id != 600UL) {
+            puts("gui driver self-test: other-session outgoing must append");
+            return 2;
+        }
+        /* Group-send fallback: echo with no server id yet (sent_id 0), then the
+           poll brings the real id -> reconcile onto the echo, no duplicate. */
+        tg_gui_driver_append_own(&dg, "gruppo", "Io", 0, 0UL);
+        if (ds.message_count != 3 || ds.messages[2].id != 0UL) {
+            puts("gui driver self-test: id-less echo setup wrong");
+            return 2;
+        }
+        row.id = 700UL;
+        row.text = "gruppo";
+        dd.on_message(dd.ctx, &row);
+        if (ds.message_count != 3 || ds.messages[2].id != 700UL) {
+            puts("gui driver self-test: id-less echo must reconcile by text");
             return 2;
         }
     }
