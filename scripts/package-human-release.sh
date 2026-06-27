@@ -3,7 +3,7 @@
 # Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
 # SPDX-License-Identifier: MIT
 #
-# Build the human-facing release packages for Telegram Amiga 0.0.2.
+# Build the human-facing release packages for Telegram Amiga 0.0.3.
 #
 # Each package contains ONLY the program, the two launchers (GUI + TUI) with
 # their icons, the PUBLIC Telegram API app credentials and per-architecture
@@ -16,7 +16,7 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/human-releases"}
 DATE_STAMP=${DATE_STAMP:-$(date +%Y%m%d)}
 COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
-VERSION=${VERSION:-0.0.2}
+VERSION=${VERSION:-0.0.3}
 
 md5of() { if command -v md5 >/dev/null 2>&1; then md5 -q "$1"; else md5sum "$1" | awk '{print $1}'; fi; }
 
@@ -102,6 +102,35 @@ fill_platform_text() {
     esac
 }
 
+write_readme() {
+    cat > "$1" <<EOF
+Telegram Amiga - $2 - alpha $VERSION
+========================================
+
+A from-scratch, native Telegram (MTProto) client. Zero dependencies: no MUI,
+no ixemul, no AmiSSL. Two clients, one engine:
+
+  TelegramGUI  - graphical (Intuition), with scrollbars + mouse.
+  TelegramTUI  - text-mode / console.
+
+Quick start: copy this drawer to a WRITABLE volume, then double-click
+TelegramGUI (or TelegramTUI). First run signs you in (phone -> code -> 2FA).
+
+New in $VERSION: replies (tap a message or right-click it for a context menu),
+real delivery checkmarks (one tick = sent, two blue ticks = read), flicker-free
+drawing (double buffering), and a scroll-to-newest button.
+
+Full instructions:
+  Manuale-IT.txt   (Italiano)
+  Manual-EN.txt    (English)
+
+NEVER share telegram-auth.bin -- once you log in, it holds your Telegram session.
+
+Version: $VERSION   Build: $COMMIT_ID
+Author: Michele Dipace <michele.dipace@kaffeine.net>   License: MIT
+EOF
+}
+
 write_manual_en() {
     cat > "$1" <<EOF
 Telegram Amiga -- User Manual (English)
@@ -145,8 +174,10 @@ Using the GUI
   very top to load older history (it pulls the previous page and keeps your
   place).
 - Click the input line and type to compose; long messages wrap over several
-  lines. Press Enter to send. Your sent messages show a delivery mark: "v" sent,
-  "vv" read by the other side. Replies show the quoted line above the message.
+  lines. Press Enter to send. To reply to a message, click its bubble (or
+  right-click it for a context menu with "Reply") -- your message is sent as a
+  reply, with the quoted line shown above it. Sent messages show a delivery tick:
+  one check = sent, two blue checks = read by the other side.
 - F1..F10 jump to chats 1..10 (Shift+F1..F10 to 11..20).
 - Search box (top-left): type a name and press Enter to find a chat on Telegram
   and add it to the list -- useful for chats not shown yet.
@@ -228,8 +259,10 @@ Usare la GUI
   per caricare la storia piu' vecchia (tira la pagina precedente mantenendo la
   posizione).
 - Clicca la riga di input e scrivi; i messaggi lunghi vanno a capo su piu' righe.
-  Premi Invio per inviare. I tuoi messaggi mostrano il segno di consegna: "v"
-  inviato, "vv" letto dall'altro. Le risposte mostrano la citazione sopra.
+  Premi Invio per inviare. Per rispondere a un messaggio, clicca la sua bolla (o
+  tasto destro per il menu contestuale con "Reply") -- il messaggio parte come
+  risposta, con la citazione mostrata sopra. I messaggi inviati mostrano la
+  spunta di consegna: una spunta = inviato, due spunte azzurre = letto dall'altro.
 - F1..F10 saltano alle chat 1..10 (Shift+F1..F10 alle 11..20).
 - Casella di ricerca (in alto a sinistra): scrivi un nome e premi Invio per
   trovare una chat su Telegram e aggiungerla alla lista -- utile per chat non
@@ -320,6 +353,7 @@ package_one() {
     cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/telegram-api.txt"
 
     fill_platform_text "$platform"
+    write_readme "$dest/README.txt" "$platform"
     write_manual_en "$dest/Manual-EN.txt" "$platform"
     write_manual_it "$dest/Manuale-IT.txt" "$platform"
 

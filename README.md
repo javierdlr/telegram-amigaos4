@@ -22,11 +22,13 @@ Two front-ends share one engine:
 - **TelegramTUI** — a full-screen text/console client for low-end and
   mouse-less setups.
 
-Status: **alpha 0.0.2** — everyday direct-message and group chat works on all
-five platforms below. 0.0.2 adds scroll-back history paging, online chat search,
-persistent unread badges, drag-reorder / remove of chats, group typing names,
-the full chat list on first login, long & multi-line messages, and the flashless
-Workbench launch.
+Status: **alpha 0.0.3** — everyday direct-message and group chat works on all
+five platforms below. 0.0.3 adds replies (tap or right-click a message), real
+delivery checkmarks (one tick = sent, two blue ticks = read), flicker-free
+drawing (double buffering) and a scroll-to-newest button — on top of 0.0.2's
+scroll-back history paging, online chat search, persistent unread badges,
+drag-reorder / remove of chats, group typing names, the full chat list on first
+login, long & multi-line messages, and the flashless Workbench launch.
 
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:
@@ -39,11 +41,11 @@ per-architecture IT/EN manuals — and **no private files**.
 
 | Platform | CPU | Release |
 |---|---|---|
-| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.2) |
-| AmigaOS 4.x | PPC | [os4-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.2) |
-| MorphOS | PPC | [morphos-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.2) |
-| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.2) |
-| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.2](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.2) |
+| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.3](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.3) |
+| AmigaOS 4.x | PPC | [os4-alpha-0.0.3](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.3) |
+| MorphOS | PPC | [morphos-alpha-0.0.3](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.3) |
+| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.3](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.3) |
+| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.3](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.3) |
 
 All releases: <https://github.com/kaffeine1/telegram-amiga/releases>
 
