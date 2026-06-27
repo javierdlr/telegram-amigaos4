@@ -59,6 +59,10 @@
 #define TG_PEER_USER_CONSTRUCTOR 0x59511722UL
 #define TG_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
+/* updateReadHistoryOutbox#2f2f21bf peer:Peer max_id:int pts:int pts_count:int
+   (layer 214, verified on core.telegram.org/constructor/updateReadHistoryOutbox)
+   -- the peer read OUR messages up to max_id; used for real-time read receipts. */
+#define TG_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR 0x2f2f21bfUL
 #define TG_DIALOG_CONSTRUCTOR 0xd58a08c6UL
 #define TG_DIALOG_FOLDER_CONSTRUCTOR 0x71bd134cUL
 #define TG_FOLDER_CONSTRUCTOR 0xff544e65UL
@@ -3897,6 +3901,34 @@ tg_mtproto_tl_status tg_mtproto_parse_updates_summary(
     return TG_MTPROTO_TL_OK;
 }
 
+/* Parses a bare updateReadHistoryOutbox#2f2f21bf body into the peer + max_id (the
+   read cursor for OUR sent messages); pts/pts_count are ignored. Pure + testable;
+   the live push path uses the parsed peer to flip own messages to "seen" at once
+   when it matches the open chat. */
+tg_mtproto_tl_status tg_mtproto_parse_update_read_history_outbox(
+    const unsigned char *body, unsigned long body_length,
+    tg_mtproto_dialog_peer *out_peer, unsigned long *out_max_id)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long constructor;
+    tg_mtproto_tl_status status;
+
+    if (out_peer == 0 || out_max_id == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    *out_max_id = 0UL;
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &constructor) != TG_MTPROTO_TL_OK ||
+        constructor != TG_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    status = tg_read_peer_ref(&reader, out_peer);
+    if (status != TG_MTPROTO_TL_OK) {
+        return status;
+    }
+    return tg_mtproto_tl_read_u32(&reader, out_max_id);
+}
+
 int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor)
 {
     return constructor == TG_AUTH_AUTHORIZATION_CONSTRUCTOR ||
@@ -4430,6 +4462,31 @@ int tg_mtproto_login_self_test(void)
         query[28] != 0x01U ||                                /* count 1 */
         query[32] != 0x0dU || query[35] != 0x0aU) {          /* id LE */
         return 2;
+    }
+    /* updateReadHistoryOutbox#2f2f21bf parser (5c): build a body (peerUser
+       id=0x0102030405060708, max_id=0x0A0B0C0D) and read it back. */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_tl_write_u32(&writer,
+            TG_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, TG_PEER_USER_CONSTRUCTOR) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u64(&writer, 0x01020304UL, 0x05060708UL) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_write_u32(&writer, 0x0A0B0C0DUL) != TG_MTPROTO_TL_OK) {
+        return 2;
+    }
+    {
+        tg_mtproto_dialog_peer rpeer;
+        unsigned long rmax;
+
+        if (tg_mtproto_parse_update_read_history_outbox(query, writer.length,
+                                                        &rpeer, &rmax) !=
+                TG_MTPROTO_TL_OK ||
+            rpeer.peer_constructor != TG_PEER_USER_CONSTRUCTOR ||
+            rpeer.id_hi != 0x01020304UL || rpeer.id_lo != 0x05060708UL ||
+            rmax != 0x0A0B0C0DUL) {
+            return 2;
+        }
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_msgs_ack(&writer, &bad_msg.bad_msg_id_hi,

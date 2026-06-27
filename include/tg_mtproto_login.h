@@ -558,6 +558,12 @@ tg_mtproto_tl_status tg_mtproto_parse_updates_summary(
     unsigned long body_length,
     tg_mtproto_updates_summary *out);
 
+/* Parses a bare updateReadHistoryOutbox#2f2f21bf body into peer + max_id (the
+   read cursor for our sent messages). For real-time read receipts (5c). */
+tg_mtproto_tl_status tg_mtproto_parse_update_read_history_outbox(
+    const unsigned char *body, unsigned long body_length,
+    tg_mtproto_dialog_peer *out_peer, unsigned long *out_max_id);
+
 int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor);
 
 int tg_mtproto_login_self_test(void);
