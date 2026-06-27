@@ -16,6 +16,7 @@
 
 #include "tg_gui.h"
 #include "tg_gui_session.h"
+#include "tg_version.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -828,7 +829,8 @@ static struct NewMenu tg_gui_newmenu[] = {
 };
 
 static const char tg_gui_about_text[] =
-    "Telegram Amiga\n\n"
+    "Telegram Amiga\n"
+    "alpha " TG_VERSION "  (built " __DATE__ ")\n\n"
     "A native Telegram client for AmigaOS,\n"
     "MorphOS and AROS.\n\n"
     "by Michele Dipace\n"

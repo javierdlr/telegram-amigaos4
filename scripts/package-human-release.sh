@@ -3,7 +3,8 @@
 # Copyright (c) 2026 Michele Dipace <michele.dipace@kaffeine.net>
 # SPDX-License-Identifier: MIT
 #
-# Build the human-facing release packages for Telegram Amiga 0.0.3.
+# Build the human-facing release packages for Telegram Amiga.
+# Version comes from include/tg_version.h (override with VERSION=... if needed).
 #
 # Each package contains ONLY the program, the two launchers (GUI + TUI) with
 # their icons, the PUBLIC Telegram API app credentials and per-architecture
@@ -16,7 +17,10 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PACKAGE_ROOT=${PACKAGE_ROOT:-"$ROOT_DIR/build/human-releases"}
 DATE_STAMP=${DATE_STAMP:-$(date +%Y%m%d)}
 COMMIT_ID=${COMMIT_ID:-$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)}
-VERSION=${VERSION:-0.0.3}
+# Single source of truth: the version the binary itself reports (About box /
+# startup banner) comes from include/tg_version.h, so the package always matches.
+VERSION=${VERSION:-$(sed -n 's/.*define TG_VERSION "\([^"]*\)".*/\1/p' "$ROOT_DIR/include/tg_version.h" 2>/dev/null)}
+VERSION=${VERSION:-0.0.0}
 
 md5of() { if command -v md5 >/dev/null 2>&1; then md5 -q "$1"; else md5sum "$1" | awk '{print $1}'; fi; }
 

@@ -18,6 +18,7 @@
 #include "tg_console_tui.h"
 #include "tg_file.h"
 #include "tg_gui.h"
+#include "tg_version.h"
 #include "tg_gui_driver.h"
 #include "tg_gui_session.h"
 #include "tg_https.h"
@@ -3920,7 +3921,7 @@ int tg_app_run(int argc, char **argv)
 
     if (!config.run_telegram_human_chat && !config.run_mtproto_chat_file &&
         !config.run_mtproto_start_file) {
-        puts("telegram-amiga bootstrap");
+        puts("telegram-amiga " TG_VERSION " bootstrap");
         printf("platform: %s\n", tg_platform_name());
         tg_log(TG_LOG_INFO, "core initialized");
         printf("data dir: %s\n", config.data_dir);
