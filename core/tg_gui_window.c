@@ -728,22 +728,25 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
         return;
     }
 
-    /* Never submit an EMPTY login field. sendCode/signIn block for several
+    /* Never submit an EMPTY phone/code field. sendCode/signIn block for several
        seconds, during which a held/auto-repeating RETURN queues a second submit;
        once the step has advanced to the code, that stray RETURN fired signIn with
        an empty code -> a cryptic "query-build-failed" before the user could type
-       it (the code had already arrived on the phone). Re-prompt instead. */
+       it (the code had already arrived on the phone). Re-prompt instead.
+       LOGIN_2FA is DELIBERATELY excluded: an empty submit there is the legitimate
+       way to finish login on an account with no 2FA password -- check_password
+       asks the server (account.getPassword) and the "no password required"
+       shortcut completes the login. Blocking it traps such users in a re-prompt
+       loop if they ever land on the 2FA screen. A real 2FA account just gets a
+       harmless "password-invalid" and re-prompts. */
     if ((state->mode == TG_GUI_MODE_LOGIN_PHONE ||
-         state->mode == TG_GUI_MODE_LOGIN_CODE ||
-         state->mode == TG_GUI_MODE_LOGIN_2FA) &&
+         state->mode == TG_GUI_MODE_LOGIN_CODE) &&
         state->input[0] == '\0') {
         tg_gui_window_copy(
             state->status, sizeof(state->status),
             state->mode == TG_GUI_MODE_LOGIN_PHONE
                 ? "Enter your phone (+ country code)"
-                : (state->mode == TG_GUI_MODE_LOGIN_CODE
-                       ? "Enter the code you received"
-                       : "Enter your 2FA password"));
+                : "Enter the code you received");
         state->cursor_on = 1;
         *caret_ticks = 0;
         tg_gui_window_paint(state, backend);
@@ -783,7 +786,7 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
             state->mode = TG_GUI_MODE_LOGIN_2FA;
             state->input_masked = 1;
             tg_gui_window_copy(state->status, sizeof(state->status),
-                               "2FA password");
+                               "2FA password (Enter if you have none)");
         } else if (rc == TG_GUI_LOGIN_BAD_CODE) {
             tg_gui_window_copy(state->status, sizeof(state->status),
                                "Wrong code - try again");
