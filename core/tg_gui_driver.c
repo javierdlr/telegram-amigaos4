@@ -235,7 +235,8 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
 }
 
 void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
-                              const char *own_label, const char *reply_snippet)
+                              const char *own_label, const char *reply_snippet,
+                              unsigned long sent_id)
 {
     tg_gui_state *state;
     tg_gui_message *message;
@@ -262,9 +263,13 @@ void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
                               (own_label != 0) ? own_label : "");
     message->sender_color =
         tg_gui_driver_color_for((own_label != 0) ? own_label : "");
-    /* Optimistic echo: delivered ("sent"), no server id yet so it cannot be
-       promoted to "seen" until the real message arrives via history. */
+    /* Optimistic echo: delivered ("sent"). messages.sendMessage returned the
+       server message id (sent_id), so stamp it here -- that lets the read-cursor
+       poll promote this echo to "seen" (the azure double-check) IN PLACE the
+       moment the peer reads it, instead of only after a chat re-open re-fetches
+       the row. 0 only if the send response carried no id (older fallback). */
     message->read_state = TG_GUI_READ_SENT;
+    message->id = sent_id;
     /* Mirror the reply quote locally so the sent message shows its "> ..." line
        (own messages are never re-fetched, so the echo is the only local copy). */
     if (reply_snippet != 0 && reply_snippet[0] != '\0') {
@@ -804,11 +809,27 @@ int tg_gui_driver_self_test(void)
             puts("gui driver self-test: reset must clear the read cursor");
             return 2;
         }
-        /* The optimistic echo is delivered ("sent") with no server id yet. */
-        tg_gui_driver_append_own(&rg, "eco", "Io", 0);
+        /* The optimistic echo now carries the server id returned by
+           messages.sendMessage, so it starts "sent" with a real id. */
+        tg_gui_driver_append_own(&rg, "eco", "Io", 0, 400UL);
         if (rs.messages[rs.message_count - 1].read_state != TG_GUI_READ_SENT ||
-            rs.messages[rs.message_count - 1].id != 0UL) {
+            rs.messages[rs.message_count - 1].id != 400UL) {
             puts("gui driver self-test: optimistic echo state wrong");
+            return 2;
+        }
+        if (!tg_gui_driver_has_unseen_own(&rg)) {
+            puts("gui driver self-test: echo must count as unseen-own");
+            return 2;
+        }
+        /* Peer reads up to the echo's id -> it promotes to "seen" IN PLACE (the
+           0.0.4 real-time double-check; previously id==0 blocked this). */
+        if (tg_gui_driver_set_read_outbox_max(&rg, 400UL) == 0 ||
+            rs.messages[rs.message_count - 1].read_state != TG_GUI_READ_SEEN) {
+            puts("gui driver self-test: echo must promote to seen via sent_id");
+            return 2;
+        }
+        if (tg_gui_driver_has_unseen_own(&rg)) {
+            puts("gui driver self-test: no unseen-own after read");
             return 2;
         }
     }

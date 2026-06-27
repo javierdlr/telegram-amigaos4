@@ -47,7 +47,8 @@ int tg_gui_driver_color_for(const char *name);
    back (notably MorphOS). `text` is already Latin-1 (typed) and copied
    verbatim; `own_label` is the sender label. */
 void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
-                              const char *own_label, const char *reply_snippet);
+                              const char *own_label, const char *reply_snippet,
+                              unsigned long sent_id);
 
 /* The peer has read our outgoing messages up to read_outbox_max: advance the
    open-chat read cursor (monotonic) and promote shown own messages at or below

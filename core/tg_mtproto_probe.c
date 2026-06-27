@@ -12749,9 +12749,9 @@ int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
                                   tg_gui_session_state.gui_driver.state != 0)
                                      ? tg_gui_session_state.gui_driver.state
                                            ->reply_snippet
-                                     : 0);
+                                     : 0,
+                                 sent_id);
     }
-    (void)sent_id;
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     return rc;
