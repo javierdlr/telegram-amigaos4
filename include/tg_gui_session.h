@@ -61,6 +61,15 @@ int tg_gui_session_load_older(FILE *stream, int allow_drop_newest);
 int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
                         FILE *stream);
 
+/* Edits an own message (messages.editMessage) to `text`, and on success updates
+   the on-screen bubble in place. Returns 0 ok, non-zero on failure / no chat. */
+int tg_gui_session_edit(const char *text, unsigned long message_id,
+                        FILE *stream);
+
+/* Deletes a message for everyone (messages./channels.deleteMessages by peer
+   type), and on success removes it from the transcript. Returns 0 ok. */
+int tg_gui_session_delete(unsigned long message_id, FILE *stream);
+
 /* Searches Telegram for `query` (contacts.search), adds the first openable
    result to the peer cache and opens it. Small reply, MorphOS-safe. Returns 0 =
    opened, 1 = no result / network issue, 2 = bad args. */

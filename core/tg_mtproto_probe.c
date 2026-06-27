@@ -7965,6 +7965,130 @@ static int tg_mtproto_auth_send_peer_on_context(
     return 0;
 }
 
+/* Send a pre-built query on the open context, surfacing only success/failure
+   (edit/delete do not need the reply body). 0 ok, SOFT_FAIL on timeout, 2 else. */
+static int tg_mtproto_auth_simple_query_on_context(
+    const char *host, const char *port, const char *api_id,
+    const char *auth_file, const char *dc_id_text,
+    tg_mtproto_auth_context *context, const unsigned char *query,
+    unsigned long query_len, FILE *stream, const char *label)
+{
+    tg_mtproto_rpc_result result;
+    int qrc;
+
+    memset(&result, 0, sizeof(result));
+    qrc = tg_mtproto_send_saved_query_on_context(host, port, api_id, auth_file,
+                                                 dc_id_text, context, query,
+                                                 query_len, &result, stream,
+                                                 label, 600U);
+    if (qrc != 0) {
+        return qrc == TG_MTPROTO_QUERY_SOFT_FAIL ? TG_MTPROTO_QUERY_SOFT_FAIL : 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0) {
+        return 2;
+    }
+    return 0;
+}
+
+/* messages.editMessage on the open context: replace an OWN message's text. */
+static int tg_mtproto_auth_edit_peer_on_context(
+    const char *host, const char *port, const char *api_id,
+    const char *auth_file, const char *dc_id_text,
+    tg_mtproto_auth_context *context, const char *peer_cache_file,
+    const char *peer_index_text, unsigned long message_id, const char *message,
+    FILE *stream)
+{
+    unsigned char query[512];
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    int has_access_hash;
+    tg_mtproto_tl_writer writer;
+    static const char label[] = "mtproto messages.editMessage";
+
+    if (stream == 0 || message == 0 || message[0] == '\0' || message_id == 0UL) {
+        return 2;
+    }
+    if (tg_mtproto_load_peer_cache_peer(peer_cache_file, peer_index_text,
+                                        &peer_constructor, &peer_id_hi,
+                                        &peer_id_lo, &access_hash_hi,
+                                        &access_hash_lo, &has_access_hash,
+                                        stream, label) != 0) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_edit_message(
+            &writer, peer_constructor, peer_id_hi, peer_id_lo, access_hash_hi,
+            access_hash_lo, has_access_hash, message_id, message) !=
+        TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    return tg_mtproto_auth_simple_query_on_context(host, port, api_id, auth_file,
+                                                   dc_id_text, context, query,
+                                                   writer.length, stream, label);
+}
+
+/* deleteMessages on the open context: messages.* for users/basic chats,
+   channels.* for channels/supergroups. revoke = delete for everyone. */
+static int tg_mtproto_auth_delete_peer_on_context(
+    const char *host, const char *port, const char *api_id,
+    const char *auth_file, const char *dc_id_text,
+    tg_mtproto_auth_context *context, const char *peer_cache_file,
+    const char *peer_index_text, unsigned long message_id, int revoke,
+    FILE *stream)
+{
+    unsigned char query[256];
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    int has_access_hash;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_tl_status bst;
+    static const char label[] = "mtproto deleteMessages";
+
+    if (stream == 0 || message_id == 0UL) {
+        return 2;
+    }
+    if (tg_mtproto_load_peer_cache_peer(peer_cache_file, peer_index_text,
+                                        &peer_constructor, &peer_id_hi,
+                                        &peer_id_lo, &access_hash_hi,
+                                        &access_hash_lo, &has_access_hash,
+                                        stream, label) != 0) {
+        return 2;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (peer_constructor == TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR) {
+        if (!has_access_hash) {
+            fprintf(stream, "%s: channel without access_hash\n", label);
+            return 2;
+        }
+        bst = tg_mtproto_build_channels_delete_messages(
+            &writer, peer_id_hi, peer_id_lo, access_hash_hi, access_hash_lo,
+            message_id);
+    } else {
+        bst = tg_mtproto_build_messages_delete_messages(&writer, revoke,
+                                                        message_id);
+    }
+    if (bst != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    return tg_mtproto_auth_simple_query_on_context(host, port, api_id, auth_file,
+                                                   dc_id_text, context, query,
+                                                   writer.length, stream, label);
+}
+
 /* Refresh the open chat's read_outbox_max_id (how far the peer has read OUR
    messages -- the read-receipt cursor) with a one-peer messages.getPeerDialogs.
    Sets *out to the cursor (0 if the chat is absent / unread); returns 0 on
@@ -12753,6 +12877,76 @@ int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
                                            ->reply_snippet
                                      : 0,
                                  sent_id);
+    }
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    return rc;
+}
+
+int tg_gui_session_edit(const char *text, unsigned long message_id, FILE *stream)
+{
+    FILE *quiet;
+    unsigned long prev_timeout;
+    int rc;
+    const char *edit_text;
+#if TG_MTPROTO_DISPLAY_LATIN1
+    char edit_line[1024];
+#endif
+
+    if (!tg_gui_session_state.open || stream == 0 || text == 0 ||
+        text[0] == '\0' || message_id == 0UL ||
+        tg_gui_session_state.current_peer_index[0] == '\0') {
+        return 2;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(10UL);
+    edit_text = text;
+#if TG_MTPROTO_DISPLAY_LATIN1
+    if (tg_mtproto_latin1_to_utf8(text, edit_line, sizeof(edit_line))) {
+        edit_text = edit_line; /* send UTF-8; the local echo keeps Latin-1 */
+    }
+#endif
+    rc = tg_mtproto_auth_edit_peer_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+        tg_gui_session_state.peer_cache_file,
+        tg_gui_session_state.current_peer_index, message_id, edit_text, quiet);
+    if (rc == 0) {
+        /* Update the on-screen bubble at once with the ORIGINAL Latin-1 text. */
+        (void)tg_gui_driver_update_text(&tg_gui_session_state.gui_driver,
+                                        message_id, text);
+    }
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    return rc;
+}
+
+int tg_gui_session_delete(unsigned long message_id, FILE *stream)
+{
+    FILE *quiet;
+    unsigned long prev_timeout;
+    int rc;
+
+    if (!tg_gui_session_state.open || stream == 0 || message_id == 0UL ||
+        tg_gui_session_state.current_peer_index[0] == '\0') {
+        return 2;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(10UL);
+    /* revoke = 1: delete for everyone (the usual intent; the server ignores
+       revoke when it is past the allowed window). */
+    rc = tg_mtproto_auth_delete_peer_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+        tg_gui_session_state.peer_cache_file,
+        tg_gui_session_state.current_peer_index, message_id, 1, quiet);
+    if (rc == 0) {
+        (void)tg_gui_driver_remove_by_id(&tg_gui_session_state.gui_driver,
+                                         message_id);
     }
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);

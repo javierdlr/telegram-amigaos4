@@ -67,6 +67,16 @@ void tg_gui_driver_reset_read_outbox(tg_gui_chat_driver *gui);
    tick, then relaxes once everything is read. */
 int tg_gui_driver_has_unseen_own(const tg_gui_chat_driver *gui);
 
+/* Edit: replace the text of the shown message with this server id (Latin-1
+   verbatim). Returns 1 if found (a repaint is needed). */
+int tg_gui_driver_update_text(tg_gui_chat_driver *gui, unsigned long message_id,
+                              const char *text);
+
+/* Delete: drop the shown message with this server id, shifting the tail up.
+   Returns 1 if removed (a repaint is needed). */
+int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui,
+                               unsigned long message_id);
+
 /* Host-CI self-test: feeds synthetic rows through the driver and asserts the
    resulting tg_gui_state (sender, text, time, is_own, colour, ring overflow).
    Returns 0 on success. */

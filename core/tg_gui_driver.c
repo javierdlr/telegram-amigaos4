@@ -376,6 +376,46 @@ int tg_gui_driver_has_unseen_own(const tg_gui_chat_driver *gui)
     return 0;
 }
 
+int tg_gui_driver_update_text(tg_gui_chat_driver *gui, unsigned long message_id,
+                              const char *text)
+{
+    int i;
+
+    if (gui == 0 || gui->state == 0 || text == 0 || message_id == 0UL) {
+        return 0;
+    }
+    for (i = 0; i < gui->state->message_count; ++i) {
+        if (gui->state->messages[i].id == message_id) {
+            /* Latin-1 verbatim (the composer text is already Latin-1, like the
+               optimistic echo); the bubble re-wraps on the next paint. */
+            tg_gui_driver_copy(gui->state->messages[i].text,
+                               sizeof(gui->state->messages[i].text), text);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui, unsigned long message_id)
+{
+    int i;
+    int j;
+
+    if (gui == 0 || gui->state == 0 || message_id == 0UL) {
+        return 0;
+    }
+    for (i = 0; i < gui->state->message_count; ++i) {
+        if (gui->state->messages[i].id == message_id) {
+            for (j = i + 1; j < gui->state->message_count; ++j) {
+                gui->state->messages[j - 1] = gui->state->messages[j];
+            }
+            gui->state->message_count -= 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Derives 1-2 uppercase initials from a display name (skipping a leading '@'):
    first letter of the first word, plus the first letter of the second word if
    present. "Mario Rossi" -> "MR", "Anna" -> "A", "" -> "?". */
@@ -917,6 +957,20 @@ int tg_gui_driver_self_test(void)
         dd.on_message(dd.ctx, &row);
         if (ds.message_count != 3 || ds.messages[2].id != 700UL) {
             puts("gui driver self-test: id-less echo must reconcile by text");
+            return 2;
+        }
+        /* Edit: update a shown message's text by id (ds has ids 500,600,700). */
+        if (tg_gui_driver_update_text(&dg, 600UL, "modificato") != 1 ||
+            strcmp(ds.messages[1].text, "modificato") != 0 ||
+            tg_gui_driver_update_text(&dg, 999UL, "x") != 0) {
+            puts("gui driver self-test: edit update_text wrong");
+            return 2;
+        }
+        /* Delete: drop by id, shifting the tail up. */
+        if (tg_gui_driver_remove_by_id(&dg, 500UL) != 1 ||
+            ds.message_count != 2 || ds.messages[0].id != 600UL ||
+            tg_gui_driver_remove_by_id(&dg, 999UL) != 0) {
+            puts("gui driver self-test: delete remove_by_id wrong");
             return 2;
         }
     }
