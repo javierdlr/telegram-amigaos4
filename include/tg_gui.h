@@ -227,6 +227,11 @@ typedef struct tg_gui_state {
     int ctx_visible;
     int ctx_msg;
     int ctx_x, ctx_y;
+
+    /* Composer is editing this own message in place (0 = composing a new one).
+       Set when "Edit" is picked from the context menu; the next send routes to
+       messages.editMessage instead of sendMessage. */
+    unsigned long edit_to_id;
 } tg_gui_state;
 
 /* Fills state with the demo conversation the GUI design was signed off on; used
@@ -261,10 +266,15 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
    backend-free (no text measuring). One item for now; the list is laid out so
    more (Copy/Edit/Delete) can follow the roadmap. */
 #define TG_GUI_CTX_W 108
+/* Item ids returned by tg_gui_context_menu_hit. Which items the popup shows
+   depends on the target message: Reply always; Edit + Delete only on an own
+   message that has a server id (you can only edit/delete your own). */
 #define TG_GUI_CTX_REPLY 0
-#define TG_GUI_CTX_ITEMS 1
-/* Maps a click at renderer-space (x, y) to a context-menu item index
-   [0, TG_GUI_CTX_ITEMS) when the popup is open, or -1 when the click is
+#define TG_GUI_CTX_EDIT 1
+#define TG_GUI_CTX_DELETE 2
+#define TG_GUI_CTX_ITEMS_MAX 3
+/* Maps a click at renderer-space (x, y) to a context-menu item id
+   (TG_GUI_CTX_REPLY/EDIT/DELETE) when the popup is open, or -1 when the click is
    outside it (the caller then dismisses the menu). */
 int tg_gui_context_menu_hit(const tg_gui_state *state, int width, int height,
                             int lh, int x, int y);

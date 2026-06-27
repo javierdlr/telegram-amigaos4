@@ -918,6 +918,19 @@ static int tg_gui_amiga_confirm_remove(struct Window *win, const char *name)
     return (int)tg_gui_amiga_easyreq_args(win, &es);
 }
 
+/* One-line confirm before deleting a message for everyone. 1 = Delete. */
+static int tg_gui_amiga_confirm_delete(struct Window *win)
+{
+    struct EasyStruct es;
+
+    es.es_StructSize = (ULONG)sizeof(struct EasyStruct);
+    es.es_Flags = 0UL;
+    es.es_Title = (STRPTR)"Delete message";
+    es.es_TextFormat = (STRPTR)"Delete this message for everyone?";
+    es.es_GadgetFormat = (STRPTR)"Delete|Cancel";
+    return (int)tg_gui_amiga_easyreq_args(win, &es);
+}
+
 /* Confirm + remove the selected chat from the sidebar, persist it, then land on
    a neighbouring chat (or an empty transcript if the list is now empty). Shared
    by the menu item and the Del key. No-op outside chat mode / with no selection. */
@@ -1528,8 +1541,15 @@ int tg_gui_run_window(tg_gui_state *state)
                    cancels, BACKSPACE deletes. */
                 if (msg_code == 13 || msg_code == 10) {
                     if (state->input[0] != '\0') {
-                        if (tg_gui_session_send(state->input, state->reply_to_id,
-                                                stdout) == 0) {
+                        if (state->edit_to_id != 0UL) {
+                            /* Edit mode: save the edit, then leave edit mode (the
+                               bubble is updated in place by the session call). */
+                            (void)tg_gui_session_edit(state->input,
+                                                      state->edit_to_id, stdout);
+                            state->edit_to_id = 0UL;
+                        } else if (tg_gui_session_send(state->input,
+                                                       state->reply_to_id,
+                                                       stdout) == 0) {
                             tg_gui_history_add(state, state->input);
                             state->reply_to_id = 0UL; /* clear only on success */
                             state->reply_sender[0] = '\0';
@@ -1556,10 +1576,11 @@ int tg_gui_run_window(tg_gui_state *state)
                     state->input_caret = 0;
                     state->history_pos = -1;
                     state->composing = 0;
-                    /* Leaving the composer drops any pending reply target too. */
+                    /* Leaving the composer drops any pending reply/edit too. */
                     state->reply_to_id = 0UL;
                     state->reply_sender[0] = '\0';
                     state->reply_snippet[0] = '\0';
+                    state->edit_to_id = 0UL;
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_window_paint(state, &backend);
@@ -1865,36 +1886,58 @@ int tg_gui_run_window(tg_gui_state *state)
                 hx = (int)mouse_x - ctx.origin_x;
                 hy = (int)mouse_y - ctx.origin_y;
                 if (msg_code == SELECTDOWN && state->ctx_visible) {
-                    /* A left click while the context menu is open: pick the item
+                    /* A left click while the context menu is open: run the item
                        under the pointer, or dismiss when the click is outside. */
                     int it = tg_gui_context_menu_hit(state, ctx.inner_w,
                                                      ctx.inner_h, ctx.line_h,
                                                      hx, hy);
+                    int mi = state->ctx_msg;
+                    const tg_gui_message *m =
+                        (mi >= 0 && mi < state->message_count)
+                            ? &state->messages[mi]
+                            : 0;
 
                     state->ctx_visible = 0;
-                    if (it == TG_GUI_CTX_REPLY) {
-                        int mi = state->ctx_msg;
+                    if (it == TG_GUI_CTX_REPLY && m != 0 && !m->is_system &&
+                        m->id != 0UL) {
+                        state->reply_to_id = m->id;
+                        tg_gui_window_copy(state->reply_sender,
+                                           sizeof(state->reply_sender),
+                                           m->sender);
+                        tg_gui_window_copy(state->reply_snippet,
+                                           sizeof(state->reply_snippet),
+                                           m->text);
+                        state->edit_to_id = 0UL;
+                        state->search_active = 0;
+                        state->composing = 1;
+                        state->input_caret = (int)strlen(state->input);
+                        state->cursor_on = 1;
+                        caret_ticks = 0;
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Reply - ENTER sends, ESC cancels");
+                    } else if (it == TG_GUI_CTX_EDIT && m != 0 && m->is_own &&
+                               m->id != 0UL) {
+                        /* Edit mode: pre-fill the composer with the message text;
+                           the next ENTER routes to editMessage (edit_to_id). */
+                        state->edit_to_id = m->id;
+                        state->reply_to_id = 0UL;
+                        state->reply_sender[0] = '\0';
+                        state->reply_snippet[0] = '\0';
+                        tg_gui_window_copy(state->input, sizeof(state->input),
+                                           m->text);
+                        state->search_active = 0;
+                        state->composing = 1;
+                        state->input_caret = (int)strlen(state->input);
+                        state->cursor_on = 1;
+                        caret_ticks = 0;
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Editing - ENTER saves, ESC cancels");
+                    } else if (it == TG_GUI_CTX_DELETE && m != 0 && m->is_own &&
+                               m->id != 0UL) {
+                        unsigned long del_id = m->id;
 
-                        if (mi >= 0 && mi < state->message_count) {
-                            const tg_gui_message *m = &state->messages[mi];
-
-                            if (!m->is_system && m->id != 0UL) {
-                                state->reply_to_id = m->id;
-                                tg_gui_window_copy(state->reply_sender,
-                                                   sizeof(state->reply_sender),
-                                                   m->sender);
-                                tg_gui_window_copy(state->reply_snippet,
-                                                   sizeof(state->reply_snippet),
-                                                   m->text);
-                                state->search_active = 0;
-                                state->composing = 1;
-                                state->input_caret = (int)strlen(state->input);
-                                state->cursor_on = 1;
-                                caret_ticks = 0;
-                                tg_gui_window_copy(
-                                    state->status, sizeof(state->status),
-                                    "Reply - ENTER sends, ESC cancels");
-                            }
+                        if (tg_gui_amiga_confirm_delete(ctx.window) != 0) {
+                            (void)tg_gui_session_delete(del_id, stdout);
                         }
                     }
                     tg_gui_window_paint(state, &backend);
@@ -2048,9 +2091,14 @@ int tg_gui_run_window(tg_gui_state *state)
                         tg_gui_window_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
                         if (state->input[0] != '\0') {
-                            if (tg_gui_session_send(state->input,
-                                                    state->reply_to_id,
-                                                    stdout) == 0) {
+                            if (state->edit_to_id != 0UL) {
+                                (void)tg_gui_session_edit(state->input,
+                                                          state->edit_to_id,
+                                                          stdout);
+                                state->edit_to_id = 0UL;
+                            } else if (tg_gui_session_send(state->input,
+                                                           state->reply_to_id,
+                                                           stdout) == 0) {
                                 tg_gui_history_add(state, state->input);
                                 state->reply_to_id = 0UL; /* clear on success */
                                 state->reply_sender[0] = '\0';

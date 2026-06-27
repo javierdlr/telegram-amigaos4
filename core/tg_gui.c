@@ -1643,17 +1643,39 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend)
 
 /* --- Right-click context menu (popup at the pointer) ------------------- */
 
-static const char *const tg_gui_ctx_items[TG_GUI_CTX_ITEMS] = { "Reply" };
+/* Items shown for the open menu, by target message: Reply always; Edit + Delete
+   only on an OWN message with a server id. Fills labels[]/ids[] (each sized
+   TG_GUI_CTX_ITEMS_MAX) and returns the count. */
+static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
+                                int *ids)
+{
+    int n = 0;
 
-/* Shared geometry for the popup: box rect + per-item height, clamped so the box
-   stays fully inside the window. Backend-free so the hit-test can reuse it. */
-static void tg_gui_context_box(const tg_gui_state *state, int width, int height,
-                               int lh, int *bx, int *by, int *bw, int *bh,
-                               int *item_h)
+    labels[n] = "Reply";
+    ids[n] = TG_GUI_CTX_REPLY;
+    ++n;
+    if (state->ctx_msg >= 0 && state->ctx_msg < state->message_count &&
+        state->messages[state->ctx_msg].is_own &&
+        state->messages[state->ctx_msg].id != 0UL) {
+        labels[n] = "Edit";
+        ids[n] = TG_GUI_CTX_EDIT;
+        ++n;
+        labels[n] = "Delete";
+        ids[n] = TG_GUI_CTX_DELETE;
+        ++n;
+    }
+    return n;
+}
+
+/* Shared geometry for the popup: box rect + per-item height for `count` items,
+   clamped so the box stays fully inside the window. Backend-free. */
+static void tg_gui_context_box(const tg_gui_state *state, int count, int width,
+                               int height, int lh, int *bx, int *by, int *bw,
+                               int *bh, int *item_h)
 {
     int ih = lh + 4;
     int w = TG_GUI_CTX_W;
-    int h = (TG_GUI_CTX_ITEMS * ih) + 4;
+    int h = (count * ih) + 4;
     int x = state->ctx_x;
     int y = state->ctx_y;
 
@@ -1684,7 +1706,9 @@ static void tg_gui_paint_context_menu(const tg_gui_state *state,
     int width;
     int height;
     int lh;
-    int bx, by, bw, bh, ih, i;
+    int bx, by, bw, bh, ih, n, i;
+    const char *labels[TG_GUI_CTX_ITEMS_MAX];
+    int ids[TG_GUI_CTX_ITEMS_MAX];
 
     if (!state->ctx_visible) {
         return;
@@ -1695,28 +1719,32 @@ static void tg_gui_paint_context_menu(const tg_gui_state *state,
     if (width <= 0 || height <= 0 || lh <= 0) {
         return;
     }
-    tg_gui_context_box(state, width, height, lh, &bx, &by, &bw, &bh, &ih);
+    n = tg_gui_context_items(state, labels, ids);
+    tg_gui_context_box(state, n, width, height, lh, &bx, &by, &bw, &bh, &ih);
     backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
                        tg_gui_make_rect(bx - 1, by - 1, bw + 2, bh + 2));
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                        tg_gui_make_rect(bx, by, bw, bh));
-    for (i = 0; i < TG_GUI_CTX_ITEMS; ++i) {
+    for (i = 0; i < n; ++i) {
         backend->draw_text(backend, TG_GUI_PEN_TEXT, bx + 8,
-                           by + 2 + (i * ih) + lh, tg_gui_ctx_items[i],
-                           (unsigned long)strlen(tg_gui_ctx_items[i]));
+                           by + 2 + (i * ih) + lh, labels[i],
+                           (unsigned long)strlen(labels[i]));
     }
 }
 
 int tg_gui_context_menu_hit(const tg_gui_state *state, int width, int height,
                             int lh, int x, int y)
 {
-    int bx, by, bw, bh, ih, i;
+    int bx, by, bw, bh, ih, n, i;
+    const char *labels[TG_GUI_CTX_ITEMS_MAX];
+    int ids[TG_GUI_CTX_ITEMS_MAX];
 
     if (state == 0 || !state->ctx_visible || lh <= 0 || width <= 0 ||
         height <= 0) {
         return -1;
     }
-    tg_gui_context_box(state, width, height, lh, &bx, &by, &bw, &bh, &ih);
+    n = tg_gui_context_items(state, labels, ids);
+    tg_gui_context_box(state, n, width, height, lh, &bx, &by, &bw, &bh, &ih);
     if (x < bx || x >= bx + bw || y < by || y >= by + bh) {
         return -1; /* outside the box -> dismiss */
     }
@@ -1724,10 +1752,10 @@ int tg_gui_context_menu_hit(const tg_gui_state *state, int width, int height,
     if (i < 0) {
         i = 0;
     }
-    if (i >= TG_GUI_CTX_ITEMS) {
-        i = TG_GUI_CTX_ITEMS - 1;
+    if (i >= n) {
+        i = n - 1;
     }
-    return i;
+    return ids[i]; /* item id: TG_GUI_CTX_REPLY / EDIT / DELETE */
 }
 
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
