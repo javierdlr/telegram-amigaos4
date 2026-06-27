@@ -167,6 +167,9 @@
 #define TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR 0xc01e857fUL
 #define TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR 0x83487af0UL
 #define TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR 0x8c88c923UL
+/* updateReadHistoryOutbox#2f2f21bf: the peer read OUR messages up to max_id --
+   real-time read receipts (5c). Parser/reader live in tg_mtproto_login.c. */
+#define TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR 0x2f2f21bfUL
 #define TG_MTPROTO_SEND_MESSAGE_TYPING_ACTION_CONSTRUCTOR 0x16bf744eUL
 /* A typing action is refreshed by the server every ~5s while active; clear the
    indicator a hair later so it stays lit during real typing and drops soon
@@ -309,6 +312,16 @@ typedef struct tg_chat_typing_sink {
     unsigned long seen_epoch; /* time() when last seen, for the TTL */
 } tg_chat_typing_sink;
 static tg_chat_typing_sink *tg_chat_typing_target = 0;
+/* Live read-receipt sink (5c): the push collector records the most recent
+   updateReadHistoryOutbox (which peer read up to which id); the GUI loop applies
+   it when the peer matches the open chat. NULL outside a GUI session. */
+typedef struct tg_chat_read_outbox_sink {
+    unsigned long peer_id_hi; /* peer of the latest read-outbox push */
+    unsigned long peer_id_lo;
+    unsigned long max_id;     /* the read cursor it reported */
+    int pending;              /* 1 = a push not yet applied by the loop */
+} tg_chat_read_outbox_sink;
+static tg_chat_read_outbox_sink *tg_chat_read_outbox_target = 0;
 /* The real console stream while the chat runs, for TUI components that must
    bypass capture streams (input-row redraws from the editor and the
    sub-prompts). 0 outside the chat. */
@@ -2768,6 +2781,25 @@ static void tg_chat_notify_collect_updates(const unsigned char *body,
             /* A typing item leading the container: record it, then stop (items
                are not length-prefixed, so the walk cannot continue past it). */
             tg_chat_typing_parse_update(&reader, item_constructor);
+            return;
+        }
+        if (item_constructor ==
+            TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) {
+            /* The peer read our messages: record (peer, max_id) for the loop to
+               apply when it is the open chat. Then stop (items are not
+               length-prefixed, so the walk cannot continue past it). */
+            tg_mtproto_dialog_peer rpeer;
+            unsigned long rmax;
+
+            if (tg_chat_read_outbox_target != 0 &&
+                tg_mtproto_read_update_read_history_outbox(&reader, &rpeer,
+                                                           &rmax) ==
+                    TG_MTPROTO_TL_OK) {
+                tg_chat_read_outbox_target->peer_id_hi = rpeer.id_hi;
+                tg_chat_read_outbox_target->peer_id_lo = rpeer.id_lo;
+                tg_chat_read_outbox_target->max_id = rmax;
+                tg_chat_read_outbox_target->pending = 1;
+            }
             return;
         }
         if (item_constructor != TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR &&
@@ -12035,6 +12067,10 @@ static struct {
     unsigned long saved_timeout;
     unsigned long diff_tick;
     unsigned long read_outbox_tick; /* cadence for the read-receipt refresh */
+    /* Real-time read receipt (5c): an updateReadHistoryOutbox push records its
+       (peer, max_id) here; the loop applies it next tick when the peer matches
+       the open chat (the poll backstop still runs). Armed at open. */
+    tg_chat_read_outbox_sink read_outbox_sink;
     tg_chat_typing_sink typing;     /* live "is typing" sink, armed at open */
     unsigned long open_peer_id_hi;  /* the open chat's peer id, to match typing */
     unsigned long open_peer_id_lo;
@@ -12161,6 +12197,9 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
        reconsider (a backlog-draining strategy, or pushes off again). */
     memset(&tg_gui_session_state.typing, 0, sizeof(tg_gui_session_state.typing));
     tg_chat_typing_target = &tg_gui_session_state.typing;
+    memset(&tg_gui_session_state.read_outbox_sink, 0,
+           sizeof(tg_gui_session_state.read_outbox_sink));
+    tg_chat_read_outbox_target = &tg_gui_session_state.read_outbox_sink;
     tg_mtproto_set_session_updates(1);
     tg_gui_chat_driver_bind(&tg_gui_session_state.gui_driver, state,
                             &tg_gui_session_state.driver);
@@ -12195,6 +12234,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         tg_mtproto_close_auth_context(&tg_gui_session_state.context);
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
+        tg_chat_read_outbox_target = 0;
         return 2;
     }
     tg_gui_log("open: connected");
@@ -13055,6 +13095,21 @@ int tg_gui_session_tick(FILE *stream)
         if (printed > 0UL) {
             dirty = 1;
         }
+        /* Real-time read receipt (5c): an updateReadHistoryOutbox push recorded
+           by the drain applies instantly when it is the open chat -- the poll
+           below stays as the backstop (dropped pushes / MorphOS). */
+        if (tg_gui_session_state.read_outbox_sink.pending) {
+            tg_gui_session_state.read_outbox_sink.pending = 0;
+            if (tg_gui_session_state.read_outbox_sink.peer_id_hi ==
+                    tg_gui_session_state.open_peer_id_hi &&
+                tg_gui_session_state.read_outbox_sink.peer_id_lo ==
+                    tg_gui_session_state.open_peer_id_lo &&
+                tg_gui_driver_set_read_outbox_max(
+                    &tg_gui_session_state.gui_driver,
+                    tg_gui_session_state.read_outbox_sink.max_id)) {
+                dirty = 1;
+            }
+        }
         /* Refresh the peer's read cursor so own messages flip to the double-
            check once the peer reads them. Throttled: read state changes slowly
            and getPeerDialogs is a needless round-trip on every short tick. Now
@@ -13270,6 +13325,7 @@ void tg_gui_session_close(void)
     if (!tg_gui_session_state.open) {
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
+        tg_chat_read_outbox_target = 0;
         return;
     }
     tg_gui_log("close: closing context");
@@ -13288,6 +13344,7 @@ void tg_gui_session_close(void)
     tg_net_set_connect_timeout_seconds(tg_gui_session_state.saved_timeout);
     tg_chat_nq = 0;
     tg_chat_typing_target = 0;
+    tg_chat_read_outbox_target = 0;
     tg_gui_session_state.open = 0;
 }
 

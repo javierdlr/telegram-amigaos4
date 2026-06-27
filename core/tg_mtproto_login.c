@@ -3901,6 +3901,27 @@ tg_mtproto_tl_status tg_mtproto_parse_updates_summary(
     return TG_MTPROTO_TL_OK;
 }
 
+/* Reads peer + max_id from a reader positioned JUST AFTER the
+   updateReadHistoryOutbox constructor; pts/pts_count are left unread. Shared by
+   the body parser (below) and the live update-stream dispatch (probe.c), which
+   reaches this point with the item constructor already consumed. */
+tg_mtproto_tl_status tg_mtproto_read_update_read_history_outbox(
+    tg_mtproto_tl_reader *reader, tg_mtproto_dialog_peer *out_peer,
+    unsigned long *out_max_id)
+{
+    tg_mtproto_tl_status status;
+
+    if (reader == 0 || out_peer == 0 || out_max_id == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    *out_max_id = 0UL;
+    status = tg_read_peer_ref(reader, out_peer);
+    if (status != TG_MTPROTO_TL_OK) {
+        return status;
+    }
+    return tg_mtproto_tl_read_u32(reader, out_max_id);
+}
+
 /* Parses a bare updateReadHistoryOutbox#2f2f21bf body into the peer + max_id (the
    read cursor for OUR sent messages); pts/pts_count are ignored. Pure + testable;
    the live push path uses the parsed peer to flip own messages to "seen" at once
@@ -3911,7 +3932,6 @@ tg_mtproto_tl_status tg_mtproto_parse_update_read_history_outbox(
 {
     tg_mtproto_tl_reader reader;
     unsigned long constructor;
-    tg_mtproto_tl_status status;
 
     if (out_peer == 0 || out_max_id == 0) {
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
@@ -3922,11 +3942,8 @@ tg_mtproto_tl_status tg_mtproto_parse_update_read_history_outbox(
         constructor != TG_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    status = tg_read_peer_ref(&reader, out_peer);
-    if (status != TG_MTPROTO_TL_OK) {
-        return status;
-    }
-    return tg_mtproto_tl_read_u32(&reader, out_max_id);
+    return tg_mtproto_read_update_read_history_outbox(&reader, out_peer,
+                                                      out_max_id);
 }
 
 int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor)
