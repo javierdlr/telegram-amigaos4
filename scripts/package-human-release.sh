@@ -216,7 +216,7 @@ credentials. Advanced users may replace it with their own (two lines: api_id
 then api_hash).
 
 License: MIT -- a non-commercial community project. Diary:
-https://androidlab.it/telegram-amiga-diario-sviluppo-client-mtproto/
+https://androidlab.it/en/telegram-amiga-mtproto-client-development-diary/
 EOF
 }
 

@@ -32,7 +32,7 @@ login, long & multi-line messages, and the flashless Workbench launch.
 
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:
-<https://androidlab.it/telegram-amiga-diario-sviluppo-client-mtproto/>
+<https://androidlab.it/en/telegram-amiga-mtproto-client-development-diary/>
 
 ## Platforms & releases
 
