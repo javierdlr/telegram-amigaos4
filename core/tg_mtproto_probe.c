@@ -493,6 +493,30 @@ static unsigned long tg_mtproto_context_time(
     return now + (unsigned long)context->server_time_delta_seconds;
 }
 
+/*
+ * Seconds by which the raw local Amiga clock (tg_platform_local_epoch, read from
+ * DateStamp -- the value the Workbench clock shows) leads the C library time().
+ * Zero on toolchains where time() already returns the raw local clock, but on
+ * AmigaOS3/clib2 time() adds the locale GMT offset to synthesize UTC and never
+ * applies DST, so time() is NOT the wall clock. The display path corrects the
+ * server delta by this skew so message times match the system clock regardless
+ * of how Locale/DST are configured; protocol timing keeps using time()/the UTC
+ * delta untouched. On hosts tg_platform_local_epoch falls back to time(), so the
+ * skew is zero and behaviour is unchanged.
+ */
+static long tg_mtproto_local_clock_skew(void)
+{
+    unsigned long local_now;
+    unsigned long lib_now;
+
+    local_now = tg_platform_local_epoch();
+    lib_now = (unsigned long)time(0);
+    if (local_now >= lib_now) {
+        return (long)(local_now - lib_now);
+    }
+    return -(long)(lib_now - local_now);
+}
+
 static void tg_mtproto_sync_time_from_server(
     tg_mtproto_auth_context *context,
     const tg_mtproto_encrypted_message *message)
@@ -9337,6 +9361,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
     {
         tg_chat_console_driver console_drv;
         tg_chat_driver driver;
+        long display_delta;
 
         /* The history renderer hands each resolved row to a driver: the console
            one (wrapping this stream + the day-separator cursor) by default, or
@@ -9351,6 +9376,13 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
             driver.on_chat_list_changed = 0; /* console list via render_console */
             driver.on_notification = 0;
         }
+        /* Anchor message times on the real local wall clock instead of time():
+           the server delta is server-UTC minus time(), but on clib2 time() is
+           already (locale-offset) UTC, so that delta loses the timezone and any
+           DST gap leaks through as an "off by an hour" display. Subtracting the
+           wall-clock-vs-time() skew rebases the delta on the Workbench clock. */
+        display_delta = context->server_time_delta_seconds
+                      - tg_mtproto_local_clock_skew();
         while (i > 0UL) {
             --i;
             if (texts.messages[i].id > max_seen_message_id) {
@@ -9397,7 +9429,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                     row.has_time
                         ? tg_mtproto_chat_local_epoch(
                               texts.messages[i].date,
-                              context->server_time_delta_seconds)
+                              display_delta)
                         : 0UL;
                 row.is_out = texts.messages[i].is_out;
                 row.is_group = is_group;
@@ -9481,12 +9513,13 @@ static void tg_mtproto_chat_print_system_line(FILE *stream, const char *text)
 }
 
 /*
- * Maps a server-side message date into the machine's wall-clock frame.
- * Amiga clocks usually store local time, which time() then reports as if it
- * were UTC; the server delta (server UTC minus local clock) therefore
- * carries the timezone offset, and subtracting it maps server dates back to
- * the local wall clock. Rendering uses gmtime so no host timezone is
- * applied a second time.
+ * Maps a server-side (UTC) message date into the machine's wall-clock frame by
+ * subtracting a delta. Callers pass the DISPLAY delta = (server UTC minus the
+ * local wall clock), i.e. the protocol's server-UTC-minus-time() delta rebased
+ * onto the real Amiga clock via tg_mtproto_local_clock_skew(); see the render
+ * loop. Rendering then uses gmtime so no host timezone is applied a second time.
+ * (Anchoring on the raw wall clock rather than time() is what keeps clib2/OS3 --
+ * whose time() returns locale-offset UTC with no DST -- on the system clock.)
  */
 static unsigned long tg_mtproto_chat_local_epoch(unsigned long message_date,
                                                  long server_delta)

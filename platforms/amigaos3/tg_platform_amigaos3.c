@@ -120,6 +120,23 @@ const char *tg_platform_default_data_dir(void)
     return "PROGDIR:";
 }
 
+unsigned long tg_platform_local_epoch(void)
+{
+    struct DateStamp ds;
+
+    /* The Amiga system clock is LOCAL wall-clock time (what the Workbench clock
+       shows): days/minutes/ticks since 1978-01-01, with no timezone or DST
+       concept. Convert to a Unix-style epoch with NO offset applied -- clib2's
+       time() instead adds the locale GMT offset (and never DST), so reading the
+       battclock directly is the only value that always matches the system clock.
+       252460800 = seconds from 1970-01-01 to the 1978-01-01 Amiga epoch. */
+    DateStamp(&ds);
+    return (unsigned long)ds.ds_Days * 86400UL
+         + (unsigned long)ds.ds_Minute * 60UL
+         + (unsigned long)ds.ds_Tick / 50UL
+         + 252460800UL;
+}
+
 void tg_platform_workbench_init(void)
 {
 #if defined(__amigaos3__)

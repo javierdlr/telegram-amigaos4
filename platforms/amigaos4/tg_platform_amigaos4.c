@@ -72,6 +72,21 @@ const char *tg_platform_default_data_dir(void)
     return "PROGDIR:";
 }
 
+unsigned long tg_platform_local_epoch(void)
+{
+    struct DateStamp ds;
+
+    /* Raw LOCAL Amiga wall clock (the Workbench clock value), days/minutes/ticks
+       since 1978-01-01, no timezone/DST applied -- used to anchor message-time
+       display on the system clock rather than C time(). 252460800 = seconds from
+       1970-01-01 to the 1978-01-01 Amiga epoch. */
+    DateStamp(&ds);
+    return (unsigned long)ds.ds_Days * 86400UL
+         + (unsigned long)ds.ds_Minute * 60UL
+         + (unsigned long)ds.ds_Tick / 50UL
+         + 252460800UL;
+}
+
 void tg_platform_workbench_init(void)
 {
 #if defined(__amigaos4__)

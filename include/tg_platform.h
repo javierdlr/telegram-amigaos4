@@ -47,6 +47,16 @@ void tg_platform_debug(const char *message);
 void tg_platform_sleep_seconds(unsigned long seconds);
 
 /**
+ * Returns the local wall-clock time as a Unix-style epoch (seconds since
+ * 1970-01-01), read straight from the Amiga system clock so it matches what the
+ * Workbench clock shows -- with NO timezone or DST adjustment applied. Used to
+ * anchor message-time display on the real wall clock instead of C time(), which
+ * on some Amiga toolchains (clib2) reports UTC via the locale GMT offset and
+ * never applies DST. On non-Amiga hosts it falls back to time(0).
+ */
+unsigned long tg_platform_local_epoch(void);
+
+/**
  * Waits until standard input appears readable, or until timeout_seconds pass.
  *
  * Returns non-zero when a line can probably be read with fgets(), zero on
