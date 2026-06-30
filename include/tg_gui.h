@@ -223,10 +223,13 @@ typedef struct tg_gui_state {
     /* Right-click context menu: a small popup at the pointer over a message
        bubble. ctx_visible gates the paint + hit-test; ctx_msg is the target
        message index captured when the menu opened; ctx_x/ctx_y is the pointer
-       (window-inner coords) the box anchors to (clamped into the window). */
+       (window-inner coords) the box anchors to (clamped into the window).
+       ctx_hover is the 0-based item index under the pointer (-1 = none), so the
+       popup highlights the entry the click will pick. */
     int ctx_visible;
     int ctx_msg;
     int ctx_x, ctx_y;
+    int ctx_hover;
 
     /* Composer is editing this own message in place (0 = composing a new one).
        Set when "Edit" is picked from the context menu; the next send routes to
@@ -278,6 +281,11 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
    outside it (the caller then dismisses the menu). */
 int tg_gui_context_menu_hit(const tg_gui_state *state, int width, int height,
                             int lh, int x, int y);
+/* Maps a pointer at renderer-space (x, y) to the 0-based context-menu item INDEX
+   under it (for hover highlighting), or -1 when the pointer is outside the popup.
+   Same geometry as tg_gui_context_menu_hit, which returns the item id instead. */
+int tg_gui_context_menu_index(const tg_gui_state *state, int width, int height,
+                              int lh, int x, int y);
 
 /* Maps a cursor Y (window-inner-relative) to a drag-and-drop INSERT-BEFORE target
    in [0, chat_count] for the sidebar list (chat_count == drop at the end). Uses

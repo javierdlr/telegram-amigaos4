@@ -1451,6 +1451,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->ctx_msg = mi;
                         state->ctx_x = hx;
                         state->ctx_y = hy;
+                        state->ctx_hover = -1; /* set on first pointer move */
                         msg->Code = MENUCANCEL;
                         ctx_repaint = 1;
                     }
@@ -2180,9 +2181,25 @@ int tg_gui_run_window(tg_gui_state *state)
                     }
                 }
             } else if (msg_class == IDCMP_MOUSEMOVE) {
-                /* Intuition reports moves while a button is held -- so this only
-                   fires during a knob drag. Map the cursor to a scroll offset;
-                   the painter re-clamps and redraws the knob to match. */
+                /* Context-menu hover: highlight the item under the pointer so the
+                   user sees which of Reply/Edit/Delete the click will pick.
+                   REPORTMOUSE floods moves, so repaint ONLY when the highlighted
+                   item actually changes (crossing an item boundary). */
+                if (state->ctx_visible) {
+                    int hx = (int)mouse_x - ctx.origin_x;
+                    int hy = (int)mouse_y - ctx.origin_y;
+                    int hv = tg_gui_context_menu_index(state, ctx.inner_w,
+                                                       ctx.inner_h, ctx.line_h,
+                                                       hx, hy);
+
+                    if (hv != state->ctx_hover) {
+                        state->ctx_hover = hv;
+                        tg_gui_window_paint(state, &backend);
+                    }
+                }
+                /* Scrollbar knob drag: Intuition reports moves while a button is
+                   held. Map the cursor to a scroll offset; the painter re-clamps
+                   and redraws the knob to match. */
                 if (state->sb_drag != 0) {
                     int hy;
                     int nky;

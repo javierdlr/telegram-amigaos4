@@ -1726,7 +1726,16 @@ static void tg_gui_paint_context_menu(const tg_gui_state *state,
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                        tg_gui_make_rect(bx, by, bw, bh));
     for (i = 0; i < n; ++i) {
-        backend->draw_text(backend, TG_GUI_PEN_TEXT, bx + 8,
+        int text_pen = TG_GUI_PEN_TEXT;
+
+        if (i == state->ctx_hover) {
+            /* Highlight the entry under the pointer so the user sees which of
+               Reply/Edit/Delete the click will pick (accent fill + accent text). */
+            backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                               tg_gui_make_rect(bx, by + 2 + (i * ih), bw, ih));
+            text_pen = TG_GUI_PEN_ACCENT_TEXT;
+        }
+        backend->draw_text(backend, text_pen, bx + 8,
                            by + 2 + (i * ih) + lh, labels[i],
                            (unsigned long)strlen(labels[i]));
     }
@@ -1756,6 +1765,32 @@ int tg_gui_context_menu_hit(const tg_gui_state *state, int width, int height,
         i = n - 1;
     }
     return ids[i]; /* item id: TG_GUI_CTX_REPLY / EDIT / DELETE */
+}
+
+int tg_gui_context_menu_index(const tg_gui_state *state, int width, int height,
+                              int lh, int x, int y)
+{
+    int bx, by, bw, bh, ih, n, i;
+    const char *labels[TG_GUI_CTX_ITEMS_MAX];
+    int ids[TG_GUI_CTX_ITEMS_MAX];
+
+    if (state == 0 || !state->ctx_visible || lh <= 0 || width <= 0 ||
+        height <= 0) {
+        return -1;
+    }
+    n = tg_gui_context_items(state, labels, ids);
+    tg_gui_context_box(state, n, width, height, lh, &bx, &by, &bw, &bh, &ih);
+    if (x < bx || x >= bx + bw || y < by || y >= by + bh) {
+        return -1; /* outside the box -> no item highlighted */
+    }
+    i = (y - (by + 2)) / ih;
+    if (i < 0) {
+        i = 0;
+    }
+    if (i >= n) {
+        i = n - 1;
+    }
+    return i; /* 0-based item index, for ctx_hover highlighting */
 }
 
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
