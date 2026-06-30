@@ -137,9 +137,10 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramGUI (or TelegramTUI). First run signs you in (phone -> code -> 2FA).
 
-New in $VERSION: replies (tap a message or right-click it for a context menu),
-real delivery checkmarks (one tick = sent, two blue ticks = read), flicker-free
-drawing (double buffering), and a scroll-to-newest button.
+New in $VERSION: edit and delete your own messages (right-click a message),
+live read receipts, sync of messages you send from another device, message times
+that follow the Amiga system clock, and a clearer 2FA login. (0.0.3 added
+replies, drawn delivery checkmarks, flicker-free drawing and scroll-to-newest.)
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
@@ -182,7 +183,7 @@ First start (logging in)
 2. If there is no saved login, a login panel appears. Enter your phone number
    in full international form (for example +39 333 1234567), then the code
    Telegram sends you. If your account has a cloud password (2FA), type it on
-   the masked screen.
+   the masked screen (if you do NOT have one, just press Enter to continue).
 3. The client logs in and writes telegram-auth.bin in this drawer. After that
    it reuses the saved login -- you are not asked for the phone/code again.
 
@@ -196,9 +197,11 @@ Using the GUI
   place).
 - Click the input line and type to compose; long messages wrap over several
   lines. Press Enter to send. To reply to a message, click its bubble (or
-  right-click it for a context menu with "Reply") -- your message is sent as a
-  reply, with the quoted line shown above it. Sent messages show a delivery tick:
-  one check = sent, two blue checks = read by the other side.
+  right-click it for a context menu) -- it is sent as a reply, with the quoted
+  line shown above it. The menu highlights the item under the pointer; on your
+  OWN messages it also offers Edit (change the text) and Delete (remove for
+  everyone). Sent messages show a delivery tick: one check = sent, two blue
+  checks = read by the other side -- it updates live.
 - F1..F10 jump to chats 1..10 (Shift+F1..F10 to 11..20).
 - Search box (top-left): type a name and press Enter to find a chat on Telegram
   and add it to the list -- useful for chats not shown yet.
@@ -214,10 +217,10 @@ emoji glyphs; bold/italic/code formatting is rendered with the system font.
 
 Message times
 -------------
-Message times follow your system clock -- the client just mirrors it. If they
-look off by an hour, set your Amiga's clock (and summer time / DST) to your
-correct local time in the system preferences; many setups leave the clock on
-standard time year-round, which then reads one hour behind in summer.
+Message times follow your Amiga system clock -- the same time Workbench shows --
+so they always match your machine. Just set the Amiga clock to your correct
+local time in the system preferences; there is no separate timezone to set in
+the client (it reads the system clock directly, DST and all).
 
 $notes_en
 
@@ -267,7 +270,7 @@ Primo avvio (accesso)
 2. Se non c'e' un login salvato, compare il pannello di accesso. Inserisci il
    numero di telefono in formato internazionale completo (es. +39 333 1234567),
    poi il codice che Telegram ti invia. Se il tuo account ha una password cloud
-   (2FA), digitala sulla schermata mascherata.
+   (2FA), digitala sulla schermata mascherata (se NON ce l'hai, premi Invio).
 3. Il client accede e scrive telegram-auth.bin in questo drawer. Da li' in poi
    riusa il login salvato -- non ti richiede piu' telefono/codice.
 
@@ -281,9 +284,10 @@ Usare la GUI
   posizione).
 - Clicca la riga di input e scrivi; i messaggi lunghi vanno a capo su piu' righe.
   Premi Invio per inviare. Per rispondere a un messaggio, clicca la sua bolla (o
-  tasto destro per il menu contestuale con "Reply") -- il messaggio parte come
-  risposta, con la citazione mostrata sopra. I messaggi inviati mostrano la
-  spunta di consegna: una spunta = inviato, due spunte azzurre = letto dall'altro.
+  tasto destro per il menu contestuale) -- parte come risposta, con la citazione
+  mostrata sopra. Il menu evidenzia la voce sotto il puntatore; sui TUOI messaggi
+  offre anche Edit (modifica il testo) e Delete (elimina per tutti). I messaggi
+  inviati mostrano la spunta: una = inviato, due azzurre = letto -- in tempo reale.
 - F1..F10 saltano alle chat 1..10 (Shift+F1..F10 alle 11..20).
 - Casella di ricerca (in alto a sinistra): scrivi un nome e premi Invio per
   trovare una chat su Telegram e aggiungerla alla lista -- utile per chat non
@@ -300,11 +304,11 @@ Amiga non hanno glifi emoji; grassetto/corsivo/code usano il font di sistema.
 
 Orari dei messaggi
 ------------------
-Gli orari dei messaggi seguono l'orologio di sistema -- il client lo rispecchia e
-basta. Se sono sfasati di un'ora, imposta l'orologio dell'Amiga (e l'ora legale)
-all'ora locale corretta nelle preferenze di sistema; molte configurazioni
-lasciano l'orologio sull'ora solare tutto l'anno, e d'estate risulta un'ora
-indietro.
+Gli orari dei messaggi seguono l'orologio di sistema dell'Amiga -- lo stesso che
+mostra Workbench -- quindi coincidono sempre con la tua macchina. Basta impostare
+l'orologio dell'Amiga all'ora locale corretta nelle preferenze; non c'e' un fuso
+orario separato da configurare nel client (legge l'orologio di sistema, DST
+compresa).
 
 $notes_it
 
