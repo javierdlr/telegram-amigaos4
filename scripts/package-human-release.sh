@@ -30,9 +30,26 @@ AMIGAOS4_BINARY=${AMIGAOS4_BINARY:-"$ROOT_DIR/build/amigaos4/telegram-test"}
 AROS_I386_BINARY=${AROS_I386_BINARY:-"$ROOT_DIR/build/aros-i386-abiv0/telegram-test"}
 AROS_X86_64_BINARY=${AROS_X86_64_BINARY:-"$ROOT_DIR/build/aros-x86_64/telegram-test"}
 
+# --- Aminet artifacts (.lha + .readme) --------------------------------------
+# Aminet requires a real LhA ENCODER (the Mac's lhasa is extract-only); we use
+# Koji Arai's lha. Set AMINET=0 to skip the Aminet pass. See the verified
+# procedure in memory/aminet-publishing.md (Type comm/tcp, 5 per-arch uploads,
+# version in the .readme NOT the filename, FTP upload to /new by Michele).
+AMINET=${AMINET:-1}
+LHA_BIN=${LHA_BIN:-"$HOME/amiga-dev/tools/lha-src/src/lha"}
+AMINET_ROOT=${AMINET_ROOT:-"$PACKAGE_ROOT/aminet"}
+AMINET_BASE=${AMINET_BASE:-tgamiga}      # short base: keeps every name <= 30 chars incl. suffix
+AMINET_DRAWER=${AMINET_DRAWER:-TelegramAmiga}
+AMINET_UPLOADER=${AMINET_UPLOADER:-"michele.dipace@kaffeine.net (Michele Dipace)"}
+AMINET_AUTHOR=${AMINET_AUTHOR:-"Michele Dipace <michele.dipace@kaffeine.net>"}
+DIARY_URL="https://androidlab.it/en/telegram-amiga-mtproto-client-development-diary/"
+
+sha_cmd() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }
+
 mkdir -p "$PACKAGE_ROOT"
 rm -f "$PACKAGE_ROOT"/Telegram-*-"$DATE_STAMP".zip
 rm -rf "$PACKAGE_ROOT"/Telegram-*-"$DATE_STAMP"
+if [ "$AMINET" = "1" ]; then rm -rf "$AMINET_ROOT"; mkdir -p "$AMINET_ROOT"; fi
 
 # --- per-architecture text blocks -------------------------------------------
 # requirements_en / requirements_it / notes_en / notes_it are filled per
@@ -306,6 +323,65 @@ https://androidlab.it/telegram-amiga-diario-sviluppo-client-mtproto/
 EOF
 }
 
+# Aminet per-architecture metadata. Sets: archtag (FILENAME suffix), archval
+# (the readme Architecture: value), requires. NB the Aminet enum has no
+# x86_64-aros token -> 64-bit AROS uses archval i386-aros, distinguished only by
+# the x86_64-aros FILENAME (verified live, e.g. filesysbox.x86_64-aros).
+aminet_meta() {
+    case "$1" in
+    amigaos3)    archtag="m68k-amigaos"; archval="m68k-amigaos >= 3.0.0"
+                 requires="68020+ CPU and a bsdsocket.library TCP/IP stack" ;;
+    morphos)     archtag="ppc-morphos";  archval="ppc-morphos"
+                 requires="MorphOS 3.x with its TCP/IP stack" ;;
+    amigaos4)    archtag="ppc-amigaos";  archval="ppc-amigaos >= 4.0.0"
+                 requires="AmigaOS 4.x with its TCP/IP stack" ;;
+    aros-i386)   archtag="i386-aros";    archval="i386-aros"
+                 requires="AROS (i386) with a TCP/IP stack (AROSTCP)" ;;
+    aros-x86_64) archtag="x86_64-aros";  archval="i386-aros"
+                 requires="AROS (x86_64) with a TCP/IP stack (AROSTCP)" ;;
+    *) echo "aminet_meta: unknown arch $1" >&2; exit 1 ;;
+    esac
+}
+
+# The Aminet .readme: machine-readable header (Short/Uploader/Author/Type/
+# Version/Architecture/Requires) FIRST, blank line, then the body. LF-only (the
+# heredoc emits LF), lines <= 78 cols, version ONLY here (never in the filename).
+write_aminet_readme() {
+    out=$1; archval=$2; requires=$3
+    cat > "$out" <<EOF
+Short:        Native MTProto Telegram chat client
+Uploader:     $AMINET_UPLOADER
+Author:       $AMINET_AUTHOR
+Type:         comm/tcp
+Version:      $VERSION
+Architecture: $archval
+Requires:     $requires
+
+Telegram Amiga is a from-scratch, native Telegram (MTProto) client for
+classic and Next-Gen Amiga systems. It signs in to a normal Telegram
+account, lists your chats and exchanges messages. Zero external
+dependencies: no MUI, no ixemul, no AmiSSL -- all crypto (RSA,
+Diffie-Hellman, SRP/2FA, AES, SHA) is built in.
+
+Two clients share one engine and one saved login:
+  TelegramGUI  - native Intuition/GadTools GUI (scrollbars + mouse)
+  TelegramTUI  - text/console client for low-end or mouse-less setups
+
+Features: replies + right-click context menu, edit/delete, real delivery
+checkmarks (one tick = sent, two blue ticks = read), double-buffered
+flicker-free drawing, scroll-to-newest, persistent unread badges and
+chat order. Message times follow the Amiga system clock.
+
+Quick start: copy the drawer to a WRITABLE volume and double-click
+TelegramGUI (or TelegramTUI). First run signs you in (phone -> code ->
+optional 2FA). NEVER share telegram-auth.bin: it holds your session.
+
+License: MIT. A non-commercial community project; full EN/IT manuals are
+inside the archive. Development diary:
+$DIARY_URL
+EOF
+}
+
 package_one() {
     platform=$1
     binary=$2
@@ -360,6 +436,7 @@ package_one() {
     write_readme "$dest/README.txt" "$platform"
     write_manual_en "$dest/Manual-EN.txt" "$platform"
     write_manual_it "$dest/Manuale-IT.txt" "$platform"
+    cp "$ROOT_DIR/LICENSE" "$dest/LICENSE"
 
     if command -v zip >/dev/null 2>&1; then
         (cd "$PACKAGE_ROOT" && rm -f "$drawer.zip" && zip -qr "$drawer.zip" "$drawer")
@@ -377,6 +454,42 @@ package_one() {
     else
         echo "$dest"
     fi
+
+    # --- Aminet: tgamiga.<archtag>.lha + matching tgamiga.<archtag>.readme ----
+    # Reuses the assembled drawer ($dest, incl. LICENSE) but under a clean
+    # top-level name ($AMINET_DRAWER) so unpacking yields one tidy directory.
+    if [ "$AMINET" = "1" ]; then
+        if [ ! -x "$LHA_BIN" ]; then
+            echo "ERROR $platform: LhA encoder not found at $LHA_BIN (build jca02266/lha or set LHA_BIN=, or AMINET=0)" >&2
+            exit 1
+        fi
+        aminet_meta "$expected"
+        amiwork="$AMINET_ROOT/$AMINET_DRAWER"
+        lhafile="$AMINET_ROOT/$AMINET_BASE.$archtag.lha"
+        rm -rf "$amiwork"; mkdir -p "$amiwork"
+        cp "$dest"/* "$amiwork"/
+        rm -f "$lhafile"
+        ( cd "$AMINET_ROOT" && "$LHA_BIN" a "$AMINET_BASE.$archtag.lha" "$AMINET_DRAWER" >/dev/null )
+        rm -rf "$amiwork"
+        # Verify it extracts under UNIX lha (Aminet's own checklist requirement).
+        if ! "$LHA_BIN" t "$lhafile" >/dev/null 2>&1; then
+            echo "ERROR $platform: $lhafile fails lha integrity test" >&2; exit 1
+        fi
+        # Same guards as the zip path: no leaked session file; the packaged
+        # binary is byte-identical to the built one.
+        if "$LHA_BIN" l "$lhafile" | grep -qiE "telegram-(auth|peers|seed|password|token)|phone-code-hash"; then
+            echo "ERROR $platform: SESSION FILE LEAK in $lhafile" >&2; exit 1
+        fi
+        lhatmp=$(mktemp -d)
+        ( cd "$lhatmp" && "$LHA_BIN" xq "$lhafile" >/dev/null 2>&1 )
+        if [ "$(md5of "$lhatmp/$AMINET_DRAWER/telegram-test")" != "$(md5of "$binary")" ]; then
+            rm -rf "$lhatmp"
+            echo "ERROR $platform: lha binary != built binary ($binary)" >&2; exit 1
+        fi
+        rm -rf "$lhatmp"
+        write_aminet_readme "$AMINET_ROOT/$AMINET_BASE.$archtag.readme" "$archval" "$requires"
+        echo "$lhafile  +  $AMINET_BASE.$archtag.readme  [Architecture: $archval]"
+    fi
 }
 
 package_one "AmigaOS 3.x" "$AMIGAOS3_BINARY" "amigaos3" "amigaos3"
@@ -384,3 +497,16 @@ package_one "MorphOS" "$MORPHOS_BINARY" "morphos" "morphos"
 package_one "AmigaOS 4.x" "$AMIGAOS4_BINARY" "amigaos4" "amigaos4"
 package_one "AROS i386 ABIv0" "$AROS_I386_BINARY" "aros-i386" "aros-i386"
 package_one "AROS x86_64" "$AROS_X86_64_BINARY" "aros-x86_64" "aros-x86_64"
+
+# --- checksums ---------------------------------------------------------------
+( cd "$PACKAGE_ROOT" && ls Telegram-*-"$DATE_STAMP".zip >/dev/null 2>&1 &&
+  sha_cmd Telegram-*-"$DATE_STAMP".zip > SHA256SUMS-github.txt &&
+  echo "$PACKAGE_ROOT/SHA256SUMS-github.txt" ) || true
+if [ "$AMINET" = "1" ] && ls "$AMINET_ROOT"/"$AMINET_BASE".*.lha >/dev/null 2>&1; then
+    ( cd "$AMINET_ROOT" && sha_cmd "$AMINET_BASE".*.lha "$AMINET_BASE".*.readme > SHA256SUMS-aminet.txt )
+    echo
+    echo "Aminet artifacts ready in: $AMINET_ROOT  (version $VERSION, Type comm/tcp)"
+    echo "Upload (Michele): FTP main.aminet.net -> cd /new -> binary -> put each"
+    echo "  $AMINET_BASE.<arch>.lha AND $AMINET_BASE.<arch>.readme (5 + 5 files)."
+    echo "  Web form may be back at https://aminet.net/upload. See memory/aminet-publishing.md"
+fi
