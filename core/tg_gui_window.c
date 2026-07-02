@@ -287,6 +287,21 @@ static void tg_gui_av_release_pool(struct ColorMap *cmap)
     tg_gui_av_reset();
 }
 
+/* Drops the cached pen grid for one peer so the next paint rebuilds it from
+   the freshest source (called after a successful avatar download). */
+void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo)
+{
+    int i;
+
+    for (i = 0; i < TG_GUI_AV_SLOTS; ++i) {
+        if (tg_gui_av_slots[i].state != 0 &&
+            tg_gui_av_slots[i].id_hi == id_hi &&
+            tg_gui_av_slots[i].id_lo == id_lo) {
+            tg_gui_av_slots[i].state = 0;
+        }
+    }
+}
+
 /* Pool pen for an RGB pixel: reuse a close pool entry, else obtain a new one
    (PRECISION-default like the theme pens), else nearest of what we have. */
 static LONG tg_gui_av_pen_for(const unsigned char *rgb)
@@ -354,10 +369,34 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
         unsigned long thumb_len;
         static unsigned char rgb[TG_GUI_AV_SZ * TG_GUI_AV_SZ * 3];
         unsigned long px;
+        int have_rgb = 0;
 
-        if (!tg_mtproto_avatar_thumb_lookup(id_hi, id_lo, &thumb,
-                                            &thumb_len)) {
-            return 0; /* no thumb captured (yet): initials */
+        /* Source priority: the downloaded 160px JPEG on disk (v2, crisp),
+           else the inline stripped thumb (v1, blurred), else initials. */
+        {
+            char name[40];
+            FILE *f;
+
+            sprintf(name, "tgav%08lx%08lx.jpg", id_hi, id_lo);
+            f = fopen(name, "rb");
+            if (f != 0) {
+                static unsigned char jpeg[24576];
+                unsigned long n = (unsigned long)fread(jpeg, 1, sizeof(jpeg),
+                                                       f);
+
+                fclose(f);
+                if (n > 0UL && n < sizeof(jpeg) &&
+                    tg_avatar_decode_jpeg(jpeg, n, rgb, TG_GUI_AV_SZ,
+                                          TG_GUI_AV_SZ) == 0) {
+                    have_rgb = 1;
+                }
+            }
+        }
+        if (!have_rgb) {
+            if (!tg_mtproto_avatar_thumb_lookup(id_hi, id_lo, &thumb,
+                                                &thumb_len)) {
+                return 0; /* nothing yet: initials */
+            }
         }
         for (i = 0; i < TG_GUI_AV_SLOTS; ++i) {
             if (tg_gui_av_slots[i].state == 0) {
@@ -371,7 +410,8 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
         }
         slot->id_hi = id_hi;
         slot->id_lo = id_lo;
-        if (tg_avatar_decode_stripped(thumb, thumb_len, rgb, TG_GUI_AV_SZ,
+        if (!have_rgb &&
+            tg_avatar_decode_stripped(thumb, thumb_len, rgb, TG_GUI_AV_SZ,
                                       TG_GUI_AV_SZ) != 0) {
             slot->state = -1; /* undecodable: remember and keep initials */
             return 0;
@@ -2838,6 +2878,12 @@ int tg_gui_run_window(tg_gui_state *state)
     puts("gui window: native window not available on this build; "
          "use --gui-self-test for the layout check.");
     return 0;
+}
+
+void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo)
+{
+    (void)id_hi; /* no native window: nothing cached to drop */
+    (void)id_lo;
 }
 
 #endif

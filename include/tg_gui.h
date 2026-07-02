@@ -314,6 +314,10 @@ int tg_gui_context_menu_index(const tg_gui_state *state, int width, int height,
    Pure text logic (self-tested); the window layer feeds the popup with it. */
 int tg_gui_mention_token(const char *input, int caret, int *start);
 
+/* Window layer: drop the cached avatar pen grid for one peer (after a fresh
+   download) so the next repaint rebuilds it from the disk JPEG. */
+void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo);
+
 /* Maps a cursor Y (window-inner-relative) to a drag-and-drop INSERT-BEFORE target
    in [0, chat_count] for the sidebar list (chat_count == drop at the end). Uses
    the same search_h/row_h/chat_scroll geometry the painter uses, rounded to the

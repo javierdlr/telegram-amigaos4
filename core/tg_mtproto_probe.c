@@ -12345,6 +12345,8 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     return 0;
 }
 
+static void tg_gui_session_fetch_open_avatar(FILE *stream);
+
 int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
 {
     FILE *quiet;
@@ -12469,6 +12471,9 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
                 &tg_gui_session_state.gui_driver, read_max);
         }
     }
+    /* Avatar v2: one bounded photo download for THIS chat (no-op on MorphOS,
+       once per peer per session, silent on any failure). */
+    tg_gui_session_fetch_open_avatar(quiet);
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_gui_log("open_chat: done");
@@ -13121,6 +13126,136 @@ int tg_gui_session_mention_candidates(const char *prefix, char *items,
         ++n;
     }
     return n;
+}
+
+/* Avatar v2 (safe scope): ONE bounded download of the OPEN chat's small
+   profile photo, at open_chat time only -- never from the live tick, and never
+   on MorphOS (same discipline as the member fetch). Cached as a flat
+   tgav<peerid>.jpg next to the binary; re-fetched at most once per peer per
+   session (freshness) and skipped when the photo lives on another DC (the v3
+   export/import path is deliberately out of scope). All failures are silent:
+   the renderer keeps the stripped thumb / initials. */
+#define TG_GUI_AVFETCH_MAX 64
+static unsigned long tg_gui_avfetch_hi[TG_GUI_AVFETCH_MAX];
+static unsigned long tg_gui_avfetch_lo[TG_GUI_AVFETCH_MAX];
+static int tg_gui_avfetch_n = 0;
+
+static void tg_gui_session_fetch_open_avatar(FILE *stream)
+{
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    (void)stream; /* never fetch on MorphOS (freeze guard, like the members) */
+#else
+    unsigned long id_hi = tg_gui_session_state.open_peer_id_hi;
+    unsigned long id_lo = tg_gui_session_state.open_peer_id_lo;
+    unsigned long photo_hi;
+    unsigned long photo_lo;
+    unsigned long dc;
+    unsigned long pc;
+    unsigned long ph;
+    unsigned long pl;
+    unsigned long ahh;
+    unsigned long ahl;
+    int hah;
+    int i;
+    unsigned char query[96];
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_rpc_result result;
+    const unsigned char *bytes;
+    unsigned long bytes_len;
+    int cdn;
+    FILE *quiet;
+    static const char label[] = "mtproto upload.getFile(avatar)";
+
+    if (!tg_gui_session_state.open || stream == 0 ||
+        (id_hi == 0UL && id_lo == 0UL)) {
+        return;
+    }
+    for (i = 0; i < tg_gui_avfetch_n; ++i) {
+        if (tg_gui_avfetch_hi[i] == id_hi && tg_gui_avfetch_lo[i] == id_lo) {
+            return; /* already tried this session */
+        }
+    }
+    if (!tg_mtproto_avatar_meta_lookup(id_hi, id_lo, &photo_hi, &photo_lo,
+                                       &dc)) {
+        return; /* no capture yet (peer straight from the file cache) */
+    }
+    if (photo_hi == 0UL && photo_lo == 0UL) {
+        return; /* no profile photo */
+    }
+    if (tg_gui_session_state.dc_id_text[0] != '\0') {
+        unsigned long home = 0UL;
+        const char *p = tg_gui_session_state.dc_id_text;
+
+        while (*p >= '0' && *p <= '9') {
+            home = home * 10UL + (unsigned long)(*p - '0');
+            ++p;
+        }
+        if (home != 0UL && dc != 0UL && dc != home) {
+            return; /* foreign DC: keep the thumb (v3 territory) */
+        }
+    }
+    /* Mark BEFORE the attempt: any failure must not retry this session. */
+    if (tg_gui_avfetch_n < TG_GUI_AVFETCH_MAX) {
+        tg_gui_avfetch_hi[tg_gui_avfetch_n] = id_hi;
+        tg_gui_avfetch_lo[tg_gui_avfetch_n] = id_lo;
+        ++tg_gui_avfetch_n;
+    }
+    if (tg_mtproto_load_peer_cache_peer(
+            tg_gui_session_state.peer_cache_file,
+            tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+            &ahl, &hah, stream, label) != 0) {
+        return;
+    }
+    if (ph != id_hi || pl != id_lo) {
+        return; /* stale open state: never fetch the wrong peer */
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_upload_get_peer_photo(&writer, pc, ph, pl, ahh, ahl,
+                                               hah, photo_hi, photo_lo, 0UL,
+                                               65536UL) != TG_MTPROTO_TL_OK) {
+        return;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    memset(&result, 0, sizeof(result));
+    if (tg_mtproto_send_saved_query_on_context(
+            tg_gui_session_state.host, tg_gui_session_state.port,
+            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            query, writer.length, &result, quiet, label, 600U) != 0) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR ||
+        tg_mtproto_unpack_gzip_result(&result, quiet, label) != 0) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return; /* FILE_MIGRATE / FLOOD / reference expired: thumb stays */
+    }
+    if (tg_mtproto_parse_upload_file(result.result_constructor,
+                                     result.result_body,
+                                     result.result_body_length, &bytes,
+                                     &bytes_len, &cdn) != TG_MTPROTO_TL_OK ||
+        cdn || bytes_len == 0UL || bytes_len >= 65536UL) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return; /* cdn redirect / empty / suspiciously full chunk: skip */
+    }
+    {
+        char name[40];
+        FILE *f;
+
+        sprintf(name, "tgav%08lx%08lx.jpg", id_hi, id_lo);
+        f = fopen(name, "wb");
+        if (f != 0) {
+            if (fwrite(bytes, 1, bytes_len, f) == bytes_len) {
+                fclose(f);
+                tg_gui_window_avatar_invalidate(id_hi, id_lo);
+            } else {
+                fclose(f);
+                remove(name); /* half-written cache is worse than none */
+            }
+        }
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+#endif
 }
 
 int tg_gui_session_is_open(void)

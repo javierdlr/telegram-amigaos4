@@ -143,24 +143,18 @@ static int tg_avatar_out(JDEC *jd, void *bitmap, JRECT *rect)
     return 1;
 }
 
-int tg_avatar_decode_stripped(const unsigned char *stripped,
-                              unsigned long stripped_len,
-                              unsigned char *dst_rgb, int dw, int dh)
+int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
+                          unsigned char *dst_rgb, int dw, int dh)
 {
-    static unsigned char jpeg[900];
     static unsigned char work[3500 + 512];
     static unsigned char src_rgb[TG_AVATAR_SRC_MAX * TG_AVATAR_SRC_MAX * 3];
-    unsigned long jpeg_len;
     tg_avatar_io io;
     JDEC jd;
+    unsigned int scale;
     int y;
     int x;
 
-    if (dst_rgb == 0 || dw <= 0 || dh <= 0) {
-        return 1;
-    }
-    if (tg_avatar_expand_stripped(stripped, stripped_len, jpeg, sizeof(jpeg),
-                                  &jpeg_len) != 0) {
+    if (jpeg == 0 || jpeg_len == 0UL || dst_rgb == 0 || dw <= 0 || dh <= 0) {
         return 1;
     }
     memset(&io, 0, sizeof(io));
@@ -171,13 +165,20 @@ int tg_avatar_decode_stripped(const unsigned char *stripped,
     if (jd_prepare(&jd, tg_avatar_in, work, sizeof(work), &io) != JDR_OK) {
         return 1;
     }
-    if (jd.width == 0 || jd.height == 0 || jd.width > TG_AVATAR_SRC_MAX ||
-        jd.height > TG_AVATAR_SRC_MAX) {
+    /* Smallest 1/2^scale output that fits the source frame: a 160px avatar
+       decodes at 1/4 (40px), a stripped thumb (~40px) at 1/1. */
+    for (scale = 0; scale <= 3; ++scale) {
+        if ((jd.width >> scale) <= TG_AVATAR_SRC_MAX &&
+            (jd.height >> scale) <= TG_AVATAR_SRC_MAX) {
+            break;
+        }
+    }
+    if (scale > 3 || (jd.width >> scale) == 0 || (jd.height >> scale) == 0) {
         return 1;
     }
-    io.w = jd.width;
-    io.h = jd.height;
-    if (jd_decomp(&jd, tg_avatar_out, 0) != JDR_OK) {
+    io.w = (unsigned int)(jd.width >> scale);
+    io.h = (unsigned int)(jd.height >> scale);
+    if (jd_decomp(&jd, tg_avatar_out, (uint8_t)scale) != JDR_OK) {
         return 1;
     }
     /* nearest-neighbour into the destination square (fixed point 16.16) */
@@ -196,6 +197,20 @@ int tg_avatar_decode_stripped(const unsigned char *stripped,
         }
     }
     return 0;
+}
+
+int tg_avatar_decode_stripped(const unsigned char *stripped,
+                              unsigned long stripped_len,
+                              unsigned char *dst_rgb, int dw, int dh)
+{
+    static unsigned char jpeg[900];
+    unsigned long jpeg_len;
+
+    if (tg_avatar_expand_stripped(stripped, stripped_len, jpeg, sizeof(jpeg),
+                                  &jpeg_len) != 0) {
+        return 1;
+    }
+    return tg_avatar_decode_jpeg(jpeg, jpeg_len, dst_rgb, dw, dh);
 }
 
 int tg_avatar_self_test(void)
