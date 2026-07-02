@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "tg_mtproto_login.h"
+#include "tg_avatar.h"
 
 #define TG_MTPROTO_CURRENT_LAYER 214UL
 #define TG_INVOKE_WITH_LAYER_CONSTRUCTOR 0xda9b0d0dUL
@@ -4141,6 +4142,9 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_tl_writer writer;
 
     if (tg_entity_marker_self_test() != 0) {
+        return 2;
+    }
+    if (tg_avatar_self_test() != 0) {
         return 2;
     }
     /* Avatar v1: byte-verified userProfilePhoto capture (photo_id lo/hi wire
