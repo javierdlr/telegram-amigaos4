@@ -47,6 +47,18 @@ void tg_platform_debug(const char *message);
 void tg_platform_sleep_seconds(unsigned long seconds);
 
 /**
+ * Folds one user-input event (key press, mouse move/click) into the platform's
+ * keystroke-timing entropy ring, which the DRBG absorbs on every generate.
+ * `a` and `b` are opaque event words (e.g. IDCMP class^code and packed mouse
+ * coordinates); the platform mixes in its own fine-grained timer at call time,
+ * which is where most of the entropy lives. O(1), no hashing on the input
+ * path -- safe to call for every event. Closes the gap where the GUI (the
+ * primary shipped front-end) fed no input entropy before the first-run
+ * auth-key DH, while the console stdin path did.
+ */
+void tg_platform_note_input_event(unsigned long a, unsigned long b);
+
+/**
  * Returns the local wall-clock time as a Unix-style epoch (seconds since
  * 1970-01-01), read straight from the Amiga system clock so it matches what the
  * Workbench clock shows -- with NO timezone or DST adjustment applied. Used to

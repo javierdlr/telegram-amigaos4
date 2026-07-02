@@ -153,6 +153,15 @@ static unsigned long tg_os4_timebase(void);
 static unsigned long tg_os4_key_ring[16];
 static unsigned long tg_os4_key_ring_pos = 0;
 
+static void tg_os4_note_input_event_words(unsigned long a, unsigned long b)
+{
+    unsigned long v = tg_os4_timebase() ^ a ^ (b << 13) ^ (b >> 7) ^
+                      (tg_os4_key_ring_pos * 2654435761UL);
+    tg_os4_key_ring[tg_os4_key_ring_pos & 15UL] ^=
+        (v << (tg_os4_key_ring_pos & 7UL)) ^ (v >> 5);
+    ++tg_os4_key_ring_pos;
+}
+
 static void tg_os4_note_input_event(int ch)
 {
     unsigned long v = tg_os4_timebase() ^
@@ -163,6 +172,17 @@ static void tg_os4_note_input_event(int ch)
     ++tg_os4_key_ring_pos;
 }
 #endif
+
+/* Public GUI hook: same ring, full event words (see tg_platform.h). */
+void tg_platform_note_input_event(unsigned long a, unsigned long b)
+{
+#if defined(__amigaos4__)
+    tg_os4_note_input_event_words(a, b);
+#else
+    (void)a;
+    (void)b;
+#endif
+}
 
 int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
 {

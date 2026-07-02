@@ -155,6 +155,16 @@ static unsigned long tg_morphos_input_tick(void)
     return tb;
 }
 
+/* Public GUI hook: same ring, full event words (see tg_platform.h). */
+void tg_platform_note_input_event(unsigned long a, unsigned long b)
+{
+    unsigned long v = tg_morphos_input_tick() ^ a ^ (b << 13) ^ (b >> 7) ^
+                      (tg_morphos_key_ring_pos * 2654435761UL);
+    tg_morphos_key_ring[tg_morphos_key_ring_pos & 15UL] ^=
+        (v << (tg_morphos_key_ring_pos & 7UL)) ^ (v >> 5);
+    ++tg_morphos_key_ring_pos;
+}
+
 static void tg_morphos_note_input_event(int ch)
 {
     unsigned long v = tg_morphos_input_tick() ^

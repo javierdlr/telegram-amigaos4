@@ -220,6 +220,23 @@ static void tg_os3_note_input_event(int ch)
 }
 #endif
 
+/* Public GUI hook: same ring, full event words (IDCMP class^code + mouse
+   coords) instead of one console byte. The E-Clock read at call time carries
+   the actual entropy; the words decorrelate identical-timing events. */
+void tg_platform_note_input_event(unsigned long a, unsigned long b)
+{
+#if defined(__amigaos3__)
+    unsigned long v = tg_os3_timebase() ^ a ^ (b << 13) ^ (b >> 7) ^
+                      (tg_os3_key_ring_pos * 2654435761UL);
+    tg_os3_key_ring[tg_os3_key_ring_pos & 15UL] ^=
+        (v << (tg_os3_key_ring_pos & 7UL)) ^ (v >> 5);
+    ++tg_os3_key_ring_pos;
+#else
+    (void)a;
+    (void)b;
+#endif
+}
+
 int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
 {
 #if defined(__amigaos3__)
@@ -336,6 +353,10 @@ static void tg_os3_timer_open(void)
     tg_os3_timer_tried = 1;
     tg_os3_timeport = CreateMsgPort();
     if (tg_os3_timeport == 0) {
+        /* Without timer.device the entropy timebase degrades to time(0) at 1s
+           granularity and the jitter loop flattens -- say so instead of
+           degrading silently (rng security note, 2026-06-21 review). */
+        puts("platform rng: WARNING no msg port - E-Clock entropy degraded");
         return;
     }
     memset(&tg_os3_timereq, 0, sizeof(tg_os3_timereq));
@@ -343,6 +364,8 @@ static void tg_os3_timer_open(void)
     if (OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
                    (struct IORequest *)&tg_os3_timereq, 0) == 0) {
         TimerBase = tg_os3_timereq.tr_node.io_Device;
+    } else {
+        puts("platform rng: WARNING timer.device failed - E-Clock entropy degraded");
     }
 }
 

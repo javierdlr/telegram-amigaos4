@@ -16,6 +16,7 @@
 
 #include "tg_gui.h"
 #include "tg_gui_session.h"
+#include "tg_platform.h"
 #include "tg_version.h"
 
 #include <stdio.h>
@@ -1457,6 +1458,25 @@ int tg_gui_run_window(tg_gui_state *state)
             msg_qual = msg->Qualifier;
             mouse_x = msg->MouseX;
             mouse_y = msg->MouseY;
+            /* Feed REAL user input (keys, clicks, pointer motion) into the
+               platform entropy ring -- the DRBG absorbs it on every generate.
+               This is what makes the first-run auth-key DH benefit from the
+               human at the keyboard even on the GUI-only path (the console
+               already fed its stdin bytes). INTUITICKS et al. are skipped so
+               the ring stays input-dominated. O(1), no hashing here. */
+            if (msg_class == IDCMP_RAWKEY || msg_class == IDCMP_VANILLAKEY ||
+                msg_class == IDCMP_MOUSEBUTTONS ||
+                msg_class == IDCMP_MOUSEMOVE
+#if defined(__amigaos4__)
+                || msg_class == IDCMP_EXTENDEDMOUSE
+#endif
+                ) {
+                tg_platform_note_input_event(
+                    ((unsigned long)msg_class << 8) ^ (unsigned long)msg_code ^
+                        ((unsigned long)msg_qual << 20),
+                    ((unsigned long)(unsigned short)mouse_x << 16) |
+                        (unsigned long)(unsigned short)mouse_y);
+            }
 #if defined(__amigaos4__)
             /* Read the wheel delta BEFORE ReplyMsg: the IntuiWheelData behind
                IAddress is only guaranteed valid until the message is replied. */

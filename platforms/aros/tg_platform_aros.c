@@ -153,6 +153,16 @@ static void tg_aros_note_input_event(int ch)
     ++tg_aros_key_ring_pos;
 }
 
+/* Public GUI hook: same ring, full event words (see tg_platform.h). */
+void tg_platform_note_input_event(unsigned long a, unsigned long b)
+{
+    unsigned long v = tg_aros_timebase() ^ a ^ (b << 13) ^ (b >> 7) ^
+                      (tg_aros_key_ring_pos * 2654435761UL);
+    tg_aros_key_ring[tg_aros_key_ring_pos & 15UL] ^=
+        (v << (tg_aros_key_ring_pos & 7UL)) ^ (v >> 5);
+    ++tg_aros_key_ring_pos;
+}
+
 int tg_platform_stdin_read_char(unsigned long timeout_seconds, char *out_char)
 {
 #if defined(__AROS__)
