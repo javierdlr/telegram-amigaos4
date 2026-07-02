@@ -2421,6 +2421,59 @@ static int tg_peer_cache_apply_chat(tg_mtproto_peer_cache *cache,
     return 1;
 }
 
+/* chat#/channel#: the photo:ChatPhoto field follows right after the leading
+   fields the scanner reads (title / optional username), so capture it into the
+   just-applied cache entry. BEST-EFFORT by design: any parse hiccup here simply
+   stops the capture -- the chat itself is already applied and the scanner's
+   resync finds the next object exactly as it did when this field was skipped.
+   chatPhoto#1c6e1c11 flags:# has_video:flags.0?true photo_id:long
+   stripped_thumb:flags.1?bytes dc_id:int. */
+static void tg_chat_photo_capture(tg_mtproto_tl_reader *reader,
+                                  tg_mtproto_peer_cache *cache,
+                                  unsigned long peer_constructor,
+                                  unsigned long id_hi,
+                                  unsigned long id_lo)
+{
+    unsigned long constructor;
+    unsigned long flags;
+    unsigned long ph_hi;
+    unsigned long ph_lo;
+    unsigned long dc;
+    const unsigned char *thumb;
+    unsigned long thumb_len;
+    tg_mtproto_peer_cache_entry *entry;
+
+    if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK ||
+        constructor != TG_CHAT_PHOTO_CONSTRUCTOR) {
+        return; /* empty/absent photo: keep the initials */
+    }
+    if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &ph_hi, &ph_lo) != TG_MTPROTO_TL_OK) {
+        return;
+    }
+    thumb = 0;
+    thumb_len = 0UL;
+    if ((flags & 2UL) != 0UL &&
+        tg_mtproto_tl_read_bytes(reader, &thumb, &thumb_len) !=
+            TG_MTPROTO_TL_OK) {
+        return;
+    }
+    if (tg_mtproto_tl_read_u32(reader, &dc) != TG_MTPROTO_TL_OK) {
+        return;
+    }
+    entry = tg_peer_cache_find(cache, peer_constructor, id_hi, id_lo);
+    if (entry == 0) {
+        return;
+    }
+    entry->photo_id_hi = ph_hi;
+    entry->photo_id_lo = ph_lo;
+    entry->photo_dc_id = dc;
+    if (thumb_len > 0UL && thumb_len <= TG_MTPROTO_STRIPPED_MAX) {
+        memcpy(entry->stripped, thumb, thumb_len);
+        entry->stripped_len = thumb_len;
+    }
+}
+
 static tg_mtproto_tl_status tg_read_chat_leading_from_reader(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_peer_cache *cache)
@@ -2454,11 +2507,14 @@ static tg_mtproto_tl_status tg_read_chat_leading_from_reader(
             return TG_MTPROTO_TL_INVALID_DATA;
         }
         (void)flags;
-        return tg_peer_cache_apply_chat(cache, TG_PEER_CHAT_CONSTRUCTOR,
-                                        id_hi, id_lo, 0UL, 0UL, 0, title,
-                                        username) ?
-                   TG_MTPROTO_TL_OK :
-                   TG_MTPROTO_TL_INVALID_DATA;
+        if (!tg_peer_cache_apply_chat(cache, TG_PEER_CHAT_CONSTRUCTOR,
+                                      id_hi, id_lo, 0UL, 0UL, 0, title,
+                                      username)) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        tg_chat_photo_capture(reader, cache, TG_PEER_CHAT_CONSTRUCTOR,
+                              id_hi, id_lo);
+        return TG_MTPROTO_TL_OK;
     case TG_CHANNEL_CONSTRUCTOR:
         if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
             tg_mtproto_tl_read_u32(reader, &flags2) != TG_MTPROTO_TL_OK ||
@@ -2484,12 +2540,15 @@ static tg_mtproto_tl_status tg_read_chat_leading_from_reader(
             return TG_MTPROTO_TL_INVALID_DATA;
         }
         (void)flags2;
-        return tg_peer_cache_apply_chat(cache, TG_PEER_CHANNEL_CONSTRUCTOR,
-                                        id_hi, id_lo, access_hash_hi,
-                                        access_hash_lo, has_access_hash,
-                                        title, username) ?
-                   TG_MTPROTO_TL_OK :
-                   TG_MTPROTO_TL_INVALID_DATA;
+        if (!tg_peer_cache_apply_chat(cache, TG_PEER_CHANNEL_CONSTRUCTOR,
+                                      id_hi, id_lo, access_hash_hi,
+                                      access_hash_lo, has_access_hash,
+                                      title, username)) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        tg_chat_photo_capture(reader, cache, TG_PEER_CHANNEL_CONSTRUCTOR,
+                              id_hi, id_lo);
+        return TG_MTPROTO_TL_OK;
     default:
         return TG_MTPROTO_TL_INVALID_DATA;
     }
