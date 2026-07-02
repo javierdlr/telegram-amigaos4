@@ -412,6 +412,37 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
 
 /* messages.editMessage#dfd14005: edit an own message's text (flags.11 message,
    peer, id, message). */
+/* Avatar v2: upload.getFile of a peer's small (160px) profile photo via the
+   inputPeerPhotoFileLocation shortcut. offset is a TL long (hi word 0). */
+tg_mtproto_tl_status tg_mtproto_build_upload_get_peer_photo(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long photo_id_hi,
+    unsigned long photo_id_lo,
+    unsigned long offset,
+    unsigned long limit);
+
+/* Parses upload.file (type+mtime skipped, bytes out); recognizes
+   upload.fileCdnRedirect via *cdn_redirect=1 (OK, no bytes). */
+tg_mtproto_tl_status tg_mtproto_parse_upload_file(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    const unsigned char **bytes,
+    unsigned long *bytes_length,
+    int *cdn_redirect);
+
+/* Avatar meta for a peer id from the capture store: photo_id + dc. 1=found. */
+int tg_mtproto_avatar_meta_lookup(unsigned long id_hi, unsigned long id_lo,
+                                  unsigned long *photo_id_hi,
+                                  unsigned long *photo_id_lo,
+                                  unsigned long *dc_id);
+
 tg_mtproto_tl_status tg_mtproto_build_messages_edit_message(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,

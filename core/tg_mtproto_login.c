@@ -1318,6 +1318,98 @@ tg_mtproto_tl_status tg_mtproto_build_msgs_ack(
     return status;
 }
 
+/* upload.getFile#be5335be for a peer's SMALL profile photo, addressed via the
+   inputPeerPhotoFileLocation#37257e99 shortcut (NO file_reference field; `big`
+   unset = the 160x160 crop). flags=0 on both: no `precise`, no `cdn_supported`
+   -- the server then serves the bytes directly and upload.fileCdnRedirect is a
+   bail-out, not a requirement. `offset` is a TL LONG (the #1 wire trap: 4 bytes
+   here shifts `limit` and yields cryptic failures); `limit` must be a power-of-
+   two multiple of 4096 dividing 1 MB. Hashes verified on core.telegram.org and
+   cross-checked against TDLib telegram_api.tl; unchanged from layer 214 through
+   the live layer. */
+tg_mtproto_tl_status tg_mtproto_build_upload_get_peer_photo(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long photo_id_hi,
+    unsigned long photo_id_lo,
+    unsigned long offset,
+    unsigned long limit)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || limit == 0UL || (limit % 4096UL) != 0UL ||
+        (1048576UL % limit) != 0UL || (offset % 4096UL) != 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer, 0xbe5335beUL); /* upload.getFile */
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* flags: plain fetch */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0x37257e99UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* flags: big unset */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_input_peer(writer, peer_constructor, peer_id_hi,
+                                     peer_id_lo, access_hash_hi,
+                                     access_hash_lo, has_access_hash);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, photo_id_hi, photo_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        /* offset:long -- avatars are far below 4 GB, so the high word is 0 */
+        status = tg_mtproto_tl_write_u64(writer, 0UL, offset);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, limit);
+    }
+    return status;
+}
+
+/* upload.file#096a18d5 type:storage.FileType mtime:int bytes:bytes. The
+   storage.FileType members are bare constructors (no fields). Recognizes
+   upload.fileCdnRedirect#f18cda44 explicitly (sets *cdn_redirect, returns OK
+   with no bytes) so the caller bails to a fallback instead of misparsing. */
+tg_mtproto_tl_status tg_mtproto_parse_upload_file(
+    unsigned long constructor,
+    const unsigned char *body,
+    unsigned long body_length,
+    const unsigned char **bytes,
+    unsigned long *bytes_length,
+    int *cdn_redirect)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long scratch;
+
+    if (body == 0 || bytes == 0 || bytes_length == 0 || cdn_redirect == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    *bytes = 0;
+    *bytes_length = 0UL;
+    *cdn_redirect = 0;
+    if (constructor == 0xf18cda44UL) { /* upload.fileCdnRedirect */
+        *cdn_redirect = 1;
+        return TG_MTPROTO_TL_OK;
+    }
+    if (constructor != 0x096a18d5UL) { /* upload.file */
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    tg_mtproto_tl_reader_init(&reader, body, body_length);
+    if (tg_mtproto_tl_read_u32(&reader, &scratch) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(&reader, &scratch) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA; /* type constructor + mtime */
+    }
+    return tg_mtproto_tl_read_bytes(&reader, bytes, bytes_length);
+}
+
 tg_mtproto_tl_status tg_mtproto_parse_rpc_result(
     const unsigned char *body,
     unsigned long body_length,
@@ -2125,7 +2217,10 @@ static void tg_peer_cache_copy_user_title(tg_mtproto_peer_cache_entry *entry,
    alone is enough to draw a small offline avatar; hashes re-verified on
    core.telegram.org, unchanged through the live layer). */
 static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
-                                const unsigned char *thumb, unsigned long len);
+                                const unsigned char *thumb, unsigned long len,
+                                unsigned long photo_id_hi,
+                                unsigned long photo_id_lo,
+                                unsigned long dc_id);
 
 static tg_mtproto_tl_status tg_read_user_profile_photo(
     tg_mtproto_tl_reader *reader,
@@ -2359,7 +2454,8 @@ static int tg_peer_cache_apply_user(tg_mtproto_peer_cache *cache,
             memcpy(entry->stripped, user->stripped, user->stripped_len);
             entry->stripped_len = user->stripped_len;
             tg_avatar_store_put(user->id_hi, user->id_lo, user->stripped,
-                                user->stripped_len);
+                                user->stripped_len, user->photo_id_hi,
+                                user->photo_id_lo, user->photo_dc_id);
         }
     }
     return 1;
@@ -2436,6 +2532,9 @@ static int tg_peer_cache_apply_chat(tg_mtproto_peer_cache *cache,
 typedef struct tg_avatar_slot {
     unsigned long id_hi;
     unsigned long id_lo;
+    unsigned long photo_id_hi; /* for the v2 getFile + disk-cache key */
+    unsigned long photo_id_lo;
+    unsigned long dc_id;
     unsigned long len; /* 0 = free slot */
     unsigned char thumb[TG_MTPROTO_STRIPPED_MAX];
 } tg_avatar_slot;
@@ -2443,7 +2542,10 @@ static tg_avatar_slot tg_avatar_store[TG_AVATAR_STORE_MAX];
 static unsigned long tg_avatar_store_next = 0UL;
 
 static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
-                                const unsigned char *thumb, unsigned long len)
+                                const unsigned char *thumb, unsigned long len,
+                                unsigned long photo_id_hi,
+                                unsigned long photo_id_lo,
+                                unsigned long dc_id)
 {
     unsigned long i;
     tg_avatar_slot *slot = 0;
@@ -2468,8 +2570,31 @@ static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
     }
     slot->id_hi = id_hi;
     slot->id_lo = id_lo;
+    slot->photo_id_hi = photo_id_hi;
+    slot->photo_id_lo = photo_id_lo;
+    slot->dc_id = dc_id;
     memcpy(slot->thumb, thumb, len);
     slot->len = len;
+}
+
+int tg_mtproto_avatar_meta_lookup(unsigned long id_hi, unsigned long id_lo,
+                                  unsigned long *photo_id_hi,
+                                  unsigned long *photo_id_lo,
+                                  unsigned long *dc_id)
+{
+    unsigned long i;
+
+    for (i = 0UL; i < TG_AVATAR_STORE_MAX; ++i) {
+        if (tg_avatar_store[i].len != 0UL &&
+            tg_avatar_store[i].id_hi == id_hi &&
+            tg_avatar_store[i].id_lo == id_lo) {
+            *photo_id_hi = tg_avatar_store[i].photo_id_hi;
+            *photo_id_lo = tg_avatar_store[i].photo_id_lo;
+            *dc_id = tg_avatar_store[i].dc_id;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int tg_mtproto_avatar_thumb_lookup(unsigned long id_hi, unsigned long id_lo,
@@ -2540,7 +2665,8 @@ static void tg_chat_photo_capture(tg_mtproto_tl_reader *reader,
     if (thumb_len > 0UL && thumb_len <= TG_MTPROTO_STRIPPED_MAX) {
         memcpy(entry->stripped, thumb, thumb_len);
         entry->stripped_len = thumb_len;
-        tg_avatar_store_put(id_hi, id_lo, thumb, thumb_len);
+        tg_avatar_store_put(id_hi, id_lo, thumb, thumb_len,
+                            ph_hi, ph_lo, dc);
     }
 }
 
@@ -4216,6 +4342,35 @@ int tg_mtproto_login_self_test(void)
     if (tg_avatar_self_test() != 0) {
         return 2;
     }
+    /* Avatar v2: byte-verify upload.getFile(inputPeerPhotoFileLocation) --
+       especially the 8-byte offset (the wire trap) and the tail layout. */
+    {
+        unsigned char q[64];
+        tg_mtproto_tl_writer w;
+
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_upload_get_peer_photo(
+                &w, TG_PEER_USER_CONSTRUCTOR, 0x00000001UL, 0x02030405UL,
+                0x0a0b0c0dUL, 0x0e0f1011UL, 1, 0x55667788UL, 0x11223344UL,
+                0UL, 65536UL) != TG_MTPROTO_TL_OK ||
+            w.length != 56UL ||
+            q[0] != 0xbeU || q[1] != 0x35U || q[2] != 0x53U || q[3] != 0xbeU ||
+            q[8] != 0x99U || q[9] != 0x7eU || q[10] != 0x25U ||
+            q[11] != 0x37U ||
+            q[36] != 0x44U || q[37] != 0x33U || q[38] != 0x22U ||
+            q[44] != 0x00U || q[48] != 0x00U || q[51] != 0x00U ||
+            q[52] != 0x00U || q[53] != 0x00U || q[54] != 0x01U ||
+            q[55] != 0x00U) {
+            return 2;
+        }
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_upload_get_peer_photo(
+                &w, TG_PEER_USER_CONSTRUCTOR, 0UL, 1UL, 0UL, 0UL, 1, 0UL, 1UL,
+                0UL, 12345UL) != TG_MTPROTO_TL_INVALID_ARGUMENT) {
+            return 2;
+        }
+    }
+
     /* Avatar v1: byte-verified userProfilePhoto capture (photo_id lo/hi wire
        order, stripped thumb via TL bytes short-form + padding, dc_id). */
     {
