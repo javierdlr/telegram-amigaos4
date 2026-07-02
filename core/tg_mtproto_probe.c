@@ -13026,6 +13026,103 @@ int tg_gui_session_delete(unsigned long message_id, FILE *stream)
     return rc;
 }
 
+/* One-shot member fetch for the OPEN group (same lazily-triggered fetch the
+   typing-name resolver uses; member_fetch_done is marked BEFORE the call so a
+   miss never re-fetches this open). MorphOS returns empty by design (the
+   freeze guard lives inside tg_mtproto_gui_fetch_group_members). */
+static void tg_gui_session_ensure_members(FILE *stream)
+{
+    FILE *fq;
+
+    if (tg_gui_session_state.member_fetch_done) {
+        return;
+    }
+    tg_gui_session_state.member_fetch_done = 1;
+    tg_gui_session_state.member_for_id_hi =
+        tg_gui_session_state.open_peer_id_hi;
+    tg_gui_session_state.member_for_id_lo =
+        tg_gui_session_state.open_peer_id_lo;
+    fq = tg_mtproto_open_quiet_stream(stream);
+    (void)tg_mtproto_gui_fetch_group_members(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+        tg_gui_session_state.peer_cache_file,
+        tg_gui_session_state.current_peer_index,
+        &tg_gui_session_state.member_cache, fq);
+    tg_mtproto_close_quiet_stream(fq, stream);
+}
+
+/* Case-insensitive ASCII prefix test; a shorter `s` fails via the NUL byte. */
+static int tg_gui_session_prefix_ci(const char *s, const char *prefix,
+                                    unsigned long n)
+{
+    unsigned long i;
+
+    for (i = 0UL; i < n; ++i) {
+        unsigned char a = (unsigned char)s[i];
+        unsigned char b = (unsigned char)prefix[i];
+
+        if (a >= 'A' && a <= 'Z') {
+            a = (unsigned char)(a + 32U);
+        }
+        if (b >= 'A' && b <= 'Z') {
+            b = (unsigned char)(b + 32U);
+        }
+        if (a != b) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int tg_gui_session_mention_candidates(const char *prefix, char *items,
+                                      unsigned long item_size, int max,
+                                      FILE *stream)
+{
+    unsigned long i;
+    unsigned long plen;
+    int n;
+
+    if (items == 0 || item_size < 2UL || max <= 0 || stream == 0) {
+        return 0;
+    }
+    if (!tg_gui_session_state.open ||
+        !tg_gui_session_state.open_peer_is_chat) {
+        return 0; /* mentions only make sense in an open group */
+    }
+    tg_gui_session_ensure_members(stream);
+    plen = (prefix != 0) ? (unsigned long)strlen(prefix) : 0UL;
+    n = 0;
+    for (i = 0UL;
+         i < tg_gui_session_state.member_cache.count && n < max; ++i) {
+        const tg_mtproto_peer_cache_entry *e =
+            &tg_gui_session_state.member_cache.entries[i];
+        char *dst;
+        unsigned long k;
+
+        if (e->username[0] == '\0' || e->is_self) {
+            /* Only usernames can be inserted as a plain-text mention; the
+               sender's own name would be noise. */
+            continue;
+        }
+        if (plen != 0UL &&
+            !tg_gui_session_prefix_ci(e->username, prefix, plen) &&
+            !tg_gui_session_prefix_ci(e->title, prefix, plen)) {
+            continue;
+        }
+        dst = items + ((unsigned long)n * item_size);
+        k = 0UL;
+        while (e->username[k] != '\0' && k + 1UL < item_size) {
+            dst[k] = e->username[k];
+            ++k;
+        }
+        dst[k] = '\0';
+        ++n;
+    }
+    return n;
+}
+
 int tg_gui_session_is_open(void)
 {
     return tg_gui_session_state.open;

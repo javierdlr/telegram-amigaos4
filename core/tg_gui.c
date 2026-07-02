@@ -1138,6 +1138,53 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
                        tg_gui_make_rect(width - 64, box_top, 56, input_h - 4));
     backend->draw_text(backend, TG_GUI_PEN_ACCENT_TEXT, width - 56,
                        box_top + lh + 2, "Send", 4UL);
+
+    /* '@' mention popup: the candidate usernames above the composer (over the
+       reply strip when one is shown); the highlighted row is what ENTER/TAB
+       will insert. Same accent-frame + surface look as the context menu. */
+    if (state->composing && state->mention_active && state->mention_count > 0) {
+        int ih = lh + 4;
+        int n = state->mention_count;
+        int bw = 220;
+        int bh = (n * ih) + 4;
+        int bx = sidebar_w + 8;
+        int by = box_top - bh - 2;
+        int mi;
+
+        if (state->reply_to_id != 0UL) {
+            by -= (lh + 4); /* sit above the reply strip */
+        }
+        if (bx + bw > width - 8) {
+            bw = width - 8 - bx;
+        }
+        if (by < 0) {
+            by = 0;
+        }
+        backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                           tg_gui_make_rect(bx - 1, by - 1, bw + 2, bh + 2));
+        backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
+                           tg_gui_make_rect(bx, by, bw, bh));
+        for (mi = 0; mi < n; ++mi) {
+            int pen = TG_GUI_PEN_TEXT;
+            char row[TG_GUI_MENTION_LEN + 2];
+            unsigned long rl = 0UL;
+            const char *u = state->mention_items[mi];
+
+            if (mi == state->mention_sel) {
+                backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                                   tg_gui_make_rect(bx, by + 2 + (mi * ih),
+                                                    bw, ih));
+                pen = TG_GUI_PEN_ACCENT_TEXT;
+            }
+            row[rl++] = '@';
+            while (*u != '\0' && rl < sizeof(row) - 1UL) {
+                row[rl++] = *u++;
+            }
+            row[rl] = '\0';
+            backend->draw_text(backend, pen, bx + 8, by + 2 + (mi * ih) + lh,
+                               row, rl);
+        }
+    }
 }
 
 /* The floating "scroll to newest" button: an accent square with a filled
@@ -1793,6 +1840,33 @@ int tg_gui_context_menu_index(const tg_gui_state *state, int width, int height,
     return i; /* 0-based item index, for ctx_hover highlighting */
 }
 
+int tg_gui_mention_token(const char *input, int caret, int *start)
+{
+    int i;
+
+    if (input == 0 || start == 0 || caret < 0) {
+        return -1;
+    }
+    i = caret - 1;
+    while (i >= 0) {
+        char c = input[i];
+
+        if (c == '@') {
+            if (i == 0 || input[i - 1] == ' ' || input[i - 1] == '\n' ||
+                input[i - 1] == '\t') {
+                *start = i;
+                return caret - i - 1; /* prefix length, 0 for a bare '@' */
+            }
+            return -1; /* '@' glued to a word (email-style): not a mention */
+        }
+        if (c == ' ' || c == '\n' || c == '\t') {
+            return -1; /* whitespace between '@' and the caret: no token */
+        }
+        --i;
+    }
+    return -1;
+}
+
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
 {
     int width;
@@ -2069,6 +2143,37 @@ int tg_gui_self_test(void)
         }
         if (lrec.forbidden_hits != 0) {
             puts("gui self-test: 2FA password must be masked, not drawn");
+            return 2;
+        }
+    }
+
+    /* '@' mention token finder: the pure text rules the composer popup rides on. */
+    {
+        int st = -1;
+
+        if (tg_gui_mention_token("@ma", 3, &st) != 2 || st != 0) {
+            puts("gui self-test: mention token at line start failed");
+            return 2;
+        }
+        if (tg_gui_mention_token("ciao @lu", 8, &st) != 2 || st != 5) {
+            puts("gui self-test: mention token after space failed");
+            return 2;
+        }
+        if (tg_gui_mention_token("ciao @", 6, &st) != 0 || st != 5) {
+            puts("gui self-test: bare '@' must yield an empty prefix");
+            return 2;
+        }
+        if (tg_gui_mention_token("mail@host", 9, &st) != -1) {
+            puts("gui self-test: email-style '@' must not be a mention");
+            return 2;
+        }
+        if (tg_gui_mention_token("@ma poi", 7, &st) != -1) {
+            puts("gui self-test: space between '@' and caret must end the token");
+            return 2;
+        }
+        if (tg_gui_mention_token("ciao", 4, &st) != -1 ||
+            tg_gui_mention_token("", 0, &st) != -1) {
+            puts("gui self-test: no-'@' input must yield no token");
             return 2;
         }
     }

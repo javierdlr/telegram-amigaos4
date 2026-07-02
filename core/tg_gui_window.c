@@ -1035,6 +1035,79 @@ static void tg_gui_window_save_geom(int w, int h, int x, int y)
     }
 }
 
+/* Recompute the '@' mention popup after a composer edit or caret move: token
+   under the caret (tg_gui_mention_token) -> candidate usernames from the open
+   group's member cache. Selection resets to the top match on every refresh so
+   the popup always answers "what will ENTER insert" at a glance. */
+static void tg_gui_window_mention_refresh(tg_gui_state *state)
+{
+    int start = 0;
+    int plen;
+    char prefix[TG_GUI_MENTION_LEN];
+
+    state->mention_active = 0;
+    state->mention_count = 0;
+    state->mention_sel = 0;
+    if (!state->composing || state->mode != TG_GUI_MODE_CHAT ||
+        !tg_gui_session_is_open()) {
+        return;
+    }
+    plen = tg_gui_mention_token(state->input, state->input_caret, &start);
+    if (plen < 0 || plen >= (int)sizeof(prefix)) {
+        return;
+    }
+    memcpy(prefix, state->input + start + 1, (unsigned long)plen);
+    prefix[plen] = '\0';
+    state->mention_count = tg_gui_session_mention_candidates(
+        prefix, &state->mention_items[0][0], TG_GUI_MENTION_LEN,
+        TG_GUI_MENTION_MAX, stdout);
+    if (state->mention_count > 0) {
+        state->mention_active = 1;
+        state->mention_start = start;
+    }
+}
+
+/* Replace the '@'-token under the caret with "@<picked username> " and place
+   the caret after the space; closes the popup. Bounded by the input buffer. */
+static void tg_gui_window_mention_complete(tg_gui_state *state)
+{
+    char out[TG_GUI_MSG_TEXT_MAX];
+    unsigned long o = 0UL;
+    unsigned long caret;
+    int i;
+    const char *u;
+
+    if (!state->mention_active || state->mention_sel < 0 ||
+        state->mention_sel >= state->mention_count) {
+        return;
+    }
+    /* head, up to and including the '@' */
+    for (i = 0; i <= state->mention_start && o + 1UL < sizeof(out); ++i) {
+        out[o++] = state->input[i];
+    }
+    u = state->mention_items[state->mention_sel];
+    while (*u != '\0' && o + 1UL < sizeof(out)) {
+        out[o++] = *u++;
+    }
+    if (o + 1UL < sizeof(out)) {
+        out[o++] = ' ';
+    }
+    caret = o;
+    /* tail: whatever followed the caret */
+    u = state->input + state->input_caret;
+    while (*u != '\0' && o + 1UL < sizeof(out)) {
+        out[o++] = *u++;
+    }
+    out[o] = '\0';
+    tg_gui_window_copy(state->input, sizeof(state->input), out);
+    if (caret > (unsigned long)strlen(state->input)) {
+        caret = (unsigned long)strlen(state->input);
+    }
+    state->input_caret = (int)caret;
+    state->mention_active = 0;
+    state->mention_count = 0;
+}
+
 /* Load the last online search's openable results into the sidebar list so the
    existing renderer + click hit-test present them as a picker. chats[] is
    restored from the cache (tg_gui_session_refresh_chats) on cancel/open. */
@@ -1602,8 +1675,18 @@ int tg_gui_run_window(tg_gui_state *state)
                 }
             } else if (msg_class == IDCMP_VANILLAKEY && state->composing) {
                 /* Composing: keys edit the input line; RETURN sends, ESC
-                   cancels, BACKSPACE deletes. */
-                if (msg_code == 13 || msg_code == 10) {
+                   cancels, BACKSPACE deletes. While the '@' mention popup is
+                   up, RETURN/TAB insert the highlighted username instead (the
+                   NEXT return sends) and ESC only closes the popup. */
+                if ((msg_code == 13 || msg_code == 10 || msg_code == 9) &&
+                    state->mention_active) {
+                    tg_gui_window_mention_complete(state);
+                    tg_gui_window_paint(state, &backend);
+                } else if (msg_code == 27 && state->mention_active) {
+                    state->mention_active = 0;
+                    state->mention_count = 0;
+                    tg_gui_window_paint(state, &backend);
+                } else if (msg_code == 13 || msg_code == 10) {
                     if (state->input[0] != '\0') {
                         if (state->edit_to_id != 0UL) {
                             /* Edit mode: save the edit, then leave edit mode (the
@@ -1662,6 +1745,7 @@ int tg_gui_run_window(tg_gui_state *state)
                         memmove(&state->input[c - 1UL], &state->input[c],
                                 n - c + 1UL);
                         state->input_caret = (int)(c - 1UL);
+                        tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code >= 32 && msg_code < 256) {
@@ -1679,6 +1763,7 @@ int tg_gui_run_window(tg_gui_state *state)
                                 n - c + 1UL);
                         state->input[c] = (char)msg_code;
                         state->input_caret = (int)(c + 1UL);
+                        tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
                 }
@@ -1729,15 +1814,31 @@ int tg_gui_run_window(tg_gui_state *state)
                        state->mode == TG_GUI_MODE_CHAT) {
                 /* While composing, LEFT/RIGHT move the caret within the input.
                    The key-up event arrives as code|0x80, so the strict == tests
-                   fire exactly once per press. */
-                if (msg_code == 0x4F) { /* cursor left */
+                   fire exactly once per press. With the '@' mention popup up,
+                   UP/DOWN move its highlight instead of recalling history. */
+                if ((msg_code == 0x4C || msg_code == 0x4D) &&
+                    state->mention_active) {
+                    if (msg_code == 0x4C) { /* up */
+                        state->mention_sel = (state->mention_sel > 0)
+                                                 ? state->mention_sel - 1
+                                                 : state->mention_count - 1;
+                    } else {                 /* down */
+                        state->mention_sel =
+                            (state->mention_sel + 1 < state->mention_count)
+                                ? state->mention_sel + 1
+                                : 0;
+                    }
+                    tg_gui_window_paint(state, &backend);
+                } else if (msg_code == 0x4F) { /* cursor left */
                     if (state->input_caret > 0) {
                         state->input_caret--;
+                        tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 0x4E) { /* cursor right */
                     if (state->input_caret < (int)strlen(state->input)) {
                         state->input_caret++;
+                        tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 0x4C) { /* cursor up: older sent line */

@@ -80,6 +80,10 @@ struct tg_gui_backend {
                                    getHistory loads ~90, leaving room for live ones */
 #define TG_GUI_NAME_MAX 48
 #define TG_GUI_TEXT_MAX 256
+
+/* '@' mention autocomplete popup (composer). */
+#define TG_GUI_MENTION_MAX 5
+#define TG_GUI_MENTION_LEN 40
 /* Received-message body buffer, decoupled from the 256-byte preview/input/name
    size so long messages are not truncated at ingestion. The MTProto parse holds
    up to TG_MTPROTO_MESSAGE_TEXT_MAX = 4096, so PPC/AROS use the full 4096 to show
@@ -231,6 +235,17 @@ typedef struct tg_gui_state {
     int ctx_x, ctx_y;
     int ctx_hover;
 
+    /* '@' mention autocomplete over the composer: while the caret sits in an
+       "@prefix" token, mention_items holds up to TG_GUI_MENTION_MAX candidate
+       usernames (no leading '@') from the open group's member cache.
+       mention_active gates paint + key routing (Up/Down pick, ENTER/TAB
+       complete, ESC closes); mention_start is the byte offset of the '@'. */
+    int mention_active;
+    int mention_count;
+    int mention_sel;
+    int mention_start;
+    char mention_items[TG_GUI_MENTION_MAX][TG_GUI_MENTION_LEN];
+
     /* Composer is editing this own message in place (0 = composing a new one).
        Set when "Edit" is picked from the context menu; the next send routes to
        messages.editMessage instead of sendMessage. */
@@ -286,6 +301,13 @@ int tg_gui_context_menu_hit(const tg_gui_state *state, int width, int height,
    Same geometry as tg_gui_context_menu_hit, which returns the item id instead. */
 int tg_gui_context_menu_index(const tg_gui_state *state, int width, int height,
                               int lh, int x, int y);
+
+/* Locates the '@'-token the caret sits in: scans back from `caret` for an '@'
+   that starts the line or follows whitespace, with no whitespace between it and
+   the caret. Returns the prefix length (bytes after the '@', may be 0) and sets
+   *start to the '@' byte offset; returns -1 when the caret is in no such token.
+   Pure text logic (self-tested); the window layer feeds the popup with it. */
+int tg_gui_mention_token(const char *input, int caret, int *start);
 
 /* Maps a cursor Y (window-inner-relative) to a drag-and-drop INSERT-BEFORE target
    in [0, chat_count] for the sidebar list (chat_count == drop at the end). Uses
