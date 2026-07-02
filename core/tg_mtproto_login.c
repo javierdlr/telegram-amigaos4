@@ -2117,13 +2117,20 @@ static void tg_peer_cache_copy_user_title(tg_mtproto_peer_cache_entry *entry,
     }
 }
 
-static tg_mtproto_tl_status tg_skip_user_profile_photo(
-    tg_mtproto_tl_reader *reader)
+/* userProfilePhoto#82d1f706 flags:# has_video:flags.0?true personal:flags.2?true
+   photo_id:long stripped_thumb:flags.1?bytes dc_id:int (empty variant
+   userProfilePhotoEmpty#4f11bae1). Was a pure skip; now CAPTURES photo_id/dc_id
+   and the inline stripped thumb into the user summary (avatar v1: the thumb
+   alone is enough to draw a small offline avatar; hashes re-verified on
+   core.telegram.org, unchanged through the live layer). */
+static tg_mtproto_tl_status tg_read_user_profile_photo(
+    tg_mtproto_tl_reader *reader,
+    tg_mtproto_user_summary *out)
 {
     unsigned long constructor;
     unsigned long flags;
-    unsigned long scratch_hi;
-    unsigned long scratch_lo;
+    const unsigned char *thumb;
+    unsigned long thumb_len;
 
     if (tg_mtproto_tl_read_u32(reader, &constructor) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
@@ -2135,14 +2142,22 @@ static tg_mtproto_tl_status tg_skip_user_profile_photo(
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
-        tg_mtproto_tl_read_u64(reader, &scratch_hi, &scratch_lo) !=
+        tg_mtproto_tl_read_u64(reader, &out->photo_id_hi,
+                               &out->photo_id_lo) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if ((flags & 2UL) != 0UL) {
+        if (tg_mtproto_tl_read_bytes(reader, &thumb, &thumb_len) !=
             TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_INVALID_DATA;
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        /* Keep only thumbs that fit whole: truncated JPEG data is useless. */
+        if (thumb_len > 0UL && thumb_len <= TG_MTPROTO_STRIPPED_MAX) {
+            memcpy(out->stripped, thumb, thumb_len);
+            out->stripped_len = thumb_len;
+        }
     }
-    if ((flags & 2UL) != 0UL && tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
-        return TG_MTPROTO_TL_INVALID_DATA;
-    }
-    return tg_mtproto_tl_read_u32(reader, &scratch_lo);
+    return tg_mtproto_tl_read_u32(reader, &out->photo_dc_id);
 }
 
 static tg_mtproto_tl_status tg_skip_user_status(tg_mtproto_tl_reader *reader)
@@ -2233,7 +2248,7 @@ static tg_mtproto_tl_status tg_read_user_summary_from_reader(
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if ((out->flags & 32UL) != 0UL &&
-        tg_skip_user_profile_photo(reader) != TG_MTPROTO_TL_OK) {
+        tg_read_user_profile_photo(reader, out) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
     if ((out->flags & 64UL) != 0UL &&
@@ -2329,6 +2344,18 @@ static int tg_peer_cache_apply_user(tg_mtproto_peer_cache *cache,
     tg_peer_cache_copy_user_title(entry, user);
     tg_peer_cache_copy_text(entry->username, sizeof(entry->username),
                             user->username);
+    /* Avatar v1: adopt the freshly parsed photo id/dc + stripped thumb; only
+       overwrite when this parse actually carried a photo, so a partial user
+       object does not wipe a thumb captured moments earlier. */
+    if (user->photo_id_hi != 0UL || user->photo_id_lo != 0UL) {
+        entry->photo_id_hi = user->photo_id_hi;
+        entry->photo_id_lo = user->photo_id_lo;
+        entry->photo_dc_id = user->photo_dc_id;
+        if (user->stripped_len > 0UL) {
+            memcpy(entry->stripped, user->stripped, user->stripped_len);
+            entry->stripped_len = user->stripped_len;
+        }
+    }
     return 1;
 }
 
@@ -4056,6 +4083,30 @@ int tg_mtproto_login_self_test(void)
 
     if (tg_entity_marker_self_test() != 0) {
         return 2;
+    }
+    /* Avatar v1: byte-verified userProfilePhoto capture (photo_id lo/hi wire
+       order, stripped thumb via TL bytes short-form + padding, dc_id). */
+    {
+        static const unsigned char photo_blob[] = {
+            0x06, 0xf7, 0xd1, 0x82,             /* userProfilePhoto (LE) */
+            0x02, 0x00, 0x00, 0x00,             /* flags: stripped_thumb */
+            0x44, 0x33, 0x22, 0x11,             /* photo_id lo */
+            0x88, 0x77, 0x66, 0x55,             /* photo_id hi */
+            0x03, 0x01, 0x08, 0x08,             /* bytes len 3: 01 08 08 */
+            0x04, 0x00, 0x00, 0x00              /* dc_id = 4 */
+        };
+        tg_mtproto_tl_reader reader;
+        tg_mtproto_user_summary u;
+
+        memset(&u, 0, sizeof(u));
+        tg_mtproto_tl_reader_init(&reader, photo_blob, sizeof(photo_blob));
+        if (tg_read_user_profile_photo(&reader, &u) != TG_MTPROTO_TL_OK ||
+            u.photo_id_hi != 0x55667788UL || u.photo_id_lo != 0x11223344UL ||
+            u.photo_dc_id != 4UL || u.stripped_len != 3UL ||
+            u.stripped[0] != 0x01U || u.stripped[1] != 0x08U ||
+            u.stripped[2] != 0x08U || reader.offset != sizeof(photo_blob)) {
+            return 2;
+        }
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_auth_send_code(&writer, "+1234567890", 42UL,

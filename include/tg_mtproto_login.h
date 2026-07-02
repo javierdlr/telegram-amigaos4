@@ -67,6 +67,13 @@ typedef struct tg_mtproto_password_summary {
     unsigned char srp_b[TG_MTPROTO_PASSWORD_BYTES_MAX];
 } tg_mtproto_password_summary;
 
+/* Inline profile-photo thumb (userProfilePhoto/chatPhoto stripped_thumb): a
+   tiny JPEG skeleton (~30-40 bytes typical) that expands to a real baseline
+   JPEG offline -- the avatar v1 source. Thumbs that do not fit whole are
+   dropped (a truncated JPEG payload is useless), so the cap only trades
+   coverage of rare outliers for RAM. */
+#define TG_MTPROTO_STRIPPED_MAX 128U
+
 typedef struct tg_mtproto_user_summary {
     unsigned long constructor;
     unsigned long flags;
@@ -82,6 +89,12 @@ typedef struct tg_mtproto_user_summary {
     char last_name[96];
     char username[96];
     char phone[64];
+    /* userProfilePhoto#82d1f706 capture (all zero when photo empty/absent). */
+    unsigned long photo_id_hi;
+    unsigned long photo_id_lo;
+    unsigned long photo_dc_id;
+    unsigned long stripped_len;
+    unsigned char stripped[TG_MTPROTO_STRIPPED_MAX];
 } tg_mtproto_user_summary;
 
 typedef struct tg_mtproto_dialogs_summary {
@@ -136,6 +149,14 @@ typedef struct tg_mtproto_peer_cache_entry {
     int from_dialog;
     char title[128];
     char username[96];
+    /* Avatar v1: profile-photo id/dc + inline stripped thumb, captured from
+       the users/chats vectors (in-memory only; the peers FILE format is
+       unchanged -- thumbs re-arrive with the first dialogs/search fetch). */
+    unsigned long photo_id_hi;
+    unsigned long photo_id_lo;
+    unsigned long photo_dc_id;
+    unsigned long stripped_len;
+    unsigned char stripped[TG_MTPROTO_STRIPPED_MAX];
 } tg_mtproto_peer_cache_entry;
 
 typedef struct tg_mtproto_peer_cache {
