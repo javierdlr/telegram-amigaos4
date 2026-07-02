@@ -96,7 +96,10 @@ fill_platform_text() {
   chat. Removed/reordered chats and unread badges still persist.
 - In groups the typing line shows \"someone is typing\" (the per-member name
   fetch is skipped on MorphOS on purpose, to avoid a freeze).
-- Auto-read runs at a gentle pace; emoji are text emoticons."
+- Auto-read runs at a gentle pace; emoji are text emoticons.
+- Avatars stay as blurred previews / initials (the crisp-photo download is
+  disabled on MorphOS on purpose); the @ member autocomplete is off too.
+- Own-screen mode: MorphOS 3.16 or newer is recommended."
         req_it="- MorphOS (3.x) con il suo stack TCP/IP e una connessione internet.
 - Qualche MB di RAM libera."
         notes_it="Note per MorphOS
@@ -106,7 +109,11 @@ fill_platform_text() {
   casella di ricerca per trovare/aggiungere una chat. Rimozioni/riordino e
   badge non letti restano comunque persistenti.
 - Nei gruppi la riga di scrittura mostra \"someone is typing\" (il recupero del
-  nome del membro e' disattivato su MorphOS apposta, per evitare un freeze)."
+  nome del membro e' disattivato su MorphOS apposta, per evitare un freeze).
+- Gli avatar restano anteprime sfocate / iniziali (il download della foto
+  nitida e' disattivato su MorphOS apposta); anche l'autocompletamento @ dei
+  membri e' spento.
+- Modalita' schermo proprio: consigliato MorphOS 3.16 o piu' recente."
         ;;
     *)
         req_en="- $1 with a working TCP/IP stack (bsdsocket) and an internet connection.
@@ -137,10 +144,11 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramGUI (or TelegramTUI). First run signs you in (phone -> code -> 2FA).
 
-New in $VERSION: edit and delete your own messages (right-click a message),
-live read receipts, sync of messages you send from another device, message times
-that follow the Amiga system clock, and a clearer 2FA login. (0.0.3 added
-replies, drawn delivery checkmarks, flicker-free drawing and scroll-to-newest.)
+New in $VERSION: real profile-picture avatars in the chat list (instant blurred
+previews everywhere; they turn crisp after you open a chat -- not on MorphOS),
+@username autocomplete in groups (type @), the window remembers its position,
+an optional own screen, and stronger first-login randomness. (0.0.4 added
+edit/delete, live read receipts, multi-device sync and system-clock times.)
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
@@ -202,6 +210,12 @@ Using the GUI
   OWN messages it also offers Edit (change the text) and Delete (remove for
   everyone). Sent messages show a delivery tick: one check = sent, two blue
   checks = read by the other side -- it updates live.
+- Chat-list avatars show each peer's real profile picture: a blurred preview
+  appears as soon as the chat list loads, and it turns crisp shortly after you
+  open that chat (the photo is cached next to the program as tgav*.jpg).
+- In groups, type @ in the composer to autocomplete a member: a small list
+  pops up above the input line -- Up/Down select, Enter or Tab inserts
+  @username, Esc closes, typing narrows the matches.
 - F1..F10 jump to chats 1..10 (Shift+F1..F10 to 11..20).
 - Search box (top-left): type a name and press Enter to find a chat on Telegram
   and add it to the list -- useful for chats not shown yet.
@@ -221,6 +235,15 @@ Message times follow your Amiga system clock -- the same time Workbench shows --
 so they always match your machine. Just set the Amiga clock to your correct
 local time in the system preferences; there is no separate timezone to set in
 the client (it reads the system clock directly, DST and all).
+
+Window position and own screen
+------------------------------
+The window remembers its size AND position across restarts
+(telegram-gui-win.txt next to the program). To open the GUI on its OWN screen
+(its own "page"), edit that file and append the word own to the geometry line,
+e.g. "820 560 100 50 own"; remove the word to go back to a Workbench window.
+If the screen cannot open (low memory), the program falls back to a normal
+window automatically.
 
 $notes_en
 
@@ -288,6 +311,12 @@ Usare la GUI
   mostrata sopra. Il menu evidenzia la voce sotto il puntatore; sui TUOI messaggi
   offre anche Edit (modifica il testo) e Delete (elimina per tutti). I messaggi
   inviati mostrano la spunta: una = inviato, due azzurre = letto -- in tempo reale.
+- Gli avatar della lista chat mostrano la vera foto profilo: un'anteprima
+  sfocata appare subito col caricamento della lista, e diventa nitida poco dopo
+  che apri quella chat (la foto viene salvata accanto al programma, tgav*.jpg).
+- Nei gruppi, digita @ nel composer per completare un membro: compare una
+  listina sopra la riga di input -- Su/Giu' selezionano, Invio o Tab inserisce
+  @username, Esc chiude, digitando filtri i risultati.
 - F1..F10 saltano alle chat 1..10 (Shift+F1..F10 alle 11..20).
 - Casella di ricerca (in alto a sinistra): scrivi un nome e premi Invio per
   trovare una chat su Telegram e aggiungerla alla lista -- utile per chat non
@@ -309,6 +338,15 @@ mostra Workbench -- quindi coincidono sempre con la tua macchina. Basta impostar
 l'orologio dell'Amiga all'ora locale corretta nelle preferenze; non c'e' un fuso
 orario separato da configurare nel client (legge l'orologio di sistema, DST
 compresa).
+
+Posizione finestra e schermo proprio
+------------------------------------
+La finestra ricorda dimensione E posizione tra i riavvii (telegram-gui-win.txt
+accanto al programma). Per aprire la GUI su un SUO schermo (una "pagina"
+propria), modifica quel file aggiungendo la parola own in coda alla riga della
+geometria, es. "820 560 100 50 own"; togli la parola per tornare alla finestra
+su Workbench. Se lo schermo non si puo' aprire (poca memoria), il programma
+ripiega automaticamente sulla finestra normale.
 
 $notes_it
 

@@ -10,6 +10,6 @@
 #ifndef TG_VERSION_H
 #define TG_VERSION_H
 
-#define TG_VERSION "0.0.4"
+#define TG_VERSION "0.0.5"
 
 #endif
