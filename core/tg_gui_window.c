@@ -975,40 +975,61 @@ static void tg_gui_window_remove_selected(tg_gui_state *state,
     }
 }
 
-/* Persist the last window size to a small file next to the binary (Work:TGh,
-   which survives a reboot) so a reopen restores it; a roomier default on first
-   run than the old 600x380. */
-static void tg_gui_window_load_size(int *w, int *h)
+/* Persist the last window GEOMETRY (size + position) to a small file next to
+   the binary (Work:TGh, which survives a reboot) so a reopen restores the
+   window exactly where the user left it -- the "pin the window" testers asked
+   for. Format: "w h x y"; older files hold just "w h" and still load (position
+   stays -1 = let Intuition place it), and older binaries reading a new file
+   simply ignore the trailing x y. A roomier default on first run than the old
+   600x380. */
+static void tg_gui_window_load_geom(int *w, int *h, int *x, int *y)
 {
     FILE *f;
     int rw;
     int rh;
+    int rx;
+    int ry;
+    int got;
 
     *w = 820;
     *h = 560;
+    *x = -1; /* -1 = no saved position: Intuition picks the spot */
+    *y = -1;
     rw = 0;
     rh = 0;
+    rx = -1;
+    ry = -1;
     f = fopen("telegram-gui-win.txt", "r");
     if (f != 0) {
-        if (fscanf(f, "%d %d", &rw, &rh) == 2 && rw >= 320 && rh >= 200 &&
-            rw <= 4096 && rh <= 4096) {
+        got = fscanf(f, "%d %d %d %d", &rw, &rh, &rx, &ry);
+        if (got >= 2 && rw >= 320 && rh >= 200 && rw <= 4096 && rh <= 4096) {
             *w = rw;
             *h = rh;
+            if (got == 4 && rx >= 0 && ry >= 0 && rx <= 8192 && ry <= 8192) {
+                *x = rx;
+                *y = ry;
+            }
         }
         fclose(f);
     }
 }
 
-static void tg_gui_window_save_size(int w, int h)
+static void tg_gui_window_save_geom(int w, int h, int x, int y)
 {
     FILE *f;
 
     if (w < 320 || h < 200) {
         return;
     }
+    if (x < 0) {
+        x = 0;
+    }
+    if (y < 0) {
+        y = 0;
+    }
     f = fopen("telegram-gui-win.txt", "w");
     if (f != 0) {
-        fprintf(f, "%d %d\n", w, h);
+        fprintf(f, "%d %d %d %d\n", w, h, x, y);
         fclose(f);
     }
 }
@@ -1106,7 +1127,9 @@ int tg_gui_run_window(tg_gui_state *state)
     tg_gui_backend backend;
     int init_w;
     int init_h;
-    struct TagItem tags[18];
+    int init_x;
+    int init_y;
+    struct TagItem tags[20];
     struct ColorMap *cmap;
     struct TextFont *font;
     APTR vi;
@@ -1183,8 +1206,17 @@ int tg_gui_run_window(tg_gui_state *state)
     }
 
     memset(&ctx, 0, sizeof(ctx));
-    tg_gui_window_load_size(&init_w, &init_h);
+    tg_gui_window_load_geom(&init_w, &init_h, &init_x, &init_y);
     i = 0;
+    /* Saved position first (when any): if this exact spot no longer fits the
+       screen, OpenWindowTagList FAILS -- the open call below retries once with
+       these two tags neutralised, falling back to Intuition's own placement. */
+    if (init_x >= 0 && init_y >= 0) {
+        tags[i].ti_Tag = WA_Left;
+        tags[i++].ti_Data = (ULONG)init_x;
+        tags[i].ti_Tag = WA_Top;
+        tags[i++].ti_Data = (ULONG)init_y;
+    }
     tags[i].ti_Tag = WA_Title;
     tags[i++].ti_Data = TG_GUI_TAG("Telegram Amiga - GUI");
     tags[i].ti_Tag = WA_InnerWidth;
@@ -1244,6 +1276,14 @@ int tg_gui_run_window(tg_gui_state *state)
     mem_before = (unsigned long)AvailMem(MEMF_ANY);
 
     ctx.window = OpenWindowTagList(0, tags);
+    if (ctx.window == 0 && init_x >= 0 && init_y >= 0) {
+        /* The remembered position no longer fits (smaller screen/mode since the
+           save). Neutralise WA_Left/WA_Top -- they are tags[0]/tags[1] when a
+           position was loaded -- and let Intuition place the window instead. */
+        tags[0].ti_Tag = TAG_IGNORE;
+        tags[1].ti_Tag = TAG_IGNORE;
+        ctx.window = OpenWindowTagList(0, tags);
+    }
     if (ctx.window == 0) {
         puts("gui window: cannot open window");
 #if defined(__amigaos4__)
@@ -2353,7 +2393,9 @@ int tg_gui_run_window(tg_gui_state *state)
     tg_gui_amiga_buffer_free(&ctx); /* free the off-screen double-buffer */
     tg_gui_log("window: releasing pens");
     tg_gui_amiga_release_pens(&ctx, cmap);
-    tg_gui_window_save_size(ctx.inner_w, ctx.inner_h);
+    tg_gui_window_save_geom(ctx.inner_w, ctx.inner_h,
+                            (int)ctx.window->LeftEdge,
+                            (int)ctx.window->TopEdge);
     tg_gui_log("window: CloseWindow");
     CloseWindow(ctx.window);
     ctx.window = 0;
