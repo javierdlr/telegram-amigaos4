@@ -16,6 +16,8 @@
 
 #include "tg_gui.h"
 #include "tg_gui_session.h"
+#include "tg_avatar.h"
+#include "tg_mtproto_login.h"
 #include "tg_platform.h"
 #include "tg_version.h"
 
@@ -232,6 +234,189 @@ static void tg_gui_amiga_avatar_fill(tg_gui_backend *backend, int color_index,
     RectFill(ctx->rport, x0, y0, x0 + rect.w - 1, y0 + rect.h - 1);
 }
 
+/* --- real avatars (decoded stripped thumbs) ------------------------------
+   Each avatar is decoded ONCE to a TG_GUI_AV_SZ^2 grid of RESOLVED PENS
+   (1 byte/pixel) and cached by peer id; repaints replay the pen grid with
+   run-length RectFills into the current (buffered) RastPort. Pens come from
+   a small pool shared across ALL avatars (ObtainBestPenA, nearest-match once
+   full, released with the other pens at teardown). Any failure returns 0 and
+   the renderer falls back to the classic initials square. */
+static ULONG tg_gui_amiga_rgb32(unsigned char component);
+
+#define TG_GUI_AV_SZ 32
+#if defined(__m68k__)
+#define TG_GUI_AV_SLOTS 8
+#else
+#define TG_GUI_AV_SLOTS 16
+#endif
+#define TG_GUI_AV_POOL 48
+
+typedef struct tg_gui_av_slot {
+    unsigned long id_hi;
+    unsigned long id_lo;
+    int state; /* 0 free, 1 pens ready, -1 decode failed (skip, use initials) */
+    unsigned char pen[TG_GUI_AV_SZ * TG_GUI_AV_SZ];
+} tg_gui_av_slot;
+static tg_gui_av_slot tg_gui_av_slots[TG_GUI_AV_SLOTS];
+static unsigned long tg_gui_av_evict = 0UL;
+static struct ColorMap *tg_gui_av_cmap = 0;
+static LONG tg_gui_av_pool_pen[TG_GUI_AV_POOL];
+static unsigned char tg_gui_av_pool_rgb[TG_GUI_AV_POOL][3];
+static int tg_gui_av_pool_n = 0;
+
+static void tg_gui_av_reset(void)
+{
+    int i;
+
+    for (i = 0; i < TG_GUI_AV_SLOTS; ++i) {
+        tg_gui_av_slots[i].state = 0;
+    }
+    tg_gui_av_pool_n = 0;
+    tg_gui_av_evict = 0UL;
+}
+
+static void tg_gui_av_release_pool(struct ColorMap *cmap)
+{
+    int i;
+
+    for (i = 0; i < tg_gui_av_pool_n; ++i) {
+        ReleasePen(cmap, tg_gui_av_pool_pen[i]);
+    }
+    tg_gui_av_pool_n = 0;
+    tg_gui_av_cmap = 0;
+    tg_gui_av_reset();
+}
+
+/* Pool pen for an RGB pixel: reuse a close pool entry, else obtain a new one
+   (PRECISION-default like the theme pens), else nearest of what we have. */
+static LONG tg_gui_av_pen_for(const unsigned char *rgb)
+{
+    int i;
+    int best = -1;
+    long best_d = 0x7fffffffL;
+
+    for (i = 0; i < tg_gui_av_pool_n; ++i) {
+        long dr = (long)tg_gui_av_pool_rgb[i][0] - (long)rgb[0];
+        long dg = (long)tg_gui_av_pool_rgb[i][1] - (long)rgb[1];
+        long db = (long)tg_gui_av_pool_rgb[i][2] - (long)rgb[2];
+        long d = dr * dr + dg * dg + db * db;
+
+        if (d < best_d) {
+            best_d = d;
+            best = i;
+        }
+    }
+    if (best >= 0 && best_d <= 192L) {
+        return tg_gui_av_pool_pen[best]; /* close enough: share */
+    }
+    if (tg_gui_av_pool_n < TG_GUI_AV_POOL && tg_gui_av_cmap != 0) {
+        LONG p = ObtainBestPenA(tg_gui_av_cmap, tg_gui_amiga_rgb32(rgb[0]),
+                                tg_gui_amiga_rgb32(rgb[1]),
+                                tg_gui_amiga_rgb32(rgb[2]), 0);
+
+        if (p != -1) {
+            tg_gui_av_pool_pen[tg_gui_av_pool_n] = p;
+            tg_gui_av_pool_rgb[tg_gui_av_pool_n][0] = rgb[0];
+            tg_gui_av_pool_rgb[tg_gui_av_pool_n][1] = rgb[1];
+            tg_gui_av_pool_rgb[tg_gui_av_pool_n][2] = rgb[2];
+            ++tg_gui_av_pool_n;
+            return p;
+        }
+    }
+    return (best >= 0) ? tg_gui_av_pool_pen[best] : -1;
+}
+
+static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
+                                     unsigned long id_hi, unsigned long id_lo,
+                                     tg_gui_rect rect)
+{
+    tg_gui_amiga_ctx *ctx;
+    tg_gui_av_slot *slot;
+    int i;
+    int y;
+
+    ctx = (tg_gui_amiga_ctx *)backend->context;
+    if (rect.w <= 0 || rect.h <= 0 || (id_hi == 0UL && id_lo == 0UL) ||
+        tg_gui_av_cmap == 0) {
+        return 0;
+    }
+    slot = 0;
+    for (i = 0; i < TG_GUI_AV_SLOTS; ++i) {
+        if (tg_gui_av_slots[i].state != 0 &&
+            tg_gui_av_slots[i].id_hi == id_hi &&
+            tg_gui_av_slots[i].id_lo == id_lo) {
+            slot = &tg_gui_av_slots[i];
+            break;
+        }
+    }
+    if (slot == 0) {
+        const unsigned char *thumb;
+        unsigned long thumb_len;
+        static unsigned char rgb[TG_GUI_AV_SZ * TG_GUI_AV_SZ * 3];
+        unsigned long px;
+
+        if (!tg_mtproto_avatar_thumb_lookup(id_hi, id_lo, &thumb,
+                                            &thumb_len)) {
+            return 0; /* no thumb captured (yet): initials */
+        }
+        for (i = 0; i < TG_GUI_AV_SLOTS; ++i) {
+            if (tg_gui_av_slots[i].state == 0) {
+                slot = &tg_gui_av_slots[i];
+                break;
+            }
+        }
+        if (slot == 0) {
+            slot = &tg_gui_av_slots[tg_gui_av_evict % TG_GUI_AV_SLOTS];
+            ++tg_gui_av_evict;
+        }
+        slot->id_hi = id_hi;
+        slot->id_lo = id_lo;
+        if (tg_avatar_decode_stripped(thumb, thumb_len, rgb, TG_GUI_AV_SZ,
+                                      TG_GUI_AV_SZ) != 0) {
+            slot->state = -1; /* undecodable: remember and keep initials */
+            return 0;
+        }
+        for (px = 0UL; px < TG_GUI_AV_SZ * TG_GUI_AV_SZ; ++px) {
+            LONG p = tg_gui_av_pen_for(rgb + px * 3UL);
+
+            if (p == -1) { /* pen system exhausted: give up cleanly */
+                slot->state = -1;
+                return 0;
+            }
+            slot->pen[px] = (unsigned char)p;
+        }
+        slot->state = 1;
+    }
+    if (slot->state != 1) {
+        return 0;
+    }
+    /* Replay the pen grid scaled to rect (nearest), row by row with
+       run-length RectFills into the current (buffered) RastPort. */
+    for (y = 0; y < rect.h; ++y) {
+        int sy = (y * TG_GUI_AV_SZ) / rect.h;
+        int x = 0;
+
+        while (x < rect.w) {
+            int sx = (x * TG_GUI_AV_SZ) / rect.w;
+            unsigned char p = slot->pen[sy * TG_GUI_AV_SZ + sx];
+            int run = x + 1;
+
+            while (run < rect.w &&
+                   slot->pen[sy * TG_GUI_AV_SZ +
+                             ((run * TG_GUI_AV_SZ) / rect.w)] == p) {
+                ++run;
+            }
+            SetAPen(ctx->rport, (LONG)p);
+            RectFill(ctx->rport, ctx->origin_x + rect.x + x,
+                     ctx->origin_y + rect.y + y,
+                     ctx->origin_x + rect.x + run - 1,
+                     ctx->origin_y + rect.y + y);
+            x = run;
+        }
+    }
+    return 1;
+}
+
 static void tg_gui_amiga_draw_text(tg_gui_backend *backend, int pen, int x,
                                    int baseline, const char *text,
                                    unsigned long length)
@@ -328,6 +513,7 @@ static void tg_gui_amiga_release_pens(tg_gui_amiga_ctx *ctx,
             ReleasePen(cmap, ctx->avatar_obtained[i]);
         }
     }
+    tg_gui_av_release_pool(cmap); /* the shared real-avatar pen pool */
     ctx->pens_held = 0;
 }
 
@@ -1464,6 +1650,8 @@ int tg_gui_run_window(tg_gui_state *state)
     ctx.line_h = (font != 0 ? (int)font->tf_YSize : 8) + 2;
     cmap = ctx.window->WScreen->ViewPort.ColorMap;
     tg_gui_amiga_obtain_pens(&ctx, cmap);
+    tg_gui_av_reset();          /* pens are per-screen: drop stale avatar pens */
+    tg_gui_av_cmap = cmap;      /* arms the real-avatar path */
     tg_gui_amiga_measure_geometry(&ctx);
     tg_gui_amiga_buffer_alloc(&ctx); /* off-screen double-buffer (flicker-free) */
 
@@ -1502,6 +1690,7 @@ int tg_gui_run_window(tg_gui_state *state)
     backend.text_width = tg_gui_amiga_text_width;
     backend.fill_rect = tg_gui_amiga_fill_rect;
     backend.avatar_fill = tg_gui_amiga_avatar_fill;
+    backend.avatar_image = tg_gui_amiga_avatar_image;
     backend.draw_text = tg_gui_amiga_draw_text;
     backend.set_style = tg_gui_amiga_set_style;
 

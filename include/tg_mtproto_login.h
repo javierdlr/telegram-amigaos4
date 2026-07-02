@@ -74,6 +74,13 @@ typedef struct tg_mtproto_password_summary {
    coverage of rare outliers for RAM. */
 #define TG_MTPROTO_STRIPPED_MAX 128U
 
+/* Looks up the captured stripped thumb for a peer id (the avatar store filled
+   by the users/chats scanners). Returns 1 and points into the store (valid
+   until the slot is evicted -- copy or decode immediately), 0 = none. */
+int tg_mtproto_avatar_thumb_lookup(unsigned long id_hi, unsigned long id_lo,
+                                   const unsigned char **thumb,
+                                   unsigned long *len);
+
 typedef struct tg_mtproto_user_summary {
     unsigned long constructor;
     unsigned long flags;

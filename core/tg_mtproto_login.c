@@ -2124,6 +2124,9 @@ static void tg_peer_cache_copy_user_title(tg_mtproto_peer_cache_entry *entry,
    and the inline stripped thumb into the user summary (avatar v1: the thumb
    alone is enough to draw a small offline avatar; hashes re-verified on
    core.telegram.org, unchanged through the live layer). */
+static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
+                                const unsigned char *thumb, unsigned long len);
+
 static tg_mtproto_tl_status tg_read_user_profile_photo(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_user_summary *out)
@@ -2355,6 +2358,8 @@ static int tg_peer_cache_apply_user(tg_mtproto_peer_cache *cache,
         if (user->stripped_len > 0UL) {
             memcpy(entry->stripped, user->stripped, user->stripped_len);
             entry->stripped_len = user->stripped_len;
+            tg_avatar_store_put(user->id_hi, user->id_lo, user->stripped,
+                                user->stripped_len);
         }
     }
     return 1;
@@ -2422,6 +2427,69 @@ static int tg_peer_cache_apply_chat(tg_mtproto_peer_cache *cache,
     return 1;
 }
 
+/* Global avatar-thumb store: the dialog scanners run on function-local static
+   caches the GUI cannot reach, so captured stripped thumbs ALSO land here,
+   keyed by peer id -- the stable key the sidebar rows already carry
+   (chat->peer_id_hi/lo). Fixed table, same-id updates reuse their slot,
+   round-robin eviction when full. ~8 KB static. */
+#define TG_AVATAR_STORE_MAX 64
+typedef struct tg_avatar_slot {
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long len; /* 0 = free slot */
+    unsigned char thumb[TG_MTPROTO_STRIPPED_MAX];
+} tg_avatar_slot;
+static tg_avatar_slot tg_avatar_store[TG_AVATAR_STORE_MAX];
+static unsigned long tg_avatar_store_next = 0UL;
+
+static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
+                                const unsigned char *thumb, unsigned long len)
+{
+    unsigned long i;
+    tg_avatar_slot *slot = 0;
+
+    if (thumb == 0 || len == 0UL || len > TG_MTPROTO_STRIPPED_MAX) {
+        return;
+    }
+    for (i = 0UL; i < TG_AVATAR_STORE_MAX; ++i) {
+        if (tg_avatar_store[i].len != 0UL &&
+            tg_avatar_store[i].id_hi == id_hi &&
+            tg_avatar_store[i].id_lo == id_lo) {
+            slot = &tg_avatar_store[i];
+            break;
+        }
+        if (slot == 0 && tg_avatar_store[i].len == 0UL) {
+            slot = &tg_avatar_store[i];
+        }
+    }
+    if (slot == 0) {
+        slot = &tg_avatar_store[tg_avatar_store_next % TG_AVATAR_STORE_MAX];
+        ++tg_avatar_store_next;
+    }
+    slot->id_hi = id_hi;
+    slot->id_lo = id_lo;
+    memcpy(slot->thumb, thumb, len);
+    slot->len = len;
+}
+
+int tg_mtproto_avatar_thumb_lookup(unsigned long id_hi, unsigned long id_lo,
+                                   const unsigned char **thumb,
+                                   unsigned long *len)
+{
+    unsigned long i;
+
+    for (i = 0UL; i < TG_AVATAR_STORE_MAX; ++i) {
+        if (tg_avatar_store[i].len != 0UL &&
+            tg_avatar_store[i].id_hi == id_hi &&
+            tg_avatar_store[i].id_lo == id_lo) {
+            *thumb = tg_avatar_store[i].thumb;
+            *len = tg_avatar_store[i].len;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* chat#/channel#: the photo:ChatPhoto field follows right after the leading
    fields the scanner reads (title / optional username), so capture it into the
    just-applied cache entry. BEST-EFFORT by design: any parse hiccup here simply
@@ -2472,6 +2540,7 @@ static void tg_chat_photo_capture(tg_mtproto_tl_reader *reader,
     if (thumb_len > 0UL && thumb_len <= TG_MTPROTO_STRIPPED_MAX) {
         memcpy(entry->stripped, thumb, thumb_len);
         entry->stripped_len = thumb_len;
+        tg_avatar_store_put(id_hi, id_lo, thumb, thumb_len);
     }
 }
 

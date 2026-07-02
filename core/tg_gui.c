@@ -424,10 +424,20 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
         }
 
         avatar = (2 * lh);
-        backend->avatar_fill(backend, chat->avatar_color,
-                             tg_gui_make_rect(8, y + 6, avatar, avatar));
-        backend->draw_text(backend, TG_GUI_PEN_TEXT, 8 + 6, y + 6 + lh,
-                           chat->initials, (unsigned long)strlen(chat->initials));
+        /* Real avatar first (decoded stripped thumb, when the backend and the
+           store have one); the classic colored-initials square is the fallback
+           and the only path on backends without image support. */
+        if (backend->avatar_image == 0 ||
+            !backend->avatar_image(backend, chat->peer_id_hi,
+                                   chat->peer_id_lo,
+                                   tg_gui_make_rect(8, y + 6, avatar,
+                                                    avatar))) {
+            backend->avatar_fill(backend, chat->avatar_color,
+                                 tg_gui_make_rect(8, y + 6, avatar, avatar));
+            backend->draw_text(backend, TG_GUI_PEN_TEXT, 8 + 6, y + 6 + lh,
+                               chat->initials,
+                               (unsigned long)strlen(chat->initials));
+        }
 
         text_x = 8 + avatar + 8;
         {
