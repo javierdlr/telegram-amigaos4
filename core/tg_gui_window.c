@@ -983,7 +983,7 @@ static void tg_gui_window_remove_selected(tg_gui_state *state,
    stays -1 = let Intuition place it), and older binaries reading a new file
    simply ignore the trailing x y. A roomier default on first run than the old
    600x380. */
-static void tg_gui_window_load_geom(int *w, int *h, int *x, int *y)
+static void tg_gui_window_load_geom(int *w, int *h, int *x, int *y, int *own)
 {
     FILE *f;
     int rw;
@@ -991,11 +991,13 @@ static void tg_gui_window_load_geom(int *w, int *h, int *x, int *y)
     int rx;
     int ry;
     int got;
+    char tok[16];
 
     *w = 820;
     *h = 560;
     *x = -1; /* -1 = no saved position: Intuition picks the spot */
     *y = -1;
+    *own = 0; /* opt-in: append " own" to the geometry line for an own screen */
     rw = 0;
     rh = 0;
     rx = -1;
@@ -1011,11 +1013,18 @@ static void tg_gui_window_load_geom(int *w, int *h, int *x, int *y)
                 *y = ry;
             }
         }
+        /* Optional trailing token: "own" = open on an own (private, cloned
+           from Workbench) screen. The save path re-writes it, so the user's
+           hand-added toggle survives; old binaries just never read this far. */
+        if (fscanf(f, "%15s", tok) == 1 &&
+            (strcmp(tok, "own") == 0 || strcmp(tok, "OWN") == 0)) {
+            *own = 1;
+        }
         fclose(f);
     }
 }
 
-static void tg_gui_window_save_geom(int w, int h, int x, int y)
+static void tg_gui_window_save_geom(int w, int h, int x, int y, int own)
 {
     FILE *f;
 
@@ -1030,7 +1039,7 @@ static void tg_gui_window_save_geom(int w, int h, int x, int y)
     }
     f = fopen("telegram-gui-win.txt", "w");
     if (f != 0) {
-        fprintf(f, "%d %d %d %d\n", w, h, x, y);
+        fprintf(f, "%d %d %d %d%s\n", w, h, x, y, own ? " own" : "");
         fclose(f);
     }
 }
@@ -1203,7 +1212,9 @@ int tg_gui_run_window(tg_gui_state *state)
     int init_h;
     int init_x;
     int init_y;
-    struct TagItem tags[20];
+    int init_own;
+    struct Screen *own_scr;
+    struct TagItem tags[22];
     struct ColorMap *cmap;
     struct TextFont *font;
     APTR vi;
@@ -1280,7 +1291,58 @@ int tg_gui_run_window(tg_gui_state *state)
     }
 
     memset(&ctx, 0, sizeof(ctx));
-    tg_gui_window_load_geom(&init_w, &init_h, &init_x, &init_y);
+    own_scr = 0;
+    tg_gui_window_load_geom(&init_w, &init_h, &init_x, &init_y, &init_own);
+    /* Own-screen mode (opt-in " own" token in telegram-gui-win.txt): a PRIVATE
+       screen cloned from Workbench (SA_LikeWorkbench, V39 on every lane). The
+       testers' "move to another page" gadget is MUI-only, so an app screen is
+       the one way to give them a dedicated page. Key tags: SA_SharePens=TRUE
+       (without it a paletted OS3 clone holds pens exclusive and every
+       ObtainBestPen fails), SA_Pens={~0} (full new-look with the user's pen
+       preferences), SA_Behind (the screen surfaces only after the first locked
+       paint -- same anti-race discipline as WA_Activate=FALSE). Any open
+       failure (no chip RAM on a stock A1200, unknown mode...) falls back to
+       the normal Workbench-window path -- never a hard failure. */
+    if (init_own) {
+        ULONG oserr = 0;
+        static UWORD own_pens[] = { (UWORD)~0 };
+        struct TagItem stags[9];
+        int s = 0;
+
+        stags[s].ti_Tag = SA_LikeWorkbench;
+        stags[s++].ti_Data = TRUE;
+        stags[s].ti_Tag = SA_Title;
+        stags[s++].ti_Data = TG_GUI_TAG("Telegram Amiga");
+        stags[s].ti_Tag = SA_Pens;
+        stags[s++].ti_Data = TG_GUI_TAG(own_pens);
+        stags[s].ti_Tag = SA_SharePens;
+        stags[s++].ti_Data = TRUE;
+        stags[s].ti_Tag = SA_SysFont;
+        stags[s++].ti_Data = 1;
+        stags[s].ti_Tag = SA_ShowTitle;
+        stags[s++].ti_Data = TRUE;
+        stags[s].ti_Tag = SA_Behind;
+        stags[s++].ti_Data = TRUE;
+        stags[s].ti_Tag = SA_ErrorCode;
+        stags[s++].ti_Data = TG_GUI_TAG(&oserr);
+        stags[s].ti_Tag = TAG_END;
+        stags[s++].ti_Data = 0;
+        own_scr = OpenScreenTagList(0, stags);
+        if (own_scr == 0) {
+            printf("gui window: own screen failed (err %lu) - using default\n",
+                   (unsigned long)oserr);
+        } else {
+            /* The saved geometry may exceed the clone (the Workbench mode may
+               have shrunk since the save): clamp so the window open cannot
+               fail for a stale size. */
+            if (init_w > (int)own_scr->Width - 8) {
+                init_w = (int)own_scr->Width - 8;
+            }
+            if (init_h > (int)own_scr->Height - 32) {
+                init_h = (int)own_scr->Height - 32;
+            }
+        }
+    }
     i = 0;
     /* Saved position first (when any): if this exact spot no longer fits the
        screen, OpenWindowTagList FAILS -- the open call below retries once with
@@ -1341,6 +1403,12 @@ int tg_gui_run_window(tg_gui_state *state)
        knob is grabbed, so the extra reports cost nothing when idle. */
     tags[i].ti_Tag = WA_ReportMouse;
     tags[i++].ti_Data = TRUE;
+    if (own_scr != 0) {
+        /* OWNER window on our private screen (WA_CustomScreen, not a visitor):
+           CloseScreen at teardown stays deterministically under our control. */
+        tags[i].ti_Tag = WA_CustomScreen;
+        tags[i++].ti_Data = TG_GUI_TAG(own_scr);
+    }
     tags[i].ti_Tag = TAG_END;
     tags[i++].ti_Data = 0;
 
@@ -1356,6 +1424,15 @@ int tg_gui_run_window(tg_gui_state *state)
            position was loaded -- and let Intuition place the window instead. */
         tags[0].ti_Tag = TAG_IGNORE;
         tags[1].ti_Tag = TAG_IGNORE;
+        ctx.window = OpenWindowTagList(0, tags);
+    }
+    if (ctx.window == 0 && own_scr != 0) {
+        /* Still no window on the own screen: give the screen up and retry on
+           the default public screen (the WA_CustomScreen pair is the one right
+           before TAG_END). Degraded > dead. */
+        tags[i - 2].ti_Tag = TAG_IGNORE;
+        CloseScreen(own_scr);
+        own_scr = 0;
         ctx.window = OpenWindowTagList(0, tags);
     }
     if (ctx.window == 0) {
@@ -1377,6 +1454,12 @@ int tg_gui_run_window(tg_gui_state *state)
     }
 
     ctx.rport = ctx.window->RPort;
+    if (own_scr != 0 && own_scr->RastPort.Font != 0) {
+        /* SA_SysFont sets the SCREEN font, but a window RastPort still comes up
+           with the fixed-width DefaultFont (autodoc caveat) -- adopt the screen
+           font so text metrics match the Workbench-window mode exactly. */
+        SetFont(ctx.rport, own_scr->RastPort.Font);
+    }
     font = ctx.rport->Font;
     ctx.line_h = (font != 0 ? (int)font->tf_YSize : 8) + 2;
     cmap = ctx.window->WScreen->ViewPort.ColorMap;
@@ -1442,6 +1525,12 @@ int tg_gui_run_window(tg_gui_state *state)
        are IDCMP-driven and the IDCMP_REFRESHWINDOW path is bracketed by
        BeginRefresh/EndRefresh, which carries its own layer lock. */
     tg_gui_window_paint(state, &backend);
+    if (own_scr != 0) {
+        /* The screen opened BEHIND (SA_Behind) so nobody saw the pre-paint
+           window; surface it only now that the first locked paint settled --
+           and never while a layer lock is held. */
+        ScreenToFront(own_scr);
+    }
     ActivateWindow(ctx.window);
     printf("gui window: open %dx%d, font %dpx, %lu pens; window footprint "
            "~%lu KB\n",
@@ -2516,10 +2605,25 @@ int tg_gui_run_window(tg_gui_state *state)
     tg_gui_amiga_release_pens(&ctx, cmap);
     tg_gui_window_save_geom(ctx.inner_w, ctx.inner_h,
                             (int)ctx.window->LeftEdge,
-                            (int)ctx.window->TopEdge);
+                            (int)ctx.window->TopEdge, init_own);
     tg_gui_log("window: CloseWindow");
     CloseWindow(ctx.window);
     ctx.window = 0;
+    if (own_scr != 0) {
+        /* Private screen, our window was the only one -> CloseScreen succeeds
+           deterministically; the bounded retry is purely defensive (leak
+           rather than hang if something impossible keeps it open). */
+        int scr_tries = 0;
+
+        while (CloseScreen(own_scr) == FALSE && scr_tries < 10) {
+            Delay(10);
+            ++scr_tries;
+        }
+        if (scr_tries >= 10) {
+            puts("gui window: own screen close blocked (leaked)");
+        }
+        own_scr = 0;
+    }
 #if defined(__amigaos4__)
     DropInterface((struct Interface *)IGraphics);
     IGraphics = 0;
