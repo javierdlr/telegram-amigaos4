@@ -43,6 +43,7 @@ AMINET_DRAWER=${AMINET_DRAWER:-TelegramAmiga}
 AMINET_UPLOADER=${AMINET_UPLOADER:-"michele.dipace@kaffeine.net (Michele Dipace)"}
 AMINET_AUTHOR=${AMINET_AUTHOR:-"Michele Dipace <michele.dipace@kaffeine.net>"}
 DIARY_URL="https://androidlab.it/en/telegram-amiga-mtproto-client-development-diary/"
+REPO_URL="https://github.com/kaffeine1/telegram-amiga"
 
 sha_cmd() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$@"; else sha256sum "$@"; fi; }
 
@@ -399,28 +400,63 @@ Version:      $VERSION
 Architecture: $archval
 Requires:     $requires
 
-Telegram Amiga is a from-scratch, native Telegram (MTProto) client for
-classic and Next-Gen Amiga systems. It signs in to a normal Telegram
-account, lists your chats and exchanges messages. Zero external
-dependencies: no MUI, no ixemul, no AmiSSL -- all crypto (RSA,
-Diffie-Hellman, SRP/2FA, AES, SHA) is built in.
+WHAT IS THIS?
+-------------
+Telegram Amiga brings real, live Telegram chat to the Amiga -- not through
+a gateway, a proxy service or a web wrapper, but by speaking Telegram's
+own MTProto protocol natively, from scratch, on your machine. You sign in
+to your normal Telegram account, your chat list appears, and you talk to
+people (and they talk back) on hardware that may well be older than they
+are.
 
-Two clients share one engine and one saved login:
-  TelegramGUI  - native Intuition/GadTools GUI (scrollbars + mouse)
-  TelegramTUI  - text/console client for low-end or mouse-less setups
+Everything is built in: RSA, Diffie-Hellman, AES, SHA and the SRP two-
+factor login are implemented inside the program. Zero external
+dependencies -- no MUI, no ixemul.library, no AmiSSL, no TCP helper
+beyond your system's own bsdsocket stack.
 
-Features: replies + right-click context menu, edit/delete, real delivery
-checkmarks (one tick = sent, two blue ticks = read), double-buffered
-flicker-free drawing, scroll-to-newest, persistent unread badges and
-chat order. Message times follow the Amiga system clock.
+Two programs share one engine and one saved login:
 
-Quick start: copy the drawer to a WRITABLE volume and double-click
-TelegramGUI (or TelegramTUI). First run signs you in (phone -> code ->
-optional 2FA). NEVER share telegram-auth.bin: it holds your session.
+  TelegramGUI  - the native Intuition/GadTools GUI: chat list with real
+                 profile-picture avatars, message bubbles, scrollbars,
+                 mouse wheel, context menus.
+  TelegramTUI  - the text/console client, at home on a 68030 with a
+                 serial console or an ssh session.
 
-License: MIT. A non-commercial community project; full EN/IT manuals are
-inside the archive. Development diary:
-$DIARY_URL
+WHAT CAN I ACTUALLY DO WITH IT?
+-------------------------------
+Read and send messages in private chats, groups and channels. Reply to a
+specific message (right-click it). Edit or delete your own messages. See
+real delivery state: one tick = sent, two blue ticks = read, updating
+live. See who is typing. Search for chats. Send messages from your desk
+at work and find the conversation already synced when you get home to
+the Amiga -- and the other way round.
+
+Message times follow your Amiga clock. Unread badges and your chat order
+survive restarts. The window remembers where you left it, and can open
+on its own screen if you prefer a dedicated page for chatting.
+
+GETTING STARTED
+---------------
+1. Copy this drawer to a WRITABLE volume (not from the archive directly).
+2. Double-click TelegramGUI (or TelegramTUI on very low-end setups).
+3. First run walks you through the normal Telegram login: phone number,
+   the code Telegram sends you, and your cloud password if you use
+   two-factor. That is all -- next time it goes straight to your chats.
+
+The login is stored in telegram-auth.bin next to the program. Treat that
+file like a house key: NEVER copy it around or share it -- anyone who has
+it has your Telegram session. Full EN and IT manuals are in the archive,
+including per-platform notes and troubleshooting.
+
+A COMMUNITY PROJECT
+-------------------
+MIT licensed, non-commercial, written for the love of the platform.
+Bug reports and wishes are very welcome -- testers on real hardware
+(A1200s, A4000s, Pegasos, Sam, FPGA machines) are what moves this
+project forward.
+
+  Source + issues:    $REPO_URL
+  Development diary:  $DIARY_URL
 EOF
 }
 
