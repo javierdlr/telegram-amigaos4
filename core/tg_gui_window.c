@@ -50,6 +50,24 @@
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <intuition/intuition.h>
+#include <devices/timer.h>
+
+/* timer.device request, papering over the OS4 SDK rename (TimeRequest with
+   Request/Time.Seconds vs the classic timerequest with tr_node/tr_time). */
+#if defined(__amigaos4__)
+typedef struct TimeRequest tg_gui_timereq;
+#define TG_GUI_TR_NODE(t) ((t)->Request)
+#define TG_GUI_TR_SECS(t) ((t)->Time.Seconds)
+#define TG_GUI_TR_MICRO(t) ((t)->Time.Microseconds)
+#else
+typedef struct timerequest tg_gui_timereq;
+#define TG_GUI_TR_NODE(t) ((t)->tr_node)
+#define TG_GUI_TR_SECS(t) ((t)->tr_time.tv_secs)
+#define TG_GUI_TR_MICRO(t) ((t)->tr_time.tv_micro)
+#endif
+/* Heartbeat period: half the fastest watch cadence so a poll window is never
+   missed by more than one beat. */
+#define TG_GUI_HEARTBEAT_SECS 2UL
 #include <intuition/screens.h>
 #include <libraries/gadtools.h>
 #include <graphics/gfx.h>
@@ -1456,6 +1474,10 @@ int tg_gui_run_window(tg_gui_state *state)
     unsigned long footprint;
     int i;
     int done;
+    struct MsgPort *timer_port = 0; /* live-reception heartbeat (timer.device) */
+    tg_gui_timereq *timer_req = 0;
+    int timer_ok = 0;
+    int timer_pending = 0;
     int caret_ticks;
     int search_idle_ticks; /* INTUITICKS since the search query last changed */
     int older_exhausted;   /* load-older confirmed the chat start; re-armed off-top / on open */
@@ -1823,6 +1845,29 @@ int tg_gui_run_window(tg_gui_state *state)
     older_exhausted = 0;
     older_cooldown = 0;
     prev_selected = state->selected_chat;
+    /* Live-reception heartbeat. INTUITICKS are delivered ONLY to the ACTIVE
+       window, so with the window deactivated the loop slept in Wait() and the
+       network poll never ran -- incoming messages stalled until the user came
+       back and clicked around (A4000/Roadshow report). A timer.device VBLANK
+       request on the same Wait() wakes the loop every TG_GUI_HEARTBEAT_SECS
+       regardless of activation; the poll keeps its own cadence/composing
+       guards, so an ACTIVE window behaves exactly as before. If any setup step
+       fails we simply keep the old active-only behavior. */
+    timer_port = CreateMsgPort();
+    if (timer_port != 0) {
+        timer_req = (tg_gui_timereq *)CreateIORequest(timer_port,
+                                                      sizeof(tg_gui_timereq));
+    }
+    if (timer_req != 0 &&
+        OpenDevice((CONST_STRPTR)"timer.device", UNIT_VBLANK,
+                   (struct IORequest *)timer_req, 0) == 0) {
+        timer_ok = 1;
+        TG_GUI_TR_NODE(timer_req).io_Command = TR_ADDREQUEST;
+        TG_GUI_TR_SECS(timer_req) = TG_GUI_HEARTBEAT_SECS;
+        TG_GUI_TR_MICRO(timer_req) = 0;
+        SendIO((struct IORequest *)timer_req);
+        timer_pending = 1;
+    }
     while (!done) {
         struct IntuiMessage *msg;
         int session_dirty;
@@ -1837,7 +1882,14 @@ int tg_gui_run_window(tg_gui_state *state)
         if (older_cooldown > 0) {
             older_cooldown -= 1;
         }
-        (void)Wait(1L << ctx.window->UserPort->mp_SigBit);
+        {
+            ULONG wait_mask = 1UL << ctx.window->UserPort->mp_SigBit;
+
+            if (timer_ok) {
+                wait_mask |= 1UL << timer_port->mp_SigBit;
+            }
+            (void)Wait(wait_mask);
+        }
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
             ULONG msg_class;
@@ -2786,6 +2838,41 @@ int tg_gui_run_window(tg_gui_state *state)
                 /* got < 0: transient fetch failure -> do NOT latch; retry later. */
             }
         }
+        /* Heartbeat fired? Run the SAME poll the INTUITICKS path runs (same
+           cadence guard via last_session_poll, same composing-idle deferral),
+           then re-arm. This is what keeps reception alive while the window is
+           inactive; when it is active the shared time guard prevents any
+           double-polling. */
+        if (timer_ok && timer_pending &&
+            CheckIO((struct IORequest *)timer_req) != 0) {
+            (void)WaitIO((struct IORequest *)timer_req);
+            timer_pending = 0;
+            if (!done && state->mode == TG_GUI_MODE_CHAT) {
+                time_t hb_now = time(0);
+                unsigned long hb_eff = watch_seconds;
+
+                if (watch_boot_grace && session_boot != (time_t)-1 &&
+                    hb_now != (time_t)-1 &&
+                    (unsigned long)(hb_now - session_boot) < watch_boot_grace) {
+                    hb_eff = watch_boot_seconds;
+                }
+                if (hb_now != (time_t)-1 &&
+                    (unsigned long)(hb_now - last_session_poll) >= hb_eff &&
+                    (!state->composing ||
+                     (unsigned long)(hb_now - last_key_time) >=
+                         TG_GUI_COMPOSE_IDLE_POLL_SECONDS)) {
+                    last_session_poll = hb_now;
+                    if (tg_gui_session_tick(stdout)) {
+                        session_dirty = 1;
+                    }
+                }
+            }
+            TG_GUI_TR_NODE(timer_req).io_Command = TR_ADDREQUEST;
+            TG_GUI_TR_SECS(timer_req) = TG_GUI_HEARTBEAT_SECS;
+            TG_GUI_TR_MICRO(timer_req) = 0;
+            SendIO((struct IORequest *)timer_req);
+            timer_pending = 1;
+        }
         if (session_dirty || scroll_dirty) {
             tg_gui_window_paint(state, &backend);
         }
@@ -2834,6 +2921,25 @@ int tg_gui_run_window(tg_gui_state *state)
     if (GadToolsBase != 0) {
         CloseLibrary(GadToolsBase);
         GadToolsBase = 0;
+    }
+    /* Heartbeat teardown: abort any in-flight request BEFORE freeing (a
+       firing request after DeleteIORequest is a guaranteed crash). */
+    if (timer_ok) {
+        if (timer_pending) {
+            AbortIO((struct IORequest *)timer_req);
+            (void)WaitIO((struct IORequest *)timer_req);
+            timer_pending = 0;
+        }
+        CloseDevice((struct IORequest *)timer_req);
+        timer_ok = 0;
+    }
+    if (timer_req != 0) {
+        DeleteIORequest((struct IORequest *)timer_req);
+        timer_req = 0;
+    }
+    if (timer_port != 0) {
+        DeleteMsgPort(timer_port);
+        timer_port = 0;
     }
     tg_gui_amiga_buffer_free(&ctx); /* free the off-screen double-buffer */
     tg_gui_log("window: releasing pens");
