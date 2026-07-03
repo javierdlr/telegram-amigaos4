@@ -12180,6 +12180,8 @@ void tg_gui_log(const char *msg)
     }
 }
 
+static void tg_gui_session_harvest_avatars(FILE *stream);
+
 int tg_gui_session_open(const char *api_file, const char *auth_file,
                         const char *peer_cache_file, tg_gui_state *state,
                         FILE *stream)
@@ -12341,6 +12343,8 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         }
     }
     tg_gui_session_state.open = 1;
+    /* Preload the sidebar avatar thumbs (no-op on MorphOS, silent on error). */
+    tg_gui_session_harvest_avatars(stream);
     tg_gui_log("open: ready");
     return 0;
 }
@@ -13140,11 +13144,57 @@ static unsigned long tg_gui_avfetch_hi[TG_GUI_AVFETCH_MAX];
 static unsigned long tg_gui_avfetch_lo[TG_GUI_AVFETCH_MAX];
 static int tg_gui_avfetch_n = 0;
 
-static void tg_gui_session_fetch_open_avatar(FILE *stream)
+/* Avatar v1 preload: ONE harvest-only getDialogs at session open so the
+   sidebar shows the blurred previews immediately, instead of only after each
+   chat is first opened. The response is scanned into a THROWAWAY cache -- the
+   peers FILE is never touched (the user's saved order stays authoritative);
+   the useful side effect is the scanners filling the global avatar-thumb
+   store. Not on MorphOS (getDialogs stalls its TCP stack -- known quirk);
+   there the store fills progressively from search/open/history scans. */
+static void tg_gui_session_harvest_avatars(FILE *stream)
 {
 #if defined(__MORPHOS__) || defined(__MORPHOS)
-    (void)stream; /* never fetch on MorphOS (freeze guard, like the members) */
+    (void)stream;
 #else
+    unsigned char query[64];
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_rpc_result result;
+    static tg_mtproto_peer_cache scratch; /* ~32KB: keep off the stack */
+    FILE *quiet;
+    static const char label[] = "mtproto getDialogs(avatar-harvest)";
+
+    if (!tg_gui_session_state.open && tg_gui_session_state.host[0] == '\0') {
+        return;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_dialogs(&writer, 20UL) !=
+        TG_MTPROTO_TL_OK) {
+        return;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    memset(&result, 0, sizeof(result));
+    if (tg_mtproto_send_saved_query_on_context(
+            tg_gui_session_state.host, tg_gui_session_state.port,
+            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            query, writer.length, &result, quiet, label, 600U) == 0 &&
+        result.result_constructor != TG_MTPROTO_RPC_ERROR_CONSTRUCTOR &&
+        tg_mtproto_unpack_gzip_result(&result, quiet, label) == 0) {
+        /* Scan for the capture side effect only; scratch is discarded. */
+        (void)tg_mtproto_parse_dialog_peer_cache(result.result_constructor,
+                                                 result.result_body,
+                                                 result.result_body_length,
+                                                 &scratch);
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+#endif
+}
+
+static void tg_gui_session_fetch_open_avatar(FILE *stream)
+{
+    /* Also on MorphOS: open_chat already runs the same class of bounded
+       on-context RPCs there (getHistory, getPeerDialogs) without issue -- the
+       historic freezes were getDialogs/tick races, not one-shot queries. */
     unsigned long id_hi = tg_gui_session_state.open_peer_id_hi;
     unsigned long id_lo = tg_gui_session_state.open_peer_id_lo;
     unsigned long photo_hi;
@@ -13255,7 +13305,6 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
         }
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
-#endif
 }
 
 int tg_gui_session_is_open(void)

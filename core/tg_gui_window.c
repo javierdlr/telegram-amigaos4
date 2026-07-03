@@ -249,7 +249,13 @@ static ULONG tg_gui_amiga_rgb32(unsigned char component);
 #else
 #define TG_GUI_AV_SLOTS 16
 #endif
-#define TG_GUI_AV_POOL 48
+#if defined(__m68k__)
+#define TG_GUI_AV_POOL 48        /* paletted screens: pens are scarce */
+#define TG_GUI_AV_SHARE_D 192L   /* share pool pens aggressively */
+#else
+#define TG_GUI_AV_POOL 96        /* truecolor screens: pens are cheap */
+#define TG_GUI_AV_SHARE_D 48L    /* much finer colour steps */
+#endif
 
 typedef struct tg_gui_av_slot {
     unsigned long id_hi;
@@ -321,7 +327,7 @@ static LONG tg_gui_av_pen_for(const unsigned char *rgb)
             best = i;
         }
     }
-    if (best >= 0 && best_d <= 192L) {
+    if (best >= 0 && best_d <= TG_GUI_AV_SHARE_D) {
         return tg_gui_av_pool_pen[best]; /* close enough: share */
     }
     if (tg_gui_av_pool_n < TG_GUI_AV_POOL && tg_gui_av_cmap != 0) {
