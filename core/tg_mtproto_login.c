@@ -2216,12 +2216,6 @@ static void tg_peer_cache_copy_user_title(tg_mtproto_peer_cache_entry *entry,
    and the inline stripped thumb into the user summary (avatar v1: the thumb
    alone is enough to draw a small offline avatar; hashes re-verified on
    core.telegram.org, unchanged through the live layer). */
-static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
-                                const unsigned char *thumb, unsigned long len,
-                                unsigned long photo_id_hi,
-                                unsigned long photo_id_lo,
-                                unsigned long dc_id);
-
 static tg_mtproto_tl_status tg_read_user_profile_photo(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_user_summary *out)
@@ -2303,6 +2297,12 @@ static tg_mtproto_tl_status tg_skip_restriction_reason_vector(
     return TG_MTPROTO_TL_OK;
 }
 
+static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
+                                const unsigned char *thumb, unsigned long len,
+                                unsigned long photo_id_hi,
+                                unsigned long photo_id_lo,
+                                unsigned long dc_id);
+
 static tg_mtproto_tl_status tg_read_user_summary_from_reader(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_user_summary *out)
@@ -2365,6 +2365,14 @@ static tg_mtproto_tl_status tg_read_user_summary_from_reader(
     if ((out->flags & (1UL << 22)) != 0UL &&
         tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    /* Feed the avatar store at READ level so EVERY user scan captures --
+       the dialogs parser goes through tg_peer_cache_apply_user, not
+       update_user, and the harvest was silently missing all DMs. */
+    if (out->stripped_len > 0UL) {
+        tg_avatar_store_put(out->id_hi, out->id_lo, out->stripped,
+                            out->stripped_len, out->photo_id_hi,
+                            out->photo_id_lo, out->photo_dc_id);
     }
     return TG_MTPROTO_TL_OK;
 }
@@ -2453,9 +2461,6 @@ static int tg_peer_cache_apply_user(tg_mtproto_peer_cache *cache,
         if (user->stripped_len > 0UL) {
             memcpy(entry->stripped, user->stripped, user->stripped_len);
             entry->stripped_len = user->stripped_len;
-            tg_avatar_store_put(user->id_hi, user->id_lo, user->stripped,
-                                user->stripped_len, user->photo_id_hi,
-                                user->photo_id_lo, user->photo_dc_id);
         }
     }
     return 1;
