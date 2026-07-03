@@ -6,6 +6,16 @@
 #include <stdio.h>
 
 #include "tg_app.h"
+#include "tg_version.h"
+
+/* Amiga $VER version tag (GitHub issue #3): lets the shell "Version" command
+   report the binary's version on every Amiga-like OS. Must be a real string
+   in the data section -- "used" keeps it alive if the linker ever GCs. */
+#if defined(__GNUC__)
+__attribute__((used))
+#endif
+static const char tg_amiga_ver_tag[] =
+    "$VER: TelegramAmiga " TG_VERSION " (" TG_VERSION_DATE ")";
 #include "tg_platform.h"
 
 int main(int argc, char **argv)
