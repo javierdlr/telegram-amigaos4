@@ -27,7 +27,9 @@ static void tg_config_move_to_data(const char *old_name, const char *new_name)
     fclose(f);
     f = fopen(new_name, "rb");
     if (f != 0) {
-        fclose(f); /* the new location already has one: keep it */
+        fclose(f); /* the data/ copy is the live one: drop the stale root
+                      duplicate so the drawer stays tidy */
+        (void)remove(old_name);
         return;
     }
     (void)rename(old_name, new_name); /* same volume: keeps the content */

@@ -14,18 +14,35 @@ IF NOT EXISTS avatars
     Makedir >NIL: avatars
 ENDIF
 IF EXISTS telegram-peers.txt
-    Rename >NIL: telegram-peers.txt data/telegram-peers.txt
+    IF EXISTS data/telegram-peers.txt
+        Delete >NIL: telegram-peers.txt
+    ELSE
+        Rename >NIL: telegram-peers.txt data/telegram-peers.txt
+    ENDIF
 ENDIF
 IF EXISTS telegram-api.txt
-    Rename >NIL: telegram-api.txt data/telegram-api.txt
+    IF EXISTS data/telegram-api.txt
+        Delete >NIL: telegram-api.txt
+    ELSE
+        Rename >NIL: telegram-api.txt data/telegram-api.txt
+    ENDIF
 ENDIF
 IF EXISTS phone-code-hash.txt
-    Rename >NIL: phone-code-hash.txt data/phone-code-hash.txt
+    IF EXISTS data/phone-code-hash.txt
+        Delete >NIL: phone-code-hash.txt
+    ELSE
+        Rename >NIL: phone-code-hash.txt data/phone-code-hash.txt
+    ENDIF
 ENDIF
 IF EXISTS telegram-gui-win.txt
-    Rename >NIL: telegram-gui-win.txt data/telegram-gui-win.txt
+    IF EXISTS data/telegram-gui-win.txt
+        Delete >NIL: telegram-gui-win.txt
+    ELSE
+        Rename >NIL: telegram-gui-win.txt data/telegram-gui-win.txt
+    ENDIF
 ENDIF
 Rename >NIL: tgav#?.jpg avatars
+Delete >NIL: tgav#?.jpg
 
 SET APIFILE "data/telegram-api.txt"
 SET AUTHFILE "telegram-auth.bin"
