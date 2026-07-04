@@ -13175,6 +13175,25 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
             return; /* already tried this session */
         }
     }
+    /* A cached photo on disk is good enough: re-downloading on every chat
+       open was a needless RPC on a slow link and made opening feel sluggish.
+       Refresh path: delete the avatars/ drawer (or the one file). */
+    {
+        char cached[48];
+        FILE *probe;
+
+        sprintf(cached, "avatars/tgav%08lx%08lx.jpg", id_hi, id_lo);
+        probe = fopen(cached, "rb");
+        if (probe != 0) {
+            fclose(probe);
+            if (tg_gui_avfetch_n < TG_GUI_AVFETCH_MAX) {
+                tg_gui_avfetch_hi[tg_gui_avfetch_n] = id_hi;
+                tg_gui_avfetch_lo[tg_gui_avfetch_n] = id_lo;
+                ++tg_gui_avfetch_n;
+            }
+            return;
+        }
+    }
     if (!tg_mtproto_avatar_meta_lookup(id_hi, id_lo, &photo_hi, &photo_lo,
                                        &dc)) {
         return; /* no capture yet (peer straight from the file cache) */
