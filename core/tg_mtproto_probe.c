@@ -12341,6 +12341,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         }
     }
     tg_gui_session_state.open = 1;
+    tg_mtproto_avatar_store_load(); /* blurred previews from the last run */
     tg_gui_log("open: ready");
     return 0;
 }
@@ -13606,6 +13607,7 @@ int tg_gui_session_tick(FILE *stream)
 
 void tg_gui_session_close(void)
 {
+    tg_mtproto_avatar_store_save(); /* keep the previews for next run */
     if (!tg_gui_session_state.open) {
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;

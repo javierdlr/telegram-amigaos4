@@ -2616,6 +2616,51 @@ int tg_mtproto_avatar_meta_lookup(unsigned long id_hi, unsigned long id_lo,
     return 0;
 }
 
+/* Persistence for the thumb store (data/telegram-thumbs.bin): a raw dump of
+   the slot array, machine-local by nature (never travels between systems, so
+   layout/endianness stay the compiler's own). The version byte invalidates
+   the cache when the slot struct changes -- worst case the previews simply
+   re-capture. Blurred previews thus survive client restarts, matching the
+   crisp on-disk photos. */
+#define TG_AVATAR_STORE_FILE "data/telegram-thumbs.bin"
+#define TG_AVATAR_STORE_VERSION 1UL
+
+void tg_mtproto_avatar_store_save(void)
+{
+    FILE *f;
+    unsigned long header[2];
+
+    f = fopen(TG_AVATAR_STORE_FILE, "wb");
+    if (f == 0) {
+        return;
+    }
+    header[0] = TG_AVATAR_STORE_VERSION;
+    header[1] = sizeof(tg_avatar_slot);
+    if (fwrite(header, sizeof(header), 1, f) == 1) {
+        (void)fwrite(tg_avatar_store, sizeof(tg_avatar_store), 1, f);
+    }
+    fclose(f);
+}
+
+void tg_mtproto_avatar_store_load(void)
+{
+    FILE *f;
+    unsigned long header[2];
+
+    f = fopen(TG_AVATAR_STORE_FILE, "rb");
+    if (f == 0) {
+        return;
+    }
+    if (fread(header, sizeof(header), 1, f) == 1 &&
+        header[0] == TG_AVATAR_STORE_VERSION &&
+        header[1] == sizeof(tg_avatar_slot)) {
+        if (fread(tg_avatar_store, sizeof(tg_avatar_store), 1, f) != 1) {
+            memset(tg_avatar_store, 0, sizeof(tg_avatar_store));
+        }
+    }
+    fclose(f);
+}
+
 int tg_mtproto_avatar_thumb_lookup(unsigned long id_hi, unsigned long id_lo,
                                    const unsigned char **thumb,
                                    unsigned long *len)
