@@ -3,17 +3,43 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 
 #include "tg_config.h"
 #include "tg_platform.h"
 
-/* The data/ drawer holds every auxiliary file except telegram-auth.bin (the
-   launchers create it and migrate old root files; this covers a bare launch). */
+/* The data/ drawer holds every auxiliary file except telegram-auth.bin. The
+   launchers create it and migrate old root files, but the binary must NOT
+   depend on that: an updated binary under an old launcher (or a bare launch)
+   still finds its internally-defaulted files by migrating them here. The
+   peers file is deliberately NOT touched -- its path always arrives as a
+   launcher argument, so wherever the launcher says, it stays. */
+static void tg_config_move_to_data(const char *old_name, const char *new_name)
+{
+    FILE *f;
+
+    f = fopen(old_name, "rb");
+    if (f == 0) {
+        return; /* nothing to migrate */
+    }
+    fclose(f);
+    f = fopen(new_name, "rb");
+    if (f != 0) {
+        fclose(f); /* the new location already has one: keep it */
+        return;
+    }
+    (void)rename(old_name, new_name); /* same volume: keeps the content */
+}
+
 static void tg_config_ensure_data_dir(void)
 {
     (void)mkdir("data", 0777); /* EEXIST is the norm */
+    tg_config_move_to_data("telegram-api.txt", "data/telegram-api.txt");
+    tg_config_move_to_data("phone-code-hash.txt", "data/phone-code-hash.txt");
+    tg_config_move_to_data("telegram-gui-win.txt",
+                           "data/telegram-gui-win.txt");
 }
 
 void tg_config_init(tg_config *config)
