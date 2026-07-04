@@ -41,6 +41,13 @@ IF EXISTS telegram-gui-win.txt
         Rename >NIL: telegram-gui-win.txt data/telegram-gui-win.txt
     ENDIF
 ENDIF
+IF EXISTS telegram-seed.bin
+    IF EXISTS data/telegram-seed.bin
+        Delete >NIL: telegram-seed.bin
+    ELSE
+        Rename >NIL: telegram-seed.bin data/telegram-seed.bin
+    ENDIF
+ENDIF
 Rename >NIL: tgav#?.jpg avatars
 Delete >NIL: tgav#?.jpg
 

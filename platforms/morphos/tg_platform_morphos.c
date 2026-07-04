@@ -4,6 +4,7 @@
  */
 
 #include <stdio.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -356,9 +357,29 @@ static FILE *tg_morphos_open_seed_file(const char *mode)
     /* PROGDIR: keeps the seed next to the binary; some C libraries do not
        grok Amiga-style paths, so fall back to the current directory (the
        icon launcher CDs into the drawer anyway). */
-    FILE *f = fopen("PROGDIR:telegram-seed.bin", mode);
+    FILE *f;
+
+    /* Tidy layout: the seed lives in data/ with the other auxiliary files.
+       One-time migration of a root-era seed, with the data/ copy winning
+       (never overwrite live state with a stale root leftover). */
+    f = fopen("PROGDIR:data/telegram-seed.bin", "rb");
     if (f == 0) {
-        f = fopen("telegram-seed.bin", mode);
+        f = fopen("data/telegram-seed.bin", "rb");
+    }
+    if (f != 0) {
+        fclose(f);
+        (void)remove("PROGDIR:telegram-seed.bin");
+        (void)remove("telegram-seed.bin");
+    } else {
+        (void)mkdir("data", 0777);
+        if (rename("PROGDIR:telegram-seed.bin",
+                   "PROGDIR:data/telegram-seed.bin") != 0) {
+            (void)rename("telegram-seed.bin", "data/telegram-seed.bin");
+        }
+    }
+    f = fopen("PROGDIR:data/telegram-seed.bin", mode);
+    if (f == 0) {
+        f = fopen("data/telegram-seed.bin", mode);
     }
     return f;
 }
@@ -390,7 +411,7 @@ static int tg_morphos_random_fallback(unsigned char *bytes,
     memcpy(mix + TG_MTPROTO_SHA512_LENGTH, fresh, TG_MTPROTO_SHA512_LENGTH);
     tg_mtproto_sha512(mix, 2UL * TG_MTPROTO_SHA512_LENGTH, state);
 
-    /* Persistent seed (PROGDIR:telegram-seed.bin, Linux random-seed
+    /* Persistent seed (PROGDIR:data/telegram-seed.bin, Linux random-seed
        style): mixed in once per run, rewritten below with fresh output so
        entropy accumulates across runs instead of restarting from a cold,
        reproducible boot state. */

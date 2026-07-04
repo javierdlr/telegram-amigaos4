@@ -4,6 +4,7 @@
  */
 
 #include <stdio.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -404,15 +405,35 @@ static FILE *tg_aros_open_seed_file(const char *mode)
     /* PROGDIR: keeps the seed next to the binary; some C libraries do not
        grok Amiga-style paths, so fall back to the current directory (the
        icon launcher CDs into the drawer anyway). */
-    FILE *f = fopen("PROGDIR:telegram-seed.bin", mode);
+    FILE *f;
+
+    /* Tidy layout: the seed lives in data/ with the other auxiliary files.
+       One-time migration of a root-era seed, with the data/ copy winning
+       (never overwrite live state with a stale root leftover). */
+    f = fopen("PROGDIR:data/telegram-seed.bin", "rb");
     if (f == 0) {
-        f = fopen("telegram-seed.bin", mode);
+        f = fopen("data/telegram-seed.bin", "rb");
+    }
+    if (f != 0) {
+        fclose(f);
+        (void)remove("PROGDIR:telegram-seed.bin");
+        (void)remove("telegram-seed.bin");
+    } else {
+        (void)mkdir("data", 0777);
+        if (rename("PROGDIR:telegram-seed.bin",
+                   "PROGDIR:data/telegram-seed.bin") != 0) {
+            (void)rename("telegram-seed.bin", "data/telegram-seed.bin");
+        }
+    }
+    f = fopen("PROGDIR:data/telegram-seed.bin", mode);
+    if (f == 0) {
+        f = fopen("data/telegram-seed.bin", mode);
     }
     return f;
 }
 
 /*
- * Persistent seed (PROGDIR:telegram-seed.bin, Linux random-seed style):
+ * Persistent seed (PROGDIR:data/telegram-seed.bin, Linux random-seed style):
  * entropy accumulates across runs instead of restarting from a cold,
  * reproducible VM boot. The file is mixed into the pool at seed time and
  * immediately overwritten with fresh DRBG output, so yesterday's file
