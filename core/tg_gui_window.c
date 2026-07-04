@@ -1964,6 +1964,16 @@ int tg_gui_run_window(tg_gui_state *state)
                         msg->Code = MENUCANCEL;
                         ctx_repaint = 1;
                     }
+                } else if (hit >= 0 || hit == TG_GUI_HIT_SEARCH) {
+                    /* Right-click on the chat list (a row or its search box):
+                       the sidebar menu -- currently just "Load avatars". */
+                    state->ctx_visible = 1;
+                    state->ctx_msg = TG_GUI_CTX_MSG_SIDEBAR;
+                    state->ctx_x = hx;
+                    state->ctx_y = hy;
+                    state->ctx_hover = -1;
+                    msg->Code = MENUCANCEL;
+                    ctx_repaint = 1;
                 }
             }
             ReplyMsg((struct Message *)msg);
@@ -2473,6 +2483,15 @@ int tg_gui_run_window(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Editing - ENTER saves, ESC cancels");
+                    } else if (it == TG_GUI_CTX_LOAD_AVATARS) {
+                        /* One harvest-only getDialogs fills the thumb store;
+                           repaint shows the blurred previews. */
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Loading avatars...");
+                        tg_gui_window_paint(state, &backend);
+                        (void)tg_gui_session_load_avatars(stdout);
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "");
                     } else if (it == TG_GUI_CTX_DELETE && m != 0 && m->is_own &&
                                m->id != 0UL) {
                         unsigned long del_id = m->id;

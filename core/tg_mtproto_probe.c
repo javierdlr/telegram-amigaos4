@@ -12343,8 +12343,6 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         }
     }
     tg_gui_session_state.open = 1;
-    /* Preload the sidebar avatar thumbs (no-op on MorphOS, silent on error). */
-    tg_gui_session_harvest_avatars(stream);
     tg_gui_log("open: ready");
     return 0;
 }
@@ -13153,9 +13151,6 @@ static int tg_gui_avfetch_n = 0;
    there the store fills progressively from search/open/history scans. */
 static void tg_gui_session_harvest_avatars(FILE *stream)
 {
-#if defined(__MORPHOS__) || defined(__MORPHOS)
-    (void)stream;
-#else
     unsigned char query[64];
     tg_mtproto_tl_writer writer;
     tg_mtproto_rpc_result result;
@@ -13187,7 +13182,6 @@ static void tg_gui_session_harvest_avatars(FILE *stream)
                                                  &scratch);
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
-#endif
 }
 
 static void tg_gui_session_fetch_open_avatar(FILE *stream)
@@ -13305,6 +13299,20 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
         }
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
+}
+
+/* User-invoked avatar preload ("Load avatars" in the chat-list context
+   menu): one harvest-only getDialogs that fills the thumb store, never the
+   peers file. Menu-only by design -- the automatic run at session open was
+   dropped (kept startup lean, and it needs the user's intent on the slower
+   platforms anyway). Returns 1 so the caller repaints. */
+int tg_gui_session_load_avatars(FILE *stream)
+{
+    if (!tg_gui_session_state.open || stream == 0) {
+        return 0;
+    }
+    tg_gui_session_harvest_avatars(stream);
+    return 1;
 }
 
 int tg_gui_session_is_open(void)

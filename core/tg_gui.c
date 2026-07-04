@@ -434,9 +434,22 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                                                     avatar))) {
             backend->avatar_fill(backend, chat->avatar_color,
                                  tg_gui_make_rect(8, y + 6, avatar, avatar));
-            backend->draw_text(backend, TG_GUI_PEN_TEXT, 8 + 6, y + 6 + lh,
-                               chat->initials,
-                               (unsigned long)strlen(chat->initials));
+            /* Center the initials in the (2*lh) square: measured width for the
+               horizontal axis; vertically the baseline sits half a text cell
+               below the square's middle, minus the ~2px typical Amiga font
+               descent (testers' screenshots showed them high-left). */
+            {
+                unsigned long ilen = (unsigned long)strlen(chat->initials);
+                int iw = backend->text_width(backend, chat->initials, ilen);
+                int ix = 8 + ((avatar - iw) / 2);
+                int iy = y + 6 + lh + ((lh - 4) / 2);
+
+                if (ix < 8) {
+                    ix = 8;
+                }
+                backend->draw_text(backend, TG_GUI_PEN_TEXT, ix, iy,
+                                   chat->initials, ilen);
+            }
         }
 
         text_x = 8 + avatar + 8;
@@ -1708,6 +1721,11 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
 {
     int n = 0;
 
+    if (state->ctx_msg == TG_GUI_CTX_MSG_SIDEBAR) {
+        labels[n] = "Load avatars";
+        ids[n] = TG_GUI_CTX_LOAD_AVATARS;
+        return 1;
+    }
     labels[n] = "Reply";
     ids[n] = TG_GUI_CTX_REPLY;
     ++n;
