@@ -4481,7 +4481,7 @@ int tg_app_run(int argc, char **argv)
                     config.mtproto_auth_file,
                     config.mtproto_auth_code_hash_file != 0
                         ? config.mtproto_auth_code_hash_file
-                        : "phone-code-hash.txt",
+                        : "data/phone-code-hash.txt",
                     stdout);
                 if (wizard_rc != 0) {
                     /* A wizard aborted after sendCode leaves a transport-only

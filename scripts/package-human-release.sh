@@ -213,7 +213,7 @@ Using the GUI
   checks = read by the other side -- it updates live.
 - Chat-list avatars show each peer's real profile picture: a blurred preview
   appears as soon as the chat list loads, and it turns crisp shortly after you
-  open that chat (the photo is cached next to the program as tgav*.jpg).
+  open that chat (the photo is cached in the avatars/ drawer).
 - In groups, type @ in the composer to autocomplete a member: a small list
   pops up above the input line -- Up/Down select, Enter or Tab inserts
   @username, Esc closes, typing narrows the matches.
@@ -255,7 +255,7 @@ it private and never share it. Do not download or copy anyone else's
 telegram-auth.bin. When sharing screenshots, hide phone numbers, login codes,
 passwords and private messages.
 
-Advanced: the bundled telegram-api.txt holds public Telegram API app
+Advanced: the bundled data/telegram-api.txt holds public Telegram API app
 credentials. Advanced users may replace it with their own (two lines: api_id
 then api_hash).
 
@@ -314,7 +314,7 @@ Usare la GUI
   inviati mostrano la spunta: una = inviato, due azzurre = letto -- in tempo reale.
 - Gli avatar della lista chat mostrano la vera foto profilo: un'anteprima
   sfocata appare subito col caricamento della lista, e diventa nitida poco dopo
-  che apri quella chat (la foto viene salvata accanto al programma, tgav*.jpg).
+  che apri quella chat (la foto viene salvata nel cassetto avatars/).
 - Nei gruppi, digita @ nel composer per completare un membro: compare una
   listina sopra la riga di input -- Su/Giu' selezionano, Invio o Tab inserisce
   @username, Esc chiude, digitando filtri i risultati.
@@ -358,7 +358,7 @@ tienilo privato e non condividerlo mai. Non scaricare ne' copiare il
 telegram-auth.bin di altri. Negli screenshot nascondi numeri di telefono, codici
 di accesso, password e messaggi privati.
 
-Avanzato: il telegram-api.txt incluso contiene credenziali API pubbliche. Gli
+Avanzato: il data/telegram-api.txt incluso contiene credenziali API pubbliche. Gli
 utenti avanzati possono sostituirlo col proprio (due righe: api_id poi api_hash).
 
 Licenza: MIT -- progetto di comunita' non commerciale. Diario:
@@ -508,7 +508,8 @@ package_one() {
     cp "$ROOT_DIR/scripts/TelegramTUI" "$dest/TelegramTUI"
     cp "$ROOT_DIR/assets/TelegramGUI.info" "$dest/TelegramGUI.info"
     cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$dest/TelegramTUI.info"
-    cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/telegram-api.txt"
+    mkdir -p "$dest/data"
+    cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/data/telegram-api.txt"
 
     fill_platform_text "$platform"
     write_readme "$dest/README.txt" "$platform"

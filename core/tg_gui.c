@@ -1721,11 +1721,6 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
 {
     int n = 0;
 
-    if (state->ctx_msg == TG_GUI_CTX_MSG_SIDEBAR) {
-        labels[n] = "Load avatars";
-        ids[n] = TG_GUI_CTX_LOAD_AVATARS;
-        return 1;
-    }
     labels[n] = "Reply";
     ids[n] = TG_GUI_CTX_REPLY;
     ++n;

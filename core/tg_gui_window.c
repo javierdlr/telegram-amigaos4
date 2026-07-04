@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #if defined(__amigaos3__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
@@ -398,10 +399,10 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
         /* Source priority: the downloaded 160px JPEG on disk (v2, crisp),
            else the inline stripped thumb (v1, blurred), else initials. */
         {
-            char name[40];
+            char name[48];
             FILE *f;
 
-            sprintf(name, "tgav%08lx%08lx.jpg", id_hi, id_lo);
+            sprintf(name, "avatars/tgav%08lx%08lx.jpg", id_hi, id_lo);
             f = fopen(name, "rb");
             if (f != 0) {
                 static unsigned char jpeg[24576];
@@ -1252,7 +1253,7 @@ static void tg_gui_window_load_geom(int *w, int *h, int *x, int *y, int *own)
     rh = 0;
     rx = -1;
     ry = -1;
-    f = fopen("telegram-gui-win.txt", "r");
+    f = fopen("data/telegram-gui-win.txt", "r");
     if (f != 0) {
         got = fscanf(f, "%d %d %d %d", &rw, &rh, &rx, &ry);
         if (got >= 2 && rw >= 320 && rh >= 200 && rw <= 4096 && rh <= 4096) {
@@ -1287,7 +1288,8 @@ static void tg_gui_window_save_geom(int w, int h, int x, int y, int own)
     if (y < 0) {
         y = 0;
     }
-    f = fopen("telegram-gui-win.txt", "w");
+    (void)mkdir("data", 0777); /* best-effort; normally the launcher made it */
+    f = fopen("data/telegram-gui-win.txt", "w");
     if (f != 0) {
         fprintf(f, "%d %d %d %d%s\n", w, h, x, y, own ? " own" : "");
         fclose(f);
@@ -1964,16 +1966,6 @@ int tg_gui_run_window(tg_gui_state *state)
                         msg->Code = MENUCANCEL;
                         ctx_repaint = 1;
                     }
-                } else if (hit >= 0 || hit == TG_GUI_HIT_SEARCH) {
-                    /* Right-click on the chat list (a row or its search box):
-                       the sidebar menu -- currently just "Load avatars". */
-                    state->ctx_visible = 1;
-                    state->ctx_msg = TG_GUI_CTX_MSG_SIDEBAR;
-                    state->ctx_x = hx;
-                    state->ctx_y = hy;
-                    state->ctx_hover = -1;
-                    msg->Code = MENUCANCEL;
-                    ctx_repaint = 1;
                 }
             }
             ReplyMsg((struct Message *)msg);
@@ -2483,15 +2475,6 @@ int tg_gui_run_window(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Editing - ENTER saves, ESC cancels");
-                    } else if (it == TG_GUI_CTX_LOAD_AVATARS) {
-                        /* One harvest-only getDialogs fills the thumb store;
-                           repaint shows the blurred previews. */
-                        tg_gui_window_copy(state->status, sizeof(state->status),
-                                           "Loading avatars...");
-                        tg_gui_window_paint(state, &backend);
-                        (void)tg_gui_session_load_avatars(stdout);
-                        tg_gui_window_copy(state->status, sizeof(state->status),
-                                           "");
                     } else if (it == TG_GUI_CTX_DELETE && m != 0 && m->is_own &&
                                m->id != 0UL) {
                         unsigned long del_id = m->id;

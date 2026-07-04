@@ -12180,8 +12180,6 @@ void tg_gui_log(const char *msg)
     }
 }
 
-static void tg_gui_session_harvest_avatars(FILE *stream);
-
 int tg_gui_session_open(const char *api_file, const char *auth_file,
                         const char *peer_cache_file, tg_gui_state *state,
                         FILE *stream)
@@ -13142,48 +13140,6 @@ static unsigned long tg_gui_avfetch_hi[TG_GUI_AVFETCH_MAX];
 static unsigned long tg_gui_avfetch_lo[TG_GUI_AVFETCH_MAX];
 static int tg_gui_avfetch_n = 0;
 
-/* Avatar v1 preload: ONE harvest-only getDialogs at session open so the
-   sidebar shows the blurred previews immediately, instead of only after each
-   chat is first opened. The response is scanned into a THROWAWAY cache -- the
-   peers FILE is never touched (the user's saved order stays authoritative);
-   the useful side effect is the scanners filling the global avatar-thumb
-   store. Not on MorphOS (getDialogs stalls its TCP stack -- known quirk);
-   there the store fills progressively from search/open/history scans. */
-static void tg_gui_session_harvest_avatars(FILE *stream)
-{
-    unsigned char query[64];
-    tg_mtproto_tl_writer writer;
-    tg_mtproto_rpc_result result;
-    static tg_mtproto_peer_cache scratch; /* ~32KB: keep off the stack */
-    FILE *quiet;
-    static const char label[] = "mtproto getDialogs(avatar-harvest)";
-
-    if (!tg_gui_session_state.open && tg_gui_session_state.host[0] == '\0') {
-        return;
-    }
-    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if (tg_mtproto_build_messages_get_dialogs(&writer, 20UL) !=
-        TG_MTPROTO_TL_OK) {
-        return;
-    }
-    quiet = tg_mtproto_open_quiet_stream(stream);
-    memset(&result, 0, sizeof(result));
-    if (tg_mtproto_send_saved_query_on_context(
-            tg_gui_session_state.host, tg_gui_session_state.port,
-            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
-            query, writer.length, &result, quiet, label, 600U) == 0 &&
-        result.result_constructor != TG_MTPROTO_RPC_ERROR_CONSTRUCTOR &&
-        tg_mtproto_unpack_gzip_result(&result, quiet, label) == 0) {
-        /* Scan for the capture side effect only; scratch is discarded. */
-        (void)tg_mtproto_parse_dialog_peer_cache(result.result_constructor,
-                                                 result.result_body,
-                                                 result.result_body_length,
-                                                 &scratch);
-    }
-    tg_mtproto_close_quiet_stream(quiet, stream);
-}
-
 static void tg_gui_session_fetch_open_avatar(FILE *stream)
 {
     /* Also on MorphOS: open_chat already runs the same class of bounded
@@ -13283,10 +13239,11 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
         return; /* cdn redirect / empty / suspiciously full chunk: skip */
     }
     {
-        char name[40];
+        char name[48];
         FILE *f;
 
-        sprintf(name, "tgav%08lx%08lx.jpg", id_hi, id_lo);
+        sprintf(name, "avatars/tgav%08lx%08lx.jpg", id_hi, id_lo);
+        (void)mkdir("avatars", 0777); /* best-effort; EEXIST is the norm */
         f = fopen(name, "wb");
         if (f != 0) {
             if (fwrite(bytes, 1, bytes_len, f) == bytes_len) {
@@ -13299,20 +13256,6 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
         }
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
-}
-
-/* User-invoked avatar preload ("Load avatars" in the chat-list context
-   menu): one harvest-only getDialogs that fills the thumb store, never the
-   peers file. Menu-only by design -- the automatic run at session open was
-   dropped (kept startup lean, and it needs the user's intent on the slower
-   platforms anyway). Returns 1 so the caller repaints. */
-int tg_gui_session_load_avatars(FILE *stream)
-{
-    if (!tg_gui_session_state.open || stream == 0) {
-        return 0;
-    }
-    tg_gui_session_harvest_avatars(stream);
-    return 1;
 }
 
 int tg_gui_session_is_open(void)
@@ -13704,7 +13647,7 @@ void tg_gui_session_login_begin(const char *api_file, const char *auth_file,
     tg_gui_session_state.login.dc_id_text = "4";
     tg_gui_login_copy(tg_gui_session_state.login.code_hash_file,
                       sizeof(tg_gui_session_state.login.code_hash_file),
-                      "phone-code-hash.txt");
+                      "data/phone-code-hash.txt");
 }
 
 int tg_gui_session_login_send_code(const char *phone, FILE *stream)

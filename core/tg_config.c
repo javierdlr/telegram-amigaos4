@@ -4,9 +4,17 @@
  */
 
 #include <string.h>
+#include <sys/stat.h>
 
 #include "tg_config.h"
 #include "tg_platform.h"
+
+/* The data/ drawer holds every auxiliary file except telegram-auth.bin (the
+   launchers create it and migrate old root files; this covers a bare launch). */
+static void tg_config_ensure_data_dir(void)
+{
+    (void)mkdir("data", 0777); /* EEXIST is the norm */
+}
 
 void tg_config_init(tg_config *config)
 {
@@ -359,7 +367,7 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
                 config->gui_chats_cache_file = argv[i + 1];
                 i += 1;
             } else {
-                config->gui_chats_cache_file = "telegram-peers.txt";
+                config->gui_chats_cache_file = "data/telegram-peers.txt";
             }
         } else if (strcmp(argv[i], "--gui-live") == 0 ||
                    strcmp(argv[i], "--gui-live-debug") == 0) {
@@ -367,29 +375,32 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             if (strcmp(argv[i], "--gui-live-debug") == 0) {
                 config->run_gui_live_debug = 1;
             }
-            config->mtproto_auth_api_file = "telegram-api.txt";
+            tg_config_ensure_data_dir();
+            config->mtproto_auth_api_file = "data/telegram-api.txt";
             config->mtproto_auth_file = "telegram-auth.bin";
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 config->gui_chats_cache_file = argv[i + 1];
                 i += 1;
             } else {
-                config->gui_chats_cache_file = "telegram-peers.txt";
+                config->gui_chats_cache_file = "data/telegram-peers.txt";
             }
         } else if (strcmp(argv[i], "--gui-session-tick-self") == 0) {
             config->run_gui_session_tick_self = 1;
-            config->mtproto_auth_api_file = "telegram-api.txt";
+            tg_config_ensure_data_dir();
+            config->mtproto_auth_api_file = "data/telegram-api.txt";
             config->mtproto_auth_file = "telegram-auth.bin";
-            config->gui_chats_cache_file = "telegram-peers.txt";
+            config->gui_chats_cache_file = "data/telegram-peers.txt";
         } else if (strcmp(argv[i], "--gui-chats-live") == 0) {
             config->run_gui_chats = 1;
             config->run_gui_chats_live = 1;
-            config->mtproto_auth_api_file = "telegram-api.txt";
+            tg_config_ensure_data_dir();
+            config->mtproto_auth_api_file = "data/telegram-api.txt";
             config->mtproto_auth_file = "telegram-auth.bin";
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 config->gui_chats_cache_file = argv[i + 1];
                 i += 1;
             } else {
-                config->gui_chats_cache_file = "telegram-peers.txt";
+                config->gui_chats_cache_file = "data/telegram-peers.txt";
             }
         } else if (strcmp(argv[i], "--chat-engine-self-test") == 0) {
             config->run_chat_engine_self_test = 1;
@@ -786,10 +797,11 @@ int tg_config_parse(tg_config *config, int argc, char **argv)
             i += 6;
         } else if (strcmp(argv[i], "--mtproto-start") == 0) {
             config->run_mtproto_start_file = 1;
-            config->mtproto_auth_api_file = "telegram-api.txt";
+            tg_config_ensure_data_dir();
+            config->mtproto_auth_api_file = "data/telegram-api.txt";
             config->mtproto_auth_file = "telegram-auth.bin";
             config->mtproto_auth_code_hash_file = "phone-code-hash.txt";
-            config->mtproto_chat_peer_cache_file = "telegram-peers.txt";
+            config->mtproto_chat_peer_cache_file = "data/telegram-peers.txt";
         } else if (strcmp(argv[i], "--mtproto-start-file") == 0) {
             if (i + 4 >= argc) {
                 return 1;

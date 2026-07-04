@@ -39,10 +39,6 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
    when no session is open (returns 0). */
 int tg_gui_session_tick(FILE *stream);
 
-/* "Load avatars" (chat-list context menu): one harvest-only getDialogs into
-   the avatar thumb store; the peers file is never written. 1 = ran. */
-int tg_gui_session_load_avatars(FILE *stream);
-
 /* Opens the chat at the given 1-based peer-cache index: clears the transcript,
    fetches its recent history (incoming + outgoing) into tg_gui_state.messages
    through the GUI driver, and marks it the open chat so tg_gui_session_tick

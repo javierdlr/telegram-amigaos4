@@ -2,9 +2,30 @@ FailAt 21
 Stack 1048576
 .BRA {
 .KET }
+; --- tidy layout: auxiliary files live in data/, avatar photos in avatars/ ---
+IF NOT EXISTS data
+    Makedir >NIL: data
+ENDIF
+IF NOT EXISTS avatars
+    Makedir >NIL: avatars
+ENDIF
+IF EXISTS telegram-peers.txt
+    Rename >NIL: telegram-peers.txt data/telegram-peers.txt
+ENDIF
+IF EXISTS telegram-api.txt
+    Rename >NIL: telegram-api.txt data/telegram-api.txt
+ENDIF
+IF EXISTS phone-code-hash.txt
+    Rename >NIL: phone-code-hash.txt data/phone-code-hash.txt
+ENDIF
+IF EXISTS telegram-gui-win.txt
+    Rename >NIL: telegram-gui-win.txt data/telegram-gui-win.txt
+ENDIF
+Rename >NIL: tgav#?.jpg avatars
+
 IF EXISTS telegram-test
     Protect telegram-test +e
-    Run >NIL: telegram-test --gui-live telegram-peers.txt
+    Run >NIL: telegram-test --gui-live data/telegram-peers.txt
 ELSE
     Protect RAM:telegram-test +e
     Run >NIL: RAM:telegram-test --gui-live RAM:telegram-peers.txt

@@ -295,11 +295,7 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
 #define TG_GUI_CTX_REPLY 0
 #define TG_GUI_CTX_EDIT 1
 #define TG_GUI_CTX_DELETE 2
-#define TG_GUI_CTX_LOAD_AVATARS 3
 #define TG_GUI_CTX_ITEMS_MAX 3
-/* ctx_msg sentinel: the menu targets the CHAT LIST, not a message (the item
-   list is then "Load avatars"). */
-#define TG_GUI_CTX_MSG_SIDEBAR (-2)
 /* Maps a click at renderer-space (x, y) to a context-menu item id
    (TG_GUI_CTX_REPLY/EDIT/DELETE) when the popup is open, or -1 when the click is
    outside it (the caller then dismisses the menu). */
