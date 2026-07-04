@@ -60,8 +60,7 @@ IF EXISTS telegram-test
     Protect telegram-test +e
     telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
 ELSE
-    Protect RAM:telegram-test +e
-    RAM:telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
+    Echo "telegram-test non trovato in questo cassetto."
 ENDIF
 
 IF WARN

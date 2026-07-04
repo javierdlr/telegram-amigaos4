@@ -51,6 +51,5 @@ IF EXISTS telegram-test
     Protect telegram-test +e
     Run >NIL: telegram-test --gui-live data/telegram-peers.txt
 ELSE
-    Protect RAM:telegram-test +e
-    Run >NIL: RAM:telegram-test --gui-live RAM:telegram-peers.txt
+    Echo "telegram-test non trovato in questo cassetto."
 ENDIF
