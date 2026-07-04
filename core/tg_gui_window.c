@@ -263,10 +263,13 @@ static void tg_gui_amiga_avatar_fill(tg_gui_backend *backend, int color_index,
 static ULONG tg_gui_amiga_rgb32(unsigned char component);
 
 #define TG_GUI_AV_SZ 32
+/* Must comfortably exceed the visible sidebar rows: negative slots live here
+   too, and an eviction churn would bring back the per-repaint disk probing
+   this cache exists to kill. ~1KB per slot. */
 #if defined(__m68k__)
-#define TG_GUI_AV_SLOTS 8
+#define TG_GUI_AV_SLOTS 24
 #else
-#define TG_GUI_AV_SLOTS 16
+#define TG_GUI_AV_SLOTS 32
 #endif
 #if defined(__m68k__)
 #define TG_GUI_AV_POOL 48        /* paletted screens: pens are scarce */
@@ -279,7 +282,8 @@ static ULONG tg_gui_amiga_rgb32(unsigned char component);
 typedef struct tg_gui_av_slot {
     unsigned long id_hi;
     unsigned long id_lo;
-    int state; /* 0 free, 1 pens ready, -1 decode failed (skip, use initials) */
+    unsigned long gen; /* store generation the slot was built at (retry gate) */
+    int state; /* 0 free, 1 pens ready, -1 nothing/undecodable (initials) */
     unsigned char pen[TG_GUI_AV_SZ * TG_GUI_AV_SZ];
 } tg_gui_av_slot;
 static tg_gui_av_slot tg_gui_av_slots[TG_GUI_AV_SLOTS];
@@ -386,6 +390,13 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
             tg_gui_av_slots[i].id_hi == id_hi &&
             tg_gui_av_slots[i].id_lo == id_lo) {
             slot = &tg_gui_av_slots[i];
+            /* A negative slot only retries when NEW thumbs arrived since it
+               was cached; otherwise repaints must stay I/O-free. */
+            if (slot->state == -1 &&
+                slot->gen != tg_mtproto_avatar_store_generation()) {
+                slot->state = 0;
+                slot = 0;
+            }
             break;
         }
     }
@@ -420,7 +431,9 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
         if (!have_rgb) {
             if (!tg_mtproto_avatar_thumb_lookup(id_hi, id_lo, &thumb,
                                                 &thumb_len)) {
-                return 0; /* nothing yet: initials */
+                thumb = 0; /* nothing yet: cache the miss as a negative slot
+                              below, so the next repaint skips the disk probe */
+                thumb_len = 0UL;
             }
         }
         for (i = 0; i < TG_GUI_AV_SLOTS; ++i) {
@@ -435,10 +448,12 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
         }
         slot->id_hi = id_hi;
         slot->id_lo = id_lo;
+        slot->gen = tg_mtproto_avatar_store_generation();
         if (!have_rgb &&
-            tg_avatar_decode_stripped(thumb, thumb_len, rgb, TG_GUI_AV_SZ,
-                                      TG_GUI_AV_SZ) != 0) {
-            slot->state = -1; /* undecodable: remember and keep initials */
+            (thumb == 0 ||
+             tg_avatar_decode_stripped(thumb, thumb_len, rgb, TG_GUI_AV_SZ,
+                                       TG_GUI_AV_SZ) != 0)) {
+            slot->state = -1; /* nothing/undecodable: initials, no re-probe */
             return 0;
         }
         for (px = 0UL; px < TG_GUI_AV_SZ * TG_GUI_AV_SZ; ++px) {

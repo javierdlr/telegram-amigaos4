@@ -2559,6 +2559,15 @@ typedef struct tg_avatar_slot {
 } tg_avatar_slot;
 static tg_avatar_slot tg_avatar_store[TG_AVATAR_STORE_MAX];
 static unsigned long tg_avatar_store_next = 0UL;
+/* Bumped on every store_put: lets the renderer's negative cache know when a
+   retry is worth it (new thumbs arrived) instead of re-probing disk+store on
+   every repaint -- that per-repaint fopen() was crushing OS3. */
+static unsigned long tg_avatar_store_gen = 1UL;
+
+unsigned long tg_mtproto_avatar_store_generation(void)
+{
+    return tg_avatar_store_gen;
+}
 
 static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
                                 const unsigned char *thumb, unsigned long len,
@@ -2587,6 +2596,7 @@ static void tg_avatar_store_put(unsigned long id_hi, unsigned long id_lo,
         slot = &tg_avatar_store[tg_avatar_store_next % TG_AVATAR_STORE_MAX];
         ++tg_avatar_store_next;
     }
+    ++tg_avatar_store_gen;
     slot->id_hi = id_hi;
     slot->id_lo = id_lo;
     slot->photo_id_hi = photo_id_hi;

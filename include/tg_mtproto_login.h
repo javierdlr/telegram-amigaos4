@@ -79,6 +79,7 @@ typedef struct tg_mtproto_password_summary {
    until the slot is evicted -- copy or decode immediately), 0 = none. */
 /* Thumb-store persistence (data/telegram-thumbs.bin): blurred previews
    survive client restarts. Load at session open, save at session close. */
+unsigned long tg_mtproto_avatar_store_generation(void);
 void tg_mtproto_avatar_store_save(void);
 void tg_mtproto_avatar_store_load(void);
 
