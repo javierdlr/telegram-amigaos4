@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include <stdlib.h>
 #include "tg_mtproto_login.h"
 #include "tg_avatar.h"
 
@@ -2420,6 +2421,16 @@ static tg_mtproto_tl_status tg_read_user_leading_from_reader(
                             sizeof(out->phone)) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
+    /* photo:flags.5?UserProfilePhoto comes right after phone. Capture it
+       BEST-EFFORT: this is the reader every production user scan goes
+       through (dialogs, history, search -- via tg_peer_cache_scan_users),
+       and it used to stop here, which is why user avatars never captured
+       on the real wire while chats did. The scan resyncs on the next
+       marker regardless, so a photo parse hiccup must not drop the user
+       whose leading fields we already read. */
+    if ((out->flags & 32UL) != 0UL) {
+        (void)tg_read_user_profile_photo(reader, out);
+    }
     return TG_MTPROTO_TL_OK;
 }
 
@@ -2461,6 +2472,9 @@ static int tg_peer_cache_apply_user(tg_mtproto_peer_cache *cache,
         if (user->stripped_len > 0UL) {
             memcpy(entry->stripped, user->stripped, user->stripped_len);
             entry->stripped_len = user->stripped_len;
+            tg_avatar_store_put(user->id_hi, user->id_lo, user->stripped,
+                                user->stripped_len, user->photo_id_hi,
+                                user->photo_id_lo, user->photo_dc_id);
         }
     }
     return 1;
