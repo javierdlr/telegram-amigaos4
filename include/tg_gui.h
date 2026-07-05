@@ -147,6 +147,7 @@ typedef struct tg_gui_message {
     int read_state;                    /* TG_GUI_READ_* (own messages only) */
     unsigned long from_id_hi;          /* sender user id, to name a live typing peer */
     unsigned long from_id_lo;
+    int has_document;                  /* F9: a document is attached (Download) */
 } tg_gui_message;
 
 typedef struct tg_gui_state {

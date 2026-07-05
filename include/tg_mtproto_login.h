@@ -289,6 +289,10 @@ typedef struct tg_mtproto_message_text {
     /* Inline quote the server includes in the reply header (raw UTF-8); shown
        as a dimmed reference line. Empty when the reply carries no quote. */
     char reply_quote[TG_MTPROTO_MESSAGE_REPLY_QUOTE_MAX];
+    /* F9: attached document (file/video/voice/...) captured for the "[File:
+       name (size)]" label AND the on-request download -- has_document is 0 for
+       a plain-text or non-document media message. */
+    tg_mtproto_document_meta document;
 } tg_mtproto_message_text;
 
 typedef struct tg_mtproto_message_text_list {

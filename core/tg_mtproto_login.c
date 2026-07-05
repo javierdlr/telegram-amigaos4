@@ -4016,6 +4016,55 @@ static const char *tg_mtproto_media_label(unsigned long constructor)
     }
 }
 
+/* Builds the transcript label for an attached document into `text`, using the
+   filename when present and a compact human size (B / KB / MB from the 64-bit
+   size). Media-only messages (no caption) show this instead of an empty bubble;
+   the document meta itself is captured separately for the download. */
+static void tg_mtproto_format_document_label(
+    const tg_mtproto_document_meta *doc, char *text, unsigned long text_size)
+{
+    char size_buf[24];
+    const char *name;
+    unsigned long n = 0UL;
+    const char *p;
+
+    if (text_size < 8UL) {
+        if (text_size > 0UL) {
+            text[0] = '\0';
+        }
+        return;
+    }
+    /* Human size: exact enough for a label; treats >4GB as MB (avatars/docs on
+       these systems are far smaller, and 64-bit division is costly on 68k). */
+    if (doc->size_hi != 0UL || doc->size_lo >= 1048576UL) {
+        unsigned long mb = (doc->size_hi != 0UL)
+                               ? (4096UL + doc->size_lo / 1048576UL)
+                               : (doc->size_lo / 1048576UL);
+        sprintf(size_buf, "%lu MB", mb);
+    } else if (doc->size_lo >= 1024UL) {
+        sprintf(size_buf, "%lu KB", doc->size_lo / 1024UL);
+    } else {
+        sprintf(size_buf, "%lu B", doc->size_lo);
+    }
+    name = (doc->file_name[0] != '\0') ? doc->file_name : "File";
+    for (p = "[File: "; *p != '\0' && n + 1UL < text_size; ++p) {
+        text[n++] = *p;
+    }
+    for (p = name; *p != '\0' && n + 1UL < text_size; ++p) {
+        text[n++] = *p;
+    }
+    for (p = " ("; *p != '\0' && n + 1UL < text_size; ++p) {
+        text[n++] = *p;
+    }
+    for (p = size_buf; *p != '\0' && n + 1UL < text_size; ++p) {
+        text[n++] = *p;
+    }
+    for (p = ")]"; *p != '\0' && n + 1UL < text_size; ++p) {
+        text[n++] = *p;
+    }
+    text[n] = '\0';
+}
+
 static tg_mtproto_tl_status tg_read_common_message_text(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_message_text *out,
@@ -4123,19 +4172,40 @@ static tg_mtproto_tl_status tg_read_common_message_text(
            "[Photo]"/"[File]"/... placeholder, then bail on the rest of the tail
            (we do not walk the full MessageMedia). Reading one u32 here cannot
            corrupt the parse -- we return immediately after, exactly as before. */
-        if ((flags & 512UL) != 0UL && !out->has_text) {
+        if ((flags & 512UL) != 0UL) {
             unsigned long media_ctor;
 
             if (tg_mtproto_tl_read_u32(reader, &media_ctor) == TG_MTPROTO_TL_OK) {
-                const char *label = tg_mtproto_media_label(media_ctor);
-                unsigned long li = 0UL;
+                /* messageMediaDocument#52d8ccd9: flags:# document:flags.0?Document.
+                   Capture the Document (name/size + the download meta) BEST-
+                   EFFORT; the reader is abandoned right after either way, so a
+                   parse hiccup just falls back to the plain placeholder. */
+                if (media_ctor == 0x52d8ccd9UL) {
+                    unsigned long mflags;
 
-                while (label[li] != '\0' && li + 1UL < sizeof(out->text)) {
-                    out->text[li] = label[li];
-                    ++li;
+                    if (tg_mtproto_tl_read_u32(reader, &mflags) ==
+                            TG_MTPROTO_TL_OK &&
+                        (mflags & 1UL) != 0UL &&
+                        tg_mtproto_read_document(reader, &out->document) ==
+                            TG_MTPROTO_TL_OK &&
+                        out->document.has_document && !out->has_text) {
+                        tg_mtproto_format_document_label(&out->document,
+                                                         out->text,
+                                                         sizeof(out->text));
+                        out->has_text = out->text[0] != '\0';
+                    }
                 }
-                out->text[li] = '\0';
-                out->has_text = 1;
+                if (!out->has_text) { /* non-document media, or no caption */
+                    const char *label = tg_mtproto_media_label(media_ctor);
+                    unsigned long li = 0UL;
+
+                    while (label[li] != '\0' && li + 1UL < sizeof(out->text)) {
+                        out->text[li] = label[li];
+                        ++li;
+                    }
+                    out->text[li] = '\0';
+                    out->has_text = 1;
+                }
             }
         }
         return TG_MTPROTO_TL_OK;
@@ -4859,7 +4929,38 @@ int tg_mtproto_login_self_test(void)
     if (tg_avatar_self_test() != 0) {
         return 2;
     }
-    /* F9 chunk 1: byte-verify the document TL (layer-214 shapes). */
+    /* F9 chunk 2: the document label formatter (name + human size). */
+    {
+        tg_mtproto_document_meta d;
+        char lbl[64];
+
+        memset(&d, 0, sizeof(d));
+        d.has_document = 1;
+        d.size_lo = 2048UL; /* 2 KB */
+        strcpy(d.file_name, "notes.txt");
+        tg_mtproto_format_document_label(&d, lbl, sizeof(lbl));
+        if (strcmp(lbl, "[File: notes.txt (2 KB)]") != 0) {
+            puts("f9 self-test: document label (KB) mismatch");
+            return 2;
+        }
+        d.size_lo = 5UL; /* 5 B */
+        d.file_name[0] = '\0'; /* no name -> "File" */
+        tg_mtproto_format_document_label(&d, lbl, sizeof(lbl));
+        if (strcmp(lbl, "[File: File (5 B)]") != 0) {
+            puts("f9 self-test: document label (no-name/B) mismatch");
+            return 2;
+        }
+        d.size_hi = 0UL;
+        d.size_lo = 3UL * 1048576UL; /* 3 MB */
+        strcpy(d.file_name, "clip.mp4");
+        tg_mtproto_format_document_label(&d, lbl, sizeof(lbl));
+        if (strcmp(lbl, "[File: clip.mp4 (3 MB)]") != 0) {
+            puts("f9 self-test: document label (MB) mismatch");
+            return 2;
+        }
+    }
+
+    /* F9 chunk 1: byte-verify the document TL (layer-214 shapes). */    /* F9 chunk 1: byte-verify the document TL (layer-214 shapes). */
     {
         unsigned char q[160];
         tg_mtproto_tl_writer w;

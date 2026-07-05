@@ -9118,6 +9118,7 @@ static void tg_chat_render_emit(tg_chat_driver *driver, unsigned long date,
     row.id = 0UL;
     row.from_id_hi = 0UL;
     row.from_id_lo = 0UL;
+    row.has_document = 0;
     driver->on_message(driver->ctx, &row);
 }
 
@@ -9210,6 +9211,7 @@ int tg_mtproto_chat_render_self_test(void)
         qrow.own_label = "Io";
         qrow.sender = "Mario";
         qrow.reply_quote = "ciao";
+        qrow.has_document = 0;
         tg_mtproto_chat_render_message(qcap, &qrow, &qday);
         rewind(qcap);
         qn = fread(qbuf, 1, sizeof(qbuf) - 1U, qcap);
@@ -9446,6 +9448,7 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                 row.id = texts.messages[i].id;
                 row.from_id_hi = texts.messages[i].from_id_hi;
                 row.from_id_lo = texts.messages[i].from_id_lo;
+                row.has_document = texts.messages[i].document.has_document;
                 driver.on_message(driver.ctx, &row);
             }
             ++printed;

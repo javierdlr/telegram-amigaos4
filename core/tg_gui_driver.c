@@ -228,6 +228,7 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
 
     message->is_own = row->is_out ? 1 : 0;
     message->is_system = 0;
+    message->has_document = row->has_document; /* F9: gates the Download item */
 
     /* Sender label: own name when outgoing; the resolved sender otherwise; the
        1:1 peer name as the fallback; empty for an unresolved group author (the
