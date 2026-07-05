@@ -1411,6 +1411,440 @@ tg_mtproto_tl_status tg_mtproto_parse_upload_file(
     return tg_mtproto_tl_read_bytes(&reader, bytes, bytes_length);
 }
 
+static tg_mtproto_tl_status tg_read_vector_count(tg_mtproto_tl_reader *reader,
+                                                 unsigned long *count);
+
+/* --- F9 file sharing chunk 1: document TL (layer 214, verified) ---------
+   Wire shapes cross-checked ON the layer-214 scheme (TDLib @ MTPROTO_LAYER
+   214) -- notably messages.sendMedia is #ac55d9c1 there, not the live
+   schema's #0330e77f. The Document skips cover every PhotoSize/VideoSize/
+   DocumentAttribute variant of that layer so the reader stays wire-exact. */
+
+static tg_mtproto_tl_status tg_skip_bytes_field(tg_mtproto_tl_reader *reader)
+{
+    const unsigned char *p;
+    unsigned long n;
+
+    return tg_mtproto_tl_read_bytes(reader, &p, &n);
+}
+
+static tg_mtproto_tl_status tg_skip_u32s(tg_mtproto_tl_reader *reader,
+                                         unsigned long count)
+{
+    unsigned long scratch;
+
+    while (count-- > 0UL) {
+        if (tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+    }
+    return TG_MTPROTO_TL_OK;
+}
+
+static tg_mtproto_tl_status tg_skip_int_vector(tg_mtproto_tl_reader *reader)
+{
+    unsigned long n;
+
+    if (tg_read_vector_count(reader, &n) != TG_MTPROTO_TL_OK || n > 4096UL) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    return tg_skip_u32s(reader, n);
+}
+
+static tg_mtproto_tl_status tg_skip_input_sticker_set(
+    tg_mtproto_tl_reader *reader)
+{
+    unsigned long ctor;
+
+    if (tg_mtproto_tl_read_u32(reader, &ctor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    switch (ctor) {
+    case 0xffb62b95UL: /* inputStickerSetEmpty */
+    case 0x028703c8UL: /* inputStickerSetAnimatedEmoji */
+        return TG_MTPROTO_TL_OK;
+    case 0x9de7a269UL: /* inputStickerSetID: id + access_hash */
+        return tg_skip_u32s(reader, 4UL);
+    case 0x861cc8a0UL: /* inputStickerSetShortName */
+        return tg_skip_string(reader);
+    case 0xe67f520eUL: /* inputStickerSetDice: emoticon */
+        return tg_skip_string(reader);
+    default:
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+}
+
+static tg_mtproto_tl_status tg_skip_photo_size(tg_mtproto_tl_reader *reader)
+{
+    unsigned long ctor;
+
+    if (tg_mtproto_tl_read_u32(reader, &ctor) != TG_MTPROTO_TL_OK ||
+        tg_skip_string(reader) != TG_MTPROTO_TL_OK) { /* every variant: type */
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    switch (ctor) {
+    case 0x0e17e23cUL: /* photoSizeEmpty */
+        return TG_MTPROTO_TL_OK;
+    case 0x75c78e60UL: /* photoSize: w h size */
+        return tg_skip_u32s(reader, 3UL);
+    case 0x021e1ad6UL: /* photoCachedSize: w h bytes */
+        if (tg_skip_u32s(reader, 2UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return tg_skip_bytes_field(reader);
+    case 0xe0b0bc2eUL: /* photoStrippedSize: bytes */
+    case 0xd8214d41UL: /* photoPathSize: bytes */
+        return tg_skip_bytes_field(reader);
+    case 0xfa3efb95UL: /* photoSizeProgressive: w h Vector<int> */
+        if (tg_skip_u32s(reader, 2UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return tg_skip_int_vector(reader);
+    default:
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+}
+
+static tg_mtproto_tl_status tg_skip_video_size(tg_mtproto_tl_reader *reader)
+{
+    unsigned long ctor;
+    unsigned long flags;
+
+    if (tg_mtproto_tl_read_u32(reader, &ctor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    switch (ctor) {
+    case 0xde33b094UL: /* videoSize: flags type w h size [flags.0 double] */
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK ||
+            tg_skip_u32s(reader, 3UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 1UL) != 0UL &&
+            tg_skip_u32s(reader, 2UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return TG_MTPROTO_TL_OK;
+    case 0xf85c413cUL: /* videoSizeEmojiMarkup: emoji_id + Vector<int> */
+        if (tg_skip_u32s(reader, 2UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return tg_skip_int_vector(reader);
+    case 0x0da082feUL: /* videoSizeStickerMarkup */
+        if (tg_skip_input_sticker_set(reader) != TG_MTPROTO_TL_OK ||
+            tg_skip_u32s(reader, 2UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return tg_skip_int_vector(reader);
+    default:
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+}
+
+static tg_mtproto_tl_status tg_read_document_attribute(
+    tg_mtproto_tl_reader *reader,
+    tg_mtproto_document_meta *out)
+{
+    unsigned long ctor;
+    unsigned long flags;
+
+    if (tg_mtproto_tl_read_u32(reader, &ctor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    switch (ctor) {
+    case 0x15590068UL: /* documentAttributeFilename: THE one we want */
+        return tg_read_string_copy(reader, out->file_name,
+                                   sizeof(out->file_name));
+    case 0x11b58939UL: /* animated */
+    case 0x9801d2f7UL: /* hasStickers */
+        return TG_MTPROTO_TL_OK;
+    case 0x6c37c15cUL: /* imageSize: w h */
+        return tg_skip_u32s(reader, 2UL);
+    case 0x6319d612UL: /* sticker: flags alt stickerset [flags.0 MaskCoords] */
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK ||
+            tg_skip_input_sticker_set(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 1UL) != 0UL) { /* maskCoords#aed6dbb2: ctor n + 3 double */
+            return tg_skip_u32s(reader, 8UL);
+        }
+        return TG_MTPROTO_TL_OK;
+    case 0x43c57c48UL: /* video: flags duration(double) w h [opts] */
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_skip_u32s(reader, 4UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 4UL) != 0UL &&
+            tg_skip_u32s(reader, 1UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 16UL) != 0UL &&
+            tg_skip_u32s(reader, 2UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 32UL) != 0UL &&
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return TG_MTPROTO_TL_OK;
+    case 0x9852f9c6UL: /* audio: flags duration [title][performer][waveform] */
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_skip_u32s(reader, 1UL) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 1UL) != 0UL &&
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 2UL) != 0UL &&
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if ((flags & 4UL) != 0UL &&
+            tg_skip_bytes_field(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return TG_MTPROTO_TL_OK;
+    case 0xfd149899UL: /* customEmoji: flags alt stickerset */
+        if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+            tg_skip_string(reader) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return tg_skip_input_sticker_set(reader);
+    default:
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+}
+
+tg_mtproto_tl_status tg_mtproto_read_document(tg_mtproto_tl_reader *reader,
+                                              tg_mtproto_document_meta *out)
+{
+    unsigned long ctor;
+    unsigned long flags;
+    unsigned long scratch;
+    const unsigned char *ref;
+    unsigned long ref_len;
+    unsigned long i;
+    unsigned long count;
+
+    if (reader == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    memset(out, 0, sizeof(*out));
+    if (tg_mtproto_tl_read_u32(reader, &ctor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (ctor == 0x36f8c871UL) { /* documentEmpty: id */
+        return tg_mtproto_tl_read_u64(reader, &out->id_hi, &out->id_lo);
+    }
+    if (ctor != 0x8fd4c4d8UL) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &out->id_hi, &out->id_lo) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &out->access_hash_hi,
+                               &out->access_hash_lo) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_bytes(reader, &ref, &ref_len) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+        tg_read_string_copy(reader, out->mime, sizeof(out->mime)) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &out->size_hi, &out->size_lo) !=
+            TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (ref_len > 0UL && ref_len <= TG_MTPROTO_FILE_REF_MAX) {
+        memcpy(out->file_reference, ref, ref_len);
+        out->file_reference_len = ref_len; /* truncated ref = useless: keep 0 */
+    }
+    if ((flags & 1UL) != 0UL) { /* thumbs:Vector<PhotoSize> */
+        if (tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK ||
+            count > 64UL) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        for (i = 0UL; i < count; ++i) {
+            if (tg_skip_photo_size(reader) != TG_MTPROTO_TL_OK) {
+                return TG_MTPROTO_TL_INVALID_DATA;
+            }
+        }
+    }
+    if ((flags & 2UL) != 0UL) { /* video_thumbs:Vector<VideoSize> */
+        if (tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK ||
+            count > 64UL) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        for (i = 0UL; i < count; ++i) {
+            if (tg_skip_video_size(reader) != TG_MTPROTO_TL_OK) {
+                return TG_MTPROTO_TL_INVALID_DATA;
+            }
+        }
+    }
+    if (tg_mtproto_tl_read_u32(reader, &out->dc_id) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK ||
+        count > 64UL) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    for (i = 0UL; i < count; ++i) {
+        if (tg_read_document_attribute(reader, out) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+    }
+    out->has_document = 1;
+    return TG_MTPROTO_TL_OK;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_upload_get_document(
+    tg_mtproto_tl_writer *writer,
+    const tg_mtproto_document_meta *doc,
+    unsigned long offset,
+    unsigned long limit)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || doc == 0 || !doc->has_document ||
+        doc->file_reference_len == 0UL || limit == 0UL ||
+        (limit % 4096UL) != 0UL || (1048576UL % limit) != 0UL ||
+        (offset % 4096UL) != 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer, 0xbe5335beUL); /* upload.getFile */
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* flags */
+    }
+    if (status == TG_MTPROTO_TL_OK) { /* inputDocumentFileLocation */
+        status = tg_mtproto_tl_write_u32(writer, 0xbad07584UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, doc->id_hi, doc->id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, doc->access_hash_hi,
+                                         doc->access_hash_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_bytes(writer, doc->file_reference,
+                                           doc->file_reference_len);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, ""); /* thumb_size: full file */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, 0UL, offset); /* long */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, limit);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_upload_save_file_part(
+    tg_mtproto_tl_writer *writer,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long part_index,
+    const unsigned char *data,
+    unsigned long data_length)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || data == 0 || data_length == 0UL ||
+        data_length > 524288UL || part_index > 2999UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer, 0xb304a621UL);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, file_id_hi, file_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, part_index);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_bytes(writer, data, data_length);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long file_parts,
+    const char *file_name,
+    const char *mime_type,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || file_name == 0 || file_name[0] == '\0' ||
+        mime_type == 0 || mime_type[0] == '\0' || file_parts == 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    /* messages.sendMedia#ac55d9c1 -- the LAYER-214 id (not the live one). */
+    status = tg_mtproto_tl_write_u32(writer, 0xac55d9c1UL);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* flags */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_input_peer(writer, peer_constructor, peer_id_hi,
+                                     peer_id_lo, access_hash_hi,
+                                     access_hash_lo, has_access_hash);
+    }
+    if (status == TG_MTPROTO_TL_OK) { /* inputMediaUploadedDocument */
+        status = tg_mtproto_tl_write_u32(writer, 0x037c9330UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 16UL); /* force_file */
+    }
+    if (status == TG_MTPROTO_TL_OK) { /* file: inputFile#f52ff27f */
+        status = tg_mtproto_tl_write_u32(writer, 0xf52ff27fUL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, file_id_hi, file_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, file_parts);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, file_name);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, ""); /* md5: server-side optional */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, mime_type);
+    }
+    if (status == TG_MTPROTO_TL_OK) { /* attributes: Vector(1) filename */
+        status = tg_mtproto_tl_write_u32(writer, 0x1cb5c415UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0x15590068UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, file_name);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, ""); /* message: no caption */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, random_id_hi, random_id_lo);
+    }
+    return status;
+}
+
 tg_mtproto_tl_status tg_mtproto_parse_rpc_result(
     const unsigned char *body,
     unsigned long body_length,
@@ -4425,6 +4859,73 @@ int tg_mtproto_login_self_test(void)
     if (tg_avatar_self_test() != 0) {
         return 2;
     }
+    /* F9 chunk 1: byte-verify the document TL (layer-214 shapes). */
+    {
+        unsigned char q[160];
+        tg_mtproto_tl_writer w;
+        static const unsigned char part_expected[20] = {
+            0x21, 0xa6, 0x04, 0xb3,                         /* saveFilePart */
+            0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, /* file_id */
+            0x02, 0x00, 0x00, 0x00,                         /* part 2 */
+            0x03, 0xaa, 0xbb, 0xcc                          /* bytes {3} */
+        };
+        static const unsigned char part_data[3] = { 0xaa, 0xbb, 0xcc };
+        tg_mtproto_document_meta doc;
+
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_upload_save_file_part(&w, 0x11223344UL,
+                                                   0x55667788UL, 2UL,
+                                                   part_data, 3UL) !=
+                TG_MTPROTO_TL_OK ||
+            w.length != sizeof(part_expected) ||
+            memcmp(q, part_expected, sizeof(part_expected)) != 0) {
+            puts("f9 self-test: saveFilePart bytes mismatch");
+            return 2;
+        }
+        memset(&doc, 0, sizeof(doc));
+        doc.has_document = 1;
+        doc.id_hi = 0x01020304UL;
+        doc.id_lo = 0x05060708UL;
+        doc.access_hash_hi = 0x0a0b0c0dUL;
+        doc.access_hash_lo = 0x0e0f1011UL;
+        doc.file_reference[0] = 0xfe;
+        doc.file_reference_len = 1UL;
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_upload_get_document(&w, &doc, 0UL, 65536UL) !=
+                TG_MTPROTO_TL_OK ||
+            w.length != 48UL ||
+            q[0] != 0xbeU || q[3] != 0xbeU ||        /* upload.getFile */
+            q[8] != 0x84U || q[9] != 0x75U ||        /* inputDocFileLoc LE */
+            q[10] != 0xd0U || q[11] != 0xbaU ||
+            q[28] != 0x01U || q[29] != 0xfeU ||      /* ref: len 1 + 0xfe */
+            q[44] != 0x00U || q[46] != 0x01U) {      /* limit 65536 LE */
+            puts("f9 self-test: getFile(document) layout mismatch");
+            return 2;
+        }
+        /* no file_reference -> must refuse before the wire */
+        doc.file_reference_len = 0UL;
+        tg_mtproto_tl_writer_init(&w, q, sizeof(w));
+        if (tg_mtproto_build_upload_get_document(&w, &doc, 0UL, 65536UL) !=
+            TG_MTPROTO_TL_INVALID_ARGUMENT) {
+            puts("f9 self-test: missing file_reference must be rejected");
+            return 2;
+        }
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_messages_send_media_document(
+                &w, TG_PEER_USER_CONSTRUCTOR, 0UL, 1UL, 0UL, 2UL, 1,
+                0x0000deadUL, 0x0000beefUL, 3UL, "b.txt", "text/plain",
+                0x11UL, 0x22UL) != TG_MTPROTO_TL_OK ||
+            q[0] != 0xc1U || q[1] != 0xd9U ||        /* sendMedia LAYER 214 */
+            q[2] != 0x55U || q[3] != 0xacU ||
+            q[32] != 0x30U || q[33] != 0x93U ||      /* inputMediaUploadedDoc */
+            q[34] != 0x7cU || q[35] != 0x03U ||
+            q[36] != 0x10U ||                        /* force_file flag */
+            q[40] != 0x7fU || q[41] != 0xf2U) {      /* inputFile LE */
+            puts("f9 self-test: sendMedia(document) layout mismatch");
+            return 2;
+        }
+    }
+
     /* Avatar v2: byte-verify upload.getFile(inputPeerPhotoFileLocation) --
        especially the 8-byte offset (the wire trap) and the tail layout. */
     {

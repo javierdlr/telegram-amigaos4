@@ -77,6 +77,69 @@ typedef struct tg_mtproto_password_summary {
 /* Looks up the captured stripped thumb for a peer id (the avatar store filled
    by the users/chats scanners). Returns 1 and points into the store (valid
    until the slot is evicted -- copy or decode immediately), 0 = none. */
+/* --- F9 file sharing: document TL (layer 214, verified at-layer on TDLib
+   a8db5023 + core.telegram.org; sendMedia is #ac55d9c1 AT 214, NOT the live
+   #0330e77f -- the method changed after our layer) ------------------------ */
+#define TG_MTPROTO_FILE_REF_MAX 64U
+#define TG_MTPROTO_DOC_NAME_MAX 128U
+#define TG_MTPROTO_DOC_MIME_MAX 64U
+
+typedef struct tg_mtproto_document_meta {
+    int has_document; /* 0 = documentEmpty or absent */
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    unsigned long size_hi;
+    unsigned long size_lo;
+    unsigned long dc_id;
+    unsigned long file_reference_len; /* 0 = unusable (too big/absent) */
+    unsigned char file_reference[TG_MTPROTO_FILE_REF_MAX];
+    char mime[TG_MTPROTO_DOC_MIME_MAX];
+    char file_name[TG_MTPROTO_DOC_NAME_MAX]; /* "" when no filename attr */
+} tg_mtproto_document_meta;
+
+/* Parses one bare Document (document#8fd4c4d8 / documentEmpty#36f8c871),
+   reader positioned ON the constructor; leaves the reader right after the
+   object (all thumb/attribute variants are skipped wire-exactly). */
+tg_mtproto_tl_status tg_mtproto_read_document(tg_mtproto_tl_reader *reader,
+                                              tg_mtproto_document_meta *out);
+
+/* upload.getFile of a document (inputDocumentFileLocation, empty thumb_size);
+   same offset/limit rules as the avatar download. */
+tg_mtproto_tl_status tg_mtproto_build_upload_get_document(
+    tg_mtproto_tl_writer *writer,
+    const tg_mtproto_document_meta *doc,
+    unsigned long offset,
+    unsigned long limit);
+
+/* upload.saveFilePart#b304a621 (small-file upload, <= 10 MB / 3000 parts). */
+tg_mtproto_tl_status tg_mtproto_build_upload_save_file_part(
+    tg_mtproto_tl_writer *writer,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long part_index,
+    const unsigned char *data,
+    unsigned long data_length);
+
+/* messages.sendMedia#ac55d9c1 with inputMediaUploadedDocument (force_file,
+   filename attribute, empty caption). random_id must be fresh per send. */
+tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long file_parts,
+    const char *file_name,
+    const char *mime_type,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo);
+
 /* Thumb-store persistence (data/telegram-thumbs.bin): blurred previews
    survive client restarts. Load at session open, save at session close. */
 unsigned long tg_mtproto_avatar_store_generation(void);
