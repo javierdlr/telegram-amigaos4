@@ -39,6 +39,12 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
    when no session is open (returns 0). */
 int tg_gui_session_tick(FILE *stream);
 
+/* F9: download the document attached to message msg_id in the open chat into
+   downloads/<name>. 0 ok (path in out_path), 1 fail, 2 foreign DC (unsupported
+   yet), 3 disk error. Blocking on-context call -- never from the tick. */
+int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
+                                     unsigned long out_path_size, FILE *stream);
+
 /* Opens the chat at the given 1-based peer-cache index: clears the transcript,
    fetches its recent history (incoming + outgoing) into tg_gui_state.messages
    through the GUI driver, and marks it the open chat so tg_gui_session_tick

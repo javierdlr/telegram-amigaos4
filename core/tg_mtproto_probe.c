@@ -13148,6 +13148,229 @@ static unsigned long tg_gui_avfetch_hi[TG_GUI_AVFETCH_MAX];
 static unsigned long tg_gui_avfetch_lo[TG_GUI_AVFETCH_MAX];
 static int tg_gui_avfetch_n = 0;
 
+/* F9 chunk 3: download the document attached to message `msg_id` in the OPEN
+   chat, on the session context, into downloads/<name>. Re-fetches the chat
+   history to obtain a FRESH file_reference (references expire; a stale one from
+   open time would fail mid-transfer), then loops upload.getFile writing each
+   chunk straight to disk (a multi-MB file must never be buffered whole on OS3).
+   Same-DC only for now (a foreign-DC document needs the export/import dance,
+   deferred with the foreign-DC avatars). Bounded, silent-failing, GUI-tick-free
+   -- called only from the explicit "Download" action. */
+#if defined(__m68k__)
+#define TG_GUI_DL_CHUNK 65536UL   /* 64 KB: gentle on the 8 MB box */
+#else
+#define TG_GUI_DL_CHUNK 262144UL  /* 256 KB: fewer round-trips on the fast lanes */
+#endif
+
+static void tg_gui_dl_sanitize_name(const char *in, char *out,
+                                    unsigned long out_size)
+{
+    unsigned long n = 0UL;
+
+    if (out_size == 0UL) {
+        return;
+    }
+    if (in != 0) {
+        const char *p;
+
+        for (p = in; *p != '\0' && n + 1UL < out_size; ++p) {
+            unsigned char c = (unsigned char)*p;
+
+            /* drop path separators and control bytes -- keep it a bare name */
+            if (c == '/' || c == ':' || c == '\\' || c < 0x20U) {
+                continue;
+            }
+            out[n++] = (char)c;
+        }
+    }
+    if (n == 0UL) { /* no usable name: a stable fallback */
+        const char *f = "download.bin";
+
+        while (*f != '\0' && n + 1UL < out_size) {
+            out[n++] = *f++;
+        }
+    }
+    out[n] = '\0';
+}
+
+/* Re-fetch the open chat's newest history and copy the document meta of the
+   message with id == msg_id (fresh file_reference). 0 = found + has document. */
+static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
+                                             tg_mtproto_document_meta *out)
+{
+    unsigned char query[64];
+    unsigned long pc, ph, pl, ahh, ahl;
+    int hah;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_rpc_result result;
+    static tg_mtproto_message_text_list texts;
+    unsigned long i;
+    static const char label[] = "mtproto getHistory(download)";
+
+    if (tg_mtproto_load_peer_cache_peer(
+            tg_gui_session_state.peer_cache_file,
+            tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+            &ahl, &hah, quiet, label) != 0) {
+        return 1;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_get_history_peer(&writer, pc, ph, pl, ahh,
+                                                   ahl, hah, 0UL, 40UL) !=
+        TG_MTPROTO_TL_OK) {
+        return 1;
+    }
+    memset(&result, 0, sizeof(result));
+    if (tg_mtproto_send_saved_query_on_context(
+            tg_gui_session_state.host, tg_gui_session_state.port,
+            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            query, writer.length, &result, quiet, label, 600U) != 0 ||
+        result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR ||
+        tg_mtproto_unpack_gzip_result(&result, quiet, label) != 0 ||
+        tg_mtproto_parse_message_text_list(result.result_constructor,
+                                           result.result_body,
+                                           result.result_body_length,
+                                           &texts) != TG_MTPROTO_TL_OK) {
+        return 1;
+    }
+    for (i = 0UL; i < texts.count; ++i) {
+        if (texts.messages[i].id == msg_id &&
+            texts.messages[i].document.has_document &&
+            texts.messages[i].document.file_reference_len > 0UL) {
+            *out = texts.messages[i].document;
+            return 0;
+        }
+    }
+    return 1; /* not in the fetched page, or no usable document */
+}
+
+/* Returns: 0 ok, 1 generic failure, 2 foreign DC (needs multi-DC, deferred),
+   3 could not create/write the file. Writes the saved path into out_path. */
+int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
+                                     unsigned long out_path_size, FILE *stream)
+{
+    tg_mtproto_document_meta doc;
+    char safe[TG_MTPROTO_DOC_NAME_MAX];
+    char path[TG_MTPROTO_DOC_NAME_MAX + 16];
+    unsigned char query[128];
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_rpc_result result;
+    FILE *quiet;
+    FILE *f;
+    unsigned long offset;
+    unsigned long home;
+    const unsigned char *bytes;
+    unsigned long bytes_len;
+    int cdn;
+    int refetched = 0;
+    int rc = 1;
+
+    if (out_path != 0 && out_path_size > 0UL) {
+        out_path[0] = '\0';
+    }
+    if (!tg_gui_session_state.open || stream == 0 || msg_id == 0UL ||
+        tg_gui_session_state.current_peer_index[0] == '\0') {
+        return 1;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    if (tg_gui_session_find_open_document(msg_id, quiet, &doc) != 0) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 1;
+    }
+    /* Same-DC guard (foreign documents need export/importAuthorization). */
+    home = 0UL;
+    if (tg_gui_session_state.dc_id_text[0] != '\0') {
+        const char *p = tg_gui_session_state.dc_id_text;
+
+        while (*p >= '0' && *p <= '9') {
+            home = home * 10UL + (unsigned long)(*p - '0');
+            ++p;
+        }
+    }
+    if (home != 0UL && doc.dc_id != 0UL && doc.dc_id != home) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2; /* foreign DC: caller shows "not supported yet" */
+    }
+    tg_gui_dl_sanitize_name(doc.file_name, safe, sizeof(safe));
+    (void)mkdir("downloads", 0777);
+    sprintf(path, "downloads/%s", safe);
+    f = fopen(path, "wb");
+    if (f == 0) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 3;
+    }
+    offset = 0UL;
+    for (;;) {
+        tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+        if (tg_mtproto_build_upload_get_document(&writer, &doc, offset,
+                                                 TG_GUI_DL_CHUNK) !=
+            TG_MTPROTO_TL_OK) {
+            break;
+        }
+        memset(&result, 0, sizeof(result));
+        if (tg_mtproto_send_saved_query_on_context(
+                tg_gui_session_state.host, tg_gui_session_state.port,
+                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+                tg_gui_session_state.dc_id_text,
+                &tg_gui_session_state.context, query, writer.length, &result,
+                quiet, "mtproto getFile(document)", 600U) != 0) {
+            break;
+        }
+        if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+            /* Most likely FILE_REFERENCE_EXPIRED mid-transfer: re-fetch the
+               reference ONCE and restart from the beginning. */
+            if (!refetched &&
+                tg_gui_session_find_open_document(msg_id, quiet, &doc) == 0) {
+                refetched = 1;
+                offset = 0UL;
+                if (fseek(f, 0L, SEEK_SET) == 0) {
+                    continue;
+                }
+            }
+            break;
+        }
+        if (tg_mtproto_unpack_gzip_result(&result, quiet,
+                                          "mtproto getFile(document)") != 0 ||
+            tg_mtproto_parse_upload_file(result.result_constructor,
+                                         result.result_body,
+                                         result.result_body_length, &bytes,
+                                         &bytes_len, &cdn) !=
+                TG_MTPROTO_TL_OK ||
+            cdn) {
+            break; /* CDN redirect (large public file) not handled yet */
+        }
+        if (bytes_len > 0UL &&
+            fwrite(bytes, 1, bytes_len, f) != bytes_len) {
+            rc = 3;
+            break;
+        }
+        offset += bytes_len;
+        if (bytes_len < TG_GUI_DL_CHUNK) {
+            rc = 0; /* short chunk = last chunk: done */
+            break;
+        }
+        if (offset >= (0x00100000UL * 512UL)) {
+            break; /* 512 MB hard stop: no runaway on a bad size */
+        }
+    }
+    if (fclose(f) != 0 && rc == 0) {
+        rc = 3;
+    }
+    if (rc != 0) {
+        (void)remove(path); /* a half file is worse than none */
+    } else if (out_path != 0 && out_path_size > 0UL) {
+        unsigned long n = 0UL;
+        const char *p;
+
+        for (p = path; *p != '\0' && n + 1UL < out_path_size; ++p) {
+            out_path[n++] = *p;
+        }
+        out_path[n] = '\0';
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    return rc;
+}
+
 static void tg_gui_session_fetch_open_avatar(FILE *stream)
 {
     /* Also on MorphOS: open_chat already runs the same class of bounded
