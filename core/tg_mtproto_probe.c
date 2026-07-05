@@ -13244,6 +13244,131 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
     return 1; /* not in the fetched page, or no usable document */
 }
 
+/* F9 chunk 5: send a file from disk to the OPEN chat. Small-file path only
+   (inputFile, <= 10 MB): the file streams up in uniform saveFilePart chunks
+   read straight from disk (never buffered whole), then one sendMedia with a
+   force_file document, the filename attribute and an octet-stream mime -- the
+   receiver sees the same "[File: name (size)]" our chunk 2 renders. Returns:
+   0 ok, 1 fail, 2 too big for the small-file path, 3 unreadable file.
+   Blocking on-context call from the explicit user action, never the tick. */
+#define TG_GUI_UL_LIMIT (10UL * 1048576UL)
+
+int tg_gui_session_send_document(const char *path, FILE *stream)
+{
+    static unsigned char part_buf[TG_GUI_DL_CHUNK];
+    static unsigned char part_query[TG_GUI_DL_CHUNK + 64UL];
+    unsigned char query[512];
+    unsigned char rnd[8];
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_rpc_result result;
+    FILE *quiet;
+    FILE *f;
+    long file_size;
+    unsigned long file_id_hi, file_id_lo, rand_hi, rand_lo;
+    unsigned long pc, ph, pl, ahh, ahl;
+    int hah;
+    unsigned long parts, part;
+    const char *name;
+    const char *p;
+
+    if (!tg_gui_session_state.open || stream == 0 || path == 0 ||
+        path[0] == '\0' ||
+        tg_gui_session_state.current_peer_index[0] == '\0') {
+        return 1;
+    }
+    f = fopen(path, "rb");
+    if (f == 0) {
+        return 3;
+    }
+    if (fseek(f, 0L, SEEK_END) != 0 || (file_size = ftell(f)) <= 0L ||
+        fseek(f, 0L, SEEK_SET) != 0) {
+        fclose(f);
+        return 3;
+    }
+    if ((unsigned long)file_size > TG_GUI_UL_LIMIT) {
+        fclose(f);
+        return 2; /* saveBigFilePart territory: a later chunk */
+    }
+    /* Bare filename: whatever follows the last '/' or ':' of the path. */
+    name = path;
+    for (p = path; *p != '\0'; ++p) {
+        if (*p == '/' || *p == ':') {
+            name = p + 1;
+        }
+    }
+    if (*name == '\0') {
+        fclose(f);
+        return 3;
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    if (tg_mtproto_load_peer_cache_peer(
+            tg_gui_session_state.peer_cache_file,
+            tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+            &ahl, &hah, quiet, "mtproto sendMedia(document)") != 0) {
+        fclose(f);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 1;
+    }
+    tg_mtproto_saved_session_random(rnd, sizeof(rnd));
+    file_id_lo = tg_mtproto_read_u32_le(rnd);
+    file_id_hi = tg_mtproto_read_u32_le(rnd + 4U);
+    parts = ((unsigned long)file_size + TG_GUI_DL_CHUNK - 1UL) /
+            TG_GUI_DL_CHUNK;
+    for (part = 0UL; part < parts; ++part) {
+        unsigned long got = (unsigned long)fread(part_buf, 1, TG_GUI_DL_CHUNK,
+                                                 f);
+
+        if (got == 0UL) {
+            break; /* short read = disk trouble: bail (parts check below) */
+        }
+        tg_mtproto_tl_writer_init(&writer, part_query, sizeof(part_query));
+        if (tg_mtproto_build_upload_save_file_part(&writer, file_id_hi,
+                                                   file_id_lo, part, part_buf,
+                                                   got) != TG_MTPROTO_TL_OK) {
+            break;
+        }
+        memset(&result, 0, sizeof(result));
+        if (tg_mtproto_send_saved_query_on_context(
+                tg_gui_session_state.host, tg_gui_session_state.port,
+                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+                tg_gui_session_state.dc_id_text,
+                &tg_gui_session_state.context, part_query, writer.length,
+                &result, quiet, "mtproto saveFilePart", 600U) != 0 ||
+            result.result_constructor != 0x997275b5UL /* boolTrue */) {
+            break;
+        }
+    }
+    fclose(f);
+    if (part != parts) { /* the loop broke early */
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 1;
+    }
+    tg_mtproto_saved_session_random(rnd, sizeof(rnd));
+    rand_lo = tg_mtproto_read_u32_le(rnd);
+    rand_hi = tg_mtproto_read_u32_le(rnd + 4U);
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_send_media_document(
+            &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi, file_id_lo,
+            parts, name, "application/octet-stream", rand_hi, rand_lo) !=
+        TG_MTPROTO_TL_OK) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 1;
+    }
+    memset(&result, 0, sizeof(result));
+    if (tg_mtproto_send_saved_query_on_context(
+            tg_gui_session_state.host, tg_gui_session_state.port,
+            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            query, writer.length, &result, quiet,
+            "mtproto sendMedia(document)", 600U) != 0 ||
+        result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 1;
+    }
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    return 0; /* the tick's history poll shows the sent [File: ...] row */
+}
+
 /* Returns: 0 ok, 1 generic failure, 2 foreign DC (needs multi-DC, deferred),
    3 could not create/write the file. Writes the saved path into out_path. */
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,

@@ -52,6 +52,15 @@
 #include <exec/memory.h>
 #include <intuition/intuition.h>
 #include <devices/timer.h>
+#include <libraries/asl.h>
+#include <proto/asl.h>
+
+/* asl.library is opened lazily around the file requester (Send file...) so
+   startup stays untouched and a system without it just skips the feature. */
+struct Library *AslBase = 0;
+#if defined(__amigaos4__)
+struct AslIFace *IAsl = 0;
+#endif
 
 /* timer.device request, papering over the OS4 SDK rename (TimeRequest with
    Request/Time.Seconds vs the classic timerequest with tr_node/tr_time). */
@@ -112,6 +121,7 @@ struct Library *GadToolsBase = 0;
 #define TG_MENU_HELP   2
 #define TG_MENU_QUIT   3
 #define TG_MENU_REMOVE 4
+#define TG_MENU_SENDFILE 5
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -1099,6 +1109,8 @@ static struct NewMenu tg_gui_newmenu[] = {
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Remove chat from list", (STRPTR)"R", 0, 0,
       (APTR)TG_MENU_REMOVE },
+    { NM_ITEM,  (STRPTR)"Send file...", (STRPTR)"F", 0, 0,
+      (APTR)TG_MENU_SENDFILE },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
     { NM_END,   0, 0, 0, 0, 0 }
@@ -1118,6 +1130,7 @@ static const char tg_gui_help_text[] =
     "  Shift + F1 - F10  chats 11 to 20\n\n"
     "ENTER        write a message to the open chat\n"
     "Del / A+R    remove the selected chat from the list\n"
+    "A+F          send a file to the open chat\n"
     "ESC          cancel\n"
     "Q            quit";
 
@@ -1233,6 +1246,89 @@ static void tg_gui_amiga_set_rmbtrap(struct Window *win, int on)
         win->Flags &= ~(ULONG)WFLG_RMBTRAP;
     }
     Permit();
+}
+
+/* "Send file...": ASL file requester -> chunk-5 uploader on the open chat.
+   The requester is synchronous and system-rendered (safe while we are the
+   caller); the upload itself is the same blocking on-context class as the
+   download, with the status row narrating the outcome. */
+static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
+                                    tg_gui_backend *backend)
+{
+    struct FileRequester *req;
+    char path[256];
+    int rc;
+
+    if (state->mode != TG_GUI_MODE_CHAT || !tg_gui_session_is_open() ||
+        state->chat_count <= 0) {
+        return;
+    }
+    AslBase = OpenLibrary((CONST_STRPTR)"asl.library", 38L);
+    if (AslBase == 0) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "asl.library V38 not found");
+        tg_gui_window_paint(state, backend);
+        return;
+    }
+#if defined(__amigaos4__)
+    IAsl = (struct AslIFace *)GetInterface(AslBase, "main", 1L, 0);
+    if (IAsl == 0) {
+        CloseLibrary(AslBase);
+        AslBase = 0;
+        return;
+    }
+#endif
+    req = (struct FileRequester *)AllocAslRequestTags(
+        ASL_FileRequest, ASLFR_Window, (unsigned long)win, ASLFR_TitleText,
+        (unsigned long)"Send file to this chat", TAG_DONE);
+    path[0] = '\0';
+    if (req != 0 && AslRequestTags(req, TAG_DONE)) {
+        unsigned long n = 0UL;
+        const char *p;
+
+        for (p = (const char *)req->fr_Drawer; p != 0 && *p != '\0' &&
+             n + 2UL < sizeof(path); ++p) {
+            path[n++] = *p;
+        }
+        /* Join drawer and name the AmigaDOS way: add '/' only when the drawer
+           does not already end in ':' or '/'. */
+        if (n > 0UL && path[n - 1UL] != ':' && path[n - 1UL] != '/') {
+            path[n++] = '/';
+        }
+        for (p = (const char *)req->fr_File; p != 0 && *p != '\0' &&
+             n + 1UL < sizeof(path); ++p) {
+            path[n++] = *p;
+        }
+        path[n] = '\0';
+    }
+    if (req != 0) {
+        FreeAslRequest(req);
+    }
+#if defined(__amigaos4__)
+    DropInterface((struct Interface *)IAsl);
+    IAsl = 0;
+#endif
+    CloseLibrary(AslBase);
+    AslBase = 0;
+    if (path[0] == '\0') {
+        return; /* cancelled */
+    }
+    tg_gui_window_copy(state->status, sizeof(state->status), "Uploading...");
+    tg_gui_window_paint(state, backend);
+    rc = tg_gui_session_send_document(path, stdout);
+    if (rc == 0) {
+        tg_gui_window_copy(state->status, sizeof(state->status), "File sent");
+    } else if (rc == 2) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "File too big (10 MB limit for now)");
+    } else if (rc == 3) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Could not read that file");
+    } else {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Upload failed");
+    }
+    tg_gui_window_paint(state, backend);
 }
 
 static void tg_gui_window_remove_selected(tg_gui_state *state,
@@ -2340,6 +2436,9 @@ int tg_gui_run_window(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_REMOVE) {
                             tg_gui_window_remove_selected(state, ctx.window,
                                                           &backend);
+                        } else if (ud == (APTR)TG_MENU_SENDFILE) {
+                            tg_gui_window_send_file(state, ctx.window,
+                                                    &backend);
                         } else if (ud == (APTR)TG_MENU_QUIT) {
                             done = 1;
                         }

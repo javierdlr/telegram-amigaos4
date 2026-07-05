@@ -45,6 +45,10 @@ int tg_gui_session_tick(FILE *stream);
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                      unsigned long out_path_size, FILE *stream);
 
+/* F9: send the file at `path` to the open chat (small-file path, <= 10 MB).
+   0 ok, 1 fail, 2 too big, 3 unreadable. Blocking; never from the tick. */
+int tg_gui_session_send_document(const char *path, FILE *stream);
+
 /* Opens the chat at the given 1-based peer-cache index: clears the transcript,
    fetches its recent history (incoming + outgoing) into tg_gui_state.messages
    through the GUI driver, and marks it the open chat so tg_gui_session_tick
