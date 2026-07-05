@@ -4904,7 +4904,7 @@ int tg_mtproto_login_self_test(void)
         }
         /* no file_reference -> must refuse before the wire */
         doc.file_reference_len = 0UL;
-        tg_mtproto_tl_writer_init(&w, q, sizeof(w));
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
         if (tg_mtproto_build_upload_get_document(&w, &doc, 0UL, 65536UL) !=
             TG_MTPROTO_TL_INVALID_ARGUMENT) {
             puts("f9 self-test: missing file_reference must be rejected");
@@ -4917,10 +4917,10 @@ int tg_mtproto_login_self_test(void)
                 0x11UL, 0x22UL) != TG_MTPROTO_TL_OK ||
             q[0] != 0xc1U || q[1] != 0xd9U ||        /* sendMedia LAYER 214 */
             q[2] != 0x55U || q[3] != 0xacU ||
-            q[32] != 0x30U || q[33] != 0x93U ||      /* inputMediaUploadedDoc */
-            q[34] != 0x7cU || q[35] != 0x03U ||
-            q[36] != 0x10U ||                        /* force_file flag */
-            q[40] != 0x7fU || q[41] != 0xf2U) {      /* inputFile LE */
+            q[28] != 0x30U || q[29] != 0x93U ||      /* inputMediaUploadedDoc */
+            q[30] != 0x7cU || q[31] != 0x03U ||
+            q[32] != 0x10U ||                        /* force_file flag */
+            q[36] != 0x7fU || q[37] != 0xf2U) {      /* inputFile LE */
             puts("f9 self-test: sendMedia(document) layout mismatch");
             return 2;
         }
