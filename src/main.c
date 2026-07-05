@@ -41,7 +41,7 @@ int main(int argc, char **argv)
         redir = freopen("NIL:", "w", stderr);
         (void)redir;
         tg_platform_workbench_init();
-        wb_argv[0] = "telegram-test";
+        wb_argv[0] = "TelegramAmiga";
         wb_argv[1] = "--gui-live";
         wb_argv[2] = "telegram-peers.txt";
         return tg_app_run(3, wb_argv);

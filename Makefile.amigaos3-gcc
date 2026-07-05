@@ -37,7 +37,7 @@ CFLAGS ?= -std=$(CSTD) -Wall -Wextra -O0 -m68060 -mcrt=ixemul -Iinclude
 CFLAGS += -DTG_MTPROTO_BIGINT_M68K_ASM=1
 LDFLAGS ?= -mcrt=ixemul -nodefaultlibs
 LDLIBS ?= -lc -lamiga
-TARGET ?= build/amigaos3/telegram-test
+TARGET ?= build/amigaos3/TelegramAmiga
 
 # The 68k build links -nodefaultlibs (no libgcc), so supply __muldi3 in-tree for
 # the 64-bit Montgomery modexp (see core/tg_mtproto_bigint.c).

@@ -30,7 +30,7 @@ GCC_INCLUDE_FIXED := $(shell $(CC) -print-file-name=include-fixed)
 CFLAGS += -idirafter $(GCC_INCLUDE_FIXED)
 LDFLAGS ?= -mcrt=clib2
 LDLIBS ?= -lamiga
-TARGET ?= build/amigaos3-clib2/telegram-test
+TARGET ?= build/amigaos3-clib2/TelegramAmiga
 
 # clib2's default link does not pull libgcc's __muldi3 here, so use the in-tree
 # 64-bit multiply (same as the ixemul build).

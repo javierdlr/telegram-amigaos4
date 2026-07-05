@@ -57,7 +57,7 @@ scripts/docker-morphos-cross-build.sh
 The default output is:
 
 ```text
-build/morphos-cross/telegram-test
+build/morphos-cross/TelegramAmiga
 ```
 
 The initial target is an offline build with TLS disabled:
@@ -78,28 +78,28 @@ scripts/docker-morphos-cross-build.sh
 
 ## Validate On MorphOS
 
-Copy `build/morphos-cross/telegram-test` to a MorphOS system. SFTP works well
+Copy `build/morphos-cross/TelegramAmiga` to a MorphOS system. SFTP works well
 with the tested BebboSSH setup:
 
 ```text
-put build/morphos-cross/telegram-test RAM:telegram-test-morphos-cross
+put build/morphos-cross/TelegramAmiga RAM:TelegramAmiga-morphos-cross
 ```
 
 Then run:
 
 ```text
-telegram-test --telegram-json-self-test
-telegram-test --telegram-get-updates-self-test
-telegram-test --telegram-read-once-state-self-test
-telegram-test --telegram-offset-state-self-test
-telegram-test --telegram-inbox-self-test
-telegram-test --telegram-echo-once-self-test
-telegram-test --telegram-send-message-self-test
-telegram-test --telegram-client-state-self-test
-telegram-test --telegram-client-self-test
-telegram-test --telegram-text-client-self-test
-telegram-test --telegram-console-self-test
-telegram-test --telegram-tls-status
+TelegramAmiga --telegram-json-self-test
+TelegramAmiga --telegram-get-updates-self-test
+TelegramAmiga --telegram-read-once-state-self-test
+TelegramAmiga --telegram-offset-state-self-test
+TelegramAmiga --telegram-inbox-self-test
+TelegramAmiga --telegram-echo-once-self-test
+TelegramAmiga --telegram-send-message-self-test
+TelegramAmiga --telegram-client-state-self-test
+TelegramAmiga --telegram-client-self-test
+TelegramAmiga --telegram-text-client-self-test
+TelegramAmiga --telegram-console-self-test
+TelegramAmiga --telegram-tls-status
 ```
 
 Only after those pass should the binary be packaged for testers. For live Bot

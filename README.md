@@ -122,7 +122,7 @@ AmigaOS 4 (PPC), MorphOS (PPC), AROS i386, AROS x86_64. Host smoke test:
 
 ```sh
 make -f Makefile.aros clean all ENABLE_GZIP=0 ENABLE_GZIP_PUFF=1
-./build/telegram-test --mtproto-self-test-fast
+./build/TelegramAmiga --mtproto-self-test-fast
 ```
 
 A token-based Bot API mode remains in the tree for diagnostics and TLS/HTTP

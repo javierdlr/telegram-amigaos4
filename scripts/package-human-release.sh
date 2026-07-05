@@ -24,11 +24,11 @@ VERSION=${VERSION:-0.0.0}
 
 md5of() { if command -v md5 >/dev/null 2>&1; then md5 -q "$1"; else md5sum "$1" | awk '{print $1}'; fi; }
 
-AMIGAOS3_BINARY=${AMIGAOS3_BINARY:-"$ROOT_DIR/build/amigaos3-clib2/telegram-test"}
-MORPHOS_BINARY=${MORPHOS_BINARY:-"$ROOT_DIR/build/morphos-cross/telegram-test"}
-AMIGAOS4_BINARY=${AMIGAOS4_BINARY:-"$ROOT_DIR/build/amigaos4/telegram-test"}
-AROS_I386_BINARY=${AROS_I386_BINARY:-"$ROOT_DIR/build/aros-i386-abiv0/telegram-test"}
-AROS_X86_64_BINARY=${AROS_X86_64_BINARY:-"$ROOT_DIR/build/aros-x86_64/telegram-test"}
+AMIGAOS3_BINARY=${AMIGAOS3_BINARY:-"$ROOT_DIR/build/amigaos3-clib2/TelegramAmiga"}
+MORPHOS_BINARY=${MORPHOS_BINARY:-"$ROOT_DIR/build/morphos-cross/TelegramAmiga"}
+AMIGAOS4_BINARY=${AMIGAOS4_BINARY:-"$ROOT_DIR/build/amigaos4/TelegramAmiga"}
+AROS_I386_BINARY=${AROS_I386_BINARY:-"$ROOT_DIR/build/aros-i386-abiv0/TelegramAmiga"}
+AROS_X86_64_BINARY=${AROS_X86_64_BINARY:-"$ROOT_DIR/build/aros-x86_64/TelegramAmiga"}
 
 # --- Aminet artifacts (.lha + .readme) --------------------------------------
 # Aminet requires a real LhA ENCODER (the Mac's lhasa is extract-only); we use
@@ -500,9 +500,9 @@ package_one() {
     rm -rf "$dest"
     mkdir -p "$dest"
 
-    cp "$binary" "$dest/telegram-test"
+    cp "$binary" "$dest/TelegramAmiga"
     # Launchers (shared with the repo). TelegramGUI's icon is flashless
-    # (DefaultTool = telegram-test, Stack 1 MiB): a double-click starts the GUI
+    # (DefaultTool = TelegramAmiga, Stack 1 MiB): a double-click starts the GUI
     # directly. TelegramTUI keeps the IconX console launcher.
     cp "$ROOT_DIR/scripts/TelegramGUI" "$dest/TelegramGUI"
     cp "$ROOT_DIR/scripts/TelegramTUI" "$dest/TelegramTUI"
@@ -520,7 +520,7 @@ package_one() {
     if command -v zip >/dev/null 2>&1; then
         (cd "$PACKAGE_ROOT" && rm -f "$drawer.zip" && zip -qr "$drawer.zip" "$drawer")
         # Post-zip guard: the archive must hold THIS binary and no private file.
-        unzip -p "$PACKAGE_ROOT/$drawer.zip" "*/telegram-test" > "$PACKAGE_ROOT/.zipbin" 2>/dev/null
+        unzip -p "$PACKAGE_ROOT/$drawer.zip" "*/TelegramAmiga" > "$PACKAGE_ROOT/.zipbin" 2>/dev/null
         if [ "$(md5of "$PACKAGE_ROOT/.zipbin")" != "$(md5of "$binary")" ]; then
             rm -f "$PACKAGE_ROOT/.zipbin"
             echo "ERROR $platform: packaged binary != built binary ($binary)" >&2; exit 1
@@ -561,7 +561,7 @@ package_one() {
         fi
         lhatmp=$(mktemp -d)
         ( cd "$lhatmp" && "$LHA_BIN" xq "$lhafile" >/dev/null 2>&1 )
-        if [ "$(md5of "$lhatmp/$AMINET_DRAWER/telegram-test")" != "$(md5of "$binary")" ]; then
+        if [ "$(md5of "$lhatmp/$AMINET_DRAWER/TelegramAmiga")" != "$(md5of "$binary")" ]; then
             rm -rf "$lhatmp"
             echo "ERROR $platform: lha binary != built binary ($binary)" >&2; exit 1
         fi

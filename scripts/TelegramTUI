@@ -56,11 +56,11 @@ SET AUTHFILE "telegram-auth.bin"
 SET HASHFILE "data/phone-code-hash.txt"
 SET PEERSFILE "data/telegram-peers.txt"
 
-IF EXISTS telegram-test
-    Protect telegram-test +e
-    telegram-test --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
+IF EXISTS TelegramAmiga
+    Protect TelegramAmiga +e
+    TelegramAmiga --mtproto-start-file "$APIFILE" "$AUTHFILE" "$HASHFILE" "$PEERSFILE" <* >*
 ELSE
-    Echo "telegram-test non trovato in questo cassetto."
+    Echo "TelegramAmiga non trovato in questo cassetto."
 ENDIF
 
 IF WARN

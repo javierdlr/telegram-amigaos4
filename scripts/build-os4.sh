@@ -21,28 +21,28 @@ rsync -a --delete --exclude='.git' --exclude='build' --exclude='*.local.md' \
   --exclude='telegram-auth*.bin' --exclude='telegram-peers*.txt' --exclude='telegram-api.txt' \
   --exclude='phone-code-hash.txt' --exclude='*.token' "$ROOT_DIR/" "$WS/"
 
-rm -f "$WS/build/amigaos4/telegram-test"
+rm -f "$WS/build/amigaos4/TelegramAmiga"
 cd "$OS4_CROSS"
 # The container gcc throws sporadic cc1 ICEs under emulation; rerunning make
 # WITHOUT clean resumes from the broken object. Try clean once, then resume.
 attempt=1
 while [ "$attempt" -le 6 ]; do
     [ "$attempt" = 1 ] && MK="clean all" || MK="all"
-    ./bin/os4-run bash -lc "cd telegram-amiga && make -f Makefile.amigaos4 $MK TARGET=build/amigaos4/telegram-test" >/dev/null 2>&1 || true
-    [ -f "$WS/build/amigaos4/telegram-test" ] && break
+    ./bin/os4-run bash -lc "cd telegram-amiga && make -f Makefile.amigaos4 $MK TARGET=build/amigaos4/TelegramAmiga" >/dev/null 2>&1 || true
+    [ -f "$WS/build/amigaos4/TelegramAmiga" ] && break
     echo "  attempt $attempt: cc1 ICE? resuming without clean..." >&2
     attempt=$((attempt + 1))
 done
 
-SRC="$WS/build/amigaos4/telegram-test"
+SRC="$WS/build/amigaos4/TelegramAmiga"
 [ -f "$SRC" ] || { echo "ERROR: OS4 build failed after retries" >&2; exit 1; }
 
 mkdir -p "$ROOT_DIR/build/amigaos4"
-cp "$SRC" "$ROOT_DIR/build/amigaos4/telegram-test"   # <-- the copy-back, the easy-to-forget step
+cp "$SRC" "$ROOT_DIR/build/amigaos4/TelegramAmiga"   # <-- the copy-back, the easy-to-forget step
 
 if command -v md5 >/dev/null 2>&1; then
-    md5sum_out=$(md5 -q "$ROOT_DIR/build/amigaos4/telegram-test")
+    md5sum_out=$(md5 -q "$ROOT_DIR/build/amigaos4/TelegramAmiga")
 else
-    md5sum_out=$(md5sum "$ROOT_DIR/build/amigaos4/telegram-test" | awk '{print $1}')
+    md5sum_out=$(md5sum "$ROOT_DIR/build/amigaos4/TelegramAmiga" | awk '{print $1}')
 fi
-echo "OK -> build/amigaos4/telegram-test  ($md5sum_out, $(wc -c < "$ROOT_DIR/build/amigaos4/telegram-test" | tr -d ' ')b)"
+echo "OK -> build/amigaos4/TelegramAmiga  ($md5sum_out, $(wc -c < "$ROOT_DIR/build/amigaos4/TelegramAmiga" | tr -d ' ')b)"

@@ -47,9 +47,9 @@ ENDIF
 Rename >NIL: tgav#?.jpg avatars
 Delete >NIL: tgav#?.jpg
 
-IF EXISTS telegram-test
-    Protect telegram-test +e
-    Run <NIL: >NIL: telegram-test --gui-live data/telegram-peers.txt
+IF EXISTS TelegramAmiga
+    Protect TelegramAmiga +e
+    Run <NIL: >NIL: TelegramAmiga --gui-live data/telegram-peers.txt
 ELSE
-    Echo "telegram-test non trovato in questo cassetto."
+    Echo "TelegramAmiga non trovato in questo cassetto."
 ENDIF

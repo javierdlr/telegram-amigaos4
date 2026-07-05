@@ -2375,8 +2375,8 @@ static int tg_run_telegram_manual_client_paths(const char *token_file_path,
     }
 
     puts("telegram manual client reply commands:");
-    puts("  telegram-test --telegram-reply-default 1 \"Hello from Amiga\"");
-    puts("  telegram-test --telegram-send-last-default \"Hello from Amiga\"");
+    puts("  TelegramAmiga --telegram-reply-default 1 \"Hello from Amiga\"");
+    puts("  TelegramAmiga --telegram-send-last-default \"Hello from Amiga\"");
     return 0;
 }
 
@@ -3846,7 +3846,7 @@ int tg_app_run(int argc, char **argv)
     setvbuf(stdout, (char *)0, _IONBF, 0);
     setvbuf(stderr, (char *)0, _IONBF, 0);
 
-    program_name = "telegram-test";
+    program_name = "TelegramAmiga";
     if (argc > 0 && argv[0] != 0) {
         program_name = argv[0];
     }

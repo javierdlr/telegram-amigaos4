@@ -5,7 +5,7 @@ The stock TelegramAmiga.info is a WBPROJECT icon whose DefaultTool is C:IconX,
 so a double-click runs the IconX launcher script -> a console window flashes.
 This rewrites just two fields so a double-click launches the binary directly:
 
-  - do_DefaultTool string  C:IconX            -> <tool>   (default: telegram-test)
+  - do_DefaultTool string  C:IconX            -> <tool>   (default: TelegramAmiga)
   - do_StackSize           (whatever it was)  -> <stack>  (default: 1048576)
 
 Everything else (the OldIcon imagery, the ToolTypes, and the trailing GlowIcon
@@ -90,7 +90,7 @@ def main():
             "usage: make_gui_icon.py IN.info OUT.info [tool] [stack]\n")
         return 2
     src, dst = sys.argv[1], sys.argv[2]
-    tool = sys.argv[3] if len(sys.argv) > 3 else "telegram-test"
+    tool = sys.argv[3] if len(sys.argv) > 3 else "TelegramAmiga"
     stack = int(sys.argv[4]) if len(sys.argv) > 4 else 1048576
     data = open(src, "rb").read()
     s = parse(data)

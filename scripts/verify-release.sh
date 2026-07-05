@@ -26,11 +26,11 @@ verify() {
     if ! gh release download "$tag" --repo "$REPO" --pattern "$zippat" -O "$TMP/$tag.zip" >/dev/null 2>&1; then
         echo "FAIL $tag: download failed"; fail=1; return
     fi
-    unzip -p "$TMP/$tag.zip" "*/telegram-test" > "$TMP/bin" 2>/dev/null
+    unzip -p "$TMP/$tag.zip" "*/TelegramAmiga" > "$TMP/bin" 2>/dev/null
     want=$(md5of "$ROOT_DIR/$localbin"); got=$(md5of "$TMP/bin")
     arch=$(file "$TMP/bin" | grep -c "$archpat" || true)
     leak=$(unzip -l "$TMP/$tag.zip" | grep -icE "telegram-(auth|peers|seed|password|token)|phone-code-hash" || true)
-    icon=$(unzip -p "$TMP/$tag.zip" "*/TelegramGUI.info" 2>/dev/null | strings | grep -c "^telegram-test$" || true)
+    icon=$(unzip -p "$TMP/$tag.zip" "*/TelegramGUI.info" 2>/dev/null | strings | grep -c "^TelegramAmiga$" || true)
     files=$(unzip -l "$TMP/$tag.zip" | grep -cE "Manual-EN.txt|Manuale-IT.txt|TelegramGUI$|TelegramTUI$|telegram-api.txt" || true)
     ok=1
     [ "$want" = "$got" ] || { echo "FAIL $tag: published binary $got != local build $want"; ok=0; }
@@ -41,11 +41,11 @@ verify() {
     if [ "$ok" = 1 ]; then echo "OK   $tag  [bin $(printf %.8s "$got")]"; else fail=1; fi
 }
 
-verify "os3-alpha-$VERSION"        "*amigaos3*"   build/amigaos3-clib2/telegram-test  "AmigaOS"
-verify "os4-alpha-$VERSION"        "*amigaos4*"   build/amigaos4/telegram-test        "PowerPC"
-verify "morphos-alpha-$VERSION"    "*morphos*"    build/morphos-cross/telegram-test   "PowerPC"
-verify "aros-i386-alpha-$VERSION"  "*aros-i386*"  build/aros-i386-abiv0/telegram-test "80386"
-verify "aros-x86_64-alpha-$VERSION" "*x86_64*"    build/aros-x86_64/telegram-test     "x86-64"
+verify "os3-alpha-$VERSION"        "*amigaos3*"   build/amigaos3-clib2/TelegramAmiga  "AmigaOS"
+verify "os4-alpha-$VERSION"        "*amigaos4*"   build/amigaos4/TelegramAmiga        "PowerPC"
+verify "morphos-alpha-$VERSION"    "*morphos*"    build/morphos-cross/TelegramAmiga   "PowerPC"
+verify "aros-i386-alpha-$VERSION"  "*aros-i386*"  build/aros-i386-abiv0/TelegramAmiga "80386"
+verify "aros-x86_64-alpha-$VERSION" "*x86_64*"    build/aros-x86_64/TelegramAmiga     "x86-64"
 
 if [ "$fail" = 0 ]; then
     echo "All published $VERSION assets match the local builds."

@@ -41,7 +41,7 @@ still to be documented before enabling it by default.
 Run:
 
 ```text
-telegram-test --telegram-tls-status
+TelegramAmiga --telegram-tls-status
 ```
 
 Expected current output includes:
