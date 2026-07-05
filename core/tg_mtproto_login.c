@@ -2547,7 +2547,16 @@ static int tg_peer_cache_apply_chat(tg_mtproto_peer_cache *cache,
    keyed by peer id -- the stable key the sidebar rows already carry
    (chat->peer_id_hi/lo). Fixed table, same-id updates reuse their slot,
    round-robin eviction when full. ~8 KB static. */
-#define TG_AVATAR_STORE_MAX 64
+/* Sized to hold the WHOLE sidebar plus the transient captures that share the
+   store (group members, message senders): with only 64 slots the round-robin
+   eviction let a busy group's members push the sidebar chats' thumbs out
+   before the at-close save, so previews went missing across restarts.
+   ~152 bytes per slot. */
+#if defined(__m68k__)
+#define TG_AVATAR_STORE_MAX 128 /* ~19 KB static */
+#else
+#define TG_AVATAR_STORE_MAX 256 /* ~38 KB static */
+#endif
 typedef struct tg_avatar_slot {
     unsigned long id_hi;
     unsigned long id_lo;
