@@ -49,7 +49,7 @@ Delete >NIL: tgav#?.jpg
 
 IF EXISTS telegram-test
     Protect telegram-test +e
-    Run >NIL: telegram-test --gui-live data/telegram-peers.txt
+    Run <NIL: >NIL: telegram-test --gui-live data/telegram-peers.txt
 ELSE
     Echo "telegram-test non trovato in questo cassetto."
 ENDIF
