@@ -2519,6 +2519,35 @@ int tg_gui_run_window(tg_gui_state *state)
                         if (tg_gui_amiga_confirm_delete(ctx.window) != 0) {
                             (void)tg_gui_session_delete(del_id, stdout);
                         }
+                    } else if (it == TG_GUI_CTX_DOWNLOAD && m != 0 &&
+                               m->has_document && m->id != 0UL) {
+                        unsigned long dl_id = m->id;
+                        char saved[160];
+                        int drc;
+
+                        /* Blocking download: tell the user it is working, then
+                           report where it landed (or why not). */
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Downloading...");
+                        tg_gui_window_paint(state, &backend);
+                        drc = tg_gui_session_download_document(dl_id, saved,
+                                                              sizeof(saved),
+                                                              stdout);
+                        if (drc == 0) {
+                            char msg[192];
+
+                            sprintf(msg, "Saved to %s", saved);
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status), msg);
+                        } else if (drc == 2) {
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                "File is on another server - not supported yet");
+                        } else {
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status),
+                                               "Download failed");
+                        }
                     }
                     tg_gui_window_paint(state, &backend);
                 } else if (msg_code == SELECTUP) {

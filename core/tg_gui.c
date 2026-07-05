@@ -1725,14 +1725,22 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
     ids[n] = TG_GUI_CTX_REPLY;
     ++n;
     if (state->ctx_msg >= 0 && state->ctx_msg < state->message_count &&
-        state->messages[state->ctx_msg].is_own &&
         state->messages[state->ctx_msg].id != 0UL) {
-        labels[n] = "Edit";
-        ids[n] = TG_GUI_CTX_EDIT;
-        ++n;
-        labels[n] = "Delete";
-        ids[n] = TG_GUI_CTX_DELETE;
-        ++n;
+        const tg_gui_message *m = &state->messages[state->ctx_msg];
+
+        if (m->is_own) {
+            labels[n] = "Edit";
+            ids[n] = TG_GUI_CTX_EDIT;
+            ++n;
+            labels[n] = "Delete";
+            ids[n] = TG_GUI_CTX_DELETE;
+            ++n;
+        }
+        if (m->has_document) { /* incoming OR own: you can save either */
+            labels[n] = "Download";
+            ids[n] = TG_GUI_CTX_DOWNLOAD;
+            ++n;
+        }
     }
     return n;
 }
