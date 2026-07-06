@@ -50,6 +50,7 @@
 #define TG_INPUT_PEER_EMPTY_CONSTRUCTOR 0x7f3b18eaUL
 #define TG_INPUT_PEER_SELF_CONSTRUCTOR 0x7da07ec9UL
 #define TG_INPUT_PEER_USER_CONSTRUCTOR 0xdde8a54cUL
+#define TG_INPUT_PEER_SELF_CONSTRUCTOR 0x7da07ec9UL /* layer-214 verified */
 #define TG_INPUT_PEER_CHAT_CONSTRUCTOR 0x35a95cb9UL
 #define TG_INPUT_PEER_CHANNEL_CONSTRUCTOR 0x27bcbbfcUL
 /* channels.getParticipants(channelParticipantsRecent) -- resolve a supergroup
@@ -882,6 +883,11 @@ static tg_mtproto_tl_status tg_write_input_peer(
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
     }
     switch (peer_constructor) {
+    case TG_MTPROTO_PEER_SELF_CONSTRUCTOR:
+        /* Saved Messages: inputPeerSelf has no fields -- one constructor and
+           every caller (history, send, media, files) works unchanged. */
+        return tg_mtproto_tl_write_u32(writer,
+                                       TG_INPUT_PEER_SELF_CONSTRUCTOR);
     case TG_PEER_USER_CONSTRUCTOR:
         if (!has_access_hash) {
             return TG_MTPROTO_TL_INVALID_ARGUMENT;

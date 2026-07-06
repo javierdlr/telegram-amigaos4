@@ -11,6 +11,11 @@
 
 #define TG_MTPROTO_PASSWORD_BYTES_MAX 256U
 
+/* Sentinel peer "constructor" for Saved Messages: tg_write_input_peer emits a
+   bare inputPeerSelf#7da07ec9 for it, so every RPC path (history, send,
+   media, file transfer) reaches the self chat with zero special-casing. */
+#define TG_MTPROTO_PEER_SELF_CONSTRUCTOR 0x7da07ec9UL
+
 typedef struct tg_mtproto_rpc_result {
     unsigned long request_msg_id_hi;
     unsigned long request_msg_id_lo;

@@ -6524,6 +6524,17 @@ static int tg_mtproto_load_peer_cache_peer(const char *path,
                                            FILE *stream,
                                            const char *label)
 {
+    /* Saved Messages: the self chat has no cache row -- synthesize the
+       sentinel peer; tg_write_input_peer turns it into inputPeerSelf. */
+    if (peer_index_text != 0 && strcmp(peer_index_text, "self") == 0) {
+        *peer_constructor = TG_MTPROTO_PEER_SELF_CONSTRUCTOR;
+        *peer_id_hi = 0UL;
+        *peer_id_lo = 0UL;
+        *access_hash_hi = 0UL;
+        *access_hash_lo = 0UL;
+        *has_access_hash = 0;
+        return 0;
+    }
     FILE *file;
     char line[512];
     char type[24];
@@ -7000,6 +7011,13 @@ static int tg_mtproto_load_peer_cache_label(const char *path,
                                             char *label_buffer,
                                             unsigned long label_buffer_size)
 {
+    if (peer_index_text != 0 && strcmp(peer_index_text, "self") == 0) {
+        if (label_buffer_size > 0UL) {
+            strncpy(label_buffer, "Saved Messages", label_buffer_size - 1UL);
+            label_buffer[label_buffer_size - 1UL] = '\0';
+        }
+        return 0;
+    }
     FILE *file;
     char line[512];
     char type[24];
@@ -12340,6 +12358,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         missing = 0;
         count = tg_mtproto_chat_list_parse(peer_cache_file, 0UL, rows,
                                            TG_CHAT_LIST_MAX, &missing);
+        tg_gui_saved_messages_row(rows, &count, TG_CHAT_LIST_MAX);
         if (tg_gui_session_state.driver.on_chat_list_changed != 0 &&
             count > 0) {
             tg_gui_session_state.driver.on_chat_list_changed(
@@ -12376,7 +12395,11 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
 #else
     history_limit = "60";
 #endif
-    sprintf(tg_gui_session_state.current_peer_index, "%lu", peer_index);
+    if (peer_index == TG_GUI_SAVED_PEER_INDEX) {
+        strcpy(tg_gui_session_state.current_peer_index, "self");
+    } else {
+        sprintf(tg_gui_session_state.current_peer_index, "%lu", peer_index);
+    }
     if (tg_mtproto_load_peer_cache_label(
             tg_gui_session_state.peer_cache_file,
             tg_gui_session_state.current_peer_index,
@@ -12588,11 +12611,31 @@ static void tg_gui_session_reload_chats(void)
     missing = 0;
     count = tg_mtproto_chat_list_parse(tg_gui_session_state.peer_cache_file, 0UL,
                                        rows, TG_CHAT_LIST_MAX, &missing);
+    tg_gui_saved_messages_row(rows, &count, TG_CHAT_LIST_MAX);
     /* ALWAYS fire, even with count 0: skipping the callback on an emptied
        list left the window's chat_count stale, and the remove flow then
        opened a neighbour from rows that no longer existed (stuck UI). */
     tg_gui_session_state.driver.on_chat_list_changed(
         tg_gui_session_state.driver.ctx, rows, count);
+}
+
+/* F10: appends the pinned "Saved Messages" row (the self chat / cloud
+   archive) as the LAST sidebar row. Bottom placement is load-bearing: the
+   drag-reorder maps row positions straight to the file's public indexes, so
+   anything above the synthetic row keeps that mapping intact. */
+void tg_gui_saved_messages_row(tg_chat_list_row *rows, int *count, int max)
+{
+    tg_chat_list_row *row;
+
+    if (rows == 0 || count == 0 || *count < 0 || *count >= max) {
+        return;
+    }
+    row = &rows[*count];
+    memset(row, 0, sizeof(*row));
+    row->index = TG_GUI_SAVED_PEER_INDEX;
+    row->is_user = 1;
+    strcpy(row->name, "Saved Messages");
+    *count += 1;
 }
 
 /* Public: rebuild the sidebar from the cached chat list (peer-cache file, no

@@ -4040,6 +4040,7 @@ int tg_app_run(int argc, char **argv)
                 count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file,
                                                    0UL, rows, TG_CHAT_LIST_MAX,
                                                    &missing);
+                tg_gui_saved_messages_row(rows, &count, TG_CHAT_LIST_MAX);
                 if (driver.on_chat_list_changed != 0 && count > 0) {
                     driver.on_chat_list_changed(driver.ctx, rows, count);
                 }
@@ -4132,6 +4133,7 @@ int tg_app_run(int argc, char **argv)
         tg_gui_chat_driver_bind(&gui_driver, &gui, &driver);
         count = tg_mtproto_chat_list_parse(config.gui_chats_cache_file, 0UL,
                                            rows, TG_CHAT_LIST_MAX, &missing);
+        tg_gui_saved_messages_row(rows, &count, TG_CHAT_LIST_MAX);
         if (driver.on_chat_list_changed != 0 && count > 0) {
             driver.on_chat_list_changed(driver.ctx, rows, count);
         }

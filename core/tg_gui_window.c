@@ -1350,6 +1350,12 @@ static void tg_gui_window_remove_selected(tg_gui_state *state,
         tg_gui_log("remove: idx 0, ignored");
         return;
     }
+    if (idx == TG_GUI_SAVED_PEER_INDEX) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Saved Messages is always available");
+        tg_gui_window_paint(state, backend);
+        return;
+    }
     tg_gui_log("remove: begin (showing confirm)");
     if (tg_gui_amiga_confirm_remove(win, state->chats[sel].name) != 1) {
         return; /* cancelled */
@@ -2688,7 +2694,14 @@ int tg_gui_run_window(tg_gui_state *state)
                             if (dest >= state->chat_count) {
                                 dest = state->chat_count - 1;
                             }
-                            if (dest != state->drag_src) {
+                            if (dest != state->drag_src &&
+                                state->chats[state->drag_src].index !=
+                                    TG_GUI_SAVED_PEER_INDEX &&
+                                state->chats[dest].index !=
+                                    TG_GUI_SAVED_PEER_INDEX) {
+                                /* The pinned Saved Messages row neither moves
+                                   nor is displaced: positions above it keep
+                                   mapping 1:1 to the file's public indexes. */
                                 (void)tg_gui_session_reorder_chat(
                                     (unsigned long)(state->drag_src + 1),
                                     (unsigned long)(dest + 1), stdout);

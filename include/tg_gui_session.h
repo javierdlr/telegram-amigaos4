@@ -49,6 +49,10 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
    0 ok, 1 fail, 2 too big, 3 unreadable. Blocking; never from the tick. */
 int tg_gui_session_send_document(const char *path, FILE *stream);
 
+/* F10 Saved Messages: the sidebar row index that opens the self chat (cloud
+   archive). Pinned as the LAST row; remove/reorder skip it. */
+#define TG_GUI_SAVED_PEER_INDEX 0xfffffffeUL
+
 /* Opens the chat at the given 1-based peer-cache index: clears the transcript,
    fetches its recent history (incoming + outgoing) into tg_gui_state.messages
    through the GUI driver, and marks it the open chat so tg_gui_session_tick
