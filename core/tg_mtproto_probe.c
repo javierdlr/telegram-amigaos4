@@ -13205,10 +13205,17 @@ static int tg_gui_avfetch_n = 0;
    Same-DC only for now (a foreign-DC document needs the export/import dance,
    deferred with the foreign-DC avatars). Bounded, silent-failing, GUI-tick-free
    -- called only from the explicit "Download" action. */
+/* MUST stay a valid getFile limit (4096*2^k dividing 1 MB) AND leave the
+   getFile RESPONSE -- chunk bytes + upload.file wrapper + MTProto envelope --
+   comfortably inside TG_MTPROTO_REPLY_RECV_MAX, or the reply overruns the
+   receive buffer and looks like "no reply". m68k recv is 48 KB -> 32 KB
+   chunk; the other lanes recv 128 KB -> 64 KB. (This was the file-download
+   failure on files big enough to need a FULL chunk; small files returned a
+   short reply and slipped under the limit.) */
 #if defined(__m68k__)
-#define TG_GUI_DL_CHUNK 65536UL   /* 64 KB: gentle on the 8 MB box */
+#define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, under the 48 KB m68k recv buffer */
 #else
-#define TG_GUI_DL_CHUNK 262144UL  /* 256 KB: fewer round-trips on the fast lanes */
+#define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, under the 128 KB recv buffer */
 #endif
 
 static void tg_gui_dl_sanitize_name(const char *in, char *out,
