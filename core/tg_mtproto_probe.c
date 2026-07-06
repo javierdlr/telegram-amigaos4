@@ -13429,7 +13429,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     tg_mtproto_document_meta doc;
     char safe[TG_MTPROTO_DOC_NAME_MAX];
     char path[TG_MTPROTO_DOC_NAME_MAX + 16];
-    unsigned char query[128];
+    unsigned char query[384]; /* holds a getFile with a long file_reference */
     tg_mtproto_tl_writer writer;
     tg_mtproto_rpc_result result;
     FILE *quiet;
@@ -13484,6 +13484,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 3;
     }
+    rc = 4; /* found + file open: any further failure is a transfer error */
     offset = 0UL;
     for (;;) {
         tg_mtproto_tl_writer_init(&writer, query, sizeof(query));

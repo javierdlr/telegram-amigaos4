@@ -2702,10 +2702,18 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_copy(
                                 state->status, sizeof(state->status),
                                 "File is on another server - not supported yet");
-                        } else {
+                        } else if (drc == 3) {
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status),
-                                               "Download failed");
+                                               "Could not write to downloads/");
+                        } else if (drc == 4) {
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status),
+                                               "Transfer failed (server error)");
+                        } else {
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                "File not found or reference expired");
                         }
                     }
                     tg_gui_window_paint(state, &backend);

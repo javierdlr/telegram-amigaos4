@@ -85,7 +85,9 @@ typedef struct tg_mtproto_password_summary {
 /* --- F9 file sharing: document TL (layer 214, verified at-layer on TDLib
    a8db5023 + core.telegram.org; sendMedia is #ac55d9c1 AT 214, NOT the live
    #0330e77f -- the method changed after our layer) ------------------------ */
-#define TG_MTPROTO_FILE_REF_MAX 64U
+#define TG_MTPROTO_FILE_REF_MAX 256U /* forwarded/saved files (e.g. a PDF in
+        Saved Messages) carry references well past 64 bytes; dropping them left
+        the file undownloadable */
 #define TG_MTPROTO_DOC_NAME_MAX 128U
 #define TG_MTPROTO_DOC_MIME_MAX 64U
 
