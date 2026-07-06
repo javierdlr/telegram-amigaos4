@@ -13503,9 +13503,26 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
             break;
         }
         if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
-            /* Most likely FILE_REFERENCE_EXPIRED mid-transfer: re-fetch the
-               reference ONCE and restart from the beginning. */
-            tg_gui_log("download: getFile rpc-error (ref expired?)");
+            long ecode = 0L;
+            char emsg[96];
+
+            emsg[0] = '\0';
+            (void)tg_mtproto_parse_rpc_error(result.result_body - 4U,
+                                             result.result_body_length + 4U,
+                                             &ecode, emsg, sizeof(emsg));
+            {
+                char d[160];
+                sprintf(d, "download: getFile rpc-error %ld %s", ecode, emsg);
+                tg_gui_log(d);
+            }
+            /* FILE_MIGRATE_X: the bytes live on another DC (a forwarded/saved
+               file keeps its origin DC). We cannot follow the migration yet
+               (multi-DC is deferred), so report it as a foreign-DC file. */
+            if (strncmp(emsg, "FILE_MIGRATE", 12) == 0) {
+                rc = 2;
+                break;
+            }
+            /* FILE_REFERENCE_EXPIRED mid-transfer: re-fetch once, restart. */
             if (!refetched &&
                 tg_gui_session_find_open_document(msg_id, quiet, &doc) == 0) {
                 refetched = 1;
