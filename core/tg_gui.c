@@ -304,6 +304,119 @@ static void tg_gui_paint_scrollbar(tg_gui_backend *backend, int x, int track_y,
 /* The sidebar search box (top strip): its own background + the query/placeholder
    + a caret that blinks when focused. Standalone so the caret blink can repaint
    just this strip (via tg_gui_paint_caret) instead of the whole window. */
+static int tg_gui_input_text_w(int width, int sidebar_w);
+static int tg_gui_input_rows(const tg_gui_state *state, tg_gui_backend *backend,
+                             int width, int sidebar_w);
+
+/* Byte offset in text[0..len] whose glyph boundary sits closest to dx --
+   the shared half of click-to-place-the-caret (F8). Latin-1: 1 byte = 1
+   glyph, so a linear boundary scan is exact. O(len) text_width calls, only
+   on a click. */
+static int tg_gui_text_click_offset(tg_gui_backend *backend, const char *text,
+                                    unsigned long len, int dx)
+{
+    unsigned long i;
+    int prev = 0;
+
+    if (dx <= 0) {
+        return 0;
+    }
+    for (i = 1UL; i <= len; ++i) {
+        int w = backend->text_width(backend, text, i);
+
+        if (dx < (prev + w + 1) / 2) {
+            return (int)(i - 1UL); /* closer to the previous boundary */
+        }
+        if (dx < w) {
+            return (int)i;
+        }
+        prev = w;
+    }
+    return (int)len;
+}
+
+/* Click in the sidebar search box -> caret byte offset in search_query, or -1
+   when the click is outside the box. Geometry mirrors the search painter. */
+int tg_gui_search_click_caret(const tg_gui_state *state,
+                              tg_gui_backend *backend, int x, int y)
+{
+    int width;
+    int lh;
+    int sidebar_w;
+
+    if (state == 0 || backend == 0) {
+        return -1;
+    }
+    width = backend->width(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || lh <= 0) {
+        return -1;
+    }
+    sidebar_w = tg_gui_sidebar_w(width);
+    if (x < 0 || x >= sidebar_w || y < 0 || y >= lh + 10) {
+        return -1;
+    }
+    return tg_gui_text_click_offset(backend, state->search_query,
+                                    (unsigned long)strlen(state->search_query),
+                                    x - 10);
+}
+
+/* Click in the composer -> caret byte offset in input[], or -1 outside the
+   text band. Mirrors tg_gui_paint_input_row's geometry exactly: same wrap,
+   same last-`rows`-lines window, same per-line baselines. */
+int tg_gui_input_click_caret(const tg_gui_state *state,
+                             tg_gui_backend *backend, int x, int y)
+{
+    unsigned long starts[TG_GUI_WRAP_MAX_LINES];
+    unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
+    int width;
+    int height;
+    int lh;
+    int sidebar_w;
+    int area_x;
+    int rows;
+    int input_h;
+    int box_top;
+    int n;
+    int first;
+    int line;
+
+    if (state == 0 || backend == 0 || state->mode != TG_GUI_MODE_CHAT) {
+        return -1;
+    }
+    width = backend->width(backend);
+    height = backend->height(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || height <= 0 || lh <= 0) {
+        return -1;
+    }
+    sidebar_w = tg_gui_sidebar_w(width);
+    area_x = sidebar_w + 12;
+    rows = tg_gui_input_rows(state, backend, width, sidebar_w);
+    input_h = (rows * lh) + 14;
+    box_top = (height - (lh + 6)) - input_h;
+    if (state->input[0] == '\0') {
+        return 0; /* empty input: anywhere in the box is offset 0 */
+    }
+    n = tg_gui_wrap(backend, state->input,
+                    tg_gui_input_text_w(width, sidebar_w), starts, lengths,
+                    TG_GUI_WRAP_MAX_LINES);
+    if (n < 1) {
+        n = 1;
+    }
+    first = (n > rows) ? (n - rows) : 0;
+    line = first + ((y - (box_top + 2)) / lh);
+    if (line < first) {
+        line = first;
+    }
+    if (line >= n) {
+        line = n - 1;
+    }
+    return (int)starts[line] +
+           tg_gui_text_click_offset(backend, state->input + starts[line],
+                                    lengths[line], x - area_x);
+}
+
 static void tg_gui_paint_search_box(const tg_gui_state *state,
                                     tg_gui_backend *backend)
 {
@@ -335,11 +448,15 @@ static void tg_gui_paint_search_box(const tg_gui_state *state,
     }
     if (state->search_active && state->cursor_on) {
         int cx;
+        unsigned long qlen = (unsigned long)strlen(state->search_query);
+        unsigned long sc = (unsigned long)((state->search_caret >= 0)
+                                               ? state->search_caret
+                                               : 0);
 
-        cx = 10 +
-             backend->text_width(backend, state->search_query,
-                                 (unsigned long)strlen(state->search_query)) +
-             1;
+        if (sc > qlen) {
+            sc = qlen;
+        }
+        cx = 10 + backend->text_width(backend, state->search_query, sc) + 1;
         backend->fill_rect(backend, TG_GUI_PEN_TEXT,
                            tg_gui_make_rect(cx, sbase - lh + 2, 2, lh));
     }
@@ -2093,6 +2210,30 @@ int tg_gui_self_test(void)
     backend.line_height = tg_gui_rec_line_height;
     backend.text_width = tg_gui_rec_text_width;
     backend.fill_rect = tg_gui_rec_fill;
+    /* F8 click-to-caret mapping (recording backend: 6 px per char). */
+    {
+        int off;
+
+        strcpy(state.search_query, "abc");
+        state.search_caret = 0;
+        /* box text starts at x=10; boundaries at 10,16,22,28 */
+        off = tg_gui_search_click_caret(&state, &backend, 18, 4);
+        if (off != 1) { /* 18-10=8: nearest boundary after 'a' (9.5 midpoint) */
+            puts("gui self-test: search click caret mismatch");
+            return 2;
+        }
+        off = tg_gui_search_click_caret(&state, &backend, 40, 4);
+        if (off != 3) { /* beyond the text: caret at the end */
+            puts("gui self-test: search click end mismatch");
+            return 2;
+        }
+        off = tg_gui_search_click_caret(&state, &backend, 5000, 4);
+        if (off != -1) { /* outside the sidebar box */
+            puts("gui self-test: search click outside mismatch");
+            return 2;
+        }
+        state.search_query[0] = '\0';
+    }
     backend.avatar_fill = tg_gui_rec_avatar;
     backend.draw_text = tg_gui_rec_text;
     backend.set_style = 0; /* recorder renders plain; markers are just skipped */

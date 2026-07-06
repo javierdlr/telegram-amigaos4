@@ -2137,6 +2137,7 @@ int tg_gui_run_window(tg_gui_state *state)
                 if (msg_code == 27) { /* ESC */
                     state->search_active = 0;
                     state->search_query[0] = '\0';
+                    state->search_caret = 0;
                     if (state->in_search) { /* cancel the picker -> restore chats */
                         state->in_search = 0;
                         tg_gui_session_refresh_chats();
@@ -2146,10 +2147,18 @@ int tg_gui_run_window(tg_gui_state *state)
                     tg_gui_window_paint(state, &backend);
                 } else if (msg_code == 8 || msg_code == 127) { /* BACKSPACE */
                     unsigned long n;
+                    int sc;
 
                     n = (unsigned long)strlen(state->search_query);
-                    if (n > 0UL) {
-                        state->search_query[n - 1UL] = '\0';
+                    sc = state->search_caret;
+                    if (sc < 0 || sc > (int)n) {
+                        sc = (int)n;
+                    }
+                    if (sc > 0) { /* delete the char BEFORE the caret */
+                        memmove(state->search_query + sc - 1,
+                                state->search_query + sc, n - (unsigned long)sc
+                                + 1UL);
+                        state->search_caret = sc - 1;
                         state->search_dirty = 1; /* re-search after the pause */
                         search_idle_ticks = 0;   /* restart the debounce */
                         last_key_time = time(0);
@@ -2161,11 +2170,19 @@ int tg_gui_run_window(tg_gui_state *state)
                     tg_gui_window_run_search(state, &backend, 1);
                 } else if (msg_code >= 32 && msg_code < 256) { /* printable */
                     unsigned long n;
+                    int sc;
 
                     n = (unsigned long)strlen(state->search_query);
+                    sc = state->search_caret;
+                    if (sc < 0 || sc > (int)n) {
+                        sc = (int)n;
+                    }
                     if (n + 1UL < sizeof(state->search_query)) {
-                        state->search_query[n] = (char)msg_code;
-                        state->search_query[n + 1UL] = '\0';
+                        memmove(state->search_query + sc + 1,
+                                state->search_query + sc,
+                                n - (unsigned long)sc + 1UL);
+                        state->search_query[sc] = (char)msg_code;
+                        state->search_caret = sc + 1;
                         state->search_dirty = 1; /* re-search after the pause */
                         search_idle_ticks = 0;   /* restart the debounce */
                         last_key_time = time(0);
@@ -2311,6 +2328,24 @@ int tg_gui_run_window(tg_gui_state *state)
                     }
                 }
                 scroll_dirty = 1;
+            } else if (msg_class == IDCMP_RAWKEY && state->search_active &&
+                       (msg_code == 0x4F || msg_code == 0x4E)) {
+                /* F8: arrows move the search caret (insert point). */
+                int n = (int)strlen(state->search_query);
+                int sc = state->search_caret;
+
+                if (sc < 0 || sc > n) {
+                    sc = n;
+                }
+                if (msg_code == 0x4F && sc > 0) {
+                    --sc;
+                } else if (msg_code == 0x4E && sc < n) {
+                    ++sc;
+                }
+                state->search_caret = sc;
+                state->cursor_on = 1;
+                caret_ticks = 0;
+                tg_gui_window_paint(state, &backend);
             } else if (msg_class == IDCMP_RAWKEY && state->composing &&
                        state->mode == TG_GUI_MODE_CHAT) {
                 /* While composing, LEFT/RIGHT move the caret within the input.
@@ -2798,7 +2833,10 @@ int tg_gui_run_window(tg_gui_state *state)
                         state->drag_cur_y = hy;
                     } else if (hit == TG_GUI_HIT_SEARCH &&
                                tg_gui_session_is_open()) {
-                        /* Click the sidebar search box to focus it for typing. */
+                        /* Click the sidebar search box to focus it for typing;
+                           F8: the caret lands where you clicked. */
+                        int sc;
+
                         state->composing = 0;
                         state->search_active = 1;
                         state->search_dirty = 0; /* no pending debounce on focus */
@@ -2806,6 +2844,9 @@ int tg_gui_run_window(tg_gui_state *state)
                         last_key_time = time(0);
                         state->cursor_on = 1;
                         caret_ticks = 0;
+                        sc = tg_gui_search_click_caret(state, &backend, hx, hy);
+                        state->search_caret =
+                            (sc >= 0) ? sc : (int)strlen(state->search_query);
                         tg_gui_window_copy(
                             state->status, sizeof(state->status),
                             "Search: type then PAUSE to auto-find (or ENTER)");
@@ -2841,6 +2882,18 @@ int tg_gui_run_window(tg_gui_state *state)
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Type - ENTER sends, ESC cancels");
                         tg_gui_window_paint(state, &backend);
+                    } else if (hit == TG_GUI_HIT_INPUT && state->composing) {
+                        /* F8: click places the caret in the composer text. */
+                        int cc = tg_gui_input_click_caret(state, &backend, hx,
+                                                          hy);
+
+                        if (cc >= 0) {
+                            state->input_caret = cc;
+                            state->cursor_on = 1;
+                            caret_ticks = 0;
+                            tg_gui_window_mention_refresh(state);
+                            tg_gui_window_paint(state, &backend);
+                        }
                     } else if ((hit == TG_GUI_HIT_INPUT ||
                                 hit == TG_GUI_HIT_SEND) &&
                                !state->composing && tg_gui_session_is_open()) {
@@ -2854,6 +2907,14 @@ int tg_gui_run_window(tg_gui_state *state)
                         }
                         state->composing = 1;
                         state->input_caret = (int)strlen(state->input);
+                        if (hit == TG_GUI_HIT_INPUT) { /* F8: caret at click */
+                            int cc = tg_gui_input_click_caret(state, &backend,
+                                                              hx, hy);
+
+                            if (cc >= 0) {
+                                state->input_caret = cc;
+                            }
+                        }
                         state->cursor_on = 1;
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),

@@ -316,6 +316,13 @@ int tg_gui_context_menu_index(const tg_gui_state *state, int width, int height,
    Pure text logic (self-tested); the window layer feeds the popup with it. */
 int tg_gui_mention_token(const char *input, int caret, int *start);
 
+/* F8 click-to-caret: map a click at renderer coords to a byte offset in the
+   composer input / the sidebar search query. -1 = outside the field. */
+int tg_gui_input_click_caret(const tg_gui_state *state,
+                             tg_gui_backend *backend, int x, int y);
+int tg_gui_search_click_caret(const tg_gui_state *state,
+                              tg_gui_backend *backend, int x, int y);
+
 /* Window layer: drop the cached avatar pen grid for one peer (after a fresh
    download) so the next repaint rebuilds it from the disk JPEG. */
 void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo);
