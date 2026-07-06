@@ -71,7 +71,9 @@ O2_OBJS := $(OBJDIR)/core/tg_mtproto_rsa.o $(OBJDIR)/core/tg_mtproto_crypto.o \
            $(OBJDIR)/core/tg_mtproto_srp.o $(OBJDIR)/core/tg_mtproto_encrypted.o
 $(O2_OBJS): OPT := -O2
 
-$(OBJDIR)/%.o: %.c | build/amigaos3-clib2
+HDRS_ALL := $(wildcard include/*.h) $(wildcard third_party/*/*.h)
+
+$(OBJDIR)/%.o: %.c $(HDRS_ALL) | build/amigaos3-clib2
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(OPT) -c $< -o $@
 
