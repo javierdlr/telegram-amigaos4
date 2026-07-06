@@ -145,11 +145,13 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramGUI (or TelegramTUI). First run signs you in (phone -> code -> 2FA).
 
-New in $VERSION: real profile-picture avatars in the chat list (instant blurred
-previews everywhere; they turn crisp after you open a chat -- not on MorphOS),
-@username autocomplete in groups (type @), the window remembers its position,
-an optional own screen, and stronger first-login randomness. (0.0.4 added
-edit/delete, live read receipts, multi-device sync and system-clock times.)
+New in $VERSION: FILE SHARING -- download any received file (right-click ->
+Download) and send one to the open chat (menu: Send file...), up to 10 MB.
+A pinned Saved Messages chat turns Telegram's cloud into a transfer drawer
+between your Amiga and your phone/PC. Click places the text cursor in the
+composer and the search box; an Iconify menu item parks the client on a
+Workbench AppIcon. The program is now called TelegramAmiga. (0.0.5 added
+real avatars, @mentions, remembered window position and an own screen.)
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
@@ -217,6 +219,17 @@ Using the GUI
 - In groups, type @ in the composer to autocomplete a member: a small list
   pops up above the input line -- Up/Down select, Enter or Tab inserts
   @username, Esc closes, typing narrows the matches.
+- FILES: a message carrying a file shows as [File: name (size)]. Right-click
+  it and pick Download -- the file lands in the downloads/ drawer. To send
+  one, open the chat and use the Telegram menu's "Send file..." (Amiga+F):
+  a standard file requester picks it, up to 10 MB.
+- SAVED MESSAGES: the last chat in the list is you. Send files or notes to
+  it from your phone or PC and pick them up on the Amiga (or the other way
+  round) -- Telegram's cloud as your transfer drawer. It cannot be removed.
+- Click inside the composer or the search box to place the text cursor
+  exactly where you want to edit.
+- "Iconify" in the Telegram menu (Amiga+I) closes the window and leaves a
+  TelegramAmiga icon on the Workbench: double-click it to come back.
 - F1..F10 jump to chats 1..10 (Shift+F1..F10 to 11..20).
 - Search box (top-left): type a name and press Enter to find a chat on Telegram
   and add it to the list -- useful for chats not shown yet.
@@ -318,6 +331,17 @@ Usare la GUI
 - Nei gruppi, digita @ nel composer per completare un membro: compare una
   listina sopra la riga di input -- Su/Giu' selezionano, Invio o Tab inserisce
   @username, Esc chiude, digitando filtri i risultati.
+- FILE: un messaggio con allegato appare come [File: nome (dimensione)].
+  Click destro -> Download e il file finisce nel cassetto downloads/. Per
+  inviarne uno: apri la chat e usa "Send file..." nel menu Telegram
+  (Amiga+F): lo scegli dal requester di sistema, fino a 10 MB.
+- MESSAGGI SALVATI: l'ultima chat della lista sei tu. Mandaci file o appunti
+  dal telefono o dal PC e riprendili sull'Amiga (o viceversa) -- il cloud di
+  Telegram come cassetto di scambio. Non si puo' rimuovere.
+- Un click dentro il composer o la casella di ricerca posiziona il cursore
+  esattamente dove vuoi correggere.
+- "Iconify" nel menu Telegram (Amiga+I) chiude la finestra e lascia
+  un'icona TelegramAmiga sul Workbench: doppio click per tornare.
 - F1..F10 saltano alle chat 1..10 (Shift+F1..F10 alle 11..20).
 - Casella di ricerca (in alto a sinistra): scrivi un nome e premi Invio per
   trovare una chat su Telegram e aggiungerla alla lista -- utile per chat non
@@ -370,33 +394,44 @@ EOF
 # (the readme Architecture: value), requires. NB the Aminet enum has no
 # x86_64-aros token -> 64-bit AROS uses archval i386-aros, distinguished only by
 # the x86_64-aros FILENAME (verified live, e.g. filesysbox.x86_64-aros).
+# From 0.0.6 the archives are named after the binary (TelegramAmiga) in the
+# classic Aminet suffix style -- the 30-char filename limit rules out the long
+# arch tags (TelegramAmiga.m68k-amigaos.readme would be 33). The old tgamiga.*
+# pages are superseded via the Replaces: field (lhaold below).
 aminet_meta() {
     case "$1" in
     amigaos3)    archtag="m68k-amigaos"; archval="m68k-amigaos >= 3.0.0"
+                 lhaname="TelegramAmiga"
                  requires="68020+ CPU and a bsdsocket.library TCP/IP stack" ;;
     morphos)     archtag="ppc-morphos";  archval="ppc-morphos"
+                 lhaname="TelegramAmiga-MOS"
                  requires="MorphOS 3.x with its TCP/IP stack" ;;
     amigaos4)    archtag="ppc-amigaos";  archval="ppc-amigaos >= 4.0.0"
+                 lhaname="TelegramAmiga-OS4"
                  requires="AmigaOS 4.x with its TCP/IP stack" ;;
     aros-i386)   archtag="i386-aros";    archval="i386-aros"
+                 lhaname="TelegramAmiga-AROS"
                  requires="AROS (i386) with a TCP/IP stack (AROSTCP)" ;;
     aros-x86_64) archtag="x86_64-aros";  archval="i386-aros"
+                 lhaname="TelegramAmiga-AROS64"
                  requires="AROS (x86_64) with a TCP/IP stack (AROSTCP)" ;;
     *) echo "aminet_meta: unknown arch $1" >&2; exit 1 ;;
     esac
+    lhaold="comm/tcp/tgamiga.$archtag.lha"
 }
 
 # The Aminet .readme: machine-readable header (Short/Uploader/Author/Type/
 # Version/Architecture/Requires) FIRST, blank line, then the body. LF-only (the
 # heredoc emits LF), lines <= 78 cols, version ONLY here (never in the filename).
 write_aminet_readme() {
-    out=$1; archval=$2; requires=$3
+    out=$1; archval=$2; requires=$3; replaces=$4
     cat > "$out" <<EOF
 Short:        Native MTProto Telegram chat client
 Uploader:     $AMINET_UPLOADER
 Author:       $AMINET_AUTHOR
 Type:         comm/tcp
 Version:      $VERSION
+Replaces:     $replaces
 Architecture: $archval
 Requires:     $requires
 
@@ -424,8 +459,11 @@ Two programs share one engine and one saved login:
 
 WHAT CAN I ACTUALLY DO WITH IT?
 -------------------------------
-Read and send messages in private chats, groups and channels. Reply to a
-specific message (right-click it). Edit or delete your own messages. See
+Read and send messages in private chats, groups and channels. Download a
+received file (right-click -> Download) or send one from disk, up to 10 MB.
+Use the pinned Saved Messages chat as a cloud transfer drawer between the
+Amiga and your phone or PC. Reply to a specific message (right-click it).
+Edit or delete your own messages. See
 real delivery state: one tick = sent, two blue ticks = read, updating
 live. See who is typing. Search for chats. Send messages from your desk
 at work and find the conversation already synced when you get home to
@@ -544,11 +582,11 @@ package_one() {
         fi
         aminet_meta "$expected"
         amiwork="$AMINET_ROOT/$AMINET_DRAWER"
-        lhafile="$AMINET_ROOT/$AMINET_BASE.$archtag.lha"
+        lhafile="$AMINET_ROOT/$lhaname.lha"
         rm -rf "$amiwork"; mkdir -p "$amiwork"
         cp "$dest"/* "$amiwork"/
         rm -f "$lhafile"
-        ( cd "$AMINET_ROOT" && "$LHA_BIN" a "$AMINET_BASE.$archtag.lha" "$AMINET_DRAWER" >/dev/null )
+        ( cd "$AMINET_ROOT" && "$LHA_BIN" a "$lhaname.lha" "$AMINET_DRAWER" >/dev/null )
         rm -rf "$amiwork"
         # Verify it extracts under UNIX lha (Aminet's own checklist requirement).
         if ! "$LHA_BIN" t "$lhafile" >/dev/null 2>&1; then
@@ -566,8 +604,8 @@ package_one() {
             echo "ERROR $platform: lha binary != built binary ($binary)" >&2; exit 1
         fi
         rm -rf "$lhatmp"
-        write_aminet_readme "$AMINET_ROOT/$AMINET_BASE.$archtag.readme" "$archval" "$requires"
-        echo "$lhafile  +  $AMINET_BASE.$archtag.readme  [Architecture: $archval]"
+        write_aminet_readme "$AMINET_ROOT/$lhaname.readme" "$archval" "$requires" "$lhaold"
+        echo "$lhafile  +  $lhaname.readme  [Architecture: $archval]"
     fi
 }
 
@@ -581,11 +619,11 @@ package_one "AROS x86_64" "$AROS_X86_64_BINARY" "aros-x86_64" "aros-x86_64"
 ( cd "$PACKAGE_ROOT" && ls Telegram-*-"$DATE_STAMP".zip >/dev/null 2>&1 &&
   sha_cmd Telegram-*-"$DATE_STAMP".zip > SHA256SUMS-github.txt &&
   echo "$PACKAGE_ROOT/SHA256SUMS-github.txt" ) || true
-if [ "$AMINET" = "1" ] && ls "$AMINET_ROOT"/"$AMINET_BASE".*.lha >/dev/null 2>&1; then
-    ( cd "$AMINET_ROOT" && sha_cmd "$AMINET_BASE".*.lha "$AMINET_BASE".*.readme > SHA256SUMS-aminet.txt )
+if [ "$AMINET" = "1" ] && ls "$AMINET_ROOT"/TelegramAmiga*.lha >/dev/null 2>&1; then
+    ( cd "$AMINET_ROOT" && sha_cmd TelegramAmiga*.lha TelegramAmiga*.readme > SHA256SUMS-aminet.txt )
     echo
     echo "Aminet artifacts ready in: $AMINET_ROOT  (version $VERSION, Type comm/tcp)"
     echo "Upload (Michele): FTP main.aminet.net -> cd /new -> binary -> put each"
-    echo "  $AMINET_BASE.<arch>.lha AND $AMINET_BASE.<arch>.readme (5 + 5 files)."
+    echo "  TelegramAmiga[<-suffix>].lha AND matching .readme (5 + 5 files)."
     echo "  Web form may be back at https://aminet.net/upload. See memory/aminet-publishing.md"
 fi
