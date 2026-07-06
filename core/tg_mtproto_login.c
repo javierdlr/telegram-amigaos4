@@ -3917,7 +3917,8 @@ static tg_mtproto_tl_status tg_skip_common_message(
     if (tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
-    if ((flags2 & 4UL) != 0UL &&
+    if ((flags & (1UL << 28)) != 0UL && /* saved_peer_id (Saved Messages);
+           was mis-gated on flags2.2 and desynced the whole self-chat walk */
         tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
@@ -4134,7 +4135,8 @@ static tg_mtproto_tl_status tg_read_common_message_text(
         /* The message's peer_id: the chat this message belongs to. */
         *out_dest = peer;
     }
-    if ((flags2 & 4UL) != 0UL &&
+    if ((flags & (1UL << 28)) != 0UL && /* saved_peer_id (Saved Messages);
+           was mis-gated on flags2.2 and desynced the whole self-chat walk */
         tg_read_peer_ref(reader, &peer) != TG_MTPROTO_TL_OK) {
         return TG_MTPROTO_TL_INVALID_DATA;
     }
