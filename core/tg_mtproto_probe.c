@@ -12627,8 +12627,14 @@ void tg_gui_saved_messages_row(tg_chat_list_row *rows, int *count, int max)
 {
     tg_chat_list_row *row;
 
-    if (rows == 0 || count == 0 || *count < 0 || *count >= max) {
+    if (rows == 0 || count == 0 || *count < 0 || max <= 0) {
         return;
+    }
+    if (*count >= max) {
+        /* Full list (a heavy account at the sidebar cap): the pinned row must
+           STILL exist, so the last chat row yields its slot -- losing chat
+           #max beats silently losing Saved Messages. */
+        *count = max - 1;
     }
     row = &rows[*count];
     memset(row, 0, sizeof(*row));
