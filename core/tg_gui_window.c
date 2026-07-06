@@ -53,11 +53,22 @@
 #include <intuition/intuition.h>
 #include <devices/timer.h>
 #include <libraries/asl.h>
+#include <workbench/workbench.h>
+#include <workbench/startup.h>
+#include <proto/wb.h>
+#include <proto/icon.h>
 #include <proto/asl.h>
 
 /* asl.library is opened lazily around the file requester (Send file...) so
    startup stays untouched and a system without it just skips the feature. */
 struct Library *AslBase = 0;
+/* workbench.library + icon.library open lazily around the iconified wait. */
+struct Library *WorkbenchBase = 0;
+struct Library *IconBase = 0;
+#if defined(__amigaos4__)
+struct WorkbenchIFace *IWorkbench = 0;
+struct IconIFace *IIcon = 0;
+#endif
 #if defined(__amigaos4__)
 struct AslIFace *IAsl = 0;
 #endif
@@ -122,6 +133,7 @@ struct Library *GadToolsBase = 0;
 #define TG_MENU_QUIT   3
 #define TG_MENU_REMOVE 4
 #define TG_MENU_SENDFILE 5
+#define TG_MENU_ICONIFY 6
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -1111,6 +1123,8 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_REMOVE },
     { NM_ITEM,  (STRPTR)"Send file...", (STRPTR)"F", 0, 0,
       (APTR)TG_MENU_SENDFILE },
+    { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
+      (APTR)TG_MENU_ICONIFY },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
     { NM_END,   0, 0, 0, 0, 0 }
@@ -1131,6 +1145,7 @@ static const char tg_gui_help_text[] =
     "ENTER        write a message to the open chat\n"
     "Del / A+R    remove the selected chat from the list\n"
     "A+F          send a file to the open chat\n"
+    "A+I          iconify to an AppIcon (double-click it to return)\n"
     "ESC          cancel\n"
     "Q            quit";
 
@@ -1610,7 +1625,7 @@ static void tg_gui_window_run_search(tg_gui_state *state, tg_gui_backend *backen
     tg_gui_window_paint(state, backend);
 }
 
-int tg_gui_run_window(tg_gui_state *state)
+static int tg_gui_run_window_once(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
     tg_gui_backend backend;
@@ -2480,6 +2495,10 @@ int tg_gui_run_window(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_SENDFILE) {
                             tg_gui_window_send_file(state, ctx.window,
                                                     &backend);
+                        } else if (ud == (APTR)TG_MENU_ICONIFY) {
+                            /* Tear down window (and own screen) via the normal
+                               path; the outer loop parks on an AppIcon. */
+                            done = 2;
                         } else if (ud == (APTR)TG_MENU_QUIT) {
                             done = 1;
                         }
@@ -3238,7 +3257,107 @@ int tg_gui_run_window(tg_gui_state *state)
     CloseLibrary((struct Library *)IntuitionBase);
     IntuitionBase = 0;
     tg_gui_log("window: libraries closed");
-    return 0;
+    return (done == 2) ? 2 : 0; /* 2 = iconified: the outer loop reopens */
+}
+
+/* Iconified park: an AppIcon on Workbench (our own shipped icon when
+   loadable, the default tool icon otherwise); a double-click -- or a
+   Ctrl-C break -- wakes us. Returns 1 to reopen the window, 0 to quit.
+   Everything is opened lazily and torn down before returning, so the
+   iconified footprint is just this task, its stack and the AppIcon. */
+static int tg_gui_window_iconify_wait(void)
+{
+    struct MsgPort *port = 0;
+    struct DiskObject *dobj = 0;
+    struct AppIcon *icon = 0;
+    struct Message *m;
+    int reopen = 0;
+
+    WorkbenchBase = OpenLibrary((CONST_STRPTR)"workbench.library", 36L);
+    IconBase = OpenLibrary((CONST_STRPTR)"icon.library", 36L);
+#if defined(__amigaos4__)
+    if (WorkbenchBase != 0) {
+        IWorkbench = (struct WorkbenchIFace *)GetInterface(WorkbenchBase,
+                                                           "main", 1L, 0);
+    }
+    if (IconBase != 0) {
+        IIcon = (struct IconIFace *)GetInterface(IconBase, "main", 1L, 0);
+    }
+    if (IWorkbench == 0 || IIcon == 0) {
+        goto out;
+    }
+#endif
+    if (WorkbenchBase == 0 || IconBase == 0) {
+        goto out;
+    }
+    port = CreateMsgPort();
+    if (port == 0) {
+        goto out;
+    }
+    dobj = GetDiskObject((STRPTR)"PROGDIR:TelegramGUI");
+    if (dobj == 0) {
+        dobj = GetDefDiskObject(WBTOOL);
+    }
+    if (dobj == 0) {
+        goto out;
+    }
+    dobj->do_CurrentX = NO_ICON_POSITION;
+    dobj->do_CurrentY = NO_ICON_POSITION;
+    icon = AddAppIcon(0UL, 0UL, (STRPTR)"TelegramAmiga", port, 0, dobj,
+                      TAG_DONE);
+    if (icon != 0) {
+        ULONG sigs = Wait((1UL << port->mp_SigBit) | SIGBREAKF_CTRL_C);
+
+        reopen = (sigs & (1UL << port->mp_SigBit)) != 0UL;
+        while ((m = GetMsg(port)) != 0) {
+            ReplyMsg(m);
+        }
+        RemoveAppIcon(icon);
+        while ((m = GetMsg(port)) != 0) {
+            ReplyMsg(m);
+        }
+    }
+out:
+    if (dobj != 0) {
+        FreeDiskObject(dobj);
+    }
+    if (port != 0) {
+        DeleteMsgPort(port);
+    }
+#if defined(__amigaos4__)
+    if (IIcon != 0) {
+        DropInterface((struct Interface *)IIcon);
+        IIcon = 0;
+    }
+    if (IWorkbench != 0) {
+        DropInterface((struct Interface *)IWorkbench);
+        IWorkbench = 0;
+    }
+#endif
+    if (IconBase != 0) {
+        CloseLibrary(IconBase);
+        IconBase = 0;
+    }
+    if (WorkbenchBase != 0) {
+        CloseLibrary(WorkbenchBase);
+        WorkbenchBase = 0;
+    }
+    return reopen;
+}
+
+int tg_gui_run_window(tg_gui_state *state)
+{
+    for (;;) {
+        int rc = tg_gui_run_window_once(state);
+
+        if (rc != 2) {
+            return rc;
+        }
+        if (!tg_gui_window_iconify_wait()) {
+            return 0; /* AppIcon failed or Ctrl-C: a clean quit */
+        }
+        /* Double-click: fall through and reopen the window fresh. */
+    }
 }
 
 #else /* !TG_GUI_AMIGA: host build */
