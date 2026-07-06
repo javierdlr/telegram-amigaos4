@@ -13500,6 +13500,9 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                 tg_gui_session_state.dc_id_text,
                 &tg_gui_session_state.context, query, writer.length, &result,
                 quiet, "mtproto getFile(document)", 600U) != 0) {
+            if (out_path != 0 && out_path_size > 8UL) {
+                strcpy(out_path, "no reply");
+            }
             break;
         }
         if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
@@ -13514,6 +13517,13 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                 char d[160];
                 sprintf(d, "download: getFile rpc-error %ld %s", ecode, emsg);
                 tg_gui_log(d);
+            }
+            if (out_path != 0 && out_path_size > 0UL && emsg[0] != '\0') {
+                unsigned long e = 0UL;
+                while (emsg[e] != '\0' && e + 1UL < out_path_size) {
+                    out_path[e] = emsg[e]; ++e;
+                }
+                out_path[e] = '\0'; /* GUI shows this on rc 4 */
             }
             /* FILE_MIGRATE_X: the bytes live on another DC (a forwarded/saved
                file keeps its origin DC). We cannot follow the migration yet
@@ -13542,6 +13552,9 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                 TG_MTPROTO_TL_OK ||
             cdn) {
             tg_gui_log("download: cdn/parse fail (unsupported)");
+            if (out_path != 0 && out_path_size > 12UL) {
+                strcpy(out_path, cdn ? "CDN file" : "bad reply");
+            }
             break; /* CDN redirect (large public file) not handled yet */
         }
         if (bytes_len > 0UL &&

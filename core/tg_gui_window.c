@@ -2707,9 +2707,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                sizeof(state->status),
                                                "Could not write to downloads/");
                         } else if (drc == 4) {
+                            char tmsg[192];
+
+                            if (saved[0] != '\0') {
+                                sprintf(tmsg, "Transfer failed: %.160s", saved);
+                            } else {
+                                strcpy(tmsg, "Transfer failed (server error)");
+                            }
                             tg_gui_window_copy(state->status,
-                                               sizeof(state->status),
-                                               "Transfer failed (server error)");
+                                               sizeof(state->status), tmsg);
                         } else {
                             tg_gui_window_copy(
                                 state->status, sizeof(state->status),
