@@ -96,7 +96,7 @@ struct Library *SocketBase = 0;
 
 static int tg_amigaos3_amissl_initialized = 0;
 
-const char stack_size[] = "$STACK:65536";
+const char stack_size[] = "$STACK:1048576";
 
 static int tg_amigaos3_amissl_init(char *error_buffer,
                                    unsigned long error_buffer_size);
@@ -106,9 +106,13 @@ static int tg_amigaos3_amissl_init(char *error_buffer,
 /* bsdsocket.library base used by the proto/socket.h inlines (no ixemul to
    provide BSD sockets). Opened in tg_amigaos3_socket_open(). */
 struct Library *SocketBase = 0;
-/* Embed a big stack cookie for the modexp / PBKDF2 crypto when launched
-   outside a shell (e.g. by double-clicking the icon). */
-const char stack_size[] = "$STACK:262144";
+/* Embed a big stack cookie so the binary gets a real stack on EVERY launch
+   path -- double-clicked icon, IconX script, or a bare shell -- not just when
+   the launcher's "Stack 1048576" applies. Matched to that launcher value and
+   to MorphOS's __stack: the GUI's wrapped-line arrays, the DH/PBKDF2 crypto
+   and the file-transfer parsers all want headroom, and 256 KB tripped a
+   low-stack warning on a real machine. 1 MB is trivial on the 8 MB box. */
+const char stack_size[] = "$STACK:1048576";
 #endif
 
 const char *tg_platform_name(void)
