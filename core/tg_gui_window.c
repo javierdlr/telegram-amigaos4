@@ -2717,9 +2717,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status), tmsg);
                         } else {
-                            tg_gui_window_copy(
-                                state->status, sizeof(state->status),
-                                "File not found or reference expired");
+                            char nmsg[192];
+
+                            if (saved[0] != '\0') {
+                                sprintf(nmsg, "Not found: %.170s", saved);
+                            } else {
+                                strcpy(nmsg,
+                                       "File not found or reference expired");
+                            }
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status), nmsg);
                         }
                     }
                     tg_gui_window_paint(state, &backend);

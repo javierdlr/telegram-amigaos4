@@ -13244,6 +13244,8 @@ static void tg_gui_dl_sanitize_name(const char *in, char *out,
 
 /* Re-fetch the open chat's newest history and copy the document meta of the
    message with id == msg_id (fresh file_reference). 0 = found + has document. */
+static char tg_dl_diag[96]; /* find_open_document -> download status */
+
 static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
                                              tg_mtproto_document_meta *out)
 {
@@ -13286,14 +13288,28 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
         return 1;
     }
     for (i = 0UL; i < texts.count; ++i) {
-        if (texts.messages[i].id == msg_id &&
-            texts.messages[i].document.has_document &&
-            texts.messages[i].document.file_reference_len > 0UL) {
-            *out = texts.messages[i].document;
-            return 0;
+        if (texts.messages[i].id != msg_id) {
+            continue;
         }
+        if (!texts.messages[i].document.has_document) {
+            strcpy(tg_dl_diag, "no document on message");
+            return 1;
+        }
+        if (texts.messages[i].document.file_reference_len == 0UL) {
+            sprintf(tg_dl_diag, "reference too long (dc=%lu size=%lu:%lu)",
+                    texts.messages[i].document.dc_id,
+                    texts.messages[i].document.size_hi,
+                    texts.messages[i].document.size_lo);
+            return 1;
+        }
+        *out = texts.messages[i].document;
+        sprintf(tg_dl_diag, "dc=%lu size=%lu:%lu ref=%lu",
+                out->dc_id, out->size_hi, out->size_lo,
+                out->file_reference_len);
+        return 0;
     }
-    return 1; /* not in the fetched page, or no usable document */
+    strcpy(tg_dl_diag, "message not in history page");
+    return 1;
 }
 
 /* F9 chunk 5: send a file from disk to the OPEN chat. Small-file path only
@@ -13450,8 +13466,16 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
         return 1;
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_dl_diag[0] = '\0';
     if (tg_gui_session_find_open_document(msg_id, quiet, &doc) != 0) {
-        tg_gui_log("download: message/document not found");
+        tg_gui_log("download: not found");
+        if (out_path != 0 && out_path_size > 0UL && tg_dl_diag[0] != '\0') {
+            unsigned long e = 0UL;
+            while (tg_dl_diag[e] != '\0' && e + 1UL < out_path_size) {
+                out_path[e] = tg_dl_diag[e]; ++e;
+            }
+            out_path[e] = '\0';
+        }
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 1;
     }
@@ -13500,8 +13524,9 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                 tg_gui_session_state.dc_id_text,
                 &tg_gui_session_state.context, query, writer.length, &result,
                 quiet, "mtproto getFile(document)", 600U) != 0) {
-            if (out_path != 0 && out_path_size > 8UL) {
-                strcpy(out_path, "no reply");
+            if (out_path != 0 && out_path_size > 0UL) {
+                sprintf(out_path, "no reply @off %lu (%.60s)", offset,
+                        tg_dl_diag);
             }
             break;
         }
