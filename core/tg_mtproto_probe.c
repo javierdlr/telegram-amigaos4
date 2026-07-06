@@ -13263,9 +13263,12 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
         return 1;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    /* Anchor the fetch AT the target: offset_id = msg_id + 1 makes the server
+       return messages with id <= msg_id, newest first, so the wanted message
+       is the first result no matter how far back it was scrolled. */
     if (tg_mtproto_build_messages_get_history_peer(&writer, pc, ph, pl, ahh,
-                                                   ahl, hah, 0UL, 40UL) !=
-        TG_MTPROTO_TL_OK) {
+                                                   ahl, hah, msg_id + 1UL,
+                                                   5UL) != TG_MTPROTO_TL_OK) {
         return 1;
     }
     memset(&result, 0, sizeof(result));
@@ -13448,8 +13451,15 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
     if (tg_gui_session_find_open_document(msg_id, quiet, &doc) != 0) {
+        tg_gui_log("download: message/document not found");
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 1;
+    }
+    {
+        char d[128];
+        sprintf(d, "download: doc dc=%lu size=%lu:%lu reflen=%lu",
+                doc.dc_id, doc.size_hi, doc.size_lo, doc.file_reference_len);
+        tg_gui_log(d);
     }
     /* Same-DC guard (foreign documents need export/importAuthorization). */
     home = 0UL;
@@ -13463,6 +13473,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     }
     if (home != 0UL && doc.dc_id != 0UL && doc.dc_id != home) {
         tg_mtproto_close_quiet_stream(quiet, stream);
+        tg_gui_log("download: foreign DC, unsupported");
         return 2; /* foreign DC: caller shows "not supported yet" */
     }
     tg_gui_dl_sanitize_name(doc.file_name, safe, sizeof(safe));
@@ -13493,6 +13504,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
         if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
             /* Most likely FILE_REFERENCE_EXPIRED mid-transfer: re-fetch the
                reference ONCE and restart from the beginning. */
+            tg_gui_log("download: getFile rpc-error (ref expired?)");
             if (!refetched &&
                 tg_gui_session_find_open_document(msg_id, quiet, &doc) == 0) {
                 refetched = 1;
@@ -13511,6 +13523,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                          &bytes_len, &cdn) !=
                 TG_MTPROTO_TL_OK ||
             cdn) {
+            tg_gui_log("download: cdn/parse fail (unsupported)");
             break; /* CDN redirect (large public file) not handled yet */
         }
         if (bytes_len > 0UL &&
