@@ -134,6 +134,7 @@ struct Library *GadToolsBase = 0;
 #define TG_MENU_REMOVE 4
 #define TG_MENU_SENDFILE 5
 #define TG_MENU_ICONIFY 6
+#define TG_MENU_OWNSCREEN 7
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -1126,6 +1127,8 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_SENDFILE },
     { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
       (APTR)TG_MENU_ICONIFY },
+    { NM_ITEM,  (STRPTR)"Own screen", 0, CHECKIT | MENUTOGGLE, 0,
+      (APTR)TG_MENU_OWNSCREEN },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
     { NM_END,   0, 0, 0, 0, 0 }
@@ -1635,6 +1638,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     int init_x;
     int init_y;
     int init_own;
+    int want_own; /* own-screen preference, toggled live by the menu */
     struct Screen *own_scr;
     struct TagItem tags[22];
     struct ColorMap *cmap;
@@ -1719,6 +1723,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     memset(&ctx, 0, sizeof(ctx));
     own_scr = 0;
     tg_gui_window_load_geom(&init_w, &init_h, &init_x, &init_y, &init_own);
+    want_own = init_own;
     /* Own-screen mode (opt-in " own" token in telegram-gui-win.txt): a PRIVATE
        screen cloned from Workbench (SA_LikeWorkbench, V39 on every lane). The
        testers' "move to another page" gadget is MUI-only, so an app screen is
@@ -1919,6 +1924,19 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         if (vi != 0) {
             menu = CreateMenusA(tg_gui_newmenu, 0);
             if (menu != 0 && LayoutMenusA(menu, vi, 0)) {
+                /* Reflect the current own-screen mode in the toggle's tick. */
+                if (want_own && menu->FirstItem != 0) {
+                    struct MenuItem *it2 = menu->FirstItem;
+
+                    while (it2 != 0) {
+                        if (GTMENUITEM_USERDATA(it2) ==
+                            (APTR)TG_MENU_OWNSCREEN) {
+                            it2->Flags |= CHECKED;
+                            break;
+                        }
+                        it2 = it2->NextItem;
+                    }
+                }
                 SetMenuStrip(ctx.window, menu);
             }
         }
@@ -2500,6 +2518,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             /* Tear down window (and own screen) via the normal
                                path; the outer loop parks on an AppIcon. */
                             done = 2;
+                        } else if (ud == (APTR)TG_MENU_OWNSCREEN) {
+                            /* Flip own-screen mode and reopen: persist the new
+                               flag now so the reopen (which reloads geometry)
+                               honours it, then leave via the reopen path. */
+                            want_own = !want_own;
+                            tg_gui_window_save_geom(ctx.inner_w, ctx.inner_h,
+                                                    (int)ctx.window->LeftEdge,
+                                                    (int)ctx.window->TopEdge,
+                                                    want_own);
+                            done = 3; /* reopen (no AppIcon) */
                         } else if (ud == (APTR)TG_MENU_QUIT) {
                             done = 1;
                         }
@@ -3256,7 +3284,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     tg_gui_amiga_release_pens(&ctx, cmap);
     tg_gui_window_save_geom(ctx.inner_w, ctx.inner_h,
                             (int)ctx.window->LeftEdge,
-                            (int)ctx.window->TopEdge, init_own);
+                            (int)ctx.window->TopEdge, want_own);
     tg_gui_log("window: CloseWindow");
     CloseWindow(ctx.window);
     ctx.window = 0;
@@ -3289,7 +3317,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     CloseLibrary((struct Library *)IntuitionBase);
     IntuitionBase = 0;
     tg_gui_log("window: libraries closed");
-    return (done == 2) ? 2 : 0; /* 2 = iconified: the outer loop reopens */
+    /* 2 = iconified (park on AppIcon), 3 = reopen (own-screen toggle). */
+    return (done == 2) ? 2 : (done == 3) ? 3 : 0;
 }
 
 /* Iconified park: an AppIcon on Workbench (our own shipped icon when
@@ -3382,6 +3411,9 @@ int tg_gui_run_window(tg_gui_state *state)
     for (;;) {
         int rc = tg_gui_run_window_once(state);
 
+        if (rc == 3) {
+            continue; /* own-screen toggle: reopen immediately, no AppIcon */
+        }
         if (rc != 2) {
             return rc;
         }
