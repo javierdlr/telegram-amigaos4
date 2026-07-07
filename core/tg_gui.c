@@ -82,6 +82,7 @@ static void tg_gui_set_message(tg_gui_message *message, const char *sender,
 
 void tg_gui_demo_state(tg_gui_state *state)
 {
+    state->selected_msg = -1;
     if (state == 0) {
         return;
     }
@@ -1542,6 +1543,19 @@ static void tg_gui_paint_main(const tg_gui_state *state,
         /* Draw only messages intersecting the viewport; each part is clipped to
            [transcript_top, transcript_bottom] inside the bubble. */
         if (y + h > transcript_top && y < transcript_bottom) {
+            if (i == state->selected_msg && !message->is_system) {
+                /* Clicked-row highlight: a left accent bar, like the selected
+                   chat in the sidebar, so you can see where you are. */
+                int by = (y > transcript_top) ? y : transcript_top;
+                int bb = (y + h < transcript_bottom) ? (y + h)
+                                                     : transcript_bottom;
+
+                if (bb > by) {
+                    backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                                       tg_gui_make_rect(area_x - 6, by, 3,
+                                                        bb - by));
+                }
+            }
             if (message->is_system) {
                 if (y + lh > transcript_top && y + lh <= transcript_bottom) {
                     backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM,

@@ -850,6 +850,7 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
         return;
     }
     state->selected_chat = sel;
+    state->selected_msg = -1; /* new chat: no message highlighted yet */
     state->transcript_scroll = 0; /* a freshly opened chat pins to the newest */
     state->chat_scroll_to_sel = 1; /* scroll the sidebar so the row is visible */
     /* Opening a chat clears its unread badge / flash -- you are now reading it. */
@@ -2978,6 +2979,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             const tg_gui_message *m = &state->messages[mi];
 
                             if (!m->is_system && m->id != 0UL) {
+                                state->selected_msg = mi; /* highlight it */
                                 state->reply_to_id = m->id;
                                 tg_gui_window_copy(state->reply_sender,
                                                    sizeof(state->reply_sender),

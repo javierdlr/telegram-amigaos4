@@ -6488,8 +6488,7 @@ int tg_mtproto_auth_get_history_self(const char *host,
     if (messages.is_slice || messages.is_not_modified ||
         messages.is_channel_messages) {
         fprintf(stream, "%s: count %lu\n", label, messages.count);
-    }
-    return 0;
+    }    return 0;
 }
 
 int tg_mtproto_auth_get_history_self_file(const char *host,
@@ -7769,8 +7768,7 @@ int tg_mtproto_auth_get_history_peer_file(const char *host,
     fprintf(stream, "%s: constructor 0x%08lx\n", label,
             messages.constructor);
     fprintf(stream, "%s: messages %lu chats %lu users %lu\n", label,
-            messages.message_count, messages.chat_count, messages.user_count);
-    if (messages.is_slice || messages.is_not_modified ||
+            messages.message_count, messages.chat_count, messages.user_count);    if (messages.is_slice || messages.is_not_modified ||
         messages.is_channel_messages) {
         fprintf(stream, "%s: count %lu\n", label, messages.count);
     }
@@ -12180,9 +12178,9 @@ void tg_gui_log(const char *msg)
        -- a no-op channel elsewhere, so it costs nothing there. The disk copy is
        opt-in (--gui-live-debug) since a write-back FS may not commit it. */
     tg_platform_debug(msg);
-    if (!tg_gui_log_on) {
-        return;
-    }
+    /* TEMP: always persist to disk so field diagnostics do not need the debug
+       launcher; revert to the tg_gui_log_on gate after the download hunt. */
+    /* if (!tg_gui_log_on) { return; } */
     /* Absolute path via PROGDIR: (the binary's dir, e.g. Work:TGh) so the log
        lands next to the program regardless of the launcher's current dir -- a
        relative name followed the CWD, which IconX/Ambient does not set to the
@@ -13525,17 +13523,25 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
             break;
         }
         memset(&result, 0, sizeof(result));
-        if (tg_mtproto_send_saved_query_on_context(
+        {
+            int gfrc;
+            char gl[128];
+            gfrc = tg_mtproto_send_saved_query_on_context(
                 tg_gui_session_state.host, tg_gui_session_state.port,
                 tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
                 tg_gui_session_state.dc_id_text,
                 &tg_gui_session_state.context, query, writer.length, &result,
-                quiet, "mtproto getFile(document)", 600U) != 0) {
+                quiet, "mtproto getFile(document)", 600U);
+            sprintf(gl, "download: getFile off=%lu qlen=%lu rc=%d ctor=0x%08lx",
+                    offset, writer.length, gfrc, result.result_constructor);
+            tg_gui_log(gl);
+            if (gfrc != 0) {
             if (out_path != 0 && out_path_size > 0UL) {
                 sprintf(out_path, "no reply @off %lu (%.60s)", offset,
                         tg_dl_diag);
             }
             break;
+            }
         }
         if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
             long ecode = 0L;

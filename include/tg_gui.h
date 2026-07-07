@@ -240,6 +240,7 @@ typedef struct tg_gui_state {
     int ctx_msg;
     int ctx_x, ctx_y;
     int ctx_hover;
+    int selected_msg; /* transcript row highlighted by a click (-1 = none) */
 
     /* '@' mention autocomplete over the composer: while the caret sits in an
        "@prefix" token, mention_items holds up to TG_GUI_MENTION_MAX candidate

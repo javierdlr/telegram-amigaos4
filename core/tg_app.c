@@ -3995,6 +3995,7 @@ int tg_app_run(int argc, char **argv)
 
         memset(&gui, 0, sizeof(gui));
         gui.theme = TG_GUI_THEME_DARK;
+        gui.selected_msg = -1; /* no transcript row highlighted at start */
         if (config.run_gui_live_debug) {
             tg_gui_log_enable();
         }
