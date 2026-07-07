@@ -12178,9 +12178,9 @@ void tg_gui_log(const char *msg)
        -- a no-op channel elsewhere, so it costs nothing there. The disk copy is
        opt-in (--gui-live-debug) since a write-back FS may not commit it. */
     tg_platform_debug(msg);
-    /* TEMP: always persist to disk so field diagnostics do not need the debug
-       launcher; revert to the tg_gui_log_on gate after the download hunt. */
-    /* if (!tg_gui_log_on) { return; } */
+    if (!tg_gui_log_on) {
+        return;
+    }
     /* Absolute path via PROGDIR: (the binary's dir, e.g. Work:TGh) so the log
        lands next to the program regardless of the launcher's current dir -- a
        relative name followed the CWD, which IconX/Ambient does not set to the
