@@ -1202,3 +1202,32 @@ void tg_platform_ensure_drawer_icon(const char *drawer)
     (void)drawer; /* host build: no Workbench icons */
 }
 #endif
+#if defined(__AROS__)
+
+int tg_platform_workbench_tui_console(void)
+{
+    BPTR con;
+
+    con = Open((CONST_STRPTR)"CON:20/20/640/440/Telegram Amiga TUI/CLOSE/WAIT",
+               MODE_OLDFILE);
+    if (con == 0) {
+        return 0;
+    }
+    /* Make this window the process console (pr_CIS/pr_COS)... */
+    SelectInput(con);
+    SelectOutput(con);
+    /* ...then rebind the C stdio streams to it. A Workbench-launched binary has
+       no console at startup, so the C runtime may have pinned stdin/stdout to a
+       null handle before we got here; freopen("*") re-points them at the current
+       console (this window) so printf()/fgets() actually reach it. */
+    (void)freopen("*", "r", stdin);
+    (void)freopen("*", "w", stdout);
+    (void)freopen("*", "w", stderr);
+    return 1;
+}
+#else
+int tg_platform_workbench_tui_console(void)
+{
+    return 0; /* host build: no Workbench console */
+}
+#endif

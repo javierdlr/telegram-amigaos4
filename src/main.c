@@ -18,6 +18,42 @@ static const char tg_amiga_ver_tag[] =
     "$VER: TelegramAmiga " TG_VERSION " (" TG_VERSION_DATE ")";
 #include "tg_platform.h"
 
+
+/* Scan the WBStartup arg names for "TUI" (case-insensitive). Amiga-only; the
+   host build has no Workbench and returns 0. Defensive: any null -> GUI. */
+#if defined(__amigaos3__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
+    defined(__AROS__)
+#include <workbench/startup.h>
+static int tg_main_wb_wants_tui(char **argv)
+{
+    struct WBStartup *wb = (struct WBStartup *)argv;
+    long i;
+
+    if (wb == 0 || wb->sm_ArgList == 0) {
+        return 0;
+    }
+    for (i = 0; i < wb->sm_NumArgs; ++i) {
+        const char *n = (const char *)wb->sm_ArgList[i].wa_Name;
+        const char *p;
+
+        for (p = n; p != 0 && *p != '\0'; ++p) {
+            if ((p[0] == 'T' || p[0] == 't') &&
+                (p[1] == 'U' || p[1] == 'u') &&
+                (p[2] == 'I' || p[2] == 'i')) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+#else
+static int tg_main_wb_wants_tui(char **argv)
+{
+    (void)argv;
+    return 0;
+}
+#endif
+
 int main(int argc, char **argv)
 {
     /*
@@ -33,18 +69,42 @@ int main(int argc, char **argv)
      * simply does not activate.
      */
     if (argc == 0) {
-        static char *wb_argv[3];
-        FILE *redir;
-        /* Redirect BEFORE any output so the lazy console is never opened. */
-        redir = freopen("NIL:", "w", stdout);
-        (void)redir;
-        redir = freopen("NIL:", "w", stderr);
-        (void)redir;
-        tg_platform_workbench_init();
-        wb_argv[0] = "TelegramAmiga";
-        wb_argv[1] = "--gui-live";
-        wb_argv[2] = "telegram-peers.txt";
-        return tg_app_run(3, wb_argv);
+        /* Workbench: pick GUI vs TUI from the launch icon's name. A tool icon
+           for the binary launches the GUI; the TUI ships as a project icon
+           named "...-TUI" whose DefaultTool is this binary, so scanning the
+           WBStartup arg names for "TUI" tells the two apart -- no wrapper
+           scripts (papiosaur / Easy2Install suggestion). */
+        int want_tui = tg_main_wb_wants_tui(argv);
+
+        if (want_tui) {
+            static char *tui_argv[6];
+
+            tg_platform_workbench_init();
+            if (!tg_platform_workbench_tui_console()) {
+                return 0; /* no console possible: nothing sane to do */
+            }
+            tui_argv[0] = "TelegramAmiga";
+            tui_argv[1] = "--mtproto-start-file";
+            tui_argv[2] = "data/telegram-api.txt";
+            tui_argv[3] = "telegram-auth.bin";
+            tui_argv[4] = "data/phone-code-hash.txt";
+            tui_argv[5] = "data/telegram-peers.txt";
+            return tg_app_run(6, tui_argv);
+        } else {
+            static char *wb_argv[3];
+            FILE *redir;
+            /* GUI: no console -- redirect BEFORE any output so the lazy console
+               window is never opened. */
+            redir = freopen("NIL:", "w", stdout);
+            (void)redir;
+            redir = freopen("NIL:", "w", stderr);
+            (void)redir;
+            tg_platform_workbench_init();
+            wb_argv[0] = "TelegramAmiga";
+            wb_argv[1] = "--gui-live";
+            wb_argv[2] = "data/telegram-peers.txt";
+            return tg_app_run(3, wb_argv);
+        }
     }
     return tg_app_run(argc, argv);
 }

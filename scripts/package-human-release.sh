@@ -6,10 +6,11 @@
 # Build the human-facing release packages for Telegram Amiga.
 # Version comes from include/tg_version.h (override with VERSION=... if needed).
 #
-# Each package contains ONLY the program, the two launchers (GUI + TUI) with
-# their icons, the PUBLIC Telegram API app credentials and per-architecture
-# IT/EN manuals. No user session is ever bundled: telegram-auth.bin and the
-# peer cache are created locally by the user on first login (see the manual).
+# Each package contains ONLY the program (one binary), its two self-launching
+# icons (TelegramAmiga = GUI, TelegramAmiga-TUI = console; no launcher scripts),
+# the PUBLIC Telegram API app credentials and per-architecture IT/EN manuals.
+# No user session is ever bundled: telegram-auth.bin and the peer cache are
+# created locally by the user on first login (see the manual).
 
 set -eu
 
@@ -68,8 +69,8 @@ fill_platform_text() {
 - Photos/files are shown as [Photo] / [File] labels (no image decoding on 68k).
 - The cloud-password (2FA) step is heavy on a 68k (PBKDF2) and can take a while.
 - First login: on some 68k setups the in-GUI fresh login is still rough. The
-  reliable path is to log in ONCE with TelegramTUI (the console launcher), then
-  use TelegramGUI from then on (it reuses the saved login).
+  reliable path is to log in ONCE with TelegramAmiga-TUI (the text/console client), then
+  use TelegramAmiga from then on (it reuses the saved login).
 - Emoji are drawn as text emoticons (:) :D <3); the console has no emoji font."
         req_it="- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) con uno stack TCP/IP (Roadshow, AmiTCP,
   Miami/MiamiDx) che fornisca bsdsocket.library, e una connessione internet.
@@ -84,8 +85,8 @@ fill_platform_text() {
 - Il passo della password cloud (2FA) e' pesante su 68k (PBKDF2) e puo' metterci
   un po'.
 - Primo accesso: su alcune configurazioni 68k il login fresco dentro la GUI e'
-  ancora instabile. La via affidabile e' accedere UNA volta con TelegramTUI (il
-  launcher console), poi usare TelegramGUI (riusa il login salvato)."
+  ancora instabile. La via affidabile e' accedere UNA volta con TelegramAmiga-TUI (il
+  client console), poi usare TelegramAmiga (riusa il login salvato)."
         ;;
     "MorphOS")
         req_en="- MorphOS (3.x) with its TCP/IP stack and an internet connection.
@@ -139,11 +140,11 @@ Telegram Amiga - $2 - alpha $VERSION
 A from-scratch, native Telegram (MTProto) client. Zero dependencies: no MUI,
 no ixemul, no AmiSSL. Two clients, one engine:
 
-  TelegramGUI  - graphical (Intuition), with scrollbars + mouse.
-  TelegramTUI  - text-mode / console.
+  TelegramAmiga  - graphical (Intuition), with scrollbars + mouse.
+  TelegramAmiga-TUI  - text-mode / console.
 
 Quick start: copy this drawer to a WRITABLE volume, then double-click
-TelegramGUI (or TelegramTUI). First run signs you in (phone -> code -> 2FA).
+TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
 New in $VERSION: FILE SHARING -- download any received file (right-click ->
 Download) and send one to the open chat (menu: Send file...), up to 10 MB.
@@ -183,14 +184,14 @@ $req_en
 
 Two launchers
 -------------
-- TelegramGUI -- the native Intuition/GadTools GUI (chat list + conversation).
+- TelegramAmiga -- the native Intuition/GadTools GUI (chat list + conversation).
   Double-click it: it starts the GUI directly, with no flashing console window.
-- TelegramTUI -- a full-screen text/console client for low-end or mouse-less
+- TelegramAmiga-TUI -- a full-screen text/console client for low-end or mouse-less
   setups. Both share the same login and the same saved session.
 
 First start (logging in)
 ------------------------
-1. Unpack the drawer and double-click TelegramGUI (or TelegramTUI).
+1. Unpack the drawer and double-click TelegramAmiga (or TelegramAmiga-TUI).
 2. If there is no saved login, a login panel appears. Enter your phone number
    in full international form (for example +39 333 1234567), then the code
    Telegram sends you. If your account has a cloud password (2FA), type it on
@@ -296,14 +297,14 @@ $req_it
 
 I due launcher
 --------------
-- TelegramGUI -- la GUI nativa Intuition/GadTools (lista chat + conversazione).
+- TelegramAmiga -- la GUI nativa Intuition/GadTools (lista chat + conversazione).
   Doppio click: avvia direttamente la GUI, senza finestra console che lampeggia.
-- TelegramTUI -- un client testuale a schermo intero per macchine leggere o
+- TelegramAmiga-TUI -- un client testuale a schermo intero per macchine leggere o
   senza mouse. Condividono lo stesso login e la stessa sessione salvata.
 
 Primo avvio (accesso)
 ---------------------
-1. Scompatta il drawer e fai doppio click su TelegramGUI (o TelegramTUI).
+1. Scompatta il drawer e fai doppio click su TelegramAmiga (o TelegramAmiga-TUI).
 2. Se non c'e' un login salvato, compare il pannello di accesso. Inserisci il
    numero di telefono in formato internazionale completo (es. +39 333 1234567),
    poi il codice che Telegram ti invia. Se il tuo account ha una password cloud
@@ -451,10 +452,10 @@ beyond your system's own bsdsocket stack.
 
 Two programs share one engine and one saved login:
 
-  TelegramGUI  - the native Intuition/GadTools GUI: chat list with real
+  TelegramAmiga  - the native Intuition/GadTools GUI: chat list with real
                  profile-picture avatars, message bubbles, scrollbars,
                  mouse wheel, context menus.
-  TelegramTUI  - the text/console client, at home on a 68030 with a
+  TelegramAmiga-TUI  - the text/console client, at home on a 68030 with a
                  serial console or an ssh session.
 
 WHAT CAN I ACTUALLY DO WITH IT?
@@ -476,7 +477,7 @@ on its own screen if you prefer a dedicated page for chatting.
 GETTING STARTED
 ---------------
 1. Copy this drawer to a WRITABLE volume (not from the archive directly).
-2. Double-click TelegramGUI (or TelegramTUI on very low-end setups).
+2. Double-click TelegramAmiga (or TelegramAmiga-TUI on very low-end setups).
 3. First run walks you through the normal Telegram login: phone number,
    the code Telegram sends you, and your cloud password if you use
    two-factor. That is all -- next time it goes straight to your chats.
@@ -539,13 +540,16 @@ package_one() {
     mkdir -p "$dest"
 
     cp "$binary" "$dest/TelegramAmiga"
-    # Launchers (shared with the repo). TelegramGUI's icon is flashless
-    # (DefaultTool = TelegramAmiga, Stack 1 MiB): a double-click starts the GUI
-    # directly. TelegramTUI keeps the IconX console launcher.
-    cp "$ROOT_DIR/scripts/TelegramGUI" "$dest/TelegramGUI"
-    cp "$ROOT_DIR/scripts/TelegramTUI" "$dest/TelegramTUI"
-    cp "$ROOT_DIR/assets/TelegramGUI.info" "$dest/TelegramGUI.info"
-    cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$dest/TelegramTUI.info"
+    # Self-launching, script-free (papiosaur / Easy2Install suggestion). Two
+    # byte-identical flashless icons (DefaultTool = TelegramAmiga, Stack 1 MiB)
+    # both point at the one binary; the binary reads the WBStartup arg names and
+    # picks GUI vs TUI. TelegramAmiga.info owns the binary itself -> GUI.
+    # TelegramAmiga-TUI.info owns a 0-byte marker whose name carries "TUI" -> the
+    # binary opens a CON: window and runs the console client. No IconX, no shell
+    # scripts.
+    cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
+    : > "$dest/TelegramAmiga-TUI"
+    cp "$ROOT_DIR/assets/TelegramAmiga-TUI.info" "$dest/TelegramAmiga-TUI.info"
     mkdir -p "$dest/data"
     cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/data/telegram-api.txt"
 
