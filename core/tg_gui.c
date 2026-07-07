@@ -1544,13 +1544,17 @@ static void tg_gui_paint_main(const tg_gui_state *state,
            [transcript_top, transcript_bottom] inside the bubble. */
         if (y + h > transcript_top && y < transcript_bottom) {
             if (i == state->selected_msg && !message->is_system) {
-                /* Clicked-row highlight: a left accent bar, like the selected
-                   chat in the sidebar, so you can see where you are. */
+                /* Clicked-row highlight, same language as the selected chat
+                   row in the sidebar: the darker SELECT tint across the row
+                   plus the left accent bar; the bubble then paints on top. */
                 int by = (y > transcript_top) ? y : transcript_top;
                 int bb = (y + h < transcript_bottom) ? (y + h)
                                                      : transcript_bottom;
 
                 if (bb > by) {
+                    backend->fill_rect(backend, TG_GUI_PEN_SELECT,
+                                       tg_gui_make_rect(area_x - 6, by,
+                                                        area_w + 6, bb - by));
                     backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
                                        tg_gui_make_rect(area_x - 6, by, 3,
                                                         bb - by));
