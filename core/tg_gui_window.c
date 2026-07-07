@@ -1796,6 +1796,12 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     tags[i++].ti_Data = TRUE;
     tags[i].ti_Tag = WA_CloseGadget;
     tags[i++].ti_Data = TRUE;
+#if defined(__amigaos4__)
+    /* OS4 titlebar iconify gadget (like OWB's): a click sends IDCMP_CLOSEWINDOW
+       with Code == 1, which we route to the same AppIcon park as the menu. */
+    tags[i].ti_Tag = WA_IconifyGadget;
+    tags[i++].ti_Data = TRUE;
+#endif
     tags[i].ti_Tag = WA_SizeGadget;
     tags[i++].ti_Data = TRUE;
     /* Open INACTIVE: activation is what makes the input.device/intuition task
@@ -2157,8 +2163,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             }
 
             if (msg_class == IDCMP_CLOSEWINDOW) {
-                tg_gui_log("window: close gadget");
-                done = 1;
+#if defined(__amigaos4__)
+                if (msg_code == 1) { /* the iconify gadget, not a real close */
+                    tg_gui_log("window: iconify gadget");
+                    done = 2; /* park on the AppIcon, same as the menu item */
+                } else
+#endif
+                {
+                    tg_gui_log("window: close gadget");
+                    done = 1;
+                }
             } else if (msg_class == IDCMP_VANILLAKEY &&
                        state->mode != TG_GUI_MODE_CHAT) {
                 /* A login screen owns the keyboard until the session opens. */
