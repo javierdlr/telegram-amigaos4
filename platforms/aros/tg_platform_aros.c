@@ -44,6 +44,10 @@ struct Library *SocketBase = 0;
 
 #include <time.h>
 
+#if defined(__AROS__) || defined(__amigaos4__) || defined(__MORPHOS__) || defined(__amigaos3__) || defined(__m68k__)
+#include <workbench/workbench.h>
+#include <proto/icon.h>
+#endif
 #include "tg_platform.h"
 #include "tg_mtproto_crypto.h"
 
@@ -1160,3 +1164,41 @@ void tg_platform_display_beep(void)
     }
 #endif
 }
+#if defined(__AROS__)
+
+void tg_platform_ensure_drawer_icon(const char *drawer)
+{
+    struct Library *IconBase;
+    struct DiskObject *dobj;
+
+    if (drawer == 0 || drawer[0] == '\0') {
+        return;
+    }
+    IconBase = OpenLibrary((CONST_STRPTR)"icon.library", 36L);
+    if (IconBase == 0) {
+        return;
+    }
+    {
+
+        dobj = GetDiskObject((STRPTR)drawer);
+        if (dobj != 0) {
+            FreeDiskObject(dobj); /* the drawer already has an icon */
+        } else {
+            dobj = GetDefDiskObject(WBDRAWER);
+            if (dobj != 0) {
+                dobj->do_CurrentX = NO_ICON_POSITION;
+                dobj->do_CurrentY = NO_ICON_POSITION;
+                (void)PutDiskObject((STRPTR)drawer, dobj);
+                FreeDiskObject(dobj);
+            }
+        }
+
+    }
+    CloseLibrary(IconBase);
+}
+#else
+void tg_platform_ensure_drawer_icon(const char *drawer)
+{
+    (void)drawer; /* host build: no Workbench icons */
+}
+#endif

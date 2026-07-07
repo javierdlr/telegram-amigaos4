@@ -58,6 +58,11 @@ void tg_platform_sleep_seconds(unsigned long seconds);
  */
 void tg_platform_note_input_event(unsigned long a, unsigned long b);
 
+/* Best-effort: give `drawer` a Workbench icon (<drawer>.info with the system
+   default drawer image) so a program-created directory -- downloads/ -- is
+   visible to the user. No-op where icons do not exist (host) or on failure. */
+void tg_platform_ensure_drawer_icon(const char *drawer);
+
 /**
  * Returns the local wall-clock time as a Unix-style epoch (seconds since
  * 1970-01-01), read straight from the Amiga system clock so it matches what the

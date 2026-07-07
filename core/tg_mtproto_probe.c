@@ -13512,6 +13512,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     }
     tg_gui_dl_sanitize_name(doc.file_name, safe, sizeof(safe));
     (void)mkdir("downloads", 0777);
+    tg_platform_ensure_drawer_icon("downloads"); /* visible on Workbench */
     sprintf(path, "downloads/%s", safe);
     f = fopen(path, "wb");
     if (f == 0) {
