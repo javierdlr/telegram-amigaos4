@@ -13210,10 +13210,15 @@ static int tg_gui_avfetch_n = 0;
    chunk; the other lanes recv 128 KB -> 64 KB. (This was the file-download
    failure on files big enough to need a FULL chunk; small files returned a
    short reply and slipped under the limit.) */
+/* The getFile RESPONSE (chunk bytes + upload.file wrapper + envelope) must fit
+   inside TG_MTPROTO_ENCRYPTED_BODY_MAX after decryption -- file bytes are not
+   gzip-compressed, so the raw chunk lands in that buffer whole. m68k body is
+   12 KB -> 8 KB chunk; the others hold 72 KB -> 64 KB chunk. Both are valid
+   getFile limits (4096*2^k dividing 1 MB). */
 #if defined(__m68k__)
-#define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, under the 48 KB m68k recv buffer */
+#define TG_GUI_DL_CHUNK 8192UL    /* 8 KB, within the 12 KB decrypted body */
 #else
-#define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, under the 128 KB recv buffer */
+#define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, within the 72 KB decrypted body */
 #endif
 
 static void tg_gui_dl_sanitize_name(const char *in, char *out,

@@ -9,7 +9,17 @@
 #include "tg_mtproto_rsa.h"
 #include "tg_mtproto_tl.h"
 
+/* Max size of a DECRYPTED MTProto message body. getHistory/dialogs bodies
+   arrive gzip-compressed so they fit small; getFile chunks are RAW file bytes
+   with no compression, so this must hold a whole download chunk (+ the
+   upload.file wrapper and message envelope) or the decrypt rejects it and the
+   transfer reads as "no reply". PPC/AROS have RAM to spare -> 72 KB (a 64 KB
+   chunk); m68k stays lean at 12 KB and uses an 8 KB chunk. */
+#if defined(__m68k__)
 #define TG_MTPROTO_ENCRYPTED_BODY_MAX 12288U
+#else
+#define TG_MTPROTO_ENCRYPTED_BODY_MAX 73728U
+#endif
 
 typedef struct tg_mtproto_encrypted_message {
     unsigned long server_salt_hi;
