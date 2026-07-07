@@ -324,6 +324,11 @@ int tg_gui_input_click_caret(const tg_gui_state *state,
 int tg_gui_search_click_caret(const tg_gui_state *state,
                               tg_gui_backend *backend, int x, int y);
 
+/* Click over the '@' mention popup -> candidate index, or -1 if outside/absent.
+   Lets the mouse pick a mention the way the cursor keys already do. */
+int tg_gui_mention_click(const tg_gui_state *state, tg_gui_backend *backend,
+                         int x, int y);
+
 /* Window layer: drop the cached avatar pen grid for one peer (after a fresh
    download) so the next repaint rebuilds it from the disk JPEG. */
 void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo);

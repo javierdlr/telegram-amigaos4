@@ -355,6 +355,72 @@ static int tg_gui_text_click_offset(tg_gui_backend *backend, const char *text,
     return (int)len;
 }
 
+/* Click over the '@' mention popup -> the 0-based candidate index under the
+   pointer, or -1 when the pointer is outside it. Recomputes the exact
+   geometry tg_gui_paint_input_row draws the popup with, so a click lands on
+   the same row the eye sees. Returns -1 unless the popup is actually up. */
+int tg_gui_mention_click(const tg_gui_state *state, tg_gui_backend *backend,
+                         int x, int y)
+{
+    int width;
+    int height;
+    int lh;
+    int sidebar_w;
+    int status_h;
+    int content_h;
+    int rows;
+    int input_h;
+    int box_top;
+    int ih;
+    int n;
+    int bw;
+    int bh;
+    int bx;
+    int by;
+    int idx;
+
+    if (state == 0 || backend == 0 || state->mode != TG_GUI_MODE_CHAT ||
+        !state->composing || !state->mention_active ||
+        state->mention_count <= 0) {
+        return -1;
+    }
+    width = backend->width(backend);
+    height = backend->height(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || height <= 0 || lh <= 0) {
+        return -1;
+    }
+    sidebar_w = tg_gui_sidebar_w(width);
+    status_h = lh + 6;
+    content_h = height - status_h;
+    rows = tg_gui_input_rows(state, backend, width, sidebar_w);
+    input_h = (rows * lh) + 14;
+    box_top = content_h - input_h;
+    ih = lh + 4;
+    n = state->mention_count;
+    bw = 220;
+    bh = (n * ih) + 4;
+    bx = sidebar_w + 8;
+    by = box_top - bh - 2;
+    if (state->reply_to_id != 0UL) {
+        by -= (lh + 4);
+    }
+    if (bx + bw > width - 8) {
+        bw = width - 8 - bx;
+    }
+    if (by < 0) {
+        by = 0;
+    }
+    if (x < bx || x >= bx + bw || y < by + 2 || y >= by + 2 + (n * ih)) {
+        return -1;
+    }
+    idx = (y - (by + 2)) / ih;
+    if (idx < 0 || idx >= n) {
+        return -1;
+    }
+    return idx;
+}
+
 /* Click in the sidebar search box -> caret byte offset in search_query, or -1
    when the click is outside the box. Geometry mirrors the search painter. */
 int tg_gui_search_click_caret(const tg_gui_state *state,

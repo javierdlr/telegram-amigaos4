@@ -2625,6 +2625,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_paint(state, &backend);
                         }
                     }
+                } else if (msg_code == SELECTDOWN && state->composing &&
+                           state->mention_active &&
+                           tg_gui_mention_click(state, &backend, hx, hy) >= 0) {
+                    /* Click a candidate in the '@' popup: select it and insert,
+                       exactly like ENTER/TAB on the keyboard-highlighted row. */
+                    state->mention_sel =
+                        tg_gui_mention_click(state, &backend, hx, hy);
+                    tg_gui_window_mention_complete(state);
+                    tg_gui_window_paint(state, &backend);
                 } else if (msg_code == SELECTDOWN && state->ctx_visible) {
                     /* A left click while the context menu is open: run the item
                        under the pointer, or dismiss when the click is outside. */
