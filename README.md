@@ -24,17 +24,17 @@ Two front-ends share one engine:
 
 ![Telegram Amiga GUI on AmigaOS 4](assets/screenshots/telegram-amiga-gui-os4.png)
 
-Status: **alpha 0.0.4** — everyday direct-message and group chat works on all
-five platforms below. 0.0.4 adds edit & delete of your own messages (via the
-right-click context menu, which now highlights the hovered item), live read
-receipts (the two blue ticks flip in real time), sync of messages you send from
-another device, message times that follow the Amiga system clock (DST included),
-and a clearer 2FA login (no cloud password? just press Enter) — on top of
-0.0.3's replies, drawn delivery checkmarks, flicker-free double buffering and
-scroll-to-newest, and 0.0.2's history paging, online chat search, persistent
-unread badges, drag-reorder / remove of chats, group typing names, the full
-chat list on first login, long & multi-line messages, and the flashless
-Workbench launch.
+Status: **alpha 0.0.5** — everyday direct-message and group chat works on all
+five platforms below. 0.0.5 adds real profile-picture avatars in the chat
+list (blurred previews instantly, crisp after you open a chat), @username
+autocomplete in groups, a window that remembers its position, an optional
+own screen, proper rendering of line breaks and bullet lists, a tidy
+program drawer (auxiliary files in data/, avatar photos in avatars/, with
+automatic migration), stronger first-login randomness, and a fix for a
+right-click that could freeze the whole system — on top of 0.0.4's edit &
+delete, live read receipts, multi-device sync and system-clock times,
+0.0.3's replies, checkmarks and flicker-free drawing, and 0.0.2's history
+paging, search, badges and chat management.
 
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:
@@ -47,11 +47,11 @@ per-architecture IT/EN manuals — and **no private files**.
 
 | Platform | CPU | Release |
 |---|---|---|
-| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.4](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.4) |
-| AmigaOS 4.x | PPC | [os4-alpha-0.0.4](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.4) |
-| MorphOS | PPC | [morphos-alpha-0.0.4](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.4) |
-| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.4](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.4) |
-| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.4](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.4) |
+| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.5](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.5) |
+| AmigaOS 4.x | PPC | [os4-alpha-0.0.5](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.5) |
+| MorphOS | PPC | [morphos-alpha-0.0.5](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.5) |
+| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.5](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.5) |
+| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.5](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.5) |
 
 All releases: <https://github.com/kaffeine1/telegram-amiga/releases>
 
