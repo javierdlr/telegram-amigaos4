@@ -2024,20 +2024,10 @@ static void tg_gui_paint_context_menu(const tg_gui_state *state,
     }
     n = tg_gui_context_items(state, labels, ids);
     tg_gui_context_box(state, n, width, height, lh, &bx, &by, &bw, &bh, &ih);
-    /* Raised 3D bevel in the app's own pens, so the popup reads like the NewLook
-       system menus (matching FORM even though the palette stays on-theme): a
-       SURFACE body (lighter than the WINDOW transcript behind it) with light
-       edges top/left and dark edges bottom/right. */
+    backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+                       tg_gui_make_rect(bx - 1, by - 1, bw + 2, bh + 2));
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                        tg_gui_make_rect(bx, by, bw, bh));
-    backend->fill_rect(backend, TG_GUI_PEN_TEXT_DIM,
-                       tg_gui_make_rect(bx, by, bw, 1));          /* top light */
-    backend->fill_rect(backend, TG_GUI_PEN_TEXT_DIM,
-                       tg_gui_make_rect(bx, by, 1, bh));          /* left light */
-    backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
-                       tg_gui_make_rect(bx, by + bh - 1, bw, 1)); /* bottom dark */
-    backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
-                       tg_gui_make_rect(bx + bw - 1, by, 1, bh)); /* right dark */
     for (i = 0; i < n; ++i) {
         int text_pen = TG_GUI_PEN_TEXT;
 
@@ -2045,8 +2035,7 @@ static void tg_gui_paint_context_menu(const tg_gui_state *state,
             /* Highlight the entry under the pointer so the user sees which of
                Reply/Edit/Delete the click will pick (accent fill + accent text). */
             backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
-                               tg_gui_make_rect(bx + 1, by + 2 + (i * ih),
-                                                bw - 2, ih));
+                               tg_gui_make_rect(bx, by + 2 + (i * ih), bw, ih));
             text_pen = TG_GUI_PEN_ACCENT_TEXT;
         }
         backend->draw_text(backend, text_pen, bx + 8,

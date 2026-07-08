@@ -1640,8 +1640,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     int init_own;
     int want_own; /* own-screen preference, toggled live by the menu */
     struct Screen *own_scr;
-    struct TagItem tags[24]; /* headroom: +WA_NewLookMenus over the old 22 */
-    struct TagItem lm_tags[2]; /* GTMN_NewLookMenus for LayoutMenusA */
+    struct TagItem tags[22];
     struct ColorMap *cmap;
     struct TextFont *font;
     APTR vi;
@@ -1843,13 +1842,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
        knob is grabbed, so the extra reports cost nothing when idle. */
     tags[i].ti_Tag = WA_ReportMouse;
     tags[i++].ti_Data = TRUE;
-    /* NewLook (3D) menus on every platform for a uniform look: WA_NewLookMenus
-       is V39+, so OS3/MorphOS/AROS/OS4 all honour it (PR #6 had it OS4-only).
-       This MUST come BEFORE the WA_CustomScreen block: the own-screen
-       open-failure fallback below neutralises tags[i-2] assuming it is
-       WA_CustomScreen, so that tag has to stay the one right before TAG_END. */
-    tags[i].ti_Tag = WA_NewLookMenus;
-    tags[i++].ti_Data = TRUE;
     if (own_scr != 0) {
         /* OWNER window on our private screen (WA_CustomScreen, not a visitor):
            CloseScreen at teardown stays deterministically under our control. */
@@ -1937,12 +1929,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         vi = GetVisualInfoA(ctx.window->WScreen, 0);
         if (vi != 0) {
             menu = CreateMenusA(tg_gui_newmenu, 0);
-            /* Lay the menu out with the NewLook (3D) style on every lane. */
-            lm_tags[0].ti_Tag = GTMN_NewLookMenus;
-            lm_tags[0].ti_Data = TRUE;
-            lm_tags[1].ti_Tag = TAG_END;
-            lm_tags[1].ti_Data = 0;
-            if (menu != 0 && LayoutMenusA(menu, vi, lm_tags)) {
+            if (menu != 0 && LayoutMenusA(menu, vi, 0)) {
                 /* Reflect the current own-screen mode in the toggle's tick. */
                 if (want_own && menu->FirstItem != 0) {
                     struct MenuItem *it2 = menu->FirstItem;
@@ -2064,22 +2051,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
        regardless of activation; the poll keeps its own cadence/composing
        guards, so an ACTIVE window behaves exactly as before. If any setup step
        fails we simply keep the old active-only behavior. */
-#if defined(__amigaos4__)
-    /* CreateMsgPort/CreateIORequest are the classic calls; OS4 prefers the
-       exec object allocator (PR #6). Behaviour is identical, just non-deprecated. */
-    timer_port = AllocSysObject(ASOT_PORT, NULL);
-#else
     timer_port = CreateMsgPort();
-#endif
     if (timer_port != 0) {
-#if defined(__amigaos4__)
-        timer_req = (tg_gui_timereq *)AllocSysObjectTags(
-            ASOT_IOREQUEST, ASOIOR_Size, sizeof(tg_gui_timereq),
-            ASOIOR_ReplyPort, timer_port, TAG_END);
-#else
         timer_req = (tg_gui_timereq *)CreateIORequest(timer_port,
                                                       sizeof(tg_gui_timereq));
-#endif
     }
     if (timer_req != 0 &&
         OpenDevice((CONST_STRPTR)"timer.device", UNIT_VBLANK,
@@ -3316,19 +3291,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         timer_ok = 0;
     }
     if (timer_req != 0) {
-#if defined(__amigaos4__)
-        FreeSysObject(ASOT_IOREQUEST, timer_req);
-#else
         DeleteIORequest((struct IORequest *)timer_req);
-#endif
         timer_req = 0;
     }
     if (timer_port != 0) {
-#if defined(__amigaos4__)
-        FreeSysObject(ASOT_PORT, timer_port);
-#else
         DeleteMsgPort(timer_port);
-#endif
         timer_port = 0;
     }
     tg_gui_amiga_buffer_free(&ctx); /* free the off-screen double-buffer */
@@ -3403,11 +3370,7 @@ static int tg_gui_window_iconify_wait(void)
     if (WorkbenchBase == 0 || IconBase == 0) {
         goto out;
     }
-#if defined(__amigaos4__)
-    port = AllocSysObject(ASOT_PORT, NULL);
-#else
     port = CreateMsgPort();
-#endif
     if (port == 0) {
         goto out;
     }
@@ -3443,11 +3406,7 @@ out:
         FreeDiskObject(dobj);
     }
     if (port != 0) {
-#if defined(__amigaos4__)
-        FreeSysObject(ASOT_PORT, port);
-#else
         DeleteMsgPort(port);
-#endif
     }
 #if defined(__amigaos4__)
     if (IIcon != 0) {
