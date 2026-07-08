@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 CC ?= ppc-amigaos-gcc
-CFLAGS ?= -Wall -Wextra -O2 -Iinclude
+CFLAGS ?= -Wall -Wextra -O2 -Iinclude -gstabs
 SDK_INCLUDE ?= SDK:include/include_h
 SDK_NETINCLUDE ?= SDK:include/netinclude
 TARGET ?= build/TelegramAmiga
@@ -52,8 +52,9 @@ $(TARGET): $(OBJ)
 	mkdir -p $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)
 
-HDRS_ALL := $(wildcard include/*.h) $(wildcard third_party/*/*.h)
-$(OBJ_DIR)/%.o: %.c $(HEADERS) $(HDRS_ALL)
+#HDRS_ALL := $(wildcard include/*.h) $(wildcard third_party/*/*.h)
+#$(OBJ_DIR)/%.o: %.c $(HEADERS) $(HDRS_ALL)
+$(OBJ_DIR)/%.o: %.c $(HEADERS)
 	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
