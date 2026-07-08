@@ -1640,7 +1640,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     int init_own;
     int want_own; /* own-screen preference, toggled live by the menu */
     struct Screen *own_scr;
-    struct TagItem tags[22];
+    struct TagItem tags[22+1]; // +1 __amigaos4__
     struct ColorMap *cmap;
     struct TextFont *font;
     APTR vi;
@@ -1848,6 +1848,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         tags[i].ti_Tag = WA_CustomScreen;
         tags[i++].ti_Data = TG_GUI_TAG(own_scr);
     }
+#if defined(__amigaos4__)
+    tags[i].ti_Tag = WA_NewLookMenus;
+    tags[i++].ti_Data = TRUE;
+#endif
     tags[i].ti_Tag = TAG_END;
     tags[i++].ti_Data = 0;
 
@@ -1929,7 +1933,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         vi = GetVisualInfoA(ctx.window->WScreen, 0);
         if (vi != 0) {
             menu = CreateMenusA(tg_gui_newmenu, 0);
+#if defined(__amigaos4__)
+            if (menu != 0 && LayoutMenus(menu, vi, GTMN_NewLookMenus,TRUE, TAG_END)) {
+#else
             if (menu != 0 && LayoutMenusA(menu, vi, 0)) {
+#endif
                 /* Reflect the current own-screen mode in the toggle's tick. */
                 if (want_own && menu->FirstItem != 0) {
                     struct MenuItem *it2 = menu->FirstItem;
@@ -2051,14 +2059,29 @@ static int tg_gui_run_window_once(tg_gui_state *state)
        regardless of activation; the poll keeps its own cadence/composing
        guards, so an ACTIVE window behaves exactly as before. If any setup step
        fails we simply keep the old active-only behavior. */
+#if defined(__amigaos4__)
+    timer_port = AllocSysObject(ASOT_PORT, NULL);
+#else
     timer_port = CreateMsgPort();
+#endif
     if (timer_port != 0) {
+#if defined(__amigaos4__)
+        timer_req = AllocSysObjectTags(ASOT_IOREQUEST,
+                                       ASOIOR_Size,      sizeof(tg_gui_timereq),
+                                       ASOIOR_ReplyPort, timer_port,
+                                      TAG_END);
+#else
         timer_req = (tg_gui_timereq *)CreateIORequest(timer_port,
                                                       sizeof(tg_gui_timereq));
+#endif
     }
     if (timer_req != 0 &&
         OpenDevice((CONST_STRPTR)"timer.device", UNIT_VBLANK,
                    (struct IORequest *)timer_req, 0) == 0) {
+/*#if defined (__amigaso4__
+        TimerBase = (struct Device *)timer_req->Request.io_Device;
+        ITimer = (struct TimerIFace *)GetInterface( (struct Library *)TimerBase, "main", 1, NULL );
+#endif*/
         timer_ok = 1;
         TG_GUI_TR_NODE(timer_req).io_Command = TR_ADDREQUEST;
         TG_GUI_TR_SECS(timer_req) = TG_GUI_HEARTBEAT_SECS;
@@ -3286,11 +3309,19 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         timer_ok = 0;
     }
     if (timer_req != 0) {
+#if defined(__amigaos4__)
+        FreeSysObject(ASOT_IOREQUEST, timer_req);
+#else
         DeleteIORequest((struct IORequest *)timer_req);
+#endif
         timer_req = 0;
     }
     if (timer_port != 0) {
+#if defined(__amigaos4__)
+        FreeSysObject(ASOT_PORT, timer_port);
+#else
         DeleteMsgPort(timer_port);
+#endif
         timer_port = 0;
     }
     tg_gui_amiga_buffer_free(&ctx); /* free the off-screen double-buffer */
@@ -3365,7 +3396,11 @@ static int tg_gui_window_iconify_wait(void)
     if (WorkbenchBase == 0 || IconBase == 0) {
         goto out;
     }
+#if defined (__amigaos4__)
+    port = AllocSysObject(ASOT_PORT, NULL);
+#else
     port = CreateMsgPort();
+#endif
     if (port == 0) {
         goto out;
     }
@@ -3397,7 +3432,11 @@ out:
         FreeDiskObject(dobj);
     }
     if (port != 0) {
+#if defined(__amigaos4__)
+        FreeSysObject(ASOT_PORT, port);
+#else
         DeleteMsgPort(port);
+#endif
     }
 #if defined(__amigaos4__)
     if (IIcon != 0) {
