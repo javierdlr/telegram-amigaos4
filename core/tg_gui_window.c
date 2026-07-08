@@ -1843,16 +1843,19 @@ static int tg_gui_run_window_once(tg_gui_state *state)
        knob is grabbed, so the extra reports cost nothing when idle. */
     tags[i].ti_Tag = WA_ReportMouse;
     tags[i++].ti_Data = TRUE;
+    /* NewLook (3D) menus on every platform for a uniform look: WA_NewLookMenus
+       is V39+, so OS3/MorphOS/AROS/OS4 all honour it (PR #6 had it OS4-only).
+       This MUST come BEFORE the WA_CustomScreen block: the own-screen
+       open-failure fallback below neutralises tags[i-2] assuming it is
+       WA_CustomScreen, so that tag has to stay the one right before TAG_END. */
+    tags[i].ti_Tag = WA_NewLookMenus;
+    tags[i++].ti_Data = TRUE;
     if (own_scr != 0) {
         /* OWNER window on our private screen (WA_CustomScreen, not a visitor):
            CloseScreen at teardown stays deterministically under our control. */
         tags[i].ti_Tag = WA_CustomScreen;
         tags[i++].ti_Data = TG_GUI_TAG(own_scr);
     }
-    /* NewLook (3D) menus on every platform for a uniform look: WA_NewLookMenus
-       is V39+, so OS3/MorphOS/AROS/OS4 all honour it (PR #6 had it OS4-only). */
-    tags[i].ti_Tag = WA_NewLookMenus;
-    tags[i++].ti_Data = TRUE;
     tags[i].ti_Tag = TAG_END;
     tags[i++].ti_Data = 0;
 
