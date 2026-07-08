@@ -12027,6 +12027,38 @@ int tg_mtproto_probe_self_test(void)
             puts("probe self-test: chunk-sized query wrap overflowed");
             return 2;
         }
+        /* ...and its ENCRYPTED form must fit a buffer the size of payload[] /
+           packet[] in send_encrypted_query_limited (the rest of the send-path
+           fix). Reuse big_q as the output; a dummy key/session is enough since
+           we only check the writer does not overflow. */
+        {
+            static unsigned char akey[TG_MTPROTO_AUTH_KEY_LENGTH];
+            unsigned char sid[8];
+            unsigned char pad[64];
+            unsigned long plen = 12UL;
+            tg_mtproto_tl_writer ew;
+
+            for (k = 0UL; k < sizeof(akey); ++k) {
+                akey[k] = (unsigned char)k;
+            }
+            for (k = 0UL; k < sizeof(sid); ++k) {
+                sid[k] = (unsigned char)(0x30U + k);
+            }
+            while (((32UL + bw.length + plen) % 16UL) != 0UL) {
+                ++plen;
+            }
+            for (k = 0UL; k < plen; ++k) {
+                pad[k] = (unsigned char)(0x60U + k);
+            }
+            tg_mtproto_tl_writer_init(&ew, big_q, sizeof(big_q));
+            if (tg_mtproto_write_encrypted_message(
+                    &ew, akey, 0x11111111UL, 0x22222222UL, sid, 0x33333333UL,
+                    0x44444444UL, 1UL, big_out, bw.length, pad, plen) !=
+                TG_MTPROTO_TL_OK) {
+                puts("probe self-test: encrypted chunk exceeds send buffer");
+                return 2;
+            }
+        }
     }
 
     return 0;
