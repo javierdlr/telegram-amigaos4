@@ -158,6 +158,14 @@
 #else
 #define TG_MTPROTO_REPLY_RECV_MAX 131072U
 #endif
+/* Send-side buffers that must hold a whole upload chunk. The saveFilePart query
+   IS a file chunk (unlike getFile, whose query is a tiny ~40-byte request), so
+   the initConnection wrap buffers and the encrypted send buffers have to be
+   chunk-sized or build_init_connection overflows and the upload fails with
+   "Upload failed". Reuse the per-platform message-body bound (12 KB m68k / 72 KB
+   others), which comfortably holds an 8 KB / 64 KB chunk plus the wrap+envelope.
+   This is the send-direction twin of the download PACKET_MAX/body fix. */
+#define TG_MTPROTO_QUERY_SEND_MAX TG_MTPROTO_ENCRYPTED_BODY_MAX
 #define TG_MTPROTO_PEER_USER_CONSTRUCTOR 0x59511722UL
 #define TG_MTPROTO_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
@@ -1138,8 +1146,8 @@ static int tg_mtproto_send_encrypted_query_limited(
     unsigned long query_budget_seconds)
 {
     unsigned char encrypted_padding[64];
-    static unsigned char payload[3072];
-    static unsigned char packet[3200];
+    static unsigned char payload[TG_MTPROTO_QUERY_SEND_MAX];
+    static unsigned char packet[TG_MTPROTO_QUERY_SEND_MAX + 64U];
     /* getHistory of a busy group can return several messages plus the referenced
        users/chats; a too-small buffer makes recv_abridged_packet reject the
        frame (payload > capacity) and the read hard-fails with "Could not read
@@ -2963,8 +2971,8 @@ static int tg_mtproto_build_initialized_query(tg_mtproto_tl_writer *writer,
                                               const unsigned char *query,
                                               unsigned long query_length)
 {
-    static unsigned char initialized_query[1200];
-    static unsigned char layered_query[1300];
+    static unsigned char initialized_query[TG_MTPROTO_QUERY_SEND_MAX];
+    static unsigned char layered_query[TG_MTPROTO_QUERY_SEND_MAX];
     unsigned long initialized_length;
     unsigned long layered_length;
     tg_mtproto_tl_status status;
@@ -3117,7 +3125,8 @@ static int tg_mtproto_send_saved_query_on_context(
     const char *label,
     unsigned int max_receive_attempts)
 {
-    unsigned char wrapped_query[1400];
+    /* static + chunk-sized: the saveFilePart body is a whole file chunk. */
+    static unsigned char wrapped_query[TG_MTPROTO_QUERY_SEND_MAX];
     unsigned long api_id;
     int qrc;
     tg_mtproto_session_status session_status;
@@ -11996,6 +12005,28 @@ int tg_mtproto_probe_self_test(void)
 
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
+    }
+
+    /* Upload send-path guard (the twin of the download body/PACKET_MAX fix): a
+       saveFilePart query IS a whole file chunk, so build_initialized_query must
+       wrap a chunk-sized query without overflowing its buffers. A query at the
+       per-platform send bound stands in for a full upload chunk; the pre-fix
+       1.2 KB wrap buffers failed this and the upload reported "Upload failed". */
+    {
+        static unsigned char big_q[TG_MTPROTO_QUERY_SEND_MAX];
+        static unsigned char big_out[TG_MTPROTO_QUERY_SEND_MAX];
+        unsigned long big_len = TG_MTPROTO_QUERY_SEND_MAX - 2048U;
+        tg_mtproto_tl_writer bw;
+        unsigned long k;
+
+        for (k = 0UL; k < big_len; ++k) {
+            big_q[k] = (unsigned char)((k * 5U + 1U) & 0xffU);
+        }
+        if (tg_mtproto_build_initialized_query(&bw, big_out, sizeof(big_out),
+                                               12345UL, big_q, big_len) != 0) {
+            puts("probe self-test: chunk-sized query wrap overflowed");
+            return 2;
+        }
     }
 
     return 0;
