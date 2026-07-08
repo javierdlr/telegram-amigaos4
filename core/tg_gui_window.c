@@ -2193,7 +2193,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_window_paint(state, &backend);
-                } else if (msg_code == 8 || msg_code == 127) { /* BACKSPACE */
+                } else if (msg_code == 8) { /* BACKSPACE: delete BEFORE the caret */
                     unsigned long n;
                     int sc;
 
@@ -2207,6 +2207,26 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 state->search_query + sc, n - (unsigned long)sc
                                 + 1UL);
                         state->search_caret = sc - 1;
+                        state->search_dirty = 1; /* re-search after the pause */
+                        search_idle_ticks = 0;   /* restart the debounce */
+                        last_key_time = time(0);
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Searching when you pause...");
+                        tg_gui_window_paint(state, &backend);
+                    }
+                } else if (msg_code == 127) { /* Canc/Del: delete AT the caret */
+                    unsigned long n;
+                    int sc;
+
+                    n = (unsigned long)strlen(state->search_query);
+                    sc = state->search_caret;
+                    if (sc < 0 || sc > (int)n) {
+                        sc = (int)n;
+                    }
+                    if (sc < (int)n) { /* forward-delete: pull the tail one left */
+                        memmove(state->search_query + sc,
+                                state->search_query + sc + 1,
+                                n - (unsigned long)sc);
                         state->search_dirty = 1; /* re-search after the pause */
                         search_idle_ticks = 0;   /* restart the debounce */
                         last_key_time = time(0);
@@ -2297,7 +2317,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_window_paint(state, &backend);
-                } else if (msg_code == 8 || msg_code == 127) {
+                } else if (msg_code == 8) { /* BACKSPACE: delete BEFORE the caret */
                     unsigned long n;
                     unsigned long c;
 
@@ -2311,6 +2331,21 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         memmove(&state->input[c - 1UL], &state->input[c],
                                 n - c + 1UL);
                         state->input_caret = (int)(c - 1UL);
+                        tg_gui_window_mention_refresh(state);
+                        tg_gui_window_paint(state, &backend);
+                    }
+                } else if (msg_code == 127) { /* Canc/Del: delete AT the caret */
+                    unsigned long n;
+                    unsigned long c;
+
+                    n = (unsigned long)strlen(state->input);
+                    c = (unsigned long)state->input_caret;
+                    if (c < n) {
+                        /* forward-delete: pull the tail (incl. NUL) one left,
+                           the caret stays put. Backspace (0x08) deletes left;
+                           this splits the two so Canc is not folded into it. */
+                        memmove(&state->input[c], &state->input[c + 1UL],
+                                n - c);
                         tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
