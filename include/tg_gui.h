@@ -293,12 +293,14 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
 #define TG_GUI_CTX_W 108
 /* Item ids returned by tg_gui_context_menu_hit. Which items the popup shows
    depends on the target message: Reply always; Edit + Delete only on an own
-   message that has a server id (you can only edit/delete your own). */
+   message that has a server id (you can only edit/delete your own). Send file is
+   chat-level (not tied to the clicked message) and mirrors the menubar item. */
 #define TG_GUI_CTX_REPLY 0
 #define TG_GUI_CTX_EDIT 1
 #define TG_GUI_CTX_DELETE 2
 #define TG_GUI_CTX_DOWNLOAD 3
-#define TG_GUI_CTX_ITEMS_MAX 4
+#define TG_GUI_CTX_SENDFILE 4
+#define TG_GUI_CTX_ITEMS_MAX 5
 /* Maps a click at renderer-space (x, y) to a context-menu item id
    (TG_GUI_CTX_REPLY/EDIT/DELETE) when the popup is open, or -1 when the click is
    outside it (the caller then dismisses the menu). */

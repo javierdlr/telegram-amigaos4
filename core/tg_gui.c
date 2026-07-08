@@ -1962,6 +1962,11 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
             ++n;
         }
     }
+    /* Chat-level: send a file to the open chat. Always offered (the popup only
+       appears over a conversation) so it need not be reached via the menubar. */
+    labels[n] = "Send file...";
+    ids[n] = TG_GUI_CTX_SENDFILE;
+    ++n;
     return n;
 }
 

@@ -2780,6 +2780,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status), nmsg);
                         }
+                    } else if (it == TG_GUI_CTX_SENDFILE) {
+                        /* Chat-level action (not tied to the clicked message):
+                           send a file to the open chat, same as the menubar
+                           "Send file..." item. */
+                        tg_gui_window_send_file(state, ctx.window, &backend);
                     }
                     tg_gui_window_paint(state, &backend);
                 } else if (msg_code == SELECTUP) {
@@ -3369,7 +3374,11 @@ static int tg_gui_window_iconify_wait(void)
     if (port == 0) {
         goto out;
     }
-    dobj = GetDiskObject((STRPTR)"PROGDIR:TelegramGUI");
+    /* Our own program icon (TelegramAmiga.info) so the AppIcon shows the
+       Telegram image, not a generic tool icon. The pre-0.0.6 name was
+       "TelegramGUI"; after the rename that file no longer ships, so this used to
+       miss and fall through to GetDefDiskObject (the generic icon seen on OS4). */
+    dobj = GetDiskObject((STRPTR)"PROGDIR:TelegramAmiga");
     if (dobj == 0) {
         dobj = GetDefDiskObject(WBTOOL);
     }
