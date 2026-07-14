@@ -294,13 +294,14 @@ static ULONG tg_gui_amiga_rgb32(unsigned char component);
 #else
 #define TG_GUI_AV_SLOTS 32
 #endif
-#if defined(__m68k__)
-#define TG_GUI_AV_POOL 48        /* paletted screens: pens are scarce */
-#define TG_GUI_AV_SHARE_D 192L   /* share pool pens aggressively */
-#else
-#define TG_GUI_AV_POOL 96        /* truecolor screens: pens are cheap */
-#define TG_GUI_AV_SHARE_D 48L    /* much finer colour steps */
-#endif
+/* Pen budget for the shared avatar pool, chosen at RUNTIME from the screen
+   depth when the pool is armed at window open: paletted screens (<= 8 bit)
+   get the lean profile (pens are scarce and shared with Workbench), truecolor
+   RTG screens the rich one. This used to be a compile-time m68k gate, which
+   kept avatars needlessly dull on truecolor RTG under OS3 (e.g. a Vampire):
+   the machine is m68k but its screen affords the fine profile. Arrays are
+   sized for the rich cap; the lean profile just uses less of them. */
+#define TG_GUI_AV_POOL_MAX 96
 
 typedef struct tg_gui_av_slot {
     unsigned long id_hi;
@@ -312,9 +313,14 @@ typedef struct tg_gui_av_slot {
 static tg_gui_av_slot tg_gui_av_slots[TG_GUI_AV_SLOTS];
 static unsigned long tg_gui_av_evict = 0UL;
 static struct ColorMap *tg_gui_av_cmap = 0;
-static LONG tg_gui_av_pool_pen[TG_GUI_AV_POOL];
-static unsigned char tg_gui_av_pool_rgb[TG_GUI_AV_POOL][3];
+static LONG tg_gui_av_pool_pen[TG_GUI_AV_POOL_MAX];
+static unsigned char tg_gui_av_pool_rgb[TG_GUI_AV_POOL_MAX][3];
 static int tg_gui_av_pool_n = 0;
+/* Runtime profile (set where the cmap is armed; lean defaults are the safe
+   fallback if the depth probe ever fails). */
+static int tg_gui_av_pool_cap = 48;   /* 48 paletted / 96 truecolor */
+static long tg_gui_av_share_d = 192L; /* 192 paletted / 48 truecolor */
+static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 
 static void tg_gui_av_reset(void)
 {
@@ -362,7 +368,7 @@ static void tg_gui_av_pool_add(unsigned char r, unsigned char g,
 {
     LONG p;
 
-    if (tg_gui_av_pool_n >= TG_GUI_AV_POOL || tg_gui_av_cmap == 0) {
+    if (tg_gui_av_pool_n >= tg_gui_av_pool_cap || tg_gui_av_cmap == 0) {
         return;
     }
     p = ObtainBestPenA(tg_gui_av_cmap, tg_gui_amiga_rgb32(r),
@@ -388,34 +394,32 @@ static void tg_gui_av_pool_add(unsigned char r, unsigned char g,
    shades. */
 static void tg_gui_av_seed_pool(void)
 {
-#if !defined(__m68k__)
     static const unsigned char lv[4] = { 0U, 85U, 170U, 255U };
     int r;
     int g;
     int b;
     int i;
 
-    for (r = 0; r < 4; ++r) {
-        for (g = 0; g < 4; ++g) {
-            for (b = 0; b < 4; ++b) {
-                tg_gui_av_pool_add(lv[r], lv[g], lv[b]);
+    if (tg_gui_av_rich) { /* truecolor: full cube + grey ramp (76 of 96) */
+        for (r = 0; r < 4; ++r) {
+            for (g = 0; g < 4; ++g) {
+                for (b = 0; b < 4; ++b) {
+                    tg_gui_av_pool_add(lv[r], lv[g], lv[b]);
+                }
             }
         }
-    }
-    for (i = 17; i < 255; i += 17) {
-        if ((i % 85) != 0) { /* skip the greys already in the cube */
+        for (i = 17; i < 255; i += 17) {
+            if ((i % 85) != 0) { /* skip the greys already in the cube */
+                tg_gui_av_pool_add((unsigned char)i, (unsigned char)i,
+                                   (unsigned char)i);
+            }
+        }
+    } else { /* paletted: 6 greys keep whites neutral on a lean budget */
+        for (i = 0; i <= 255; i += 51) {
             tg_gui_av_pool_add((unsigned char)i, (unsigned char)i,
                                (unsigned char)i);
         }
     }
-#else
-    int i;
-
-    for (i = 0; i <= 255; i += 51) { /* 6 greys: whites stay neutral */
-        tg_gui_av_pool_add((unsigned char)i, (unsigned char)i,
-                           (unsigned char)i);
-    }
-#endif
 }
 
 /* Pool pen for an RGB pixel: reuse a close pool entry, else obtain a new one
@@ -440,10 +444,10 @@ static LONG tg_gui_av_pen_for(const unsigned char *rgb)
             best = i;
         }
     }
-    if (best >= 0 && best_d <= TG_GUI_AV_SHARE_D) {
+    if (best >= 0 && best_d <= tg_gui_av_share_d) {
         return tg_gui_av_pool_pen[best]; /* close enough: share */
     }
-    if (tg_gui_av_pool_n < TG_GUI_AV_POOL && tg_gui_av_cmap != 0) {
+    if (tg_gui_av_pool_n < tg_gui_av_pool_cap && tg_gui_av_cmap != 0) {
         LONG p = ObtainBestPenA(tg_gui_av_cmap, tg_gui_amiga_rgb32(rgb[0]),
                                 tg_gui_amiga_rgb32(rgb[1]),
                                 tg_gui_amiga_rgb32(rgb[2]), 0);
@@ -1972,6 +1976,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     tg_gui_amiga_obtain_pens(&ctx, cmap);
     tg_gui_av_reset();          /* pens are per-screen: drop stale avatar pens */
     tg_gui_av_cmap = cmap;      /* arms the real-avatar path */
+    {
+        /* Avatar pen profile from THIS screen's depth: truecolor RTG affords
+           the rich budget even on m68k (Vampire); paletted stays lean. */
+        ULONG av_depth = GetBitMapAttr(ctx.window->WScreen->RastPort.BitMap,
+                                       BMA_DEPTH);
+
+        tg_gui_av_rich = av_depth > 8UL;
+        tg_gui_av_pool_cap = tg_gui_av_rich ? TG_GUI_AV_POOL_MAX : 48;
+        tg_gui_av_share_d = tg_gui_av_rich ? 48L : 192L;
+    }
     tg_gui_amiga_measure_geometry(&ctx);
     tg_gui_amiga_buffer_alloc(&ctx); /* off-screen double-buffer (flicker-free) */
 
