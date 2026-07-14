@@ -1936,6 +1936,14 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend)
 /* Items shown for the open menu, by target message: Reply always; Edit + Delete
    only on an OWN message with a server id. Fills labels[]/ids[] (each sized
    TG_GUI_CTX_ITEMS_MAX) and returns the count. */
+int tg_gui_open_chat_is_self(const tg_gui_state *state)
+{
+    return state != 0 && state->selected_chat >= 0 &&
+           state->selected_chat < state->chat_count &&
+           state->chats[state->selected_chat].index ==
+               TG_GUI_SAVED_PEER_INDEX;
+}
+
 static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
                                 int *ids)
 {
@@ -1948,7 +1956,10 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
         state->messages[state->ctx_msg].id != 0UL) {
         const tg_gui_message *m = &state->messages[state->ctx_msg];
 
-        if (m->is_own) {
+        /* Saved Messages: the server clears the out flag there (nothing in
+           the self chat is "outgoing"), yet every message is the user's own
+           -- so the self chat offers Edit/Delete on all of them. */
+        if (m->is_own || tg_gui_open_chat_is_self(state)) {
             labels[n] = "Edit";
             ids[n] = TG_GUI_CTX_EDIT;
             ++n;

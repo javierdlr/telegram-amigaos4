@@ -109,6 +109,13 @@ struct tg_gui_backend {
    a click maps to the same strip the painter drew. */
 #define TG_GUI_SCROLLBAR_W 14
 
+/* Sidebar row index sentinel for the pinned "Saved Messages" (self chat) row.
+   Canonical home (tg_gui_session.h re-exports it via this header): the UI layer
+   needs it too, e.g. to offer Edit/Delete on every message of the self chat,
+   where the server clears the out flag (Telegram semantics: nothing in Saved
+   Messages is "outgoing", yet everything there is yours to edit/delete). */
+#define TG_GUI_SAVED_PEER_INDEX 0xfffffffeUL
+
 typedef struct tg_gui_chat {
     char name[TG_GUI_NAME_MAX];
     char preview[TG_GUI_TEXT_MAX];
@@ -301,6 +308,12 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
 #define TG_GUI_CTX_DOWNLOAD 3
 #define TG_GUI_CTX_SENDFILE 4
 #define TG_GUI_CTX_ITEMS_MAX 5
+
+/* 1 when the currently selected sidebar row is the pinned Saved Messages
+   (self) chat -- the row whose index carries TG_GUI_SAVED_PEER_INDEX. There
+   the server clears the out flag on every message (nothing in Saved Messages
+   is "outgoing"), yet everything is yours: Edit/Delete gate on this too. */
+int tg_gui_open_chat_is_self(const tg_gui_state *state);
 /* Maps a click at renderer-space (x, y) to a context-menu item id
    (TG_GUI_CTX_REPLY/EDIT/DELETE) when the popup is open, or -1 when the click is
    outside it (the caller then dismisses the menu). */

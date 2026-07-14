@@ -50,8 +50,8 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
 int tg_gui_session_send_document(const char *path, FILE *stream);
 
 /* F10 Saved Messages: the sidebar row index that opens the self chat (cloud
-   archive). Pinned as the LAST row; remove/reorder skip it. */
-#define TG_GUI_SAVED_PEER_INDEX 0xfffffffeUL
+   archive) is TG_GUI_SAVED_PEER_INDEX, defined in tg_gui.h (the UI layer needs
+   it too). Pinned as the LAST row; remove/reorder skip it. */
 
 /* Opens the chat at the given 1-based peer-cache index: clears the transcript,
    fetches its recent history (incoming + outgoing) into tg_gui_state.messages

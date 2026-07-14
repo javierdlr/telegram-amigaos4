@@ -2808,7 +2808,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Reply - ENTER sends, ESC cancels");
-                    } else if (it == TG_GUI_CTX_EDIT && m != 0 && m->is_own &&
+                    } else if (it == TG_GUI_CTX_EDIT && m != 0 &&
+                               (m->is_own ||
+                                tg_gui_open_chat_is_self(state)) &&
                                m->id != 0UL) {
                         /* Edit mode: pre-fill the composer with the message text;
                            the next ENTER routes to editMessage (edit_to_id). */
@@ -2825,7 +2827,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Editing - ENTER saves, ESC cancels");
-                    } else if (it == TG_GUI_CTX_DELETE && m != 0 && m->is_own &&
+                    } else if (it == TG_GUI_CTX_DELETE && m != 0 &&
+                               (m->is_own ||
+                                tg_gui_open_chat_is_self(state)) &&
                                m->id != 0UL) {
                         unsigned long del_id = m->id;
 
