@@ -354,6 +354,69 @@ void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo)
     }
 }
 
+/* Obtain one pool pen for an exact RGB (shared by the seeder and the miss
+   path below). Skips silently when the pool is full or the obtain fails. */
+static void tg_gui_av_pool_add(unsigned char r, unsigned char g,
+                               unsigned char b)
+{
+    LONG p;
+
+    if (tg_gui_av_pool_n >= TG_GUI_AV_POOL || tg_gui_av_cmap == 0) {
+        return;
+    }
+    p = ObtainBestPenA(tg_gui_av_cmap, tg_gui_amiga_rgb32(r),
+                       tg_gui_amiga_rgb32(g), tg_gui_amiga_rgb32(b), 0);
+    if (p != -1) {
+        tg_gui_av_pool_pen[tg_gui_av_pool_n] = p;
+        tg_gui_av_pool_rgb[tg_gui_av_pool_n][0] = r;
+        tg_gui_av_pool_rgb[tg_gui_av_pool_n][1] = g;
+        tg_gui_av_pool_rgb[tg_gui_av_pool_n][2] = b;
+        ++tg_gui_av_pool_n;
+    }
+}
+
+/* Pre-seed the shared pool with a neutral colour lattice. Without this the
+   first 2-3 avatars filled the pool with THEIR shades and, once full, every
+   later colour snapped to the nearest of those with no bound: whites picked
+   up a pink or blue cast depending on which avatars happened to paint first
+   (tester reports: pinkish whites on MorphOS, blueish on OS4 -- same code,
+   different chat lists). A fixed 4x4x4 RGB cube plus a grey ramp bounds the
+   full-pool fallback error and keeps neutrals neutral; the remaining slots
+   stay dynamic for frequent exact colours. m68k paletted screens seed greys
+   only: pens are scarce there and the coarse share step already merges
+   shades. */
+static void tg_gui_av_seed_pool(void)
+{
+#if !defined(__m68k__)
+    static const unsigned char lv[4] = { 0U, 85U, 170U, 255U };
+    int r;
+    int g;
+    int b;
+    int i;
+
+    for (r = 0; r < 4; ++r) {
+        for (g = 0; g < 4; ++g) {
+            for (b = 0; b < 4; ++b) {
+                tg_gui_av_pool_add(lv[r], lv[g], lv[b]);
+            }
+        }
+    }
+    for (i = 17; i < 255; i += 17) {
+        if ((i % 85) != 0) { /* skip the greys already in the cube */
+            tg_gui_av_pool_add((unsigned char)i, (unsigned char)i,
+                               (unsigned char)i);
+        }
+    }
+#else
+    int i;
+
+    for (i = 0; i <= 255; i += 51) { /* 6 greys: whites stay neutral */
+        tg_gui_av_pool_add((unsigned char)i, (unsigned char)i,
+                           (unsigned char)i);
+    }
+#endif
+}
+
 /* Pool pen for an RGB pixel: reuse a close pool entry, else obtain a new one
    (PRECISION-default like the theme pens), else nearest of what we have. */
 static LONG tg_gui_av_pen_for(const unsigned char *rgb)
@@ -362,6 +425,9 @@ static LONG tg_gui_av_pen_for(const unsigned char *rgb)
     int best = -1;
     long best_d = 0x7fffffffL;
 
+    if (tg_gui_av_pool_n == 0) {
+        tg_gui_av_seed_pool(); /* once per screen (reset drops the pool) */
+    }
     for (i = 0; i < tg_gui_av_pool_n; ++i) {
         long dr = (long)tg_gui_av_pool_rgb[i][0] - (long)rgb[0];
         long dg = (long)tg_gui_av_pool_rgb[i][1] - (long)rgb[1];
