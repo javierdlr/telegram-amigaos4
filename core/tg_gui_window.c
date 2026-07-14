@@ -354,8 +354,9 @@ void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo)
     }
 }
 
-/* Obtain one pool pen for an exact RGB (shared by the seeder and the miss
-   path below). Skips silently when the pool is full or the obtain fails. */
+/* Obtain one pool pen for an exact RGB (used by the seeder; the miss path in
+   pen_for keeps its own inline copy because it needs the pen value back).
+   Skips silently when the pool is full or the obtain fails. */
 static void tg_gui_av_pool_add(unsigned char r, unsigned char g,
                                unsigned char b)
 {
