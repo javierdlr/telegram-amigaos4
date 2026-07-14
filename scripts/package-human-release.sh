@@ -99,8 +99,7 @@ fill_platform_text() {
 - In groups the typing line shows \"someone is typing\" (the per-member name
   fetch is skipped on MorphOS on purpose, to avoid a freeze).
 - Auto-read runs at a gentle pace; emoji are text emoticons.
-- Avatars stay as blurred previews / initials (the crisp-photo download is
-  disabled on MorphOS on purpose); the @ member autocomplete is off too.
+- The @ member autocomplete is off on MorphOS (freeze guard).
 - Own-screen mode: MorphOS 3.16 or newer is recommended."
         req_it="- MorphOS (3.x) con il suo stack TCP/IP e una connessione internet.
 - Qualche MB di RAM libera."
@@ -112,9 +111,7 @@ fill_platform_text() {
   badge non letti restano comunque persistenti.
 - Nei gruppi la riga di scrittura mostra \"someone is typing\" (il recupero del
   nome del membro e' disattivato su MorphOS apposta, per evitare un freeze).
-- Gli avatar restano anteprime sfocate / iniziali (il download della foto
-  nitida e' disattivato su MorphOS apposta); anche l'autocompletamento @ dei
-  membri e' spento.
+- L'autocompletamento @ dei membri e' spento su MorphOS (guardia anti-freeze).
 - Modalita' schermo proprio: consigliato MorphOS 3.16 o piu' recente."
         ;;
     *)
@@ -147,12 +144,15 @@ Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
 New in $VERSION: FILE SHARING -- download any received file (right-click ->
-Download) and send one to the open chat (menu: Send file...), up to 10 MB.
-A pinned Saved Messages chat turns Telegram's cloud into a transfer drawer
-between your Amiga and your phone/PC. Click places the text cursor in the
-composer and the search box; an Iconify menu item parks the client on a
-Workbench AppIcon. The program is now called TelegramAmiga. (0.0.5 added
-real avatars, @mentions, remembered window position and an own screen.)
+Download) and send one to the open chat (right-click -> Send file...), up to
+10 MB. A pinned Saved Messages chat turns Telegram's cloud into a transfer
+drawer between your Amiga and your phone/PC (everything there can be edited
+and deleted). No more launcher scripts: the two icons start the program
+directly (TelegramAmiga = GUI, TelegramAmiga-TUI = console). Click places the
+text cursor; Del forward-deletes; an Iconify menu item parks the client on a
+Workbench AppIcon; avatar colours are truer, and rich on RTG screens. The
+program is now called TelegramAmiga. (0.0.5 added real avatars, @mentions,
+remembered window position and an own screen.)
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
