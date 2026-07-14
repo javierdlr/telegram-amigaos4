@@ -389,9 +389,9 @@ static void tg_gui_av_pool_add(unsigned char r, unsigned char g,
    (tester reports: pinkish whites on MorphOS, blueish on OS4 -- same code,
    different chat lists). A fixed 4x4x4 RGB cube plus a grey ramp bounds the
    full-pool fallback error and keeps neutrals neutral; the remaining slots
-   stay dynamic for frequent exact colours. m68k paletted screens seed greys
-   only: pens are scarce there and the coarse share step already merges
-   shades. */
+   stay dynamic for frequent exact colours. Paletted screens (lean profile,
+   any CPU) seed greys only: pens are scarce there and the coarse share step
+   already merges shades. */
 static void tg_gui_av_seed_pool(void)
 {
     static const unsigned char lv[4] = { 0U, 85U, 170U, 255U };
