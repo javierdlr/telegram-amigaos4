@@ -277,6 +277,14 @@ typedef struct tg_config {
 void tg_config_init(tg_config *config);
 
 /**
+ * In-place upgrade cleanup: removes the pre-0.0.6 leftovers (telegram-test,
+ * the IconX launcher scripts and their icons) from the program's own drawer
+ * (PROGDIR: only, exact names). Call once at startup; silent no-op when
+ * nothing is there or on the hosted build.
+ */
+void tg_config_remove_superseded(void);
+
+/**
  * Parses command-line options into config.
  *
  * No memory is allocated. String options are stored as pointers to argv values.

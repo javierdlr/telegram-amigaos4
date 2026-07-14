@@ -44,6 +44,31 @@ static void tg_config_ensure_data_dir(void)
                            "data/telegram-gui-win.txt");
 }
 
+/* In-place upgrade cleanup: copying a 0.0.6+ drawer over an old one leaves the
+   pre-rename binary (telegram-test), the IconX launcher scripts and their
+   icons behind, next to the new self-launch icons -- confusing duplicates on
+   Workbench. Remove EXACT known names only, and only from the program's own
+   drawer (PROGDIR:), never the CWD: a shell launch from elsewhere must not
+   touch look-alike files. Session/data files are never in this list. On the
+   hosted build PROGDIR: does not resolve and remove() fails silently. */
+void tg_config_remove_superseded(void)
+{
+    static const char *victims[] = {
+        "PROGDIR:telegram-test",
+        "PROGDIR:TelegramGUI",
+        "PROGDIR:TelegramGUI.info",
+        "PROGDIR:TelegramTUI",
+        "PROGDIR:TelegramTUI.info",
+        "PROGDIR:RunMTProtoStart",
+        "PROGDIR:RunMTProtoStart.info"
+    };
+    unsigned long i;
+
+    for (i = 0UL; i < sizeof(victims) / sizeof(victims[0]); ++i) {
+        (void)remove(victims[i]);
+    }
+}
+
 /* Adopts a user/launcher-given auxiliary-file path into data/: only BARE
    filenames are touched (anything with ':' or '/' is an explicit location
    the caller chose -- respect it). The root file, when present, is migrated
