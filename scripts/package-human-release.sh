@@ -631,3 +631,47 @@ if [ "$AMINET" = "1" ] && ls "$AMINET_ROOT"/TelegramAmiga*.lha >/dev/null 2>&1; 
     echo "  TelegramAmiga[<-suffix>].lha AND matching .readme (5 + 5 files)."
     echo "  Web form may be back at https://aminet.net/upload. See memory/aminet-publishing.md"
 fi
+
+# --- OS4Depot (fixed release channel since 0.0.6) ----------------------------
+# Anonymous FTP to os4depot.net /upload: the archive FIRST, the readme LAST
+# (their processor keys off the readme). Readme = THEIR header format
+# (name:/description:/.../hend:) + our Aminet body. Queue shows on
+# https://os4depot.net/index.php?function=uploads after ~15 min.
+if [ "$AMINET" = "1" ] && [ -f "$AMINET_ROOT/TelegramAmiga-OS4.lha" ]; then
+    cp "$AMINET_ROOT/TelegramAmiga-OS4.lha" "$AMINET_ROOT/telegramamiga.lha"
+    {
+        printf 'name:TelegramAmiga\n'
+        printf 'description:Native MTProto Telegram chat client\n'
+        printf 'version:%s\n' "$VERSION"
+        printf 'author:Michele Dipace\n'
+        printf 'submitter:Michele Dipace\n'
+        printf 'email:michele.dipace@kaffeine.net\n'
+        printf 'url:%s\n' "$REPO_URL"
+        printf 'category:network/chat\n'
+        printf 'requirements:AmigaOS 4.x with its TCP/IP stack\n'
+        printf 'license:MIT\n'
+        printf 'distribute:yes\n'
+        printf 'minosversion:4.0\n'
+        printf 'hend:\n\n'
+        # body: the Aminet OS4 readme minus its header block
+        awk 'flip { print } /^$/ && !flip { flip = 1 }' \
+            "$AMINET_ROOT/TelegramAmiga-OS4.readme"
+    } > "$AMINET_ROOT/telegramamiga_lha.readme"
+    echo
+    echo "OS4Depot pair ready: telegramamiga.lha + telegramamiga_lha.readme"
+    echo "Upload: curl -T telegramamiga.lha ftp://os4depot.net/upload/ --user anonymous:"
+    echo "        then the readme (LAST). Queue: os4depot.net ?function=uploads"
+fi
+
+# --- MorphOS-Storage (fixed release channel since 0.0.6) ---------------------
+# Web form only (https://www.morphos-storage.net/?page=submit), no account but
+# a CAPTCHA: Michele submits. Hand him TelegramAmiga-MOS.lha + its readme and
+# the description block; agent prepares, human clicks.
+if [ "$AMINET" = "1" ] && [ -f "$AMINET_ROOT/TelegramAmiga-MOS.lha" ]; then
+    echo
+    echo "MorphOS-Storage (Michele, web form + captcha):"
+    echo "  https://www.morphos-storage.net/?page=submit"
+    echo "  archive: $AMINET_ROOT/TelegramAmiga-MOS.lha"
+    echo "  readme:  $AMINET_ROOT/TelegramAmiga-MOS.readme"
+    echo "  name: TelegramAmiga  version: $VERSION"
+fi
