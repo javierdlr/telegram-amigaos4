@@ -2686,7 +2686,15 @@ static void tg_chat_typing_record(int is_chat, unsigned long peer_id_hi,
                                   unsigned long from_id_lo)
 {
     if (tg_chat_typing_target == 0) {
+        tg_gui_log("typing: push seen but sink unarmed");
         return;
+    }
+    {
+        char d[96];
+
+        sprintf(d, "typing: record chat=%d peer=%08lx%08lx from=%08lx%08lx",
+                is_chat, peer_id_hi, peer_id_lo, from_id_hi, from_id_lo);
+        tg_gui_log(d);
     }
     tg_chat_typing_target->active = 1;
     tg_chat_typing_target->is_chat = is_chat;
@@ -14088,6 +14096,17 @@ int tg_gui_session_tick(FILE *stream)
             } else {
                 /* Stale or absent: disarm so a later identical push re-fires. */
                 tg_gui_session_state.typing.active = 0;
+            }
+            if (fresh) {
+                char td[112];
+
+                sprintf(td, "typing: fresh sink=%08lx%08lx open=%08lx%08lx idx=%s",
+                        tg_gui_session_state.typing.peer_id_hi,
+                        tg_gui_session_state.typing.peer_id_lo,
+                        tg_gui_session_state.open_peer_id_hi,
+                        tg_gui_session_state.open_peer_id_lo,
+                        tg_gui_session_state.current_peer_index);
+                tg_gui_log(td);
             }
             want = "";
             if (fresh && tg_gui_session_state.current_peer_index[0] != '\0' &&
