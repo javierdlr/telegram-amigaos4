@@ -27,6 +27,10 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
+#include <devices/timer.h>
+#include <interfaces/timer.h> /* struct TimerIFace only: proto/timer.h's
+                                 __USE_INLINE__ macros would rewrite our
+                                 explicit iface->ReadEClock() call */
 #include <dos/dosextens.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
@@ -298,13 +302,56 @@ int tg_platform_stdin_set_raw(int enabled)
 static unsigned char tg_os4_drbg_state[TG_MTPROTO_SHA256_LENGTH];
 static int tg_os4_drbg_ready = 0;
 
+/* Fine-grained tick for the entropy mix. The obvious mftb read is a TRAP on
+   the AmigaOne A1222: its e500v2 core does not implement the classic mftb
+   instruction (the time base is an SPR pair there) and the kernel does not
+   emulate it, so both clients died with a program exception in the entropy
+   paths -- GrimReaper put one crash at note_input_event (first keystroke) and
+   one inside drbg_generate during auth.sendCode (tester crashlogs, A1222).
+   Read the E-Clock through timer.device instead: a legal user-mode API with
+   the same jitter quality on EVERY OS4 machine (G3/G4/X5000/A1222). The
+   device is opened lazily once and stays open for the process lifetime; if
+   the open ever fails, gettimeofday microseconds keep the mix alive. */
+static struct MsgPort *tg_os4_tb_port = 0;
+static struct TimeRequest *tg_os4_tb_req = 0;
+static struct Library *tg_os4_tb_base = 0;
+static struct TimerIFace *tg_os4_itimer = 0;
+static int tg_os4_tb_state = 0; /* 0 untried, 1 EClock ready, -1 fallback */
+
 static unsigned long tg_os4_timebase(void)
 {
-    unsigned long tb = 0;
-#if defined(__GNUC__)
-    __asm__ volatile("mftb %0" : "=r"(tb));
-#endif
-    return tb;
+    if (tg_os4_tb_state == 0) {
+        tg_os4_tb_state = -1;
+        tg_os4_tb_port = CreateMsgPort();
+        if (tg_os4_tb_port != 0) {
+            tg_os4_tb_req = (struct TimeRequest *)CreateIORequest(
+                tg_os4_tb_port, sizeof(struct TimeRequest));
+        }
+        if (tg_os4_tb_req != 0 &&
+            OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
+                       (struct IORequest *)tg_os4_tb_req, 0) == 0) {
+            tg_os4_tb_base =
+                (struct Library *)tg_os4_tb_req->Request.io_Device;
+            tg_os4_itimer = (struct TimerIFace *)GetInterface(
+                tg_os4_tb_base, "main", 1L, 0);
+            if (tg_os4_itimer != 0) {
+                tg_os4_tb_state = 1;
+            }
+        }
+    }
+    if (tg_os4_tb_state == 1) {
+        struct EClockVal ecv;
+
+        tg_os4_itimer->ReadEClock(&ecv);
+        return ecv.ev_lo ^ (ecv.ev_hi << 16);
+    }
+    {
+        struct timeval tv;
+
+        gettimeofday(&tv, 0);
+        return (unsigned long)tv.tv_usec ^
+               ((unsigned long)tv.tv_sec << 20);
+    }
 }
 
 static unsigned long tg_os4_entropy_gather(unsigned char *buf, unsigned long cap)
