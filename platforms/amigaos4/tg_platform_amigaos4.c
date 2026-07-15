@@ -27,6 +27,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
+#include <dos/dosextens.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
 #include <dos/dos.h>
@@ -1226,15 +1227,33 @@ int tg_platform_workbench_tui_console(void)
     if (con == 0) {
         return 0;
     }
-    /* Make this window the process console (pr_CIS/pr_COS)... */
+    /* Make this window the process console. SelectInput/SelectOutput switch
+       the DOS channels (pr_CIS/pr_COS), but "*" and the C runtime's lazy
+       console resolve through pr_ConsoleTask, which a Workbench-launched
+       process does NOT have -- without setting it, Open("*") fails, a failed
+       freopen() still closes the stdio stream (C89), and the runtime opens
+       its own "Output" window on the first write while reads hang: the
+       two-window freeze seen on OS3/OS4. SetConsoleTask (dos V36+) points it
+       at this CON: handler first. */
+#if defined(__amigaos4__)
+    /* OS4 renamed the call and the FileHandle member. */
+    SetConsolePort(((struct FileHandle *)BADDR(con))->fh_MsgPort);
+#else
+    SetConsoleTask(((struct FileHandle *)BADDR(con))->fh_Type);
+#endif
     SelectInput(con);
     SelectOutput(con);
-    /* ...then rebind the C stdio streams to it. A Workbench-launched binary has
-       no console at startup, so the C runtime may have pinned stdin/stdout to a
-       null handle before we got here; freopen("*") re-points them at the current
-       console (this window) so printf()/fgets() actually reach it. */
-    (void)freopen("*", "r", stdin);
-    (void)freopen("*", "w", stdout);
-    (void)freopen("*", "w", stderr);
+    /* Rebind C stdio only if "*" actually resolves now: freopen on a failed
+       open would CLOSE stdin/stdout for good, so probe with dos Open first. */
+    {
+        BPTR probe = Open((CONST_STRPTR)"*", MODE_OLDFILE);
+
+        if (probe != 0) {
+            Close(probe);
+            (void)freopen("*", "r", stdin);
+            (void)freopen("*", "w", stdout);
+            (void)freopen("*", "w", stderr);
+        }
+    }
     return 1;
 }
