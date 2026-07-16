@@ -6913,9 +6913,10 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
         return;
     }
     tg_mtproto_chat_list_render_console(stream, rows, count);
-    /* The GUI pins Saved Messages as the last sidebar row; the console gets
-       the same standing pointer here (it has no cache row of its own). */
-    fprintf(stream, "  /saved      Saved Messages (your cloud drawer)\n");
+    /* The GUI pins Saved Messages as the last sidebar row; the console pins
+       it as row 0 (cache indexes are 1-based, so 0 is forever free): it reads
+       and picks like every other row, at startup and in-chat alike. */
+    fprintf(stream, "0. Saved Messages (your cloud drawer)\n");
 }
 
 static const char tg_chat_list_golden[] =
@@ -10302,7 +10303,8 @@ int tg_mtproto_auth_chat_file(const char *host,
         /* The picker footer advertises /saved: honour it (and its plain
            forms) here too by normalising to the "self" sentinel index. */
         if (strcmp(peer_index, "/saved") == 0 ||
-            strcmp(peer_index, "saved") == 0) {
+            strcmp(peer_index, "saved") == 0 ||
+            strcmp(peer_index, "0") == 0) {
             strcpy(peer_index, "self");
         }
         if (tg_mtproto_load_peer_cache_label(peer_cache_file, peer_index,
@@ -10744,7 +10746,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
             continue;
         }
-        if (strcmp(line, "/saved") == 0) {
+        if (strcmp(line, "/saved") == 0 || strcmp(line, "0") == 0) {
             /* F10 parity: jump to Saved Messages (the self chat, peer index
                "self" in the cache loaders) as the cloud transfer drawer. */
             if (peer_index[0] != '\0' && strcmp(peer_index, "self") != 0) {
