@@ -1382,12 +1382,17 @@ static int tg_os4_window_is_live(struct Window *cand)
     if (scr == 0) {
         return 0;
     }
+    /* LockPubScreen keeps the screen alive but not its window list: Forbid()
+       around the walk so no other task opens/closes a window mid-traversal
+       (a closing window would dangle NextWindow). */
+    Forbid();
     for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
         if (w == cand) {
             found = 1;
             break;
         }
     }
+    Permit();
     tg_os4_iint->UnlockPubScreen(0, scr);
     return found;
 }
@@ -1434,6 +1439,10 @@ static void tg_os4_drop_arm(void)
     if (tg_wb_tui_con == 0) {
         return; /* only the console we opened from Workbench */
     }
+    if (tg_os4_app_win != 0 || tg_os4_app_port != 0 ||
+        tg_os4_wb_base != 0 || tg_os4_int_base != 0) {
+        return; /* already armed: never leak a second set of resources */
+    }
     fh = (struct FileHandle *)BADDR(tg_wb_tui_con);
     if (fh == 0) {
         return;
@@ -1449,16 +1458,18 @@ static void tg_os4_drop_arm(void)
         return;
     }
     memset(&id, 0, sizeof(id));
-    /* The CON: handler answers ACTION_DISK_INFO by putting its window pointer
-       into id_VolumeNode (the documented ugly-but-standard trick). BADDR here
-       gives the type-correct value; if OS4's handler does not support the
-       trick, the pointer fails the window-list check below and we bail. */
+    /* The CON: handler answers ACTION_DISK_INFO by stuffing a RAW window
+       pointer into the (BPTR-typed) id_VolumeNode field -- the documented
+       trick, and every sample reads it back as a PLAIN cast, NOT via BADDR
+       (BADDR would shift it x4 into garbage). If OS4's rewritten handler does
+       not support the trick, the pointer simply fails the window-list check
+       below and we bail with no drag-and-drop (and no crash). */
     if (!DoPkt(fh->fh_MsgPort, ACTION_DISK_INFO, (LONG)MKBADDR(&id),
                0, 0, 0, 0)) {
         tg_os4_drop_disarm();
         return;
     }
-    win = (struct Window *)BADDR(id.id_VolumeNode);
+    win = (struct Window *)id.id_VolumeNode;
     if (!tg_os4_window_is_live(win)) {
         tg_os4_drop_disarm(); /* not trustworthy: no drop, but no crash */
         return;

@@ -10414,8 +10414,12 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
         }
         if (watch_seconds == 0UL) {
+            /* Auto-read is off, so we would otherwise block ~forever. Wake the
+               editor every few seconds anyway so a file dropped on the console
+               window (polled on the read timeout) is noticed promptly; rc==0
+               just re-loops without any network poll, keeping /watch off. */
             rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
-                                                &line_length, 3600UL, chat_raw,
+                                                &line_length, 3UL, chat_raw,
                                                 1, stream);
             if (rc == 0) {
                 continue;
