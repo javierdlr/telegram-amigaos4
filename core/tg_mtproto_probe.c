@@ -6913,6 +6913,9 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
         return;
     }
     tg_mtproto_chat_list_render_console(stream, rows, count);
+    /* The GUI pins Saved Messages as the last sidebar row; the console gets
+       the same standing pointer here (it has no cache row of its own). */
+    fprintf(stream, "  /saved      Saved Messages (your cloud drawer)\n");
 }
 
 static const char tg_chat_list_golden[] =
@@ -10684,7 +10687,23 @@ int tg_mtproto_auth_chat_file(const char *host,
                The helper matches the bare and tab forms too, so a syntax probe
                can never fall through and be SENT as a literal message. */
             const char *fpath = cmd_arg;
+            char fpath_buf[256];
 
+            /* An icon dropped on the console injects the path QUOTED (the
+               con-handler quotes paths with spaces, Shell-style): accept
+               "path" by stripping the surrounding double quotes. */
+            if (fpath[0] == '"') {
+                unsigned long fl = 0UL;
+
+                ++fpath;
+                while (fpath[fl] != '\0' && fpath[fl] != '"' &&
+                       fl + 1UL < sizeof(fpath_buf)) {
+                    fpath_buf[fl] = fpath[fl];
+                    ++fl;
+                }
+                fpath_buf[fl] = '\0';
+                fpath = fpath_buf;
+            }
             if (peer_index[0] == '\0') {
                 tg_mtproto_chat_print_system_line(
                     stream, "Choose a chat first with /peers or /add name.");
