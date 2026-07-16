@@ -10299,6 +10299,12 @@ int tg_mtproto_auth_chat_file(const char *host,
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 2;
         }
+        /* The picker footer advertises /saved: honour it (and its plain
+           forms) here too by normalising to the "self" sentinel index. */
+        if (strcmp(peer_index, "/saved") == 0 ||
+            strcmp(peer_index, "saved") == 0) {
+            strcpy(peer_index, "self");
+        }
         if (tg_mtproto_load_peer_cache_label(peer_cache_file, peer_index,
                                              peer_label,
                                              sizeof(peer_label)) != 0) {
