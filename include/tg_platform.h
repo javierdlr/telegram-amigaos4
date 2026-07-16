@@ -144,6 +144,16 @@ int tg_platform_workbench_tui_console(void);
    when the console was never opened. */
 void tg_platform_workbench_tui_console_close(void);
 
+/* Drag-and-drop for the Workbench TUI console: a file icon dropped on the
+   window delivers its path so the user can just drop it after "/sendfile ".
+   Non-blocking poll called from the console read loop; returns 1 with a NUL-
+   terminated path in `out` when a file was dropped, else 0. Arming/disarming
+   is folded into the console open/close. Only AmigaOS 4 implements it (via an
+   AppWindow whose Window pointer is validated against the screen window list
+   before use, so a bad handle degrades to "no drop" rather than a crash);
+   every other build is a no-op that returns 0. */
+int tg_platform_console_drop_poll(char *out, unsigned long out_size);
+
 /*
  * Returns non-zero when the user asked to abort (Amiga family: the shell
  * break signal SIGBREAKF_CTRL_C, left pending so the caller's main loop can

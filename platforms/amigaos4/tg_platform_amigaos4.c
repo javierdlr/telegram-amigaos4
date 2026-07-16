@@ -51,7 +51,19 @@
 
 #if defined(__AROS__) || defined(__amigaos4__) || defined(__MORPHOS__) || defined(__amigaos3__) || defined(__m68k__)
 #include <workbench/workbench.h>
+#include <workbench/startup.h>
 #include <proto/icon.h>
+#endif
+#if defined(__amigaos4__)
+/* Types only, not proto/*.h: with __USE_INLINE__ the proto headers rewrite
+   every call as GlobalIface->method, and we hold our own interface pointers
+   (workbench + intuition are not auto-opened). */
+#include <interfaces/wb.h>
+#include <interfaces/intuition.h>
+#include <intuition/screens.h>
+#ifndef ACTION_DISK_INFO
+#define ACTION_DISK_INFO 25
+#endif
 #endif
 #include "tg_platform.h"
 #include "tg_mtproto_crypto.h"
@@ -1270,6 +1282,9 @@ static BPTR tg_wb_tui_old_in = 0;
 static BPTR tg_wb_tui_old_out = 0;
 static struct MsgPort *tg_wb_tui_old_ct = 0;
 
+static void tg_os4_drop_arm(void);
+static void tg_os4_drop_disarm(void);
+
 int tg_platform_workbench_tui_console(void)
 {
     BPTR con;
@@ -1309,6 +1324,7 @@ int tg_platform_workbench_tui_console(void)
             (void)freopen("*", "w", stderr);
         }
     }
+    tg_os4_drop_arm(); /* best-effort file drag-and-drop onto this window */
     return 1;
 }
 
@@ -1317,6 +1333,7 @@ void tg_platform_workbench_tui_console_close(void)
     if (tg_wb_tui_con == 0) {
         return; /* console never opened (CLI launch or open failure) */
     }
+    tg_os4_drop_disarm();
     /* Put the original process plumbing back BEFORE closing our handle, so
        nothing keeps referencing the console we are about to release. The
        stdio streams freopen'd onto "*" are closed by the C runtime at exit;
@@ -1327,5 +1344,182 @@ void tg_platform_workbench_tui_console_close(void)
     SetConsolePort(tg_wb_tui_old_ct);
     Close(tg_wb_tui_con);
     tg_wb_tui_con = 0;
+}
+
+/* ---- Workbench TUI drag-and-drop (AppWindow, OS4-only) ------------------- */
+
+/* We call these four through OUR OWN stored interface pointers, so (now that
+   every header is in) drop the __USE_INLINE__ macros that would rewrite them
+   as GlobalIface->method. IExec/IDoS calls elsewhere keep their macros -- those
+   really are the auto-provided globals. */
+#undef LockPubScreen
+#undef UnlockPubScreen
+#undef AddAppWindowA
+#undef RemoveAppWindow
+
+static struct Library *tg_os4_wb_base = 0;
+static struct WorkbenchIFace *tg_os4_iwb = 0;
+static struct Library *tg_os4_int_base = 0;
+static struct IntuitionIFace *tg_os4_iint = 0;
+static struct MsgPort *tg_os4_app_port = 0;
+static struct AppWindow *tg_os4_app_win = 0;
+
+/* Confirm `cand` is a live window on the default public screen before handing
+   it to workbench.library. The DoPkt(ACTION_DISK_INFO) trick that yields the
+   CON: window pointer is not guaranteed on every handler (OS4's con-handler
+   is a rewrite), and a bogus pointer into AddAppWindow would crash; if it is
+   not in the screen's window list we simply do not arm drag-and-drop. */
+static int tg_os4_window_is_live(struct Window *cand)
+{
+    struct Screen *scr;
+    struct Window *w;
+    int found = 0;
+
+    if (cand == 0 || tg_os4_iint == 0) {
+        return 0;
+    }
+    scr = tg_os4_iint->LockPubScreen(0);
+    if (scr == 0) {
+        return 0;
+    }
+    for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
+        if (w == cand) {
+            found = 1;
+            break;
+        }
+    }
+    tg_os4_iint->UnlockPubScreen(0, scr);
+    return found;
+}
+
+static void tg_os4_drop_disarm(void)
+{
+    if (tg_os4_app_win != 0 && tg_os4_iwb != 0) {
+        tg_os4_iwb->RemoveAppWindow(tg_os4_app_win);
+        tg_os4_app_win = 0;
+    }
+    if (tg_os4_app_port != 0) {
+        struct Message *m;
+
+        while ((m = GetMsg(tg_os4_app_port)) != 0) {
+            ReplyMsg(m); /* drain and reply un-handled drops */
+        }
+        DeleteMsgPort(tg_os4_app_port);
+        tg_os4_app_port = 0;
+    }
+    if (tg_os4_iwb != 0) {
+        DropInterface((struct Interface *)tg_os4_iwb);
+        tg_os4_iwb = 0;
+    }
+    if (tg_os4_wb_base != 0) {
+        CloseLibrary(tg_os4_wb_base);
+        tg_os4_wb_base = 0;
+    }
+    if (tg_os4_iint != 0) {
+        DropInterface((struct Interface *)tg_os4_iint);
+        tg_os4_iint = 0;
+    }
+    if (tg_os4_int_base != 0) {
+        CloseLibrary(tg_os4_int_base);
+        tg_os4_int_base = 0;
+    }
+}
+
+static void tg_os4_drop_arm(void)
+{
+    struct InfoData id;
+    struct FileHandle *fh;
+    struct Window *win;
+
+    if (tg_wb_tui_con == 0) {
+        return; /* only the console we opened from Workbench */
+    }
+    fh = (struct FileHandle *)BADDR(tg_wb_tui_con);
+    if (fh == 0) {
+        return;
+    }
+    tg_os4_int_base = OpenLibrary((CONST_STRPTR)"intuition.library", 39);
+    if (tg_os4_int_base == 0) {
+        return;
+    }
+    tg_os4_iint = (struct IntuitionIFace *)GetInterface(tg_os4_int_base,
+                                                        "main", 1L, 0);
+    if (tg_os4_iint == 0) {
+        tg_os4_drop_disarm();
+        return;
+    }
+    memset(&id, 0, sizeof(id));
+    /* The CON: handler answers ACTION_DISK_INFO by putting its window pointer
+       into id_VolumeNode (the documented ugly-but-standard trick). BADDR here
+       gives the type-correct value; if OS4's handler does not support the
+       trick, the pointer fails the window-list check below and we bail. */
+    if (!DoPkt(fh->fh_MsgPort, ACTION_DISK_INFO, (LONG)MKBADDR(&id),
+               0, 0, 0, 0)) {
+        tg_os4_drop_disarm();
+        return;
+    }
+    win = (struct Window *)BADDR(id.id_VolumeNode);
+    if (!tg_os4_window_is_live(win)) {
+        tg_os4_drop_disarm(); /* not trustworthy: no drop, but no crash */
+        return;
+    }
+    tg_os4_wb_base = OpenLibrary((CONST_STRPTR)"workbench.library", 44);
+    if (tg_os4_wb_base == 0) {
+        tg_os4_drop_disarm();
+        return;
+    }
+    tg_os4_iwb = (struct WorkbenchIFace *)GetInterface(tg_os4_wb_base, "main",
+                                                       1L, 0);
+    if (tg_os4_iwb == 0) {
+        tg_os4_drop_disarm();
+        return;
+    }
+    tg_os4_app_port = CreateMsgPort();
+    if (tg_os4_app_port == 0) {
+        tg_os4_drop_disarm();
+        return;
+    }
+    tg_os4_app_win = tg_os4_iwb->AddAppWindowA(0UL, 0UL, win, tg_os4_app_port,
+                                               0);
+    if (tg_os4_app_win == 0) {
+        tg_os4_drop_disarm();
+    }
+}
+
+int tg_platform_console_drop_poll(char *out, unsigned long out_size)
+{
+    struct AppMessage *am;
+    int got = 0;
+
+    if (out == 0 || out_size == 0UL) {
+        return 0;
+    }
+    out[0] = '\0';
+    if (tg_os4_app_port == 0) {
+        return 0;
+    }
+    while ((am = (struct AppMessage *)GetMsg(tg_os4_app_port)) != 0) {
+        /* Take the FIRST dropped file only (one path per /sendfile); still
+           reply to every message so the sender is never left blocked. */
+        if (!got && am->am_NumArgs > 0 && am->am_ArgList != 0) {
+            BPTR lock = am->am_ArgList[0].wa_Lock;
+            const char *name = (const char *)am->am_ArgList[0].wa_Name;
+
+            out[0] = '\0';
+            if (lock != 0 &&
+                NameFromLock(lock, (STRPTR)out, (LONG)out_size) != 0) {
+                if (name != 0 && name[0] != '\0') {
+                    AddPart((STRPTR)out, (CONST_STRPTR)name, (ULONG)out_size);
+                }
+                got = 1;
+            } else if (name != 0 && name[0] != '\0') {
+                strncpy(out, name, out_size - 1UL);
+                out[out_size - 1UL] = '\0';
+                got = 1;
+            }
+        }
+        ReplyMsg((struct Message *)am);
+    }
+    return got;
 }
 

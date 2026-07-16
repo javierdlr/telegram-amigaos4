@@ -1208,3 +1208,12 @@ void tg_platform_workbench_tui_console_close(void)
     tg_wb_tui_con = 0;
 }
 
+int tg_platform_console_drop_poll(char *out, unsigned long out_size)
+{
+    if (out != 0 && out_size > 0UL) {
+        out[0] = '\0';
+    }
+    return 0; /* drag-and-drop console file: AmigaOS 4 only */
+}
+
+

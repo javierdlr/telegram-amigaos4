@@ -8666,6 +8666,39 @@ static int tg_mtproto_chat_read_line_edit(char *line,
     }
     rc = tg_platform_stdin_read_char(timeout_seconds, &ch);
     if (rc <= 0) {
+        /* Read timeout: check for a file dropped on the console window and
+           inject its path at the caret, so "/sendfile " + drop just works.
+           Only in the interactive chat editor with the TUI live; a no-op on
+           every build but an armed OS4 console. */
+        if (rc == 0 && use_history && tg_console_tui_active() &&
+            tg_chat_tui_stream != 0) {
+            char drop[256];
+
+            if (tg_platform_console_drop_poll(drop, sizeof(drop))) {
+                unsigned long di;
+
+                for (di = 0UL; drop[di] != '\0'; ++di) {
+                    unsigned long c;
+
+                    if (*line_length + 1UL >= line_size) {
+                        break;
+                    }
+                    c = tg_chat_caret;
+                    if (c > *line_length) {
+                        c = *line_length;
+                    }
+                    memmove(&line[c + 1UL], &line[c], *line_length - c);
+                    line[c] = drop[di];
+                    ++(*line_length);
+                    tg_chat_caret = c + 1UL;
+                }
+                tg_console_tui_input(tg_chat_tui_stream,
+                                     tg_console_tui_prompt(), line,
+                                     *line_length);
+                tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
+                                        tg_chat_caret);
+            }
+        }
         return rc;
     }
     if (raw && ch == (char)0x03) {
