@@ -320,6 +320,30 @@ typedef struct tg_chat_typing_sink {
     unsigned long seen_epoch; /* time() when last seen, for the TTL */
 } tg_chat_typing_sink;
 static tg_chat_typing_sink *tg_chat_typing_target = 0;
+
+/* Explicit context bundle for the file workers below, so the SAME machinery
+   serves both front-ends: the GUI wrappers fill it from the session
+   singleton, the console chat loop from its own locals (F9 parity for the
+   TUI). `context` is the caller's authenticated connection; `peer_index` is
+   the peer-cache index TEXT ("self" opens Saved Messages). */
+typedef struct tg_mtproto_file_ctx {
+    const char *host;
+    const char *port;
+    const char *api_id;
+    const char *auth_file;
+    const char *dc_id_text;
+    tg_mtproto_auth_context *context;
+    const char *peer_cache_file;
+    const char *peer_index;
+} tg_mtproto_file_ctx;
+
+/* File workers (defined with the GUI session code below; the console chat
+   loop calls them with its own locals). */
+static int tg_mtproto_file_download(const struct tg_mtproto_file_ctx *fc,
+                                    unsigned long msg_id, char *out_path,
+                                    unsigned long out_path_size, FILE *stream);
+static int tg_mtproto_file_send(const struct tg_mtproto_file_ctx *fc,
+                                const char *path, FILE *stream);
 /* Live read-receipt sink (5c): the push collector records the most recent
    updateReadHistoryOutbox (which peer read up to which id); the GUI loop applies
    it when the peer matches the open chat. NULL outside a GUI session. */
@@ -9933,6 +9957,9 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /add name     search Telegram and add a chat",
         "  /remove n     remove cached chat n",
         "  /history      show recent messages without new-message filtering",
+        "  /getfile      download the newest file in this chat to downloads/",
+        "  /sendfile p   send the file at path p to this chat (up to 10 MB)",
+        "  /saved        open Saved Messages (your cloud transfer drawer)",
         "  /watch sec    set auto-read interval",
         "  /watch off    disable auto-read",
         "  /resize       redraw the layout after a window resize",
@@ -10603,6 +10630,106 @@ int tg_mtproto_auth_chat_file(const char *host,
             }
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
                                         0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (strcmp(line, "/getfile") == 0) {
+            /* F9 parity for the console: download the MOST RECENT document in
+               the open chat into downloads/ (same machinery as the GUI). */
+            if (peer_index[0] == '\0') {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Choose a chat first with /peers or /add name.");
+            } else {
+                tg_mtproto_file_ctx fc;
+                char saved_path[160];
+                int frc;
+                FILE *tui_cap;
+
+                fc.host = host; fc.port = port; fc.api_id = api_id;
+                fc.auth_file = auth_file; fc.dc_id_text = dc_id_text;
+                fc.context = &chat_context;
+                fc.peer_cache_file = peer_cache_file;
+                fc.peer_index = peer_index;
+                tg_mtproto_chat_print_system_line(stream, "Downloading...");
+                frc = tg_mtproto_file_download(&fc, 0UL, saved_path,
+                                               sizeof(saved_path), stream);
+                tui_cap = tg_console_tui_capture_begin(stream);
+                if (frc == 0) {
+                    fprintf(tui_cap, "Saved to %s\n", saved_path);
+                } else if (frc == 2) {
+                    fprintf(tui_cap,
+                            "File is on another server - not supported yet.\n");
+                } else if (frc == 3) {
+                    fprintf(tui_cap, "Could not write to downloads/.\n");
+                } else if (saved_path[0] != '\0') {
+                    fprintf(tui_cap, "No file: %.120s\n", saved_path);
+                } else {
+                    fprintf(tui_cap, "Download failed.\n");
+                }
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (strncmp(line, "/sendfile ", 10) == 0) {
+            /* Upload a file (<= 10 MB) to the open chat: /sendfile <path>. */
+            const char *fpath = line + 10;
+
+            while (*fpath == ' ') {
+                ++fpath;
+            }
+            if (peer_index[0] == '\0') {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Choose a chat first with /peers or /add name.");
+            } else if (*fpath == '\0') {
+                tg_mtproto_chat_print_system_line(stream,
+                                                  "Usage: /sendfile <path>");
+            } else {
+                tg_mtproto_file_ctx fc;
+                int frc;
+                FILE *tui_cap;
+
+                fc.host = host; fc.port = port; fc.api_id = api_id;
+                fc.auth_file = auth_file; fc.dc_id_text = dc_id_text;
+                fc.context = &chat_context;
+                fc.peer_cache_file = peer_cache_file;
+                fc.peer_index = peer_index;
+                tg_mtproto_chat_print_system_line(stream, "Uploading...");
+                frc = tg_mtproto_file_send(&fc, fpath, stream);
+                tui_cap = tg_console_tui_capture_begin(stream);
+                if (frc == 0) {
+                    fprintf(tui_cap, "File sent.\n");
+                } else if (frc == 2) {
+                    fprintf(tui_cap, "File too big (10 MB limit for now).\n");
+                } else if (frc == 3) {
+                    fprintf(tui_cap, "Could not read that file.\n");
+                } else {
+                    fprintf(tui_cap, "Upload failed.\n");
+                }
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (strcmp(line, "/saved") == 0) {
+            /* F10 parity: jump to Saved Messages (the self chat, peer index
+               "self" in the cache loaders) as the cloud transfer drawer. */
+            if (peer_index[0] != '\0') {
+                strcpy(prev_peer_index, peer_index);
+                strcpy(prev_peer_label, peer_label);
+            }
+            strcpy(peer_index, "self");
+            strcpy(peer_label, "Saved Messages");
+            last_seen_message_id = 0UL;
+            peer_history_ready = 0;
+            {
+                FILE *tui_cap = tg_console_tui_capture_begin(stream);
+
+                fprintf(tui_cap, "Current chat: Saved Messages\n");
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_tui_status(peer_label);
             continue;
         }
         if (strcmp(line, "/diff") == 0 || strcmp(line, "/diff on") == 0 ||
@@ -13332,8 +13459,9 @@ static void tg_gui_dl_sanitize_name(const char *in, char *out,
    message with id == msg_id (fresh file_reference). 0 = found + has document. */
 static char tg_dl_diag[96]; /* find_open_document -> download status */
 
-static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
-                                             tg_mtproto_document_meta *out)
+static int tg_mtproto_file_find_document(const tg_mtproto_file_ctx *fc,
+                                         unsigned long msg_id, FILE *quiet,
+                                         tg_mtproto_document_meta *out)
 {
     unsigned char query[64];
     unsigned long pc, ph, pl, ahh, ahl;
@@ -13345,25 +13473,30 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
     static const char label[] = "mtproto getHistory(download)";
 
     if (tg_mtproto_load_peer_cache_peer(
-            tg_gui_session_state.peer_cache_file,
-            tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+            fc->peer_cache_file,
+            fc->peer_index, &pc, &ph, &pl, &ahh,
             &ahl, &hah, quiet, label) != 0) {
         return 1;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     /* Anchor the fetch AT the target: offset_id = msg_id + 1 makes the server
        return messages with id <= msg_id, newest first, so the wanted message
-       is the first result no matter how far back it was scrolled. */
+       is the first result no matter how far back it was scrolled. msg_id == 0
+       means "the most recent document" (console /getfile): fetch the newest
+       page and take the first message that carries one. */
     if (tg_mtproto_build_messages_get_history_peer(&writer, pc, ph, pl, ahh,
-                                                   ahl, hah, msg_id + 1UL,
-                                                   5UL) != TG_MTPROTO_TL_OK) {
+                                                   ahl, hah,
+                                                   msg_id != 0UL ? msg_id + 1UL
+                                                                 : 0UL,
+                                                   msg_id != 0UL ? 5UL : 20UL)
+        != TG_MTPROTO_TL_OK) {
         return 1;
     }
     memset(&result, 0, sizeof(result));
     if (tg_mtproto_send_saved_query_on_context(
-            tg_gui_session_state.host, tg_gui_session_state.port,
-            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            fc->host, fc->port,
+            fc->api_id, fc->auth_file,
+            fc->dc_id_text, fc->context,
             query, writer.length, &result, quiet, label, 600U) != 0 ||
         result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR ||
         tg_mtproto_unpack_gzip_result(&result, quiet, label) != 0 ||
@@ -13374,10 +13507,13 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
         return 1;
     }
     for (i = 0UL; i < texts.count; ++i) {
-        if (texts.messages[i].id != msg_id) {
+        if (msg_id != 0UL && texts.messages[i].id != msg_id) {
             continue;
         }
         if (!texts.messages[i].document.has_document) {
+            if (msg_id == 0UL) {
+                continue; /* latest-mode: keep scanning the page */
+            }
             strcpy(tg_dl_diag, "no document on message");
             return 1;
         }
@@ -13394,7 +13530,8 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
                 out->file_reference_len);
         return 0;
     }
-    strcpy(tg_dl_diag, "message not in history page");
+    strcpy(tg_dl_diag, msg_id != 0UL ? "message not in history page"
+                                     : "no recent file in this chat");
     return 1;
 }
 
@@ -13407,7 +13544,8 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
    Blocking on-context call from the explicit user action, never the tick. */
 #define TG_GUI_UL_LIMIT (10UL * 1048576UL)
 
-int tg_gui_session_send_document(const char *path, FILE *stream)
+static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
+                                const char *path, FILE *stream)
 {
     static unsigned char part_buf[TG_GUI_DL_CHUNK];
     static unsigned char part_query[TG_GUI_DL_CHUNK + 64UL];
@@ -13425,9 +13563,8 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
     const char *name;
     const char *p;
 
-    if (!tg_gui_session_state.open || stream == 0 || path == 0 ||
-        path[0] == '\0' ||
-        tg_gui_session_state.current_peer_index[0] == '\0') {
+    if (fc == 0 || stream == 0 || path == 0 || path[0] == '\0' ||
+        fc->peer_index == 0 || fc->peer_index[0] == '\0') {
         return 1;
     }
     f = fopen(path, "rb");
@@ -13456,8 +13593,8 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
     if (tg_mtproto_load_peer_cache_peer(
-            tg_gui_session_state.peer_cache_file,
-            tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+            fc->peer_cache_file,
+            fc->peer_index, &pc, &ph, &pl, &ahh,
             &ahl, &hah, quiet, "mtproto sendMedia(document)") != 0) {
         fclose(f);
         tg_mtproto_close_quiet_stream(quiet, stream);
@@ -13483,10 +13620,10 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
         }
         memset(&result, 0, sizeof(result));
         if (tg_mtproto_send_saved_query_on_context(
-                tg_gui_session_state.host, tg_gui_session_state.port,
-                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-                tg_gui_session_state.dc_id_text,
-                &tg_gui_session_state.context, part_query, writer.length,
+                fc->host, fc->port,
+                fc->api_id, fc->auth_file,
+                fc->dc_id_text,
+                fc->context, part_query, writer.length,
                 &result, quiet, "mtproto saveFilePart", 600U) != 0 ||
             result.result_constructor != 0x997275b5UL /* boolTrue */) {
             break;
@@ -13510,9 +13647,9 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
     }
     memset(&result, 0, sizeof(result));
     if (tg_mtproto_send_saved_query_on_context(
-            tg_gui_session_state.host, tg_gui_session_state.port,
-            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            fc->host, fc->port,
+            fc->api_id, fc->auth_file,
+            fc->dc_id_text, fc->context,
             query, writer.length, &result, quiet,
             "mtproto sendMedia(document)", 600U) != 0 ||
         result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
@@ -13525,8 +13662,9 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
 
 /* Returns: 0 ok, 1 generic failure, 2 foreign DC (needs multi-DC, deferred),
    3 could not create/write the file. Writes the saved path into out_path. */
-int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
-                                     unsigned long out_path_size, FILE *stream)
+static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
+                                    unsigned long msg_id, char *out_path,
+                                    unsigned long out_path_size, FILE *stream)
 {
     tg_mtproto_document_meta doc;
     char safe[TG_MTPROTO_DOC_NAME_MAX];
@@ -13547,13 +13685,13 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     if (out_path != 0 && out_path_size > 0UL) {
         out_path[0] = '\0';
     }
-    if (!tg_gui_session_state.open || stream == 0 || msg_id == 0UL ||
-        tg_gui_session_state.current_peer_index[0] == '\0') {
+    if (fc == 0 || stream == 0 ||
+        fc->peer_index == 0 || fc->peer_index[0] == '\0') {
         return 1;
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
     tg_dl_diag[0] = '\0';
-    if (tg_gui_session_find_open_document(msg_id, quiet, &doc) != 0) {
+    if (tg_mtproto_file_find_document(fc, msg_id, quiet, &doc) != 0) {
         tg_gui_log("download: not found");
         if (out_path != 0 && out_path_size > 0UL && tg_dl_diag[0] != '\0') {
             unsigned long e = 0UL;
@@ -13573,8 +13711,8 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     }
     /* Same-DC guard (foreign documents need export/importAuthorization). */
     home = 0UL;
-    if (tg_gui_session_state.dc_id_text[0] != '\0') {
-        const char *p = tg_gui_session_state.dc_id_text;
+    if (fc->dc_id_text[0] != '\0') {
+        const char *p = fc->dc_id_text;
 
         while (*p >= '0' && *p <= '9') {
             home = home * 10UL + (unsigned long)(*p - '0');
@@ -13609,10 +13747,10 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
             int gfrc;
             char gl[128];
             gfrc = tg_mtproto_send_saved_query_on_context(
-                tg_gui_session_state.host, tg_gui_session_state.port,
-                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-                tg_gui_session_state.dc_id_text,
-                &tg_gui_session_state.context, query, writer.length, &result,
+                fc->host, fc->port,
+                fc->api_id, fc->auth_file,
+                fc->dc_id_text,
+                fc->context, query, writer.length, &result,
                 quiet, "mtproto getFile(document)", 600U);
             sprintf(gl, "download: getFile off=%lu qlen=%lu rc=%d ctor=0x%08lx",
                     offset, writer.length, gfrc, result.result_constructor);
@@ -13654,7 +13792,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
             }
             /* FILE_REFERENCE_EXPIRED mid-transfer: re-fetch once, restart. */
             if (!refetched &&
-                tg_gui_session_find_open_document(msg_id, quiet, &doc) == 0) {
+                tg_mtproto_file_find_document(fc, msg_id, quiet, &doc) == 0) {
                 refetched = 1;
                 offset = 0UL;
                 if (fseek(f, 0L, SEEK_SET) == 0) {
@@ -13708,6 +13846,47 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     tg_mtproto_close_quiet_stream(quiet, stream);
     return rc;
 }
+
+/* Fills the bundle from the GUI session singleton. */
+static void tg_gui_session_file_ctx(tg_mtproto_file_ctx *fc)
+{
+    fc->host = tg_gui_session_state.host;
+    fc->port = tg_gui_session_state.port;
+    fc->api_id = tg_gui_session_state.api_id;
+    fc->auth_file = tg_gui_session_state.auth_file;
+    fc->dc_id_text = tg_gui_session_state.dc_id_text;
+    fc->context = &tg_gui_session_state.context;
+    fc->peer_cache_file = tg_gui_session_state.peer_cache_file;
+    fc->peer_index = tg_gui_session_state.current_peer_index;
+}
+
+int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
+                                     unsigned long out_path_size, FILE *stream)
+{
+    tg_mtproto_file_ctx fc;
+
+    if (!tg_gui_session_state.open || msg_id == 0UL) {
+        if (out_path != 0 && out_path_size > 0UL) {
+            out_path[0] = '\0';
+        }
+        return 1;
+    }
+    tg_gui_session_file_ctx(&fc);
+    return tg_mtproto_file_download(&fc, msg_id, out_path, out_path_size,
+                                    stream);
+}
+
+int tg_gui_session_send_document(const char *path, FILE *stream)
+{
+    tg_mtproto_file_ctx fc;
+
+    if (!tg_gui_session_state.open) {
+        return 1;
+    }
+    tg_gui_session_file_ctx(&fc);
+    return tg_mtproto_file_send(&fc, path, stream);
+}
+
 
 static void tg_gui_session_fetch_open_avatar(FILE *stream)
 {
