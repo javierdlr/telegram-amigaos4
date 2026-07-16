@@ -8891,6 +8891,19 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             line[c] = ch;
             ++(*line_length);
             tg_chat_caret = c + 1UL;
+            if (use_history && ch == '/' && *line_length == 1UL) {
+                /* Command hint: a lone leading '/' lists what can follow (the
+                   full stories live in /help). Printed to the transcript, then
+                   the input row is redrawn below with the '/' kept. */
+                FILE *hint_cap = tg_console_tui_capture_begin(stream);
+
+                fprintf(hint_cap,
+                        "Commands: /peers /saved /getfile /sendfile /search"
+                        " /add /remove\n"
+                        "          /history /swap /watch /diff /color /bell"
+                        " /resize /help /quit\n");
+                tg_console_tui_capture_end(hint_cap, stream);
+            }
             tg_console_tui_input(tg_chat_tui_stream,
                                  tg_console_tui_prompt(), line, *line_length);
             tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
