@@ -10113,6 +10113,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     const char *peer_arg;
     const char *username_arg;
     const char *search_arg;
+    const char *cmd_arg;
     const char *remove_arg;
     const char *color_arg;
     unsigned long line_length;
@@ -10660,6 +10661,13 @@ int tg_mtproto_auth_chat_file(const char *host,
                             "File is on another server - not supported yet.\n");
                 } else if (frc == 3) {
                     fprintf(tui_cap, "Could not write to downloads/.\n");
+                } else if (frc == 4) {
+                    if (saved_path[0] != '\0') {
+                        fprintf(tui_cap, "Transfer failed: %.110s\n",
+                                saved_path);
+                    } else {
+                        fprintf(tui_cap, "Transfer failed (server error).\n");
+                    }
                 } else if (saved_path[0] != '\0') {
                     fprintf(tui_cap, "No file: %.120s\n", saved_path);
                 } else {
@@ -10671,13 +10679,12 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
             continue;
         }
-        if (strncmp(line, "/sendfile ", 10) == 0) {
-            /* Upload a file (<= 10 MB) to the open chat: /sendfile <path>. */
-            const char *fpath = line + 10;
+        if (tg_mtproto_chat_named_command_arg(line, "/sendfile", &cmd_arg)) {
+            /* Upload a file (<= 10 MB) to the open chat: /sendfile <path>.
+               The helper matches the bare and tab forms too, so a syntax probe
+               can never fall through and be SENT as a literal message. */
+            const char *fpath = cmd_arg;
 
-            while (*fpath == ' ') {
-                ++fpath;
-            }
             if (peer_index[0] == '\0') {
                 tg_mtproto_chat_print_system_line(
                     stream, "Choose a chat first with /peers or /add name.");
@@ -10715,7 +10722,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         if (strcmp(line, "/saved") == 0) {
             /* F10 parity: jump to Saved Messages (the self chat, peer index
                "self" in the cache loaders) as the cloud transfer drawer. */
-            if (peer_index[0] != '\0') {
+            if (peer_index[0] != '\0' && strcmp(peer_index, "self") != 0) {
                 strcpy(prev_peer_index, peer_index);
                 strcpy(prev_peer_label, peer_label);
             }
@@ -13461,7 +13468,8 @@ static char tg_dl_diag[96]; /* find_open_document -> download status */
 
 static int tg_mtproto_file_find_document(const tg_mtproto_file_ctx *fc,
                                          unsigned long msg_id, FILE *quiet,
-                                         tg_mtproto_document_meta *out)
+                                         tg_mtproto_document_meta *out,
+                                         unsigned long *resolved_id)
 {
     unsigned char query[64];
     unsigned long pc, ph, pl, ahh, ahl;
@@ -13525,6 +13533,12 @@ static int tg_mtproto_file_find_document(const tg_mtproto_file_ctx *fc,
             return 1;
         }
         *out = texts.messages[i].document;
+        if (resolved_id != 0) {
+            /* Latest-mode callers pin the retry to THIS message: a mid-transfer
+               re-resolve of "the newest document" could bind a newer file and
+               write its bytes under the original name. */
+            *resolved_id = texts.messages[i].id;
+        }
         sprintf(tg_dl_diag, "dc=%lu size=%lu:%lu ref=%lu",
                 out->dc_id, out->size_hi, out->size_lo,
                 out->file_reference_len);
@@ -13679,6 +13693,7 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
     const unsigned char *bytes;
     unsigned long bytes_len;
     int cdn;
+    unsigned long resolved_msg_id = 0UL;
     int refetched = 0;
     int rc = 1;
 
@@ -13691,7 +13706,8 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
     tg_dl_diag[0] = '\0';
-    if (tg_mtproto_file_find_document(fc, msg_id, quiet, &doc) != 0) {
+    if (tg_mtproto_file_find_document(fc, msg_id, quiet, &doc,
+                                      &resolved_msg_id) != 0) {
         tg_gui_log("download: not found");
         if (out_path != 0 && out_path_size > 0UL && tg_dl_diag[0] != '\0') {
             unsigned long e = 0UL;
@@ -13792,7 +13808,9 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
             }
             /* FILE_REFERENCE_EXPIRED mid-transfer: re-fetch once, restart. */
             if (!refetched &&
-                tg_mtproto_file_find_document(fc, msg_id, quiet, &doc) == 0) {
+                tg_mtproto_file_find_document(
+                    fc, resolved_msg_id != 0UL ? resolved_msg_id : msg_id,
+                    quiet, &doc, 0) == 0) {
                 refetched = 1;
                 offset = 0UL;
                 if (fseek(f, 0L, SEEK_SET) == 0) {
