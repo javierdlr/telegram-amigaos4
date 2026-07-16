@@ -92,6 +92,13 @@ int main(int argc, char **argv)
             {
                 int rc = tg_app_run(6, tui_argv);
 
+                /* Farewell hint on the WAIT console: the window stays so the
+                   last output remains readable, and (when quit came from the
+                   close gadget) that first click was consumed as the quit
+                   event -- tell the user one more click dismisses it. */
+                printf("\n--- Telegram Amiga closed. "
+                       "Click the window's close gadget to dismiss. ---\n");
+                fflush(stdout);
                 /* Give the CON: handle back, or the window can never die:
                    the close gadget only works once every handle is gone. */
                 tg_platform_workbench_tui_console_close();
