@@ -8785,6 +8785,11 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 /* Window NEWSIZE raw event: let the chat loop repaint the
                    full-screen layout with the new geometry. */
                 tg_console_tui_note_resize();
+            } else if (direction == '|' && fkey == 11UL) {
+                /* CLOSEWINDOW raw event: the user clicked the console's close
+                   gadget. Same clean quit as Ctrl+C/EOF -- the chat loop
+                   prints "Input closed.", leaves the TUI and returns. */
+                return -1;
             } else if (direction == 'T') {
                 /* Shift+Up (CSI T on every Amiga console; PgUp on most
                    modern keymaps): page back through the transcript. */
