@@ -137,6 +137,13 @@ void tg_platform_workbench_init(void);
    1 = a console is in place, 0 = not available (host / failure). */
 int tg_platform_workbench_tui_console(void);
 
+/* Teardown mirror of the above, called after the console client returns: puts
+   the original process streams and console task back and CLOSES our CON:
+   handle. Without it the con-handler keeps the window alive forever -- the
+   close gadget could never dismiss it after quit. No-op on the host build or
+   when the console was never opened. */
+void tg_platform_workbench_tui_console_close(void);
+
 /*
  * Returns non-zero when the user asked to abort (Amiga family: the shell
  * break signal SIGBREAKF_CTRL_C, left pending so the caller's main loop can

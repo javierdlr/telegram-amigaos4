@@ -1303,6 +1303,11 @@ void tg_platform_ensure_drawer_icon(const char *drawer)
     CloseLibrary(IconBase);
 }
 
+static BPTR tg_wb_tui_con = 0;
+static BPTR tg_wb_tui_old_in = 0;
+static BPTR tg_wb_tui_old_out = 0;
+static struct MsgPort *tg_wb_tui_old_ct = 0;
+
 int tg_platform_workbench_tui_console(void)
 {
     BPTR con;
@@ -1320,9 +1325,11 @@ int tg_platform_workbench_tui_console(void)
        its own "Output" window on the first write while reads hang: the
        two-window freeze seen on OS3/OS4. SetConsoleTask (dos V36+) points it
        at this CON: handler first. */
-    SetConsoleTask(((struct FileHandle *)BADDR(con))->fh_Type);
-    SelectInput(con);
-    SelectOutput(con);
+    tg_wb_tui_old_ct = (struct MsgPort *)
+        SetConsoleTask(((struct FileHandle *)BADDR(con))->fh_Type);
+    tg_wb_tui_old_in = SelectInput(con);
+    tg_wb_tui_old_out = SelectOutput(con);
+    tg_wb_tui_con = con;
     /* Rebind C stdio only if "*" actually resolves now: freopen on a failed
        open would CLOSE stdin/stdout for good, so probe with dos Open first. */
     {
@@ -1337,3 +1344,21 @@ int tg_platform_workbench_tui_console(void)
     }
     return 1;
 }
+
+void tg_platform_workbench_tui_console_close(void)
+{
+    if (tg_wb_tui_con == 0) {
+        return; /* console never opened (CLI launch or open failure) */
+    }
+    /* Put the original process plumbing back BEFORE closing our handle, so
+       nothing keeps referencing the console we are about to release. The
+       stdio streams freopen'd onto "*" are closed by the C runtime at exit;
+       once this handle goes too the con-handler can honour the CLOSE gadget
+       (WAIT keeps the window readable until that click). */
+    SelectInput(tg_wb_tui_old_in);
+    SelectOutput(tg_wb_tui_old_out);
+    SetConsoleTask(tg_wb_tui_old_ct);
+    Close(tg_wb_tui_con);
+    tg_wb_tui_con = 0;
+}
+

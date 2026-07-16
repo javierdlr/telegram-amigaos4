@@ -89,7 +89,14 @@ int main(int argc, char **argv)
             tui_argv[3] = "telegram-auth.bin";
             tui_argv[4] = "data/phone-code-hash.txt";
             tui_argv[5] = "data/telegram-peers.txt";
-            return tg_app_run(6, tui_argv);
+            {
+                int rc = tg_app_run(6, tui_argv);
+
+                /* Give the CON: handle back, or the window can never die:
+                   the close gadget only works once every handle is gone. */
+                tg_platform_workbench_tui_console_close();
+                return rc;
+            }
         } else {
             static char *wb_argv[3];
             FILE *redir;
