@@ -10030,6 +10030,12 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         fputs(help_lines[i], stream);
         tg_console_ui_end_line(stream);
     }
+    /* Live status of the console drag-and-drop (the startup print is wiped by
+       the TUI screen clear, so /help is where a field report can read WHY a
+       drop does nothing). */
+    fprintf(stream, "  file drag-and-drop: %s",
+            tg_platform_console_drop_diag());
+    tg_console_ui_end_line(stream);
     tg_console_ui_reset(stream);
     tg_console_ui_end_line(stream);
 }

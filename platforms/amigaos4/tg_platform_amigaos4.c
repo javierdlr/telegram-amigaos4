@@ -1285,12 +1285,14 @@ static struct MsgPort *tg_wb_tui_old_ct = 0;
 static void tg_os4_drop_arm(void);
 static void tg_os4_drop_disarm(void);
 
+#define TG_OS4_TUI_TITLE "Telegram Amiga TUI"
+
 int tg_platform_workbench_tui_console(void)
 {
     BPTR con;
 
-    con = Open((CONST_STRPTR)"CON:20/20/640/440/Telegram Amiga TUI/CLOSE/WAIT",
-               MODE_OLDFILE);
+    con = Open((CONST_STRPTR)"CON:20/20/640/440/" TG_OS4_TUI_TITLE
+               "/CLOSE/WAIT", MODE_OLDFILE);
     if (con == 0) {
         return 0;
     }
@@ -1432,6 +1434,35 @@ static void tg_os4_drop_disarm(void)
     }
 }
 
+/* Fallback window lookup: the CON: title is OURS (we put it in the spec), so
+   a title match on the public screen finds the console window even when the
+   handler does not answer the DISK_INFO trick. The window lives until the
+   console is closed, so the pointer stays valid for the AppWindow's life. */
+static struct Window *tg_os4_find_window_by_title(const char *title)
+{
+    struct Screen *scr;
+    struct Window *w;
+    struct Window *found = 0;
+
+    if (tg_os4_iint == 0) {
+        return 0;
+    }
+    scr = tg_os4_iint->LockPubScreen(0);
+    if (scr == 0) {
+        return 0;
+    }
+    Forbid();
+    for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
+        if (w->Title != 0 && strcmp((const char *)w->Title, title) == 0) {
+            found = w;
+            break;
+        }
+    }
+    Permit();
+    tg_os4_iint->UnlockPubScreen(0, scr);
+    return found;
+}
+
 static void tg_os4_drop_arm(void)
 {
     struct InfoData id;
@@ -1463,23 +1494,24 @@ static void tg_os4_drop_arm(void)
         return;
     }
     memset(&id, 0, sizeof(id));
-    /* The CON: handler answers ACTION_DISK_INFO by stuffing a RAW window
-       pointer into the (BPTR-typed) id_VolumeNode field -- the documented
-       trick, and every sample reads it back as a PLAIN cast, NOT via BADDR
-       (BADDR would shift it x4 into garbage). If OS4's rewritten handler does
-       not support the trick, the pointer simply fails the window-list check
-       below and we bail with no drag-and-drop (and no crash). */
-    if (!DoPkt(fh->fh_MsgPort, ACTION_DISK_INFO, (LONG)MKBADDR(&id),
-               0, 0, 0, 0)) {
-        tg_os4_drop_diag = "console did not answer DISK_INFO";
-        tg_os4_drop_disarm();
-        return;
+    /* Two ways to find OUR console window, in order of directness:
+       1. The CON: handler answers ACTION_DISK_INFO by stuffing a RAW window
+          pointer into the (BPTR-typed) id_VolumeNode field -- the documented
+          trick, read back as a PLAIN cast (BADDR would shift it x4). The
+          pointer is trusted only if it shows up in the screen window list.
+       2. If the handler does not play the trick (OS4's is a rewrite), find
+          the window by its TITLE: it is ours, set in the CON: spec above. */
+    win = 0;
+    if (DoPkt(fh->fh_MsgPort, ACTION_DISK_INFO, (LONG)MKBADDR(&id),
+              0, 0, 0, 0)) {
+        win = (struct Window *)id.id_VolumeNode;
     }
-    win = (struct Window *)id.id_VolumeNode;
     if (!tg_os4_window_is_live(win)) {
-        tg_os4_drop_diag = win == 0 ? "console gave no window"
-                                    : "window not on the public screen";
-        tg_os4_drop_disarm(); /* not trustworthy: no drop, but no crash */
+        win = tg_os4_find_window_by_title(TG_OS4_TUI_TITLE);
+    }
+    if (win == 0) {
+        tg_os4_drop_diag = "console window not found";
+        tg_os4_drop_disarm(); /* no drop, but no crash */
         return;
     }
     tg_os4_wb_base = OpenLibrary((CONST_STRPTR)"workbench.library", 44);
