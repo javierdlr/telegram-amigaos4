@@ -1360,6 +1360,8 @@ void tg_platform_workbench_tui_console_close(void)
 #undef RemoveAppWindow
 
 static const char *tg_os4_drop_diag = "not armed";
+static unsigned long tg_os4_drop_polls = 0;  /* poll calls (loop alive?) */
+static unsigned long tg_os4_drop_msgs = 0;   /* AppMessages ever received */
 
 static struct Library *tg_os4_wb_base = 0;
 static struct WorkbenchIFace *tg_os4_iwb = 0;
@@ -1550,7 +1552,14 @@ static void tg_os4_drop_arm(void)
 
 const char *tg_platform_console_drop_diag(void)
 {
-    return tg_os4_drop_diag;
+    /* Live counters make the field report decisive: polls==0 means the read
+       loop never asks, msgs==0 means Workbench never delivered (e.g. the
+       con-handler's own drop handling swallowed it). */
+    static char diag_buf[96];
+
+    sprintf(diag_buf, "%s, polls %lu, drops %lu", tg_os4_drop_diag,
+            tg_os4_drop_polls, tg_os4_drop_msgs);
+    return diag_buf;
 }
 
 int tg_platform_console_drop_poll(char *out, unsigned long out_size)
@@ -1565,7 +1574,9 @@ int tg_platform_console_drop_poll(char *out, unsigned long out_size)
     if (tg_os4_app_port == 0) {
         return 0;
     }
+    ++tg_os4_drop_polls;
     while ((am = (struct AppMessage *)GetMsg(tg_os4_app_port)) != 0) {
+        ++tg_os4_drop_msgs;
         /* Take the FIRST dropped file only (one path per /sendfile); still
            reply to every message so the sender is never left blocked. */
         if (!got && am->am_NumArgs > 0 && am->am_ArgList != 0) {
