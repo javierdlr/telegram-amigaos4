@@ -1357,6 +1357,8 @@ void tg_platform_workbench_tui_console_close(void)
 #undef AddAppWindowA
 #undef RemoveAppWindow
 
+static const char *tg_os4_drop_diag = "not armed";
+
 static struct Library *tg_os4_wb_base = 0;
 static struct WorkbenchIFace *tg_os4_iwb = 0;
 static struct Library *tg_os4_int_base = 0;
@@ -1437,6 +1439,7 @@ static void tg_os4_drop_arm(void)
     struct Window *win;
 
     if (tg_wb_tui_con == 0) {
+        tg_os4_drop_diag = "no Workbench console";
         return; /* only the console we opened from Workbench */
     }
     if (tg_os4_app_win != 0 || tg_os4_app_port != 0 ||
@@ -1449,11 +1452,13 @@ static void tg_os4_drop_arm(void)
     }
     tg_os4_int_base = OpenLibrary((CONST_STRPTR)"intuition.library", 39);
     if (tg_os4_int_base == 0) {
+        tg_os4_drop_diag = "intuition.library open failed";
         return;
     }
     tg_os4_iint = (struct IntuitionIFace *)GetInterface(tg_os4_int_base,
                                                         "main", 1L, 0);
     if (tg_os4_iint == 0) {
+        tg_os4_drop_diag = "intuition interface failed";
         tg_os4_drop_disarm();
         return;
     }
@@ -1466,35 +1471,49 @@ static void tg_os4_drop_arm(void)
        below and we bail with no drag-and-drop (and no crash). */
     if (!DoPkt(fh->fh_MsgPort, ACTION_DISK_INFO, (LONG)MKBADDR(&id),
                0, 0, 0, 0)) {
+        tg_os4_drop_diag = "console did not answer DISK_INFO";
         tg_os4_drop_disarm();
         return;
     }
     win = (struct Window *)id.id_VolumeNode;
     if (!tg_os4_window_is_live(win)) {
+        tg_os4_drop_diag = win == 0 ? "console gave no window"
+                                    : "window not on the public screen";
         tg_os4_drop_disarm(); /* not trustworthy: no drop, but no crash */
         return;
     }
     tg_os4_wb_base = OpenLibrary((CONST_STRPTR)"workbench.library", 44);
     if (tg_os4_wb_base == 0) {
+        tg_os4_drop_diag = "workbench.library open failed";
         tg_os4_drop_disarm();
         return;
     }
     tg_os4_iwb = (struct WorkbenchIFace *)GetInterface(tg_os4_wb_base, "main",
                                                        1L, 0);
     if (tg_os4_iwb == 0) {
+        tg_os4_drop_diag = "workbench interface failed";
         tg_os4_drop_disarm();
         return;
     }
     tg_os4_app_port = CreateMsgPort();
     if (tg_os4_app_port == 0) {
+        tg_os4_drop_diag = "message port failed";
         tg_os4_drop_disarm();
         return;
     }
     tg_os4_app_win = tg_os4_iwb->AddAppWindowA(0UL, 0UL, win, tg_os4_app_port,
                                                0);
     if (tg_os4_app_win == 0) {
+        tg_os4_drop_diag = "AddAppWindow failed";
         tg_os4_drop_disarm();
+    } else {
+        tg_os4_drop_diag = "ready";
     }
+}
+
+const char *tg_platform_console_drop_diag(void)
+{
+    return tg_os4_drop_diag;
 }
 
 int tg_platform_console_drop_poll(char *out, unsigned long out_size)

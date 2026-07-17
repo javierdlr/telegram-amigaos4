@@ -10571,6 +10571,13 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
             continue;
         }
+        /* The chat loop never trimmed its line (only the startup picker did):
+           a habitual trailing space after an exact-match command ("/getfile ")
+           fell through the whole chain and was SENT as a message. Trim before
+           dispatch so every strcmp command tolerates trailing whitespace;
+           message text is unaffected beyond the trailing blanks nobody wants. */
+        tg_mtproto_trim_line(line);
+        line_length = (unsigned long)strlen(line);
         if (strcmp(line, "/quit") == 0 || strcmp(line, "quit") == 0) {
             tg_mtproto_chat_print_system_line(stream, "Bye.");
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
@@ -10694,7 +10701,7 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
             continue;
         }
-        if (strcmp(line, "/getfile") == 0) {
+        if (tg_mtproto_chat_named_command_arg(line, "/getfile", &cmd_arg)) {
             /* F9 parity for the console: download the MOST RECENT document in
                the open chat into downloads/ (same machinery as the GUI). */
             if (peer_index[0] == '\0') {

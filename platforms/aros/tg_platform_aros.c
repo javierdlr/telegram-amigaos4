@@ -1284,3 +1284,9 @@ int tg_platform_console_drop_poll(char *out, unsigned long out_size)
     }
     return 0;
 }
+
+const char *tg_platform_console_drop_diag(void)
+{
+    return "unsupported on this platform";
+}
+

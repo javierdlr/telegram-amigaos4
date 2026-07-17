@@ -154,6 +154,11 @@ void tg_platform_workbench_tui_console_close(void);
    every other build is a no-op that returns 0. */
 int tg_platform_console_drop_poll(char *out, unsigned long out_size);
 
+/* One-line, human-readable status of the drag-and-drop arming ("ready", or
+   which step bailed). Printed at console startup so a field report can say
+   WHY drops are inactive without a debug build. */
+const char *tg_platform_console_drop_diag(void);
+
 /*
  * Returns non-zero when the user asked to abort (Amiga family: the shell
  * break signal SIGBREAKF_CTRL_C, left pending so the caller's main loop can

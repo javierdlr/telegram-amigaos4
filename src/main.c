@@ -83,6 +83,10 @@ int main(int argc, char **argv)
             if (!tg_platform_workbench_tui_console()) {
                 return 0; /* no console possible: nothing sane to do */
             }
+            /* One line of drop status in the console scrollback: when a field
+               report says "drag-and-drop does nothing", this says WHY. */
+            printf("[file drag-and-drop: %s]\n",
+                   tg_platform_console_drop_diag());
             tui_argv[0] = "TelegramAmiga";
             tui_argv[1] = "--mtproto-start-file";
             tui_argv[2] = "data/telegram-api.txt";

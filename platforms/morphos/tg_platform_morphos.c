@@ -1216,4 +1216,10 @@ int tg_platform_console_drop_poll(char *out, unsigned long out_size)
     return 0; /* drag-and-drop console file: AmigaOS 4 only */
 }
 
+const char *tg_platform_console_drop_diag(void)
+{
+    return "unsupported on this platform";
+}
+
+
 
