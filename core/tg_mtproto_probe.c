@@ -8676,6 +8676,13 @@ static int tg_mtproto_chat_read_line_edit(char *line,
 
             if (tg_platform_console_drop_poll(drop, sizeof(drop))) {
                 unsigned long di;
+                char drop_note[300];
+
+                /* Visible proof in the transcript that the drop ARRIVED (a
+                   field report can then separate "never delivered" from
+                   "injection failed"). */
+                sprintf(drop_note, "Dropped: %.280s", drop);
+                tg_console_tui_line(tg_chat_tui_stream, drop_note);
 
                 for (di = 0UL; drop[di] != '\0'; ++di) {
                     unsigned long c;
@@ -8745,16 +8752,29 @@ static int tg_mtproto_chat_read_line_edit(char *line,
     if (ch == '\b' || ch == 127) {
         if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
             unsigned long c;
+            int changed = 0;
 
             c = tg_chat_caret;
             if (c > *line_length) {
                 c = *line_length;
             }
-            if (c > 0UL) {
-                /* delete the char before the caret, shifting the tail left */
+            if (ch == 127) {
+                /* Canc/Del: forward-delete AT the caret (the GUI fix, TUI
+                   edition -- 0x7F is not a second backspace). */
+                if (c < *line_length) {
+                    memmove(&line[c], &line[c + 1UL],
+                            *line_length - c - 1UL);
+                    --(*line_length);
+                    changed = 1;
+                }
+            } else if (c > 0UL) {
+                /* Backspace: delete the char BEFORE the caret. */
                 memmove(&line[c - 1UL], &line[c], *line_length - c);
                 --(*line_length);
                 tg_chat_caret = c - 1UL;
+                changed = 1;
+            }
+            if (changed) {
                 tg_console_tui_input(tg_chat_tui_stream,
                                      tg_console_tui_prompt(), line,
                                      *line_length);

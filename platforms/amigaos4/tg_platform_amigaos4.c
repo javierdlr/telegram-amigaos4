@@ -1506,8 +1506,14 @@ static void tg_os4_drop_arm(void)
               0, 0, 0, 0)) {
         win = (struct Window *)id.id_VolumeNode;
     }
-    if (!tg_os4_window_is_live(win)) {
+    if (tg_os4_window_is_live(win)) {
+        tg_os4_drop_diag = "ready (handler window)";
+    } else {
         win = tg_os4_find_window_by_title(TG_OS4_TUI_TITLE);
+        /* NB a STALE console window with the same title (an old WAIT window
+           from a previous run) would be matched first: the diag says which
+           route armed so a field report can catch exactly that. */
+        tg_os4_drop_diag = "ready (title match)";
     }
     if (win == 0) {
         tg_os4_drop_diag = "console window not found";
@@ -1538,9 +1544,8 @@ static void tg_os4_drop_arm(void)
     if (tg_os4_app_win == 0) {
         tg_os4_drop_diag = "AddAppWindow failed";
         tg_os4_drop_disarm();
-    } else {
-        tg_os4_drop_diag = "ready";
     }
+    /* on success the diag already says WHICH route found the window */
 }
 
 const char *tg_platform_console_drop_diag(void)
