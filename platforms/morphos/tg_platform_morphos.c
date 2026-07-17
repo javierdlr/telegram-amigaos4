@@ -1111,12 +1111,23 @@ void tg_platform_display_beep(void)
 {
     /* The screen flash is the Amiga-native notification; a BEL byte lets
        console handlers improvise (AmiKit's console clears the window). */
-    IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library",
-                                                        0L);
+    /* Respect a base someone else is HOLDING (the console drag-and-drop arms
+       intuition for the session): only open/close/zero when it was closed on
+       entry, or the holder's CloseLibrary at teardown is skipped and the
+       open count leaks (review finding on the drop port). */
+    int beep_opened = 0;
+
+    if (IntuitionBase == 0) {
+        IntuitionBase = (struct IntuitionBase *)
+            OpenLibrary("intuition.library", 0L);
+        beep_opened = 1;
+    }
     if (IntuitionBase != 0) {
         DisplayBeep(0L);
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
+        if (beep_opened) {
+            CloseLibrary((struct Library *)IntuitionBase);
+            IntuitionBase = 0;
+        }
     }
 }
 

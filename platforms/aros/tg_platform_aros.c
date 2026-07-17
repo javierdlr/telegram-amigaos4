@@ -1160,12 +1160,23 @@ void tg_platform_display_beep(void)
 #if defined(__AROS__)
     /* The screen flash is the Amiga-native notification; a BEL byte lets
        console handlers improvise (one icon console draws it as a glyph). */
-    IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library",
-                                                        0L);
+    /* Respect a base someone else is HOLDING (the console drag-and-drop arms
+       intuition for the session): only open/close/zero when it was closed on
+       entry, or the holder's CloseLibrary at teardown is skipped and the
+       open count leaks (review finding on the drop port). */
+    int beep_opened = 0;
+
+    if (IntuitionBase == 0) {
+        IntuitionBase = (struct IntuitionBase *)
+            OpenLibrary("intuition.library", 0L);
+        beep_opened = 1;
+    }
     if (IntuitionBase != 0) {
         DisplayBeep(0L);
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
+        if (beep_opened) {
+            CloseLibrary((struct Library *)IntuitionBase);
+            IntuitionBase = 0;
+        }
     }
 #endif
 }
@@ -1422,7 +1433,10 @@ static void tg_wb_drop_arm(void)
         return;
     }
     win = 0;
-    if (DoPkt(fh->fh_Type, ACTION_DISK_INFO, (LONG)MKBADDR(id),
+    /* SIPTR, NOT LONG: on AROS x86_64 LONG is 32-bit while pointers are
+       64-bit -- a LONG cast truncates the InfoData address and the handler
+       would write through garbage (found by review before it shipped). */
+    if (DoPkt(fh->fh_Type, ACTION_DISK_INFO, (SIPTR)MKBADDR(id),
               0, 0, 0, 0)) {
         /* the handler stuffs a RAW window pointer into the BPTR-typed
            field: plain cast, no BADDR (it would shift it into garbage) */
