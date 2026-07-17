@@ -1358,6 +1358,11 @@ void tg_platform_workbench_tui_console_close(void)
 #undef UnlockPubScreen
 #undef AddAppWindowA
 #undef RemoveAppWindow
+#undef AddAppIconA
+#undef RemoveAppIcon
+#undef GetDiskObject
+#undef GetDefDiskObject
+#undef FreeDiskObject
 
 static const char *tg_os4_drop_diag = "not armed";
 static unsigned long tg_os4_drop_polls = 0;  /* poll calls (loop alive?) */
@@ -1369,6 +1374,10 @@ static struct Library *tg_os4_int_base = 0;
 static struct IntuitionIFace *tg_os4_iint = 0;
 static struct MsgPort *tg_os4_app_port = 0;
 static struct AppWindow *tg_os4_app_win = 0;
+static struct AppIcon *tg_os4_app_icon = 0;
+static struct Library *tg_os4_icon_base = 0;
+static struct IconIFace *tg_os4_iicon = 0;
+static struct DiskObject *tg_os4_drop_dobj = 0;
 
 /* Confirm `cand` is a live window on the default public screen before handing
    it to workbench.library. The DoPkt(ACTION_DISK_INFO) trick that yields the
@@ -1405,6 +1414,10 @@ static int tg_os4_window_is_live(struct Window *cand)
 
 static void tg_os4_drop_disarm(void)
 {
+    if (tg_os4_app_icon != 0 && tg_os4_iwb != 0) {
+        tg_os4_iwb->RemoveAppIcon(tg_os4_app_icon);
+        tg_os4_app_icon = 0;
+    }
     if (tg_os4_app_win != 0 && tg_os4_iwb != 0) {
         tg_os4_iwb->RemoveAppWindow(tg_os4_app_win);
         tg_os4_app_win = 0;
@@ -1417,6 +1430,18 @@ static void tg_os4_drop_disarm(void)
         }
         DeleteMsgPort(tg_os4_app_port);
         tg_os4_app_port = 0;
+    }
+    if (tg_os4_drop_dobj != 0 && tg_os4_iicon != 0) {
+        tg_os4_iicon->FreeDiskObject(tg_os4_drop_dobj);
+        tg_os4_drop_dobj = 0;
+    }
+    if (tg_os4_iicon != 0) {
+        DropInterface((struct Interface *)tg_os4_iicon);
+        tg_os4_iicon = 0;
+    }
+    if (tg_os4_icon_base != 0) {
+        CloseLibrary(tg_os4_icon_base);
+        tg_os4_icon_base = 0;
     }
     if (tg_os4_iwb != 0) {
         DropInterface((struct Interface *)tg_os4_iwb);
@@ -1546,8 +1571,35 @@ static void tg_os4_drop_arm(void)
     if (tg_os4_app_win == 0) {
         tg_os4_drop_diag = "AddAppWindow failed";
         tg_os4_drop_disarm();
+        return;
     }
-    /* on success the diag already says WHICH route found the window */
+    /* Field result on OS4: the AppWindow registers fine but Workbench never
+       delivers console-window drops to it (the con-handler owns those). The
+       reliable lane is an APPICON on the same message port: drop the file on
+       the TelegramAmiga icon that appears on the Workbench while the console
+       client runs. Same port, same poll, same injection. */
+    tg_os4_icon_base = OpenLibrary((CONST_STRPTR)"icon.library", 36L);
+    if (tg_os4_icon_base != 0) {
+        tg_os4_iicon = (struct IconIFace *)GetInterface(tg_os4_icon_base,
+                                                        "main", 1L, 0);
+    }
+    if (tg_os4_iicon != 0) {
+        tg_os4_drop_dobj =
+            tg_os4_iicon->GetDiskObject((STRPTR)"PROGDIR:TelegramAmiga");
+        if (tg_os4_drop_dobj == 0) {
+            tg_os4_drop_dobj = tg_os4_iicon->GetDefDiskObject(WBTOOL);
+        }
+        if (tg_os4_drop_dobj != 0) {
+            tg_os4_drop_dobj->do_CurrentX = NO_ICON_POSITION;
+            tg_os4_drop_dobj->do_CurrentY = NO_ICON_POSITION;
+            tg_os4_drop_dobj->do_Type = 0; /* plain AppIcon, not a WB object */
+            tg_os4_app_icon = tg_os4_iwb->AddAppIconA(
+                0UL, 0UL, (CONST_STRPTR)"TG drop", tg_os4_app_port, 0,
+                tg_os4_drop_dobj, 0);
+        }
+    }
+    /* the diag already says WHICH route found the window; the icon lane is
+       best-effort on top (drops on either land on the same port) */
 }
 
 const char *tg_platform_console_drop_diag(void)
