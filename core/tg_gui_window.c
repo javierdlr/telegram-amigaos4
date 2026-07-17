@@ -1414,6 +1414,9 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     } else if (rc == 3) {
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "Could not read that file");
+    } else if (rc == 5) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "That file is empty (0 bytes)");
     } else {
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "Upload failed");

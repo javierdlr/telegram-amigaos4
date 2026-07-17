@@ -10820,6 +10820,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                     fprintf(tui_cap, "File too big (10 MB limit for now).\n");
                 } else if (frc == 3) {
                     fprintf(tui_cap, "Could not read that file.\n");
+                } else if (frc == 5) {
+                    fprintf(tui_cap, "That file is empty (0 bytes).\n");
                 } else {
                     fprintf(tui_cap, "Upload failed.\n");
                 }
@@ -13694,6 +13696,10 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
     f = fopen(path, "rb");
     if (f == 0) {
         return 3;
+    }
+    if (fseek(f, 0L, SEEK_END) == 0 && ftell(f) == 0L) {
+        fclose(f);
+        return 5; /* empty file: nothing to upload (0-byte markers, etc.) */
     }
     if (fseek(f, 0L, SEEK_END) != 0 || (file_size = ftell(f)) <= 0L ||
         fseek(f, 0L, SEEK_SET) != 0) {
