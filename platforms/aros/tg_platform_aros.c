@@ -47,7 +47,11 @@ struct Library *SocketBase = 0;
 
 #if defined(__AROS__) || defined(__amigaos4__) || defined(__MORPHOS__) || defined(__amigaos3__) || defined(__m68k__)
 #include <workbench/workbench.h>
+#include <workbench/startup.h>
 #include <proto/icon.h>
+#if defined(__AROS__)
+#include <proto/wb.h>
+#endif
 #endif
 #include "tg_platform.h"
 #include "tg_mtproto_crypto.h"
@@ -1205,6 +1209,9 @@ void tg_platform_ensure_drawer_icon(const char *drawer)
 #endif
 #if defined(__AROS__)
 
+static void tg_wb_drop_arm(void);
+static void tg_wb_drop_disarm(void);
+
 static BPTR tg_wb_tui_con = 0;
 static BPTR tg_wb_tui_old_in = 0;
 static BPTR tg_wb_tui_old_out = 0;
@@ -1244,6 +1251,7 @@ int tg_platform_workbench_tui_console(void)
             (void)freopen("*", "w", stderr);
         }
     }
+    tg_wb_drop_arm(); /* best-effort file drag-and-drop */
     return 1;
 }
 
@@ -1252,6 +1260,7 @@ void tg_platform_workbench_tui_console_close(void)
     if (tg_wb_tui_con == 0) {
         return; /* console never opened (CLI launch or open failure) */
     }
+    tg_wb_drop_disarm();
     /* Put the original process plumbing back BEFORE closing our handle, so
        nothing keeps referencing the console we are about to release. The
        stdio streams freopen'd onto "*" are closed by the C runtime at exit;
@@ -1263,6 +1272,264 @@ void tg_platform_workbench_tui_console_close(void)
     Close(tg_wb_tui_con);
     tg_wb_tui_con = 0;
 }
+
+/* ---- Workbench TUI drag-and-drop (AppIcon + AppWindow, classic API) ------
+   Port of the OS4 lane, proven there in the field: drops on the console
+   WINDOW may be owned by the system (they are on OS4), so the reliable lane
+   is the "TG drop" APPICON on the Workbench; both feed the same MsgPort.
+   Library bases are the shared globals the GUI iconify already uses
+   (gui_window.o owns them); we open them only when still closed and close
+   only what we opened. */
+
+extern struct Library *WorkbenchBase; /* owned by core/tg_gui_window.c */
+extern struct Library *IconBase;
+
+static const char *tg_wb_drop_diag = "not armed";
+static unsigned long tg_wb_drop_polls = 0;
+static unsigned long tg_wb_drop_msgs = 0;
+static struct MsgPort *tg_wb_app_port = 0;
+static struct AppWindow *tg_wb_app_win = 0;
+static struct AppIcon *tg_wb_app_icon = 0;
+static struct DiskObject *tg_wb_drop_dobj = 0;
+static int tg_wb_drop_opened_wb = 0;
+static int tg_wb_drop_opened_icon = 0;
+static int tg_wb_drop_opened_int = 0;
+
+static int tg_wb_window_is_live(struct Window *cand)
+{
+    struct Screen *scr;
+    struct Window *w;
+    int found = 0;
+
+    if (cand == 0 || IntuitionBase == 0) {
+        return 0;
+    }
+    scr = LockPubScreen(0);
+    if (scr == 0) {
+        return 0;
+    }
+    /* LockPubScreen keeps the screen alive but not its window list. */
+    Forbid();
+    for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
+        if (w == cand) {
+            found = 1;
+            break;
+        }
+    }
+    Permit();
+    UnlockPubScreen(0, scr);
+    return found;
+}
+
+static struct Window *tg_wb_find_window_by_title(const char *title)
+{
+    struct Screen *scr;
+    struct Window *w;
+    struct Window *found = 0;
+
+    if (IntuitionBase == 0) {
+        return 0;
+    }
+    scr = LockPubScreen(0);
+    if (scr == 0) {
+        return 0;
+    }
+    Forbid();
+    for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
+        if (w->Title != 0 && strcmp((const char *)w->Title, title) == 0) {
+            found = w;
+            break;
+        }
+    }
+    Permit();
+    UnlockPubScreen(0, scr);
+    return found;
+}
+
+static void tg_wb_drop_disarm(void)
+{
+    if (tg_wb_app_icon != 0) {
+        RemoveAppIcon(tg_wb_app_icon);
+        tg_wb_app_icon = 0;
+    }
+    if (tg_wb_app_win != 0) {
+        RemoveAppWindow(tg_wb_app_win);
+        tg_wb_app_win = 0;
+    }
+    if (tg_wb_app_port != 0) {
+        struct Message *m;
+
+        while ((m = GetMsg(tg_wb_app_port)) != 0) {
+            ReplyMsg(m);
+        }
+        DeleteMsgPort(tg_wb_app_port);
+        tg_wb_app_port = 0;
+    }
+    if (tg_wb_drop_dobj != 0 && IconBase != 0) {
+        FreeDiskObject(tg_wb_drop_dobj);
+        tg_wb_drop_dobj = 0;
+    }
+    if (tg_wb_drop_opened_icon && IconBase != 0) {
+        CloseLibrary(IconBase);
+        IconBase = 0;
+        tg_wb_drop_opened_icon = 0;
+    }
+    if (tg_wb_drop_opened_wb && WorkbenchBase != 0) {
+        CloseLibrary(WorkbenchBase);
+        WorkbenchBase = 0;
+        tg_wb_drop_opened_wb = 0;
+    }
+    if (tg_wb_drop_opened_int && IntuitionBase != 0) {
+        CloseLibrary((struct Library *)IntuitionBase);
+        IntuitionBase = 0;
+        tg_wb_drop_opened_int = 0;
+    }
+}
+
+static void tg_wb_drop_arm(void)
+{
+    struct InfoData *id;
+    struct FileHandle *fh;
+    struct Window *win;
+
+    if (tg_wb_tui_con == 0) {
+        tg_wb_drop_diag = "no Workbench console";
+        return;
+    }
+    if (tg_wb_app_port != 0 || tg_wb_app_win != 0 || tg_wb_app_icon != 0) {
+        return; /* already armed */
+    }
+    fh = (struct FileHandle *)BADDR(tg_wb_tui_con);
+    if (fh == 0) {
+        tg_wb_drop_diag = "no console handle";
+        return;
+    }
+    if (IntuitionBase == 0) {
+        IntuitionBase = (struct IntuitionBase *)
+            OpenLibrary((CONST_STRPTR)"intuition.library", 36L);
+        if (IntuitionBase == 0) {
+            tg_wb_drop_diag = "intuition.library open failed";
+            return;
+        }
+        tg_wb_drop_opened_int = 1;
+    }
+    /* InfoData must be longword-aligned for the packet: AllocMem it. */
+    id = (struct InfoData *)AllocMem(sizeof(struct InfoData),
+                                     MEMF_PUBLIC | MEMF_CLEAR);
+    if (id == 0) {
+        tg_wb_drop_diag = "no memory";
+        tg_wb_drop_disarm();
+        return;
+    }
+    win = 0;
+    if (DoPkt(fh->fh_Type, ACTION_DISK_INFO, (LONG)MKBADDR(id),
+              0, 0, 0, 0)) {
+        /* the handler stuffs a RAW window pointer into the BPTR-typed
+           field: plain cast, no BADDR (it would shift it into garbage) */
+        win = (struct Window *)id->id_VolumeNode;
+    }
+    FreeMem(id, sizeof(struct InfoData));
+    if (tg_wb_window_is_live(win)) {
+        tg_wb_drop_diag = "ready (handler window)";
+    } else {
+        win = tg_wb_find_window_by_title("Telegram Amiga TUI");
+        tg_wb_drop_diag = "ready (title match)";
+    }
+    if (win == 0) {
+        tg_wb_drop_diag = "console window not found";
+        tg_wb_drop_disarm();
+        return;
+    }
+    if (WorkbenchBase == 0) {
+        WorkbenchBase = OpenLibrary((CONST_STRPTR)"workbench.library", 36L);
+        if (WorkbenchBase == 0) {
+            tg_wb_drop_diag = "workbench.library open failed";
+            tg_wb_drop_disarm();
+            return;
+        }
+        tg_wb_drop_opened_wb = 1;
+    }
+    tg_wb_app_port = CreateMsgPort();
+    if (tg_wb_app_port == 0) {
+        tg_wb_drop_diag = "message port failed";
+        tg_wb_drop_disarm();
+        return;
+    }
+    tg_wb_app_win = AddAppWindowA(0UL, 0UL, win, tg_wb_app_port, 0);
+    if (tg_wb_app_win == 0) {
+        tg_wb_drop_diag = "AddAppWindow failed";
+        tg_wb_drop_disarm();
+        return;
+    }
+    /* The reliable lane: the "TG drop" AppIcon on the same port. */
+    if (IconBase == 0) {
+        IconBase = OpenLibrary((CONST_STRPTR)"icon.library", 36L);
+        if (IconBase != 0) {
+            tg_wb_drop_opened_icon = 1;
+        }
+    }
+    if (IconBase != 0) {
+        tg_wb_drop_dobj = GetDiskObject((STRPTR)"PROGDIR:TelegramAmiga");
+        if (tg_wb_drop_dobj == 0) {
+            tg_wb_drop_dobj = GetDefDiskObject(WBTOOL);
+        }
+        if (tg_wb_drop_dobj != 0) {
+            tg_wb_drop_dobj->do_CurrentX = NO_ICON_POSITION;
+            tg_wb_drop_dobj->do_CurrentY = NO_ICON_POSITION;
+            tg_wb_drop_dobj->do_Type = 0;
+            tg_wb_app_icon = AddAppIconA(0UL, 0UL, (STRPTR)"TG drop",
+                                         tg_wb_app_port, 0, tg_wb_drop_dobj,
+                                         0);
+        }
+    }
+}
+
+int tg_platform_console_drop_poll(char *out, unsigned long out_size)
+{
+    struct AppMessage *am;
+    int got = 0;
+
+    if (out == 0 || out_size == 0UL) {
+        return 0;
+    }
+    out[0] = '\0';
+    if (tg_wb_app_port == 0) {
+        return 0;
+    }
+    ++tg_wb_drop_polls;
+    while ((am = (struct AppMessage *)GetMsg(tg_wb_app_port)) != 0) {
+        ++tg_wb_drop_msgs;
+        if (!got && am->am_NumArgs > 0 && am->am_ArgList != 0) {
+            BPTR lock = am->am_ArgList[0].wa_Lock;
+            const char *name = (const char *)am->am_ArgList[0].wa_Name;
+
+            out[0] = '\0';
+            if (lock != 0 &&
+                NameFromLock(lock, (STRPTR)out, (LONG)out_size) != 0) {
+                if (name != 0 && name[0] != '\0') {
+                    AddPart((STRPTR)out, (CONST_STRPTR)name, (ULONG)out_size);
+                }
+                got = 1;
+            } else if (name != 0 && name[0] != '\0') {
+                strncpy(out, name, out_size - 1UL);
+                out[out_size - 1UL] = '\0';
+                got = 1;
+            }
+        }
+        ReplyMsg((struct Message *)am);
+    }
+    return got;
+}
+
+const char *tg_platform_console_drop_diag(void)
+{
+    static char diag_buf[96];
+
+    sprintf(diag_buf, "%s, polls %lu, drops %lu", tg_wb_drop_diag,
+            tg_wb_drop_polls, tg_wb_drop_msgs);
+    return diag_buf;
+}
+
 
 #else
 int tg_platform_workbench_tui_console(void)
@@ -1276,7 +1543,8 @@ void tg_platform_workbench_tui_console_close(void)
 }
 #endif
 
-/* Console drag-and-drop is AmigaOS 4 only; AROS and the host are no-ops. */
+#if !defined(__AROS__)
+/* Host build: no Workbench, no console drops. */
 int tg_platform_console_drop_poll(char *out, unsigned long out_size)
 {
     if (out != 0 && out_size > 0UL) {
@@ -1289,4 +1557,5 @@ const char *tg_platform_console_drop_diag(void)
 {
     return "unsupported on this platform";
 }
+#endif
 
