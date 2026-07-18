@@ -191,6 +191,10 @@ Two launchers
   To quit it: /quit, Ctrl+C, or the window's close gadget. The window then
   stays so you can read the last lines: one more click on the close gadget
   dismisses it.
+  Sending a file by drag-and-drop: type "/sendfile " in the chat, then drop
+  the file's icon on the "TG drop" Workbench icon (AmigaOS 3.x and 4.x) or
+  straight onto the console window (MorphOS and AROS); the path appears in
+  the input line, Enter sends it.
 
 First start (logging in)
 ------------------------
@@ -307,6 +311,10 @@ I due launcher
   Per uscire: /quit, Ctrl+C o il gadget di chiusura della finestra. La
   finestra poi resta aperta per farti leggere le ultime righe: un altro
   click sul gadget la congeda.
+  Inviare un file col drag-and-drop: scrivi "/sendfile " in chat, poi
+  trascina l'icona del file sull'icona Workbench "TG drop" (AmigaOS 3.x e
+  4.x) o direttamente sulla finestra console (MorphOS e AROS); il percorso
+  compare nella riga di input, Invio lo spedisce.
 
 Primo avvio (accesso)
 ---------------------
