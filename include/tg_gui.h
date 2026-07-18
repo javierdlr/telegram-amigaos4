@@ -247,12 +247,19 @@ typedef struct tg_gui_state {
     int sel_msg;
     long sel_a;
     long sel_b;
-    int sel_count_snap;   /* message_count when made: a shift invalidates */
+    unsigned long sel_gen_snap;  /* msg_gen when made: any shift invalidates */
     int sel_press_armed;
     int sel_press_msg;
     long sel_press_char;
+    unsigned long sel_press_id;  /* the message ID latched at press: the
+                                    deferred reply verifies it at release */
+    unsigned long sel_press_gen;
     int sel_press_x;
     int sel_press_y;
+    /* Transcript GENERATION: bumped on EVERY mutation of messages[] (append,
+       own echo, load-older prepend, reload, chat switch). A count snapshot is
+       NOT enough: a full ring shifts every index at constant count. */
+    unsigned long msg_gen;
 
     /* Right-click context menu: a small popup at the pointer over a message
        bubble. ctx_visible gates the paint + hit-test; ctx_msg is the target

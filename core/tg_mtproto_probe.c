@@ -12734,6 +12734,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
        unread badge. */
     if (tg_gui_session_state.gui_driver.state != 0) {
         tg_gui_session_state.gui_driver.state->message_count = 0;
+        tg_gui_session_state.gui_driver.state->msg_gen++;
         tg_gui_session_state.gui_driver.state->newest_dropped = 0;
         tg_gui_session_state.gui_driver.state->unread_below = 0;
         /* A reply target points into the OLD chat -- never carry it across. */

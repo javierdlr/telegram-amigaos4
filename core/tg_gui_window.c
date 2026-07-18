@@ -934,6 +934,7 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
     tg_gui_window_apply_selection(state);
     if (tg_gui_session_is_open()) {
         state->message_count = 0;
+        state->msg_gen++;
         tg_gui_window_paint(state, backend);
         tg_gui_log("open_selection: open_chat begin");
         (void)tg_gui_session_open_chat(state->chats[sel].index, stdout);
@@ -1653,6 +1654,7 @@ static void tg_gui_window_remove_selected(tg_gui_state *state,
     } else {
         state->selected_chat = 0;
         state->message_count = 0;
+        state->msg_gen++;
         state->title[0] = '\0';
         state->subtitle[0] = '\0';
         tg_gui_window_paint(state, backend);
@@ -3081,6 +3083,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_paint(state, &backend);
                         }
                     }
+                } else if (msg_code == SELECTDOWN &&
+                           (state->sel_press_armed = 0, 0)) {
+                    /* never taken: clears a stale press latch before ANY other
+                       SELECTDOWN branch runs (ctx menu, sidebar, gadgets...);
+                       the bubble branch below re-arms it deliberately. */
                 } else if (msg_code == SELECTDOWN && state->composing &&
                            state->mention_active &&
                            tg_gui_mention_click(state, &backend, hx, hy) >= 0) {
@@ -3227,15 +3234,20 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else if (msg_code == SELECTUP) {
                     if (state->sel_press_armed) {
                         state->sel_press_armed = 0;
-                        if (!state->sel_active) {
+                        if (!state->sel_active &&
+                            tg_gui_session_is_open() && !state->in_search) {
                             /* Plain click (never dragged): the classic gesture
-                               -- reply to the bubble, exactly as before. */
+                               -- reply to the bubble, exactly as before. The
+                               press-time ID must still match: a transcript
+                               shift between press and release would otherwise
+                               aim the reply at the wrong message. */
                             int mi = state->sel_press_msg;
 
                             if (mi >= 0 && mi < state->message_count) {
                                 const tg_gui_message *m = &state->messages[mi];
 
-                                if (!m->is_system && m->id != 0UL) {
+                                if (!m->is_system && m->id != 0UL &&
+                                    m->id == state->sel_press_id) {
                                     state->selected_msg = mi;
                                     state->reply_to_id = m->id;
                                     tg_gui_window_copy(
@@ -3520,6 +3532,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 state->sel_active = 0; /* new press resets */
                                 state->sel_press_armed = 1;
                                 state->sel_press_msg = mi;
+                                state->sel_press_id = m->id;
+                                state->sel_press_gen = state->msg_gen;
                                 state->sel_press_x = hx;
                                 state->sel_press_y = hy;
                                 state->sel_press_char =
@@ -3542,7 +3556,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     int hx = (int)mouse_x - ctx.origin_x;
                     int hy = (int)mouse_y - ctx.origin_y;
 
-                    if (!state->sel_active && state->sel_press_char >= 0) {
+                    if (!state->sel_active && state->sel_press_char >= 0 &&
+                        state->msg_gen == state->sel_press_gen) {
                         int dx = hx - state->sel_press_x;
                         int dy = hy - state->sel_press_y;
 
@@ -3551,7 +3566,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             state->sel_msg = state->sel_press_msg;
                             state->sel_a = state->sel_press_char;
                             state->sel_b = state->sel_press_char;
-                            state->sel_count_snap = state->message_count;
+                            state->sel_gen_snap = state->msg_gen;
                         }
                     }
                     if (state->sel_active) {

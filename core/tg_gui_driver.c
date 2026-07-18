@@ -129,6 +129,8 @@ int tg_gui_driver_color_for(const char *name)
 
 static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
 {
+    /* any outcome below mutates or may mutate the transcript layout */
+
     tg_gui_chat_driver *gui;
     tg_gui_state *state;
     tg_gui_message *message;
@@ -198,16 +200,19 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
             }
             state->message_count = TG_GUI_MAX_MESSAGES - 1; /* drop newest tail */
             state->newest_dropped = 1; /* ring-bottom now stale -> jump must reload */
+            state->msg_gen++;
         }
         if (at > state->message_count) {
             at = state->message_count;
         }
+        state->msg_gen++;
         for (i = state->message_count; i > at; --i) {
             state->messages[i] = state->messages[i - 1];
         }
         message = &state->messages[at];
         gui->prepend_at = at + 1;
         state->message_count += 1;
+        state->msg_gen++;
     } else {
         /* Keep the most recent TG_GUI_MAX_MESSAGES: drop the oldest when full. */
         if (state->message_count >= TG_GUI_MAX_MESSAGES) {
@@ -220,6 +225,7 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
         }
         message = &state->messages[state->message_count];
         state->message_count += 1;
+        state->msg_gen++;
         /* A live message arrived while the user is NOT at the true newest: count
            it for the scroll-to-bottom button's badge. (Own sends jump to the
            bottom, so they are never "unread"; the painter resets this on a jump
@@ -290,6 +296,7 @@ void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
         return;
     }
     state = gui->state;
+    state->msg_gen++;
     if (state->message_count >= TG_GUI_MAX_MESSAGES) {
         int i;
 

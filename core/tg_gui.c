@@ -942,6 +942,36 @@ typedef struct tg_gui_bubble_geom {
     unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
 } tg_gui_bubble_geom;
 
+/* Width of text[0..len) AS RENDERED by tg_gui_draw_markup: the style marker
+   chars (* _ ` ~) are elided there and never advance x, so they must not be
+   measured either -- or the selection tint and the char-under-pointer mapping
+   drift right of the glyphs by one marker width each. Amiga font widths are
+   additive (no kerning), so summing the runs equals the drawn advance. */
+static int tg_gui_marked_width(tg_gui_backend *backend, const char *text,
+                               unsigned long from, unsigned long to)
+{
+    unsigned long i;
+    unsigned long run;
+    int w = 0;
+
+    run = from;
+    for (i = from; i <= to; ++i) {
+        int marker = 0;
+
+        if (i < to) {
+            marker = (text[i] == '*' || text[i] == '_' || text[i] == '`' ||
+                      text[i] == '~');
+        }
+        if (marker || i == to) {
+            if (i > run) {
+                w += backend->text_width(backend, text + run, i - run);
+            }
+            run = i + 1UL;
+        }
+    }
+    return w;
+}
+
 static void tg_gui_bubble_geometry(tg_gui_backend *backend,
                                    const tg_gui_message *message, int area_x,
                                    int area_w, int lh, tg_gui_bubble_geom *geo)
@@ -1154,15 +1184,26 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
 
                 if (hi > lo) {
                     int x0 = bubble_x + pad +
-                             backend->text_width(backend,
-                                                 message->text + ls,
-                                                 (unsigned long)(lo - ls));
-                    int sw = backend->text_width(backend, message->text + lo,
-                                                 (unsigned long)(hi - lo));
+                             tg_gui_marked_width(backend, message->text,
+                                                 (unsigned long)ls,
+                                                 (unsigned long)lo);
+                    int sw = tg_gui_marked_width(backend, message->text,
+                                                 (unsigned long)lo,
+                                                 (unsigned long)hi);
+                    int sy = baseline - lh + 3;
+                    int sh = lh;
 
-                    backend->fill_rect(backend, TG_GUI_PEN_SELECT,
-                                       tg_gui_make_rect(x0, baseline - lh + 3,
-                                                        sw, lh));
+                    if (sy < top) { /* clip to the transcript viewport */
+                        sh -= top - sy;
+                        sy = top;
+                    }
+                    if (sy + sh > bottom) {
+                        sh = bottom - sy;
+                    }
+                    if (sw > 0 && sh > 0) {
+                        backend->fill_rect(backend, TG_GUI_PEN_SELECT,
+                                           tg_gui_make_rect(x0, sy, sw, sh));
+                    }
                 }
             }
             tg_gui_draw_markup(backend, text_pen, bubble_x + pad, baseline,
@@ -1556,12 +1597,17 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     }
     ((tg_gui_state *)state)->tr_area_x = area_x;
     ((tg_gui_state *)state)->tr_area_w = area_w;
-    /* A shifted transcript (new message, reload, chat switch) invalidates a
-       char-range selection: the indexes would point at different text. */
+    /* ANY transcript mutation (generation bump) invalidates a char-range
+       selection AND a latched-but-unreleased press: at a full ring the count
+       stays constant while every index shifts, so a count snapshot lies. */
     if (state->sel_active &&
-        (state->message_count != state->sel_count_snap ||
-         state->sel_msg < 0 || state->sel_msg >= state->message_count)) {
+        (state->msg_gen != state->sel_gen_snap || state->sel_msg < 0 ||
+         state->sel_msg >= state->message_count)) {
         ((tg_gui_state *)state)->sel_active = 0;
+    }
+    if (state->sel_press_armed && state->msg_gen != state->sel_press_gen) {
+        ((tg_gui_state *)state)->sel_press_armed = 0;
+        ((tg_gui_state *)state)->sel_press_char = -1;
     }
 
     header_h = lh + 10;
@@ -1843,8 +1889,8 @@ long tg_gui_transcript_char_at(const tg_gui_state *state,
         return ls;
     }
     for (c = 1; c <= ll; ++c) {
-        if (backend->text_width(backend, message->text + ls,
-                                (unsigned long)c) > lx) {
+        if (tg_gui_marked_width(backend, message->text, (unsigned long)ls,
+                                (unsigned long)(ls + c)) > lx) {
             return ls + c - 1;
         }
     }
