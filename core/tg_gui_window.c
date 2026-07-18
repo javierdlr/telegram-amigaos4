@@ -52,6 +52,7 @@
 #include <exec/memory.h>
 #include <intuition/intuition.h>
 #include <devices/timer.h>
+#include <devices/clipboard.h>
 #include <libraries/asl.h>
 #include <workbench/workbench.h>
 #include <workbench/startup.h>
@@ -135,6 +136,8 @@ struct Library *GadToolsBase = 0;
 #define TG_MENU_SENDFILE 5
 #define TG_MENU_ICONIFY 6
 #define TG_MENU_OWNSCREEN 7
+#define TG_MENU_COPY 8
+#define TG_MENU_PASTE 9
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -1187,6 +1190,184 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
 
 /* The right-button menu strip (laid out by GadTools so the metrics follow the
    screen font). Quit also gets the standard Right-Amiga+Q shortcut. */
+/* ---- clipboard.device, zero-dep IFF-FTXT ---------------------------------
+   Copy/paste for issue #5. The IFF is built and parsed BY HAND (FORM/FTXT/
+   CHRS) with explicit big-endian 32-bit sizes: IFF is big-endian on the
+   clipboard while the AROS lanes are little-endian CPUs. Unit 0, the one
+   every Amiga clipboard tool shares. */
+#if defined(TG_GUI_AMIGA)
+static void tg_gui_clip_u32be(unsigned char *p, unsigned long v)
+{
+    p[0] = (unsigned char)(v >> 24);
+    p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);
+    p[3] = (unsigned char)v;
+}
+
+static unsigned long tg_gui_clip_u32be_read(const unsigned char *p)
+{
+    return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) |
+           ((unsigned long)p[2] << 8) | (unsigned long)p[3];
+}
+
+static struct IOClipReq *tg_gui_clip_open(struct MsgPort **port_out)
+{
+    struct MsgPort *port;
+    struct IOClipReq *io;
+
+    port = CreateMsgPort();
+    if (port == 0) {
+        return 0;
+    }
+    io = (struct IOClipReq *)CreateIORequest(port, sizeof(struct IOClipReq));
+    if (io == 0 ||
+        OpenDevice((CONST_STRPTR)"clipboard.device", 0,
+                   (struct IORequest *)io, 0) != 0) {
+        if (io != 0) {
+            DeleteIORequest((struct IORequest *)io);
+        }
+        DeleteMsgPort(port);
+        return 0;
+    }
+    *port_out = port;
+    return io;
+}
+
+static void tg_gui_clip_close(struct IOClipReq *io, struct MsgPort *port)
+{
+    CloseDevice((struct IORequest *)io);
+    DeleteIORequest((struct IORequest *)io);
+    DeleteMsgPort(port);
+}
+
+/* Writes `text` to clip unit 0 as FORM FTXT / CHRS. 1 = ok. */
+static int tg_gui_clip_write_text(const char *text)
+{
+    static unsigned char iff[TG_GUI_MSG_TEXT_MAX + 24];
+    struct MsgPort *port;
+    struct IOClipReq *io;
+    unsigned long tlen, even;
+    int ok = 0;
+
+    if (text == 0 || text[0] == '\0') {
+        return 0;
+    }
+    tlen = (unsigned long)strlen(text);
+    if (tlen > (unsigned long)TG_GUI_MSG_TEXT_MAX) {
+        tlen = TG_GUI_MSG_TEXT_MAX;
+    }
+    even = tlen + (tlen & 1UL);
+    memcpy(iff, "FORM", 4);
+    tg_gui_clip_u32be(iff + 4, 4UL + 8UL + even); /* FTXT + CHRS hdr + data */
+    memcpy(iff + 8, "FTXT", 4);
+    memcpy(iff + 12, "CHRS", 4);
+    tg_gui_clip_u32be(iff + 16, tlen);
+    memcpy(iff + 20, text, tlen);
+    if (tlen & 1UL) {
+        iff[20 + tlen] = 0; /* IFF pad byte */
+    }
+    io = tg_gui_clip_open(&port);
+    if (io == 0) {
+        return 0;
+    }
+    io->io_Offset = 0;
+    io->io_ClipID = 0;
+    io->io_Command = CMD_WRITE;
+    io->io_Data = (STRPTR)iff;
+    io->io_Length = (LONG)(20UL + even);
+    if (DoIO((struct IORequest *)io) == 0) {
+        io->io_Command = CMD_UPDATE;
+        ok = DoIO((struct IORequest *)io) == 0;
+    }
+    tg_gui_clip_close(io, port);
+    return ok;
+}
+
+/* One positioned CMD_READ helper; the device advances io_Offset itself. */
+static long tg_gui_clip_read(struct IOClipReq *io, void *buf,
+                             unsigned long len)
+{
+    io->io_Command = CMD_READ;
+    io->io_Data = (STRPTR)buf;
+    io->io_Length = (LONG)len;
+    if (DoIO((struct IORequest *)io) != 0) {
+        return -1;
+    }
+    return (long)io->io_Actual;
+}
+
+/* Reads the first CHRS chunk of a FORM FTXT clip into out (NUL-terminated).
+   Returns the number of bytes copied (0 = empty clip / not text). */
+static unsigned long tg_gui_clip_read_text(char *out, unsigned long out_size)
+{
+    struct MsgPort *port;
+    struct IOClipReq *io;
+    unsigned char hdr[12];
+    unsigned long copied = 0;
+
+    if (out == 0 || out_size == 0UL) {
+        return 0;
+    }
+    out[0] = '\0';
+    io = tg_gui_clip_open(&port);
+    if (io == 0) {
+        return 0;
+    }
+    io->io_Offset = 0;
+    io->io_ClipID = 0;
+    if (tg_gui_clip_read(io, hdr, 12UL) == 12L &&
+        memcmp(hdr, "FORM", 4) == 0 && memcmp(hdr + 8, "FTXT", 4) == 0) {
+        for (;;) {
+            unsigned char chdr[8];
+            unsigned long clen;
+
+            if (tg_gui_clip_read(io, chdr, 8UL) != 8L) {
+                break;
+            }
+            clen = tg_gui_clip_u32be_read(chdr + 4);
+            if (memcmp(chdr, "CHRS", 4) == 0 && copied == 0UL) {
+                unsigned long want = clen;
+
+                if (want > out_size - 1UL) {
+                    want = out_size - 1UL;
+                }
+                if (want > 0UL &&
+                    tg_gui_clip_read(io, out, want) == (long)want) {
+                    copied = want;
+                }
+                out[copied] = '\0';
+                break; /* first text chunk is all we paste */
+            }
+            /* skip a foreign chunk (+ IFF pad) by dummy reads */
+            {
+                static unsigned char sink[256];
+                unsigned long skip = clen + (clen & 1UL);
+
+                while (skip > 0UL) {
+                    unsigned long step = skip > sizeof(sink) ? sizeof(sink)
+                                                             : skip;
+
+                    if (tg_gui_clip_read(io, sink, step) <= 0L) {
+                        skip = 0UL;
+                        break;
+                    }
+                    skip -= step;
+                }
+            }
+        }
+    }
+    /* drain to the end so the device releases the clip */
+    {
+        static unsigned char sink[256];
+
+        while (tg_gui_clip_read(io, sink, sizeof(sink)) > 0L) {
+        }
+    }
+    tg_gui_clip_close(io, port);
+    return copied;
+}
+#endif /* TG_GUI_AMIGA */
+
 static struct NewMenu tg_gui_newmenu[] = {
     { NM_TITLE, (STRPTR)"Telegram", 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"About...", 0, 0, 0, (APTR)TG_MENU_ABOUT },
@@ -1196,6 +1377,10 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_REMOVE },
     { NM_ITEM,  (STRPTR)"Send file...", (STRPTR)"F", 0, 0,
       (APTR)TG_MENU_SENDFILE },
+    { NM_ITEM,  (STRPTR)"Copy message", (STRPTR)"C", 0, 0,
+      (APTR)TG_MENU_COPY },
+    { NM_ITEM,  (STRPTR)"Paste", (STRPTR)"V", 0, 0,
+      (APTR)TG_MENU_PASTE },
     { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
       (APTR)TG_MENU_ICONIFY },
     { NM_ITEM,  (STRPTR)"Own screen", 0, CHECKIT | MENUTOGGLE, 0,
@@ -2647,6 +2832,108 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_SENDFILE) {
                             tg_gui_window_send_file(state, ctx.window,
                                                     &backend);
+                        } else if (ud == (APTR)TG_MENU_COPY) {
+                            /* Copy the highlighted message's text (issue #5).
+                               Selection = the row the user last right-clicked
+                               or picked; without one, say what to do. */
+                            int sel = state->selected_msg;
+
+                            if (sel >= 0 && sel < state->message_count &&
+                                state->messages[sel].text[0] != '\0' &&
+                                tg_gui_clip_write_text(
+                                    state->messages[sel].text)) {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Copied to clipboard");
+                            } else {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   sel < 0
+                                                       ? "Right-click a message first"
+                                                       : "Nothing to copy");
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        } else if (ud == (APTR)TG_MENU_PASTE) {
+                            /* Paste the clipboard's FTXT at the caret: into
+                               the search box when it is active, else into the
+                               composer. Newlines/tabs become spaces (the
+                               input row is one visual line); other control
+                               bytes are dropped. */
+                            static char clip[TG_GUI_MSG_TEXT_MAX];
+                            unsigned long got =
+                                tg_gui_clip_read_text(clip, sizeof(clip));
+                            unsigned long src, dst = 0UL;
+
+                            for (src = 0UL; src < got; ++src) {
+                                unsigned char cch = (unsigned char)clip[src];
+
+                                if (cch == '\n' || cch == '\r' ||
+                                    cch == '\t') {
+                                    clip[dst++] = ' ';
+                                } else if (cch >= 32) {
+                                    clip[dst++] = (char)cch;
+                                }
+                            }
+                            got = dst;
+                            clip[got] = '\0';
+                            if (got == 0UL) {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Clipboard is empty");
+                                tg_gui_window_paint(state, &backend);
+                            } else if (state->search_active) {
+                                unsigned long n = (unsigned long)strlen(
+                                    state->search_query);
+                                unsigned long c =
+                                    (unsigned long)state->search_caret;
+                                unsigned long room =
+                                    sizeof(state->search_query) - 1UL - n;
+                                unsigned long p = got > room ? room : got;
+
+                                if (c > n) {
+                                    c = n;
+                                }
+                                memmove(&state->search_query[c + p],
+                                        &state->search_query[c], n - c + 1UL);
+                                memcpy(&state->search_query[c], clip, p);
+                                state->search_caret = (int)(c + p);
+                                state->search_dirty = 1;
+                                search_idle_ticks = 0;
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Searching when you pause...");
+                                tg_gui_window_paint(state, &backend);
+                            } else if (tg_gui_session_is_open() &&
+                                       state->mode == TG_GUI_MODE_CHAT) {
+                                unsigned long n =
+                                    (unsigned long)strlen(state->input);
+                                unsigned long c =
+                                    (unsigned long)state->input_caret;
+                                unsigned long room =
+                                    sizeof(state->input) - 1UL - n;
+                                unsigned long p = got > room ? room : got;
+
+                                if (c > n) {
+                                    c = n;
+                                }
+                                memmove(&state->input[c + p],
+                                        &state->input[c], n - c + 1UL);
+                                memcpy(&state->input[c], clip, p);
+                                state->input_caret = (int)(c + p);
+                                state->composing = 1;
+                                state->cursor_on = 1;
+                                caret_ticks = 0;
+                                tg_gui_window_mention_refresh(state);
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Pasted");
+                                tg_gui_window_paint(state, &backend);
+                            } else {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Open a chat first");
+                                tg_gui_window_paint(state, &backend);
+                            }
                         } else if (ud == (APTR)TG_MENU_ICONIFY) {
                             /* Tear down window (and own screen) via the normal
                                path; the outer loop parks on an AppIcon. */
@@ -2903,6 +3190,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status), nmsg);
                         }
+                    } else if (it == TG_GUI_CTX_COPY && m != 0 &&
+                               m->text[0] != '\0') {
+                        state->selected_msg = mi; /* keep the row highlighted */
+                        tg_gui_window_copy(state->status,
+                                           sizeof(state->status),
+                                           tg_gui_clip_write_text(m->text)
+                                               ? "Copied to clipboard"
+                                               : "Copy failed");
+                        tg_gui_window_paint(state, &backend);
                     } else if (it == TG_GUI_CTX_SENDFILE) {
                         /* Chat-level action (not tied to the clicked message):
                            send a file to the open chat, same as the menubar

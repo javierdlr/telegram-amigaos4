@@ -1972,6 +1972,11 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
             ids[n] = TG_GUI_CTX_DOWNLOAD;
             ++n;
         }
+        if (m->text[0] != '\0') {
+            labels[n] = "Copy text";
+            ids[n] = TG_GUI_CTX_COPY;
+            ++n;
+        }
     }
     /* Chat-level: send a file to the open chat. Always offered (the popup only
        appears over a conversation) so it need not be reached via the menubar. */

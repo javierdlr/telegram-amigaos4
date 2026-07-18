@@ -307,7 +307,8 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
 #define TG_GUI_CTX_DELETE 2
 #define TG_GUI_CTX_DOWNLOAD 3
 #define TG_GUI_CTX_SENDFILE 4
-#define TG_GUI_CTX_ITEMS_MAX 5
+#define TG_GUI_CTX_COPY 5
+#define TG_GUI_CTX_ITEMS_MAX 6
 
 /* 1 when the currently selected sidebar row is the pinned Saved Messages
    (self) chat -- the row whose index carries TG_GUI_SAVED_PEER_INDEX. There
