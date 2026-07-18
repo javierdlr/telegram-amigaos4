@@ -1414,27 +1414,10 @@ static void tg_wb_drop_arm(void)
         tg_wb_drop_disarm();
         return;
     }
-    /* The reliable lane: the "TG drop" AppIcon on the same port. */
-    if (IconBase == 0) {
-        IconBase = OpenLibrary((CONST_STRPTR)"icon.library", 36L);
-        if (IconBase != 0) {
-            tg_wb_drop_opened_icon = 1;
-        }
-    }
-    if (IconBase != 0) {
-        tg_wb_drop_dobj = GetDiskObject((STRPTR)"PROGDIR:TelegramAmiga");
-        if (tg_wb_drop_dobj == 0) {
-            tg_wb_drop_dobj = GetDefDiskObject(WBTOOL);
-        }
-        if (tg_wb_drop_dobj != 0) {
-            tg_wb_drop_dobj->do_CurrentX = NO_ICON_POSITION;
-            tg_wb_drop_dobj->do_CurrentY = NO_ICON_POSITION;
-            tg_wb_drop_dobj->do_Type = 0;
-            tg_wb_app_icon = AddAppIconA(0UL, 0UL, (STRPTR)"TG drop",
-                                         tg_wb_app_port, 0, tg_wb_drop_dobj,
-                                         0);
-        }
-    }
+    /* NO AppIcon on MorphOS: Ambient never shows it (AddAppIcon is a no-op
+       there in practice) while drops on the console WINDOW just work, so the
+       window lane is the MorphOS path. OS4 keeps the icon -- there it is the
+       only route. */
 }
 
 int tg_platform_console_drop_poll(char *out, unsigned long out_size)

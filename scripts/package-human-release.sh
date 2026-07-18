@@ -192,9 +192,9 @@ Two launchers
   stays so you can read the last lines: one more click on the close gadget
   dismisses it.
   Sending a file by drag-and-drop: type "/sendfile " in the chat, then drop
-  the file's icon on the "TG drop" Workbench icon (AmigaOS 3.x and 4.x) or
-  straight onto the console window (MorphOS and AROS); the path appears in
-  the input line, Enter sends it.
+  the file's icon straight onto the console window (AmigaOS 3.x, MorphOS,
+  AROS) or onto the "TG drop" Workbench icon (AmigaOS 4.x, where the system
+  reserves window drops); the path appears in the input line, Enter sends.
 
 First start (logging in)
 ------------------------
@@ -312,9 +312,10 @@ I due launcher
   finestra poi resta aperta per farti leggere le ultime righe: un altro
   click sul gadget la congeda.
   Inviare un file col drag-and-drop: scrivi "/sendfile " in chat, poi
-  trascina l'icona del file sull'icona Workbench "TG drop" (AmigaOS 3.x e
-  4.x) o direttamente sulla finestra console (MorphOS e AROS); il percorso
-  compare nella riga di input, Invio lo spedisce.
+  trascina l'icona del file direttamente sulla finestra console (AmigaOS
+  3.x, MorphOS, AROS) o sull'icona Workbench "TG drop" (AmigaOS 4.x, dove i
+  drop sulla finestra sono riservati al sistema); il percorso compare nella
+  riga di input, Invio lo spedisce.
 
 Primo avvio (accesso)
 ---------------------
