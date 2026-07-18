@@ -236,6 +236,23 @@ typedef struct tg_gui_state {
     char reply_snippet[TG_GUI_REPLY_MAX];
     int msg_top[TG_GUI_MAX_MESSAGES];
     int msg_cached;
+    /* transcript area of the last paint (for the char-level hit test) */
+    int tr_area_x;
+    int tr_area_w;
+    /* mouse text selection inside ONE transcript message (issue #5 part two):
+       press latched on SELECTDOWN, becomes a selection when the pointer drags
+       past a small threshold, click-without-drag keeps the old reply gesture
+       (executed on SELECTUP). sel_a/sel_b are unordered char indexes. */
+    int sel_active;
+    int sel_msg;
+    long sel_a;
+    long sel_b;
+    int sel_count_snap;   /* message_count when made: a shift invalidates */
+    int sel_press_armed;
+    int sel_press_msg;
+    long sel_press_char;
+    int sel_press_x;
+    int sel_press_y;
 
     /* Right-click context menu: a small popup at the pointer over a message
        bubble. ctx_visible gates the paint + hit-test; ctx_msg is the target
@@ -335,6 +352,19 @@ int tg_gui_mention_token(const char *input, int caret, int *start);
 
 /* F8 click-to-caret: map a click at renderer coords to a byte offset in the
    composer input / the sidebar search query. -1 = outside the field. */
+/* Char index inside message `msg_index` for a click at inner (x,y), clamped
+   to the message's text (above/left -> 0 side, below/right -> line/text end);
+   -1 when the cached layout is stale or the message has no text geometry.
+   Uses the SAME wrap + bubble geometry as the painter. */
+long tg_gui_transcript_char_at(const tg_gui_state *state,
+                               tg_gui_backend *backend, int lh, int msg_index,
+                               int x, int y);
+
+/* Copies the selected substring into out (NUL-terminated). 1 = a non-empty
+   selection was copied, 0 = no live selection. */
+int tg_gui_selection_get(const tg_gui_state *state, char *out,
+                         unsigned long out_size);
+
 int tg_gui_input_click_caret(const tg_gui_state *state,
                              tg_gui_backend *backend, int x, int y);
 int tg_gui_search_click_caret(const tg_gui_state *state,

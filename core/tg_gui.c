@@ -928,18 +928,105 @@ static void tg_gui_draw_checks(tg_gui_backend *backend, int x, int baseline,
     }
 }
 
+/* Shared bubble geometry: the wrap, the bubble box and the header/reply
+   bands, EXACTLY as the painter lays them out -- used by the painter, the
+   char-level hit test and nothing else, so they can never drift apart. */
+typedef struct tg_gui_bubble_geom {
+    int pad;
+    int bubble_x;
+    int bubble_w;
+    int header_h;
+    int reply_h;
+    int line_count;
+    unsigned long starts[TG_GUI_WRAP_MAX_LINES];
+    unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
+} tg_gui_bubble_geom;
+
+static void tg_gui_bubble_geometry(tg_gui_backend *backend,
+                                   const tg_gui_message *message, int area_x,
+                                   int area_w, int lh, tg_gui_bubble_geom *geo)
+{
+    int max_bubble_w;
+    int widest;
+    int k;
+    int has_time;
+    int time_w;
+    int check_count;
+    int has_mark;
+    int read_mark_w;
+    int status_w;
+
+    geo->pad = 8;
+    max_bubble_w = (area_w * 78) / 100;
+    if (max_bubble_w < 40) {
+        /* Narrow window: keep a right gutter rather than touching the edge. */
+        max_bubble_w = (area_w > 2 * geo->pad) ? (area_w - 2 * geo->pad)
+                                               : area_w;
+    }
+    geo->line_count = tg_gui_wrap(backend, message->text,
+                                  max_bubble_w - (2 * geo->pad), geo->starts,
+                                  geo->lengths, TG_GUI_WRAP_MAX_LINES);
+    if (geo->line_count <= 0) {
+        geo->line_count = 1;
+        geo->starts[0] = 0UL;
+        geo->lengths[0] = 0UL;
+    }
+    widest = 0;
+    for (k = 0; k < geo->line_count; ++k) {
+        int w;
+
+        w = backend->text_width(backend, message->text + geo->starts[k],
+                                geo->lengths[k]);
+        if (w > widest) {
+            widest = w;
+        }
+    }
+    has_time = (message->time[0] != '\0');
+    time_w = has_time ? backend->text_width(
+                            backend, message->time,
+                            (unsigned long)strlen(message->time))
+                      : 0;
+    check_count = tg_gui_check_count(message);
+    has_mark = (check_count > 0);
+    read_mark_w = has_mark ? tg_gui_check_width(check_count, lh) : 0;
+    status_w = time_w + read_mark_w + ((has_time && has_mark) ? 4 : 0);
+    if (status_w > widest) {
+        widest = status_w; /* the bubble must hold the timestamp/receipt line */
+    }
+    if (message->reply_text[0] != '\0') {
+        int reply_w;
+
+        reply_w = backend->text_width(backend, "> ", 2UL) +
+                  backend->text_width(
+                      backend, message->reply_text,
+                      (unsigned long)strlen(message->reply_text));
+        if (reply_w > widest) {
+            widest = reply_w; /* the quoted reference line must fit too */
+        }
+    }
+    geo->bubble_w = widest + (2 * geo->pad);
+    if (geo->bubble_w > max_bubble_w) {
+        geo->bubble_w = max_bubble_w;
+    }
+    geo->bubble_x = message->is_own ? (area_x + area_w - geo->bubble_w)
+                                    : area_x;
+    /* lh + lh/2: gap below the sender-name baseline wider than the font
+       descent (see the painter). */
+    geo->header_h = message->is_own ? 0 : (lh + (lh / 2));
+    geo->reply_h = (message->reply_text[0] != '\0') ? lh : 0;
+}
+
 static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                const tg_gui_message *message, int area_x,
-                               int area_w, int y, int lh, int top, int bottom)
+                               int area_w, int y, int lh, int top, int bottom,
+                               long sel_lo, long sel_hi)
 {
     int style;
     unsigned long starts[TG_GUI_WRAP_MAX_LINES];
     unsigned long lengths[TG_GUI_WRAP_MAX_LINES];
-    int max_bubble_w;
     int pad;
     int line_count;
     int k;
-    int widest;
     int bubble_w;
     int bubble_x;
     int bubble_h;
@@ -957,66 +1044,32 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     int has_status;
     int status_w;
 
-    pad = 8;
-    max_bubble_w = (area_w * 78) / 100;
-    if (max_bubble_w < 40) {
-        /* Narrow window: keep a right gutter rather than touching the edge. */
-        max_bubble_w = (area_w > 2 * pad) ? (area_w - 2 * pad) : area_w;
-    }
-    line_count = tg_gui_wrap(backend, message->text, max_bubble_w - (2 * pad),
-                             starts, lengths, TG_GUI_WRAP_MAX_LINES);
-    if (line_count <= 0) {
-        line_count = 1;
-        starts[0] = 0UL;
-        lengths[0] = 0UL;
-    }
+    {
+        tg_gui_bubble_geom geo;
 
-    widest = 0;
-    for (k = 0; k < line_count; ++k) {
-        int w;
-
-        w = backend->text_width(backend, message->text + starts[k], lengths[k]);
-        if (w > widest) {
-            widest = w;
+        tg_gui_bubble_geometry(backend, message, area_x, area_w, lh, &geo);
+        pad = geo.pad;
+        line_count = geo.line_count;
+        for (k = 0; k < line_count; ++k) {
+            starts[k] = geo.starts[k];
+            lengths[k] = geo.lengths[k];
         }
+        bubble_w = geo.bubble_w;
+        header_h = geo.header_h;
+        reply_h = geo.reply_h;
     }
     has_time = (message->time[0] != '\0');
     time_w = has_time ? backend->text_width(backend, message->time,
                                             (unsigned long)strlen(message->time))
                       : 0;
-    /* The bottom line carries the timestamp and, for own messages, the read
-       receipt mark to its right (a 4px gap between them when both show). */
     check_count = tg_gui_check_count(message);
     has_mark = (check_count > 0);
     read_mark_w = has_mark ? tg_gui_check_width(check_count, lh)
                            : 0;
     has_status = has_time || has_mark;
     status_w = time_w + read_mark_w + ((has_time && has_mark) ? 4 : 0);
-    if (status_w > widest) {
-        widest = status_w; /* the bubble must hold the timestamp/receipt line */
-    }
+    (void)status_w;
     has_reply = (message->reply_text[0] != '\0');
-    reply_h = has_reply ? lh : 0;
-    if (has_reply) {
-        int reply_w;
-
-        reply_w = backend->text_width(backend, "> ", 2UL) +
-                  backend->text_width(
-                      backend, message->reply_text,
-                      (unsigned long)strlen(message->reply_text));
-        if (reply_w > widest) {
-            widest = reply_w; /* the quoted reference line must fit too */
-        }
-    }
-    bubble_w = widest + (2 * pad);
-    if (bubble_w > max_bubble_w) {
-        bubble_w = max_bubble_w;
-    }
-
-    /* lh + lh/2: leave a gap below the sender-name baseline (drawn at y+lh) wider
-       than the font descent, so the name's descenders (g/j/p/q/y) are not covered
-       by the message's coloured background fill. Plain lh+2 left only 2px. */
-    header_h = message->is_own ? 0 : (lh + (lh / 2));
     /* Reserve a line inside the bubble for the timestamp / read-receipt mark so
        it stays on the coloured background instead of spilling out below it, plus
        one for the quoted-reply reference line when present. */
@@ -1090,6 +1143,28 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
 
         baseline = y + header_h + reply_h + (k * lh) + lh;
         if (baseline <= bottom && baseline - lh >= top) {
+            /* Mouse selection: tint the selected char range of THIS visual
+               line before the glyphs go down, so the text stays crisp on the
+               SELECT band (same language as the selected sidebar row). */
+            if (sel_hi > sel_lo) {
+                long ls = (long)starts[k];
+                long le = ls + (long)lengths[k];
+                long lo = sel_lo > ls ? sel_lo : ls;
+                long hi = sel_hi < le ? sel_hi : le;
+
+                if (hi > lo) {
+                    int x0 = bubble_x + pad +
+                             backend->text_width(backend,
+                                                 message->text + ls,
+                                                 (unsigned long)(lo - ls));
+                    int sw = backend->text_width(backend, message->text + lo,
+                                                 (unsigned long)(hi - lo));
+
+                    backend->fill_rect(backend, TG_GUI_PEN_SELECT,
+                                       tg_gui_make_rect(x0, baseline - lh + 3,
+                                                        sw, lh));
+                }
+            }
             tg_gui_draw_markup(backend, text_pen, bubble_x + pad, baseline,
                                message->text + starts[k], lengths[k], &style);
         }
@@ -1479,6 +1554,15 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     if (area_w < 40) {
         area_w = 40;
     }
+    ((tg_gui_state *)state)->tr_area_x = area_x;
+    ((tg_gui_state *)state)->tr_area_w = area_w;
+    /* A shifted transcript (new message, reload, chat switch) invalidates a
+       char-range selection: the indexes would point at different text. */
+    if (state->sel_active &&
+        (state->message_count != state->sel_count_snap ||
+         state->sel_msg < 0 || state->sel_msg >= state->message_count)) {
+        ((tg_gui_state *)state)->sel_active = 0;
+    }
 
     header_h = lh + 10;
     tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, area_x, lh + 2, state->title,
@@ -1634,8 +1718,26 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                                        (unsigned long)strlen(message->text));
                 }
             } else {
+                long sel_lo = -1;
+                long sel_hi = -1;
+
+                if (state->sel_active && i == state->sel_msg) {
+                    sel_lo = state->sel_a < state->sel_b ? state->sel_a
+                                                         : state->sel_b;
+                    sel_hi = (state->sel_a > state->sel_b ? state->sel_a
+                                                          : state->sel_b) +
+                             1L; /* the char under the pointer is included */
+                    {
+                        long tl = (long)strlen(message->text);
+
+                        if (sel_hi > tl) {
+                            sel_hi = tl;
+                        }
+                    }
+                }
                 (void)tg_gui_paint_bubble(backend, message, area_x, area_w, y, lh,
-                                          transcript_top, transcript_bottom);
+                                          transcript_top, transcript_bottom,
+                                          sel_lo, sel_hi);
             }
         }
         y += h;
@@ -1699,6 +1801,87 @@ int tg_gui_sidebar_w(int width)
         sidebar_w = 1;
     }
     return sidebar_w;
+}
+
+
+long tg_gui_transcript_char_at(const tg_gui_state *state,
+                               tg_gui_backend *backend, int lh, int msg_index,
+                               int x, int y)
+{
+    tg_gui_bubble_geom geo;
+    const tg_gui_message *message;
+    int ty;
+    int k;
+    long ls;
+    long ll;
+    int lx;
+    long c;
+
+    if (state == 0 || backend == 0 || msg_index < 0 ||
+        msg_index >= state->message_count ||
+        state->msg_cached != state->message_count) {
+        return -1;
+    }
+    message = &state->messages[msg_index];
+    if (message->is_system || message->text[0] == '\0') {
+        return -1;
+    }
+    tg_gui_bubble_geometry(backend, message, state->tr_area_x,
+                           state->tr_area_w, lh, &geo);
+    ty = y - (state->msg_top[msg_index] + geo.header_h + geo.reply_h);
+    if (ty < 0) {
+        return 0; /* header band or above: clamp to the start */
+    }
+    k = ty / lh;
+    if (k >= geo.line_count) {
+        return (long)strlen(message->text); /* below the text: clamp to end */
+    }
+    ls = (long)geo.starts[k];
+    ll = (long)geo.lengths[k];
+    lx = x - (geo.bubble_x + geo.pad);
+    if (lx <= 0) {
+        return ls;
+    }
+    for (c = 1; c <= ll; ++c) {
+        if (backend->text_width(backend, message->text + ls,
+                                (unsigned long)c) > lx) {
+            return ls + c - 1;
+        }
+    }
+    return ls + ll;
+}
+
+int tg_gui_selection_get(const tg_gui_state *state, char *out,
+                         unsigned long out_size)
+{
+    long lo;
+    long hi;
+    long tl;
+    const char *text;
+
+    if (state == 0 || out == 0 || out_size == 0UL || !state->sel_active ||
+        state->sel_msg < 0 || state->sel_msg >= state->message_count) {
+        return 0;
+    }
+    text = state->messages[state->sel_msg].text;
+    tl = (long)strlen(text);
+    lo = state->sel_a < state->sel_b ? state->sel_a : state->sel_b;
+    hi = (state->sel_a > state->sel_b ? state->sel_a : state->sel_b) + 1L;
+    if (lo < 0) {
+        lo = 0;
+    }
+    if (hi > tl) {
+        hi = tl;
+    }
+    if (hi <= lo) {
+        return 0;
+    }
+    if ((unsigned long)(hi - lo) >= out_size) {
+        hi = lo + (long)out_size - 1L;
+    }
+    memcpy(out, text + lo, (unsigned long)(hi - lo));
+    out[hi - lo] = '\0';
+    return 1;
 }
 
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,

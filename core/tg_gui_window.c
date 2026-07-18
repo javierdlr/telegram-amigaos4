@@ -2836,12 +2836,20 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             /* Copy the highlighted message's text (issue #5).
                                Selection = the row the user last right-clicked
                                or picked; without one, say what to do. */
+                            static char selbuf[TG_GUI_MSG_TEXT_MAX];
                             int sel = state->selected_msg;
+                            const char *src = 0;
 
-                            if (sel >= 0 && sel < state->message_count &&
-                                state->messages[sel].text[0] != '\0' &&
-                                tg_gui_clip_write_text(
-                                    state->messages[sel].text)) {
+                            if (tg_gui_selection_get(state, selbuf,
+                                                     sizeof(selbuf))) {
+                                src = selbuf; /* the dragged range wins */
+                            } else if (sel >= 0 &&
+                                       sel < state->message_count &&
+                                       state->messages[sel].text[0] !=
+                                           '\0') {
+                                src = state->messages[sel].text;
+                            }
+                            if (src != 0 && tg_gui_clip_write_text(src)) {
                                 tg_gui_window_copy(state->status,
                                                    sizeof(state->status),
                                                    "Copied to clipboard");
@@ -3192,10 +3200,20 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         }
                     } else if (it == TG_GUI_CTX_COPY && m != 0 &&
                                m->text[0] != '\0') {
+                        static char ctxsel[TG_GUI_MSG_TEXT_MAX];
+                        const char *src = m->text;
+
+                        /* A dragged selection in THIS message wins over the
+                           whole text. */
+                        if (state->sel_active && state->sel_msg == mi &&
+                            tg_gui_selection_get(state, ctxsel,
+                                                 sizeof(ctxsel))) {
+                            src = ctxsel;
+                        }
                         state->selected_msg = mi; /* keep the row highlighted */
                         tg_gui_window_copy(state->status,
                                            sizeof(state->status),
-                                           tg_gui_clip_write_text(m->text)
+                                           tg_gui_clip_write_text(src)
                                                ? "Copied to clipboard"
                                                : "Copy failed");
                         tg_gui_window_paint(state, &backend);
@@ -3207,6 +3225,48 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                     tg_gui_window_paint(state, &backend);
                 } else if (msg_code == SELECTUP) {
+                    if (state->sel_press_armed) {
+                        state->sel_press_armed = 0;
+                        if (!state->sel_active) {
+                            /* Plain click (never dragged): the classic gesture
+                               -- reply to the bubble, exactly as before. */
+                            int mi = state->sel_press_msg;
+
+                            if (mi >= 0 && mi < state->message_count) {
+                                const tg_gui_message *m = &state->messages[mi];
+
+                                if (!m->is_system && m->id != 0UL) {
+                                    state->selected_msg = mi;
+                                    state->reply_to_id = m->id;
+                                    tg_gui_window_copy(
+                                        state->reply_sender,
+                                        sizeof(state->reply_sender),
+                                        m->sender);
+                                    tg_gui_window_copy(
+                                        state->reply_snippet,
+                                        sizeof(state->reply_snippet),
+                                        m->text);
+                                    state->search_active = 0;
+                                    state->composing = 1;
+                                    state->input_caret =
+                                        (int)strlen(state->input);
+                                    state->cursor_on = 1;
+                                    caret_ticks = 0;
+                                    tg_gui_window_copy(
+                                        state->status, sizeof(state->status),
+                                        "Reply - ENTER sends, ESC cancels");
+                                    tg_gui_window_paint(state, &backend);
+                                }
+                            }
+                        } else {
+                            /* Drag finished: keep the selection, tell how to
+                               use it. */
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status),
+                                               "Selected - A+C copies");
+                            tg_gui_window_paint(state, &backend);
+                        }
+                    }
                     state->sb_drag = 0;
                     if (state->drag_src >= 0) {
                         if (!state->drag_active) {
@@ -3445,37 +3505,66 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_paint(state, &backend);
                     } else if (hit <= TG_GUI_HIT_MESSAGE_BASE &&
                                tg_gui_session_is_open() && !state->in_search) {
-                        /* Click a transcript bubble to reply to it: latch its id +
-                           a "<sender>: <snippet>" reference and focus the composer
-                           so the next send carries reply_to_msg_id. */
+                        /* Press on a bubble: LATCH it. A drag past the
+                           threshold becomes a text selection; a click that
+                           never drags keeps the old gesture (reply), executed
+                           on SELECTUP -- same defer pattern as the sidebar. */
                         int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
 
                         if (mi >= 0 && mi < state->message_count) {
                             const tg_gui_message *m = &state->messages[mi];
 
                             if (!m->is_system && m->id != 0UL) {
-                                state->selected_msg = mi; /* highlight it */
-                                state->reply_to_id = m->id;
-                                tg_gui_window_copy(state->reply_sender,
-                                                   sizeof(state->reply_sender),
-                                                   m->sender);
-                                tg_gui_window_copy(state->reply_snippet,
-                                                   sizeof(state->reply_snippet),
-                                                   m->text);
-                                state->search_active = 0;
-                                state->composing = 1;
-                                state->input_caret = (int)strlen(state->input);
-                                state->cursor_on = 1;
-                                caret_ticks = 0;
-                                tg_gui_window_copy(
-                                    state->status, sizeof(state->status),
-                                    "Reply - ENTER sends, ESC cancels");
-                                tg_gui_window_paint(state, &backend);
+                                int repaint = state->sel_active;
+
+                                state->sel_active = 0; /* new press resets */
+                                state->sel_press_armed = 1;
+                                state->sel_press_msg = mi;
+                                state->sel_press_x = hx;
+                                state->sel_press_y = hy;
+                                state->sel_press_char =
+                                    tg_gui_transcript_char_at(state, &backend,
+                                                              ctx.line_h, mi,
+                                                              hx, hy);
+                                if (repaint) {
+                                    tg_gui_window_paint(state, &backend);
+                                }
                             }
                         }
                     }
                 }
             } else if (msg_class == IDCMP_MOUSEMOVE) {
+                if (state->mode == TG_GUI_MODE_CHAT && state->sel_press_armed) {
+                    /* Latched press: past a small threshold it becomes a text
+                       selection anchored at the press char; every further move
+                       extends it (clamped inside the SAME message by the
+                       char-at helper). */
+                    int hx = (int)mouse_x - ctx.origin_x;
+                    int hy = (int)mouse_y - ctx.origin_y;
+
+                    if (!state->sel_active && state->sel_press_char >= 0) {
+                        int dx = hx - state->sel_press_x;
+                        int dy = hy - state->sel_press_y;
+
+                        if (dx > 2 || dx < -2 || dy > 2 || dy < -2) {
+                            state->sel_active = 1;
+                            state->sel_msg = state->sel_press_msg;
+                            state->sel_a = state->sel_press_char;
+                            state->sel_b = state->sel_press_char;
+                            state->sel_count_snap = state->message_count;
+                        }
+                    }
+                    if (state->sel_active) {
+                        long c = tg_gui_transcript_char_at(
+                            state, &backend, ctx.line_h, state->sel_msg, hx,
+                            hy);
+
+                        if (c >= 0 && c != state->sel_b) {
+                            state->sel_b = c;
+                            tg_gui_window_paint(state, &backend);
+                        }
+                    }
+                }
                 /* Right-button trap follows the pointer: claimed over a real
                    bubble (our context menu), released elsewhere (menu bar). */
                 if (state->mode == TG_GUI_MODE_CHAT && !state->ctx_visible) {
