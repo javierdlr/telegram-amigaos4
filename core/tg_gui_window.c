@@ -3247,6 +3247,26 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 const tg_gui_message *m = &state->messages[mi];
 
                                 if (!m->is_system && m->id != 0UL &&
+                                    m->id == state->sel_press_id &&
+                                    mi == state->selected_msg) {
+                                    /* Click on the ALREADY-highlighted message
+                                       = toggle it off: deselect and cancel a
+                                       pending reply to it. Covers the
+                                       post-copy flow, where a stray click
+                                       must not drag the user into reply
+                                       mode -- and gives the missing deselect
+                                       gesture. */
+                                    state->selected_msg = -1;
+                                    if (state->reply_to_id == m->id) {
+                                        state->reply_to_id = 0UL;
+                                        state->reply_sender[0] = '\0';
+                                        state->reply_snippet[0] = '\0';
+                                    }
+                                    tg_gui_window_copy(state->status,
+                                                       sizeof(state->status),
+                                                       "");
+                                    tg_gui_window_paint(state, &backend);
+                                } else if (!m->is_system && m->id != 0UL &&
                                     m->id == state->sel_press_id) {
                                     state->selected_msg = mi;
                                     state->reply_to_id = m->id;
