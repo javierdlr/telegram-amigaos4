@@ -39,6 +39,12 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
    when no session is open (returns 0). */
 int tg_gui_session_tick(FILE *stream);
 
+/* Receive-only live drain for the composer path. It never starts an RPC: when
+   the held socket already has an encrypted frame queued, consumes at most one,
+   ACKs it and applies typing/read-receipt/edit/notification pushes. Returns 1
+   when GUI state changed. Safe to call frequently and with no open session. */
+int tg_gui_session_receive_pending(FILE *stream);
+
 /* F9: download the document attached to message msg_id in the open chat into
    downloads/<name>. 0 ok (path in out_path), 1 fail, 2 foreign DC (unsupported
    yet), 3 disk error. Blocking on-context call -- never from the tick. */

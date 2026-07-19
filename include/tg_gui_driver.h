@@ -72,6 +72,12 @@ int tg_gui_driver_has_unseen_own(const tg_gui_chat_driver *gui);
 int tg_gui_driver_update_text(tg_gui_chat_driver *gui, unsigned long message_id,
                               const char *text);
 
+/* Server updates carry UTF-8. Convert it to the GUI's Latin-1 display encoding,
+   then replace the shown message text by id. */
+int tg_gui_driver_update_text_utf8(tg_gui_chat_driver *gui,
+                                   unsigned long message_id,
+                                   const char *text);
+
 /* Delete: drop the shown message with this server id, shifting the tail up.
    Returns 1 if removed (a repaint is needed). */
 int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui,

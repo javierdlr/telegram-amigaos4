@@ -76,6 +76,19 @@ tg_net_status tg_net_recv(tg_net_connection *connection, void *buffer,
                                 error_buffer, error_buffer_size);
 }
 
+int tg_net_poll_readable(tg_net_connection *connection,
+                         char *error_buffer, unsigned long error_buffer_size)
+{
+    if (error_buffer != 0 && error_buffer_size > 0UL) {
+        error_buffer[0] = '\0';
+    }
+    if (connection == 0 || !connection->is_open) {
+        return -1;
+    }
+    return tg_platform_tcp_poll_readable(connection, error_buffer,
+                                         error_buffer_size);
+}
+
 void tg_net_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {

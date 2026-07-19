@@ -400,12 +400,28 @@ int tg_gui_driver_update_text(tg_gui_chat_driver *gui, unsigned long message_id,
         if (gui->state->messages[i].id == message_id) {
             /* Latin-1 verbatim (the composer text is already Latin-1, like the
                optimistic echo); the bubble re-wraps on the next paint. */
-            tg_gui_driver_copy(gui->state->messages[i].text,
-                               sizeof(gui->state->messages[i].text), text);
+            if (strcmp(gui->state->messages[i].text, text) != 0) {
+                tg_gui_driver_copy(gui->state->messages[i].text,
+                                   sizeof(gui->state->messages[i].text), text);
+                gui->state->msg_gen++;
+            }
             return 1;
         }
     }
     return 0;
+}
+
+int tg_gui_driver_update_text_utf8(tg_gui_chat_driver *gui,
+                                   unsigned long message_id,
+                                   const char *text)
+{
+    static char latin1[TG_GUI_MSG_TEXT_MAX];
+
+    if (text == 0) {
+        return 0;
+    }
+    tg_gui_driver_copy_latin1(latin1, sizeof(latin1), text);
+    return tg_gui_driver_update_text(gui, message_id, latin1);
 }
 
 int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui, unsigned long message_id)
@@ -422,6 +438,7 @@ int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui, unsigned long message_id
                 gui->state->messages[j - 1] = gui->state->messages[j];
             }
             gui->state->message_count -= 1;
+            gui->state->msg_gen++;
             return 1;
         }
     }
@@ -971,19 +988,40 @@ int tg_gui_driver_self_test(void)
             puts("gui driver self-test: id-less echo must reconcile by text");
             return 2;
         }
-        /* Edit: update a shown message's text by id (ds has ids 500,600,700). */
-        if (tg_gui_driver_update_text(&dg, 600UL, "modificato") != 1 ||
-            strcmp(ds.messages[1].text, "modificato") != 0 ||
-            tg_gui_driver_update_text(&dg, 999UL, "x") != 0) {
-            puts("gui driver self-test: edit update_text wrong");
-            return 2;
+        /* Edit: update a shown message's text by id (ds has ids 500,600,700).
+           Transcript mutations must invalidate any drag-selection snapshot. */
+        {
+            unsigned long gen;
+
+            gen = ds.msg_gen;
+            if (tg_gui_driver_update_text(&dg, 600UL, "modificato") != 1 ||
+                strcmp(ds.messages[1].text, "modificato") != 0 ||
+                ds.msg_gen != gen + 1UL ||
+                tg_gui_driver_update_text(&dg, 999UL, "x") != 0) {
+                puts("gui driver self-test: edit update_text wrong");
+                return 2;
+            }
+            gen = ds.msg_gen;
+            if (tg_gui_driver_update_text_utf8(
+                    &dg, 600UL, "pi\xc3\xb9 recente") != 1 ||
+                strcmp(ds.messages[1].text, "pi\xf9 recente") != 0 ||
+                ds.msg_gen != gen + 1UL) {
+                puts("gui driver self-test: UTF-8 edit conversion wrong");
+                return 2;
+            }
         }
         /* Delete: drop by id, shifting the tail up. */
-        if (tg_gui_driver_remove_by_id(&dg, 500UL) != 1 ||
-            ds.message_count != 2 || ds.messages[0].id != 600UL ||
-            tg_gui_driver_remove_by_id(&dg, 999UL) != 0) {
-            puts("gui driver self-test: delete remove_by_id wrong");
-            return 2;
+        {
+            unsigned long gen;
+
+            gen = ds.msg_gen;
+            if (tg_gui_driver_remove_by_id(&dg, 500UL) != 1 ||
+                ds.message_count != 2 || ds.messages[0].id != 600UL ||
+                ds.msg_gen != gen + 1UL ||
+                tg_gui_driver_remove_by_id(&dg, 999UL) != 0) {
+                puts("gui driver self-test: delete remove_by_id wrong");
+                return 2;
+            }
         }
     }
 

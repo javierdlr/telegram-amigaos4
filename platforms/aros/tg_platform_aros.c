@@ -859,6 +859,36 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
     return TG_NET_OK;
 }
 
+int tg_platform_tcp_poll_readable(tg_net_connection *connection,
+                                  char *error_buffer,
+                                  unsigned long error_buffer_size)
+{
+    fd_set read_fds;
+    struct timeval timeout;
+    long rc;
+
+    if (error_buffer != 0 && error_buffer_size > 0UL) {
+        error_buffer[0] = '\0';
+    }
+    if (connection == 0 || !connection->is_open) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket is not open");
+        return -1;
+    }
+    FD_ZERO(&read_fds);
+    FD_SET((int)connection->platform_handle, &read_fds);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+    rc = select((int)connection->platform_handle + 1, &read_fds, 0, 0,
+                &timeout);
+    if (rc < 0) {
+        tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+        return -1;
+    }
+    return rc > 0 &&
+           FD_ISSET((int)connection->platform_handle, &read_fds) ? 1 : 0;
+}
+
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
@@ -1555,4 +1585,3 @@ const char *tg_platform_console_drop_diag(void)
     return "unsupported on this platform";
 }
 #endif
-

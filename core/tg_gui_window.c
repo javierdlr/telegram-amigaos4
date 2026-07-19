@@ -38,6 +38,9 @@
    composer was focused, and "keep composer focus after send" leaves it focused,
    so reception + the typing header silently stopped until a chat switch. */
 #define TG_GUI_COMPOSE_IDLE_POLL_SECONDS 3UL
+/* While keys are flowing, drain at most one already-queued MTProto frame each
+   second. This path sends no RPC and therefore cannot leave a reply pending. */
+#define TG_GUI_COMPOSE_RECEIVE_SECONDS 1UL
 
 #if defined(TG_GUI_AMIGA)
 
@@ -1964,6 +1967,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     unsigned long effective_watch;
     time_t session_boot;
     time_t last_session_poll;
+    time_t last_receive_drain;
     time_t last_key_time;
 
     if (state == 0) {
@@ -2334,6 +2338,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 #endif
     session_boot = time(0);
     last_session_poll = time(0);
+    last_receive_drain = time(0);
     last_key_time = time(0);
     done = 0;
     state->composing = 0;
@@ -3192,6 +3197,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                        for TG_GUI_COMPOSE_IDLE_POLL_SECONDS; skip it entirely when
                        a close/quit is already queued this drain. */
                     now = time(0);
+                    if (!done && state->composing && now != (time_t)-1 &&
+                        now >= last_receive_drain &&
+                        (unsigned long)(now - last_receive_drain) >=
+                            TG_GUI_COMPOSE_RECEIVE_SECONDS) {
+                        last_receive_drain = now;
+                        if (tg_gui_session_receive_pending(stdout)) {
+                            session_dirty = 1;
+                        }
+                    }
                     /* As-you-type search: count INTUITICKS since the query last
                        changed and fire once the user pauses (~12 ticks ~= 1.2s).
                        Tick-based, NOT wall-clock: stray VM/RustDesk key events kept
@@ -3969,6 +3983,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     hb_now != (time_t)-1 &&
                     (unsigned long)(hb_now - session_boot) < watch_boot_grace) {
                     hb_eff = watch_boot_seconds;
+                }
+                if (state->composing && hb_now != (time_t)-1 &&
+                    hb_now >= last_receive_drain &&
+                    (unsigned long)(hb_now - last_receive_drain) >=
+                        TG_GUI_COMPOSE_RECEIVE_SECONDS) {
+                    last_receive_drain = hb_now;
+                    if (tg_gui_session_receive_pending(stdout)) {
+                        session_dirty = 1;
+                    }
                 }
                 if (hb_now != (time_t)-1 &&
                     (unsigned long)(hb_now - last_session_poll) >= hb_eff &&

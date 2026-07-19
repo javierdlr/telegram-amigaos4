@@ -200,6 +200,16 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
                                    char *error_buffer, unsigned long error_buffer_size);
 
 /**
+ * Non-blocking TCP readability test used by live-session push drains.
+ *
+ * Returns 1 when data (or EOF) is ready, 0 when no data is queued, and -1 on
+ * error. Implementations must not wait for network traffic.
+ */
+int tg_platform_tcp_poll_readable(tg_net_connection *connection,
+                                  char *error_buffer,
+                                  unsigned long error_buffer_size);
+
+/**
  * Platform TCP close implementation used by tg_net_close().
  */
 void tg_platform_tcp_close(tg_net_connection *connection);

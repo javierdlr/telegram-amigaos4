@@ -132,6 +132,9 @@
    214 still uses the classic ids). */
 #define TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR 0x1f2b0afdUL
 #define TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR 0x62ba04d9UL
+#define TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR 0xe40370a3UL
+#define TG_MTPROTO_UPDATE_EDIT_CHANNEL_MESSAGE_CONSTRUCTOR 0x1b3f4df7UL
+#define TG_MTPROTO_MESSAGE_CONSTRUCTOR 0x9815cec8UL
 #define TG_MTPROTO_TL_VECTOR_CONSTRUCTOR 0x1cb5c415UL
 #define TG_MTPROTO_UPDATES_TOO_LONG_CONSTRUCTOR 0xe317af7eUL
 #define TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR 0x5e002502UL
@@ -354,6 +357,22 @@ typedef struct tg_chat_read_outbox_sink {
     int pending;              /* 1 = a push not yet applied by the loop */
 } tg_chat_read_outbox_sink;
 static tg_chat_read_outbox_sink *tg_chat_read_outbox_target = 0;
+/* Remote edits arrive as updateEditMessage/updateEditChannelMessage pushes.
+   Keep a short queue because one encrypted-query receive loop may consume
+   several updates before the GUI gets control back. */
+#define TG_CHAT_EDIT_QUEUE_MAX 8U
+typedef struct tg_chat_edit_entry {
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    unsigned long message_id;
+    char text[TG_GUI_MSG_TEXT_MAX];
+} tg_chat_edit_entry;
+typedef struct tg_chat_edit_sink {
+    tg_chat_edit_entry queue[TG_CHAT_EDIT_QUEUE_MAX];
+    unsigned long count;
+} tg_chat_edit_sink;
+static tg_chat_edit_sink *tg_chat_edit_target = 0;
 /* The real console stream while the chat runs, for TUI components that must
    bypass capture streams (input-row redraws from the editor and the
    sub-prompts). 0 outside the chat. */
@@ -2794,32 +2813,104 @@ static void tg_chat_typing_parse_update(tg_mtproto_tl_reader *reader,
     }
 }
 
+static void tg_chat_edit_parse_update(tg_mtproto_tl_reader *reader)
+{
+    static tg_mtproto_message_text message;
+    tg_mtproto_dialog_peer dest;
+    tg_chat_edit_entry *entry;
+    unsigned long copy_length;
+    unsigned long i;
+
+    if (tg_chat_edit_target == 0 ||
+        tg_mtproto_read_update_message_text(reader, &message, &dest) !=
+            TG_MTPROTO_TL_OK ||
+        message.id == 0UL || dest.peer_constructor == 0UL) {
+        return;
+    }
+    if (tg_chat_edit_target->count >= TG_CHAT_EDIT_QUEUE_MAX) {
+        for (i = 1UL; i < TG_CHAT_EDIT_QUEUE_MAX; ++i) {
+            tg_chat_edit_target->queue[i - 1UL] =
+                tg_chat_edit_target->queue[i];
+        }
+        tg_chat_edit_target->count = TG_CHAT_EDIT_QUEUE_MAX - 1UL;
+    }
+    entry = &tg_chat_edit_target->queue[tg_chat_edit_target->count++];
+    entry->peer_constructor = dest.peer_constructor;
+    entry->peer_id_hi = dest.id_hi;
+    entry->peer_id_lo = dest.id_lo;
+    entry->message_id = message.id;
+    copy_length = (unsigned long)strlen(message.text);
+    if (copy_length >= sizeof(entry->text)) {
+        copy_length = sizeof(entry->text) - 1UL;
+    }
+    memcpy(entry->text, message.text, copy_length);
+    entry->text[copy_length] = '\0';
+}
+
+/* Parse one Update with the reader positioned immediately after its
+   constructor. Update items are not length-prefixed, so callers consume one
+   known item and stop rather than guessing where an unknown tail ends. */
+static void tg_chat_collect_update_item(tg_mtproto_tl_reader *reader,
+                                        unsigned long update_ctor)
+{
+    if (update_ctor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR ||
+        update_ctor == TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR ||
+        update_ctor == TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR) {
+        tg_chat_typing_parse_update(reader, update_ctor);
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) {
+        tg_mtproto_dialog_peer peer;
+        unsigned long max_id;
+
+        if (tg_chat_read_outbox_target != 0 &&
+            tg_mtproto_read_update_read_history_outbox(reader, &peer, &max_id) ==
+                TG_MTPROTO_TL_OK) {
+            tg_chat_read_outbox_target->peer_id_hi = peer.id_hi;
+            tg_chat_read_outbox_target->peer_id_lo = peer.id_lo;
+            tg_chat_read_outbox_target->max_id = max_id;
+            tg_chat_read_outbox_target->pending = 1;
+        }
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR ||
+        update_ctor == TG_MTPROTO_UPDATE_EDIT_CHANNEL_MESSAGE_CONSTRUCTOR) {
+        tg_chat_edit_parse_update(reader);
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR ||
+        update_ctor == TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR) {
+        static tg_mtproto_message_text message;
+        tg_mtproto_dialog_peer dest;
+
+        if (tg_mtproto_read_update_message_text(reader, &message, &dest) ==
+            TG_MTPROTO_TL_OK) {
+            tg_chat_notify_push_message(&message, &dest);
+        }
+    }
+}
+
 /* updateShort#78d4dec1 update:Update date:int -- the standard single-update
-   envelope that carries transient typing. */
-static void tg_chat_typing_collect_short(const unsigned char *body,
+   envelope used by typing, read receipts, new messages and remote edits. */
+static void tg_chat_update_collect_short(const unsigned char *body,
                                          unsigned long body_length)
 {
     tg_mtproto_tl_reader reader;
     unsigned long outer;
     unsigned long inner;
 
-    if (tg_chat_typing_target == 0) {
-        return;
-    }
     tg_mtproto_tl_reader_init(&reader, body, body_length);
     if (tg_mtproto_tl_read_u32(&reader, &outer) != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(&reader, &inner) != TG_MTPROTO_TL_OK) {
         return;
     }
-    tg_chat_typing_parse_update(&reader, inner);
+    tg_chat_collect_update_item(&reader, inner);
 }
 
 static void tg_chat_notify_collect_updates(const unsigned char *body,
                                            unsigned long body_length)
 {
     tg_mtproto_tl_reader reader;
-    static tg_mtproto_message_text message;
-    tg_mtproto_dialog_peer dest;
     unsigned long constructor;
     unsigned long item_constructor;
     unsigned long count;
@@ -2837,58 +2928,32 @@ static void tg_chat_notify_collect_updates(const unsigned char *body,
             TG_MTPROTO_TL_OK) {
             return;
         }
-        if (item_constructor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR ||
-            item_constructor ==
-                TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR ||
-            item_constructor ==
-                TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR) {
-            /* A typing item leading the container: record it, then stop (items
-               are not length-prefixed, so the walk cannot continue past it). */
-            tg_chat_typing_parse_update(&reader, item_constructor);
-            return;
-        }
-        if (item_constructor ==
-            TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) {
-            /* The peer read our messages: record (peer, max_id) for the loop to
-               apply when it is the open chat. Then stop (items are not
-               length-prefixed, so the walk cannot continue past it). */
-            tg_mtproto_dialog_peer rpeer;
-            unsigned long rmax;
-
-            if (tg_chat_read_outbox_target != 0 &&
-                tg_mtproto_read_update_read_history_outbox(&reader, &rpeer,
-                                                           &rmax) ==
-                    TG_MTPROTO_TL_OK) {
-                tg_chat_read_outbox_target->peer_id_hi = rpeer.id_hi;
-                tg_chat_read_outbox_target->peer_id_lo = rpeer.id_lo;
-                tg_chat_read_outbox_target->max_id = rmax;
-                tg_chat_read_outbox_target->pending = 1;
-            }
-            return;
-        }
-        if (item_constructor != TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR &&
+        if (item_constructor != TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR &&
             item_constructor !=
-                TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR) {
+                TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR &&
+            item_constructor != TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR &&
+            item_constructor != TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_EDIT_CHANNEL_MESSAGE_CONSTRUCTOR) {
             /* Unknown update items cannot be skipped (no length prefix). */
             return;
         }
-        if (tg_mtproto_read_update_message_text(&reader, &message, &dest) !=
-            TG_MTPROTO_TL_OK) {
+        tg_chat_collect_update_item(&reader, item_constructor);
 #ifdef TG_MTPROTO_DIAG
-            fprintf(stderr, "notify-diag rich parse-failed\n");
-#endif
-            return;
+        if (item_constructor == TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR ||
+            item_constructor ==
+                TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR) {
+            fprintf(stderr, "notify-diag rich message/update consumed\n");
         }
-#ifdef TG_MTPROTO_DIAG
-        fprintf(stderr,
-                "notify-diag rich msg id=%lu has_text=%d out=%d dest=0x%08lx\n",
-                message.id, message.has_text, message.is_out,
-                dest.peer_constructor);
 #endif
-        tg_chat_notify_push_message(&message, &dest);
-        /* The rich message reader may leave unparsed tail bytes (reply
-           markup and friends), so do not trust the reader position for
-           further items. */
+        /* Known parsers may leave optional tail bytes, so do not trust the
+           reader position for further vector items. */
         return;
     }
 }
@@ -2938,8 +3003,7 @@ static void tg_chat_notify_collect(const unsigned char *body,
         return;
     }
     if (constructor == TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) {
-        /* The single-update envelope: the live "is typing" carrier. */
-        tg_chat_typing_collect_short(body, body_length);
+        tg_chat_update_collect_short(body, body_length);
         return;
     }
     if (constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
@@ -12038,8 +12102,8 @@ int tg_mtproto_probe_self_test(void)
         "peer 1 type user id 0x0000000000000001 access_hash 0x0000000000000002 top 0 unread 0 self no bot no username ada title Ada\n"
         "peer 2 type chat id 0x0000000000000003 access_hash - top 0 unread 0 self no bot no username - title Test Group\n"
         "peer 3 type channel id 0x0000000000000004 access_hash 0x0000000000000005 top 0 unread 0 self no bot no username - title Test Channel\n";
-    unsigned char payload[64];
-    unsigned char packet[80];
+    unsigned char payload[128];
+    unsigned char packet[160];
     char api_id[32];
     char api_hash[96];
     char password[16];
@@ -12177,6 +12241,7 @@ int tg_mtproto_probe_self_test(void)
     {
         tg_chat_notify typing_nq;
         tg_chat_typing_sink typing_sink;
+        tg_chat_edit_sink edit_sink;
         int ok;
 
         memset(&typing_nq, 0, sizeof(typing_nq));
@@ -12262,8 +12327,66 @@ int tg_mtproto_probe_self_test(void)
             return 2;
         }
 
+        /* A remote edit in updateShort must preserve the destination peer and
+           UTF-8 text for the GUI-side in-place replacement. */
+        memset(&edit_sink, 0, sizeof(edit_sink));
+        tg_chat_edit_target = &edit_sink;
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, TG_MTPROTO_MESSAGE_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL << 8) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 0UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 77UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x44UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x99UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000000UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_bytes(
+                 &writer, (const unsigned char *)"pi\xc3\xb9 recente", 12UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 10UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000001UL) ==
+                 TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || edit_sink.count != 1UL ||
+            edit_sink.queue[0].peer_constructor !=
+                TG_MTPROTO_PEER_USER_CONSTRUCTOR ||
+            edit_sink.queue[0].peer_id_lo != 0x99UL ||
+            edit_sink.queue[0].message_id != 77UL ||
+            strcmp(edit_sink.queue[0].text, "pi\xc3\xb9 recente") != 0) {
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            tg_chat_edit_target = 0;
+            printf("probe self-test: remote edit parse wrong "
+                   "(ok=%d count=%lu peer=0x%08lx id=%lu text=%s)\n",
+                   ok, edit_sink.count,
+                   edit_sink.queue[0].peer_constructor,
+                   edit_sink.queue[0].message_id,
+                   edit_sink.queue[0].text);
+            return 2;
+        }
+
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
+        tg_chat_edit_target = 0;
     }
 
     /* Upload send-path guard (the twin of the download body/PACKET_MAX fix): a
@@ -12445,7 +12568,9 @@ static struct {
        (peer, max_id) here; the loop applies it next tick when the peer matches
        the open chat (the poll backstop still runs). Armed at open. */
     tg_chat_read_outbox_sink read_outbox_sink;
+    tg_chat_edit_sink edit_sink;   /* remote message edits, armed at open */
     tg_chat_typing_sink typing;     /* live "is typing" sink, armed at open */
+    unsigned long open_peer_constructor;
     unsigned long open_peer_id_hi;  /* the open chat's peer id, to match typing */
     unsigned long open_peer_id_lo;
     int open_peer_is_chat;
@@ -12577,6 +12702,9 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     memset(&tg_gui_session_state.read_outbox_sink, 0,
            sizeof(tg_gui_session_state.read_outbox_sink));
     tg_chat_read_outbox_target = &tg_gui_session_state.read_outbox_sink;
+    memset(&tg_gui_session_state.edit_sink, 0,
+           sizeof(tg_gui_session_state.edit_sink));
+    tg_chat_edit_target = &tg_gui_session_state.edit_sink;
     tg_mtproto_set_session_updates(1);
     tg_gui_chat_driver_bind(&tg_gui_session_state.gui_driver, state,
                             &tg_gui_session_state.driver);
@@ -12612,6 +12740,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
         tg_chat_read_outbox_target = 0;
+        tg_chat_edit_target = 0;
         return 2;
     }
     tg_gui_log("open: connected");
@@ -12750,6 +12879,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     quiet = tg_mtproto_open_quiet_stream(stream);
     /* Remember the open peer's id so the tick can match inbound typing updates
        to this chat, and clear any stale "is typing" indicator on switch. */
+    tg_gui_session_state.open_peer_constructor = 0UL;
     tg_gui_session_state.open_peer_id_hi = 0UL;
     tg_gui_session_state.open_peer_id_lo = 0UL;
     tg_gui_session_state.open_peer_is_chat = 0;
@@ -12772,6 +12902,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
                 tg_gui_session_state.peer_cache_file,
                 tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
                 &ahl, &hah, quiet, "gui open peer") == 0) {
+            tg_gui_session_state.open_peer_constructor = pc;
             tg_gui_session_state.open_peer_id_hi = ph;
             tg_gui_session_state.open_peer_id_lo = pl;
             tg_gui_session_state.open_peer_is_chat =
@@ -14217,6 +14348,282 @@ static const char *tg_gui_session_resolve_typing_member(FILE *stream)
     return 0;
 }
 
+static int tg_gui_session_apply_edit_updates(void)
+{
+    unsigned long i;
+    int dirty;
+
+    dirty = 0;
+    for (i = 0UL; i < tg_gui_session_state.edit_sink.count; ++i) {
+        tg_chat_edit_entry *entry;
+
+        int peer_match;
+
+        entry = &tg_gui_session_state.edit_sink.queue[i];
+        peer_match =
+            entry->peer_constructor ==
+                tg_gui_session_state.open_peer_constructor &&
+            entry->peer_id_hi == tg_gui_session_state.open_peer_id_hi &&
+            entry->peer_id_lo == tg_gui_session_state.open_peer_id_lo;
+        /* Saved Messages: the open chat holds the inputPeerSelf SENTINEL with
+           ids 0/0, but the wire edit carries peerUser(own id) -- the exact
+           match can never fire there. Accept USER-peer entries instead: the
+           by-id transcript lookup below is the real filter (non-channel
+           message ids are unique across the account's box, and channel edits
+           carry peerChannel, still excluded). */
+        if (!peer_match &&
+            tg_gui_session_state.open_peer_constructor ==
+                TG_MTPROTO_PEER_SELF_CONSTRUCTOR &&
+            entry->peer_constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR) {
+            peer_match = 1;
+        }
+        if (tg_gui_session_state.current_peer_index[0] != '\0' &&
+            peer_match &&
+            tg_gui_driver_update_text_utf8(
+                &tg_gui_session_state.gui_driver, entry->message_id,
+                entry->text)) {
+            dirty = 1;
+        }
+    }
+    tg_gui_session_state.edit_sink.count = 0UL;
+    return dirty;
+}
+
+static int tg_gui_session_apply_read_update(void)
+{
+    int dirty;
+
+    dirty = 0;
+    if (tg_gui_session_state.read_outbox_sink.pending) {
+        tg_gui_session_state.read_outbox_sink.pending = 0;
+        if (tg_gui_session_state.current_peer_index[0] != '\0' &&
+            tg_gui_session_state.read_outbox_sink.peer_id_hi ==
+                tg_gui_session_state.open_peer_id_hi &&
+            tg_gui_session_state.read_outbox_sink.peer_id_lo ==
+                tg_gui_session_state.open_peer_id_lo &&
+            tg_gui_driver_set_read_outbox_max(
+                &tg_gui_session_state.gui_driver,
+                tg_gui_session_state.read_outbox_sink.max_id)) {
+            dirty = 1;
+        }
+    }
+    return dirty;
+}
+
+static int tg_gui_session_dispatch_notifications(void)
+{
+    unsigned long i;
+
+    if (tg_gui_session_state.engine.notify.count == 0UL) {
+        return 0;
+    }
+    for (i = 0UL; i < tg_gui_session_state.engine.notify.count; ++i) {
+        if (tg_gui_session_state.driver.on_notification != 0) {
+            tg_gui_session_state.driver.on_notification(
+                tg_gui_session_state.driver.ctx,
+                &tg_gui_session_state.engine.notify.queue[i]);
+        }
+    }
+    tg_gui_session_state.engine.notify.count = 0UL;
+    tg_gui_session_state.engine.notify.dropped = 0UL;
+    tg_gui_session_persist_unread();
+    return 1;
+}
+
+static int tg_gui_session_apply_typing(FILE *stream, int allow_member_fetch)
+{
+    tg_gui_state *gs;
+    const char *want;
+    char built[TG_GUI_NAME_MAX];
+    int fresh;
+    unsigned long now;
+
+    gs = tg_gui_session_state.gui_driver.state;
+    if (gs == 0) {
+        return 0;
+    }
+    now = (unsigned long)time(0);
+    fresh = 0;
+    if (tg_gui_session_state.typing.active &&
+        now >= tg_gui_session_state.typing.seen_epoch &&
+        (now - tg_gui_session_state.typing.seen_epoch) <=
+            TG_MTPROTO_TYPING_TTL_SECONDS) {
+        fresh = 1;
+    } else {
+        tg_gui_session_state.typing.active = 0;
+    }
+    if (fresh) {
+        char td[112];
+
+        sprintf(td, "typing: fresh sink=%08lx%08lx open=%08lx%08lx idx=%s",
+                tg_gui_session_state.typing.peer_id_hi,
+                tg_gui_session_state.typing.peer_id_lo,
+                tg_gui_session_state.open_peer_id_hi,
+                tg_gui_session_state.open_peer_id_lo,
+                tg_gui_session_state.current_peer_index);
+        tg_gui_log(td);
+    }
+    want = "";
+    if (fresh && tg_gui_session_state.current_peer_index[0] != '\0' &&
+        tg_gui_session_state.typing.peer_id_hi ==
+            tg_gui_session_state.open_peer_id_hi &&
+        tg_gui_session_state.typing.peer_id_lo ==
+            tg_gui_session_state.open_peer_id_lo) {
+        const char *name;
+
+        name = 0;
+        if (!tg_gui_session_state.open_peer_is_chat) {
+            if (tg_gui_session_state.current_peer_label[0] != '\0') {
+                name = tg_gui_session_state.current_peer_label;
+            }
+        } else {
+            int mi;
+
+            for (mi = 0; mi < gs->message_count; ++mi) {
+                if (!gs->messages[mi].is_own &&
+                    gs->messages[mi].from_id_hi ==
+                        tg_gui_session_state.typing.from_id_hi &&
+                    gs->messages[mi].from_id_lo ==
+                        tg_gui_session_state.typing.from_id_lo &&
+                    gs->messages[mi].sender[0] != '\0') {
+                    name = gs->messages[mi].sender;
+                    break;
+                }
+            }
+            /* The receive-only composing path must stay network-free. It may
+               consult an already-fetched cache, but never trigger the member
+               query itself. */
+            if (name == 0 &&
+                (allow_member_fetch ||
+                 tg_gui_session_state.member_fetch_done)) {
+                name = tg_gui_session_resolve_typing_member(stream);
+            }
+        }
+        if (name != 0) {
+            static const char suffix[] = " is typing...";
+            unsigned long di;
+            unsigned long si;
+
+            di = 0UL;
+            while (di + sizeof(suffix) < sizeof(built) &&
+                   name[di] != '\0') {
+                built[di] = name[di];
+                ++di;
+            }
+            for (si = 0UL; si + 1UL < sizeof(suffix) &&
+                           di + 1UL < sizeof(built); ++si) {
+                built[di++] = suffix[si];
+            }
+            built[di] = '\0';
+            want = built;
+        } else {
+            want = "someone is typing...";
+        }
+    }
+    if (strcmp(gs->typing, want) != 0) {
+        unsigned long n;
+
+        n = (unsigned long)strlen(want);
+        if (n >= sizeof(gs->typing)) {
+            n = sizeof(gs->typing) - 1UL;
+        }
+        memcpy(gs->typing, want, n);
+        gs->typing[n] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+static int tg_gui_session_apply_pushes(FILE *stream, int allow_member_fetch)
+{
+    int dirty;
+
+    dirty = 0;
+    if (tg_gui_session_apply_edit_updates()) {
+        dirty = 1;
+    }
+    if (tg_gui_session_apply_read_update()) {
+        dirty = 1;
+    }
+    if (tg_gui_session_dispatch_notifications()) {
+        dirty = 1;
+    }
+    if (tg_gui_session_apply_typing(stream, allow_member_fetch)) {
+        dirty = 1;
+    }
+    return dirty;
+}
+
+int tg_gui_session_receive_pending(FILE *stream)
+{
+    static unsigned char response[TG_MTPROTO_REPLY_RECV_MAX];
+    /* static like every other decrypt site in this file: the struct embeds a
+       ~72 KB body on PPC and this runs once a second inside the GUI event
+       loop -- a stack frame that size is a Guru on sub-1MB stacks. */
+    static tg_mtproto_encrypted_message decrypted;
+    unsigned long response_length;
+    unsigned long prev_timeout;
+    tg_net_status status;
+    char error_buffer[128];
+    FILE *quiet;
+    int ready;
+    int dirty;
+
+    if (!tg_gui_session_state.open || stream == 0) {
+        return 0;
+    }
+    dirty = 0;
+    /* Even a quiet socket may require the typing TTL to clear. */
+    if (!tg_gui_session_state.context.connection.is_open) {
+        return tg_gui_session_apply_pushes(stream, 0);
+    }
+    ready = tg_net_poll_readable(&tg_gui_session_state.context.connection,
+                                 error_buffer, sizeof(error_buffer));
+    if (ready <= 0) {
+        if (ready < 0) {
+            tg_gui_log("receive_pending: poll failed; reconnect on full tick");
+            tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+        }
+        return tg_gui_session_apply_pushes(stream, 0);
+    }
+
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    /* Readability only guarantees that the first byte is ready. Bound the rest
+       of the frame; a partial frame is not recoverable, so close and let the
+       next regular tick reconnect instead of leaving a desynchronised stream.
+       KNOWN TRADE-OFF: a frame trickling in can hold the GUI up to ~1s per
+       recv chunk while composing -- bounded and rare (pushes are small), and
+       the idle-tick poll already blocks comparably; async reassembly is not
+       worth its complexity here. */
+    tg_net_set_connect_timeout_seconds(1UL);
+    error_buffer[0] = '\0';
+    response_length = 0UL;
+    status = tg_mtproto_recv_abridged_packet(
+        &tg_gui_session_state.context.connection, response, sizeof(response),
+        &response_length, error_buffer, sizeof(error_buffer));
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    if (status != TG_NET_OK ||
+        tg_mtproto_decrypt_encrypted_message(
+            response, response_length, tg_gui_session_state.context.auth_key,
+            &decrypted) != TG_MTPROTO_TL_OK) {
+        tg_gui_log("receive_pending: frame failed; reconnect on full tick");
+        tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return tg_gui_session_apply_pushes(stream, 0);
+    }
+    tg_mtproto_sync_time_from_server(&tg_gui_session_state.context, &decrypted);
+    tg_mtproto_ack_encrypted_message(&tg_gui_session_state.context, &decrypted,
+                                     quiet, "gui receive");
+    tg_chat_notify_collect(decrypted.body, decrypted.body_length);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_gui_log("receive_pending: one frame");
+    if (tg_gui_session_apply_pushes(stream, 0)) {
+        dirty = 1;
+    }
+    return dirty;
+}
+
 int tg_gui_session_tick(FILE *stream)
 {
     FILE *quiet;
@@ -14262,21 +14669,6 @@ int tg_gui_session_tick(FILE *stream)
         tg_chat_message_driver_override = 0;
         if (printed > 0UL) {
             dirty = 1;
-        }
-        /* Real-time read receipt (5c): an updateReadHistoryOutbox push recorded
-           by the drain applies instantly when it is the open chat -- the poll
-           below stays as the backstop (dropped pushes / MorphOS). */
-        if (tg_gui_session_state.read_outbox_sink.pending) {
-            tg_gui_session_state.read_outbox_sink.pending = 0;
-            if (tg_gui_session_state.read_outbox_sink.peer_id_hi ==
-                    tg_gui_session_state.open_peer_id_hi &&
-                tg_gui_session_state.read_outbox_sink.peer_id_lo ==
-                    tg_gui_session_state.open_peer_id_lo &&
-                tg_gui_driver_set_read_outbox_max(
-                    &tg_gui_session_state.gui_driver,
-                    tg_gui_session_state.read_outbox_sink.max_id)) {
-                dirty = 1;
-            }
         }
         /* Refresh the peer's read cursor so own messages flip to the double-
            check once the peer reads them. Throttled: read state changes slowly
@@ -14371,131 +14763,8 @@ int tg_gui_session_tick(FILE *stream)
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_gui_log("tick: end");
-
-    /* Dispatch every harvested notification to the GUI driver, then clear the
-       queue (same consume semantics as the console's print_notify_lines). */
-    if (tg_gui_session_state.engine.notify.count > 0UL) {
-        unsigned long i;
-
-        for (i = 0UL; i < tg_gui_session_state.engine.notify.count; ++i) {
-            if (tg_gui_session_state.driver.on_notification != 0) {
-                tg_gui_session_state.driver.on_notification(
-                    tg_gui_session_state.driver.ctx,
-                    &tg_gui_session_state.engine.notify.queue[i]);
-            }
-        }
-        tg_gui_session_state.engine.notify.count = 0UL;
-        tg_gui_session_state.engine.notify.dropped = 0UL;
+    if (tg_gui_session_apply_pushes(stream, 1)) {
         dirty = 1;
-        /* Live unread increments just landed -> persist so the badges are correct
-           after a restart (no-op write when nothing actually changed). */
-        tg_gui_session_persist_unread();
-    }
-
-    /* Reflect the live "is typing" sink into the open chat's header: shown only
-       for the open peer and only while fresh (the TTL); cleared otherwise. A
-       change in either direction is a repaint. */
-    {
-        tg_gui_state *gs;
-
-        gs = tg_gui_session_state.gui_driver.state;
-        if (gs != 0) {
-            const char *want;
-            char built[TG_GUI_NAME_MAX];
-            int fresh;
-            unsigned long now;
-
-            now = (unsigned long)time(0);
-            fresh = 0;
-            if (tg_gui_session_state.typing.active &&
-                now >= tg_gui_session_state.typing.seen_epoch &&
-                (now - tg_gui_session_state.typing.seen_epoch) <=
-                    TG_MTPROTO_TYPING_TTL_SECONDS) {
-                fresh = 1;
-            } else {
-                /* Stale or absent: disarm so a later identical push re-fires. */
-                tg_gui_session_state.typing.active = 0;
-            }
-            if (fresh) {
-                char td[112];
-
-                sprintf(td, "typing: fresh sink=%08lx%08lx open=%08lx%08lx idx=%s",
-                        tg_gui_session_state.typing.peer_id_hi,
-                        tg_gui_session_state.typing.peer_id_lo,
-                        tg_gui_session_state.open_peer_id_hi,
-                        tg_gui_session_state.open_peer_id_lo,
-                        tg_gui_session_state.current_peer_index);
-                tg_gui_log(td);
-            }
-            want = "";
-            if (fresh && tg_gui_session_state.current_peer_index[0] != '\0' &&
-                tg_gui_session_state.typing.peer_id_hi ==
-                    tg_gui_session_state.open_peer_id_hi &&
-                tg_gui_session_state.typing.peer_id_lo ==
-                    tg_gui_session_state.open_peer_id_lo) {
-                const char *name;
-
-                /* Name who is typing: in a DM it is the open peer; in a group
-                   match the typer's id against a recently shown sender. */
-                name = 0;
-                if (!tg_gui_session_state.open_peer_is_chat) {
-                    if (tg_gui_session_state.current_peer_label[0] != '\0') {
-                        name = tg_gui_session_state.current_peer_label;
-                    }
-                } else {
-                    int mi;
-
-                    /* (1) a recently shown sender (cheap, already loaded). */
-                    for (mi = 0; mi < gs->message_count; ++mi) {
-                        if (!gs->messages[mi].is_own &&
-                            gs->messages[mi].from_id_hi ==
-                                tg_gui_session_state.typing.from_id_hi &&
-                            gs->messages[mi].from_id_lo ==
-                                tg_gui_session_state.typing.from_id_lo &&
-                            gs->messages[mi].sender[0] != '\0') {
-                            name = gs->messages[mi].sender;
-                            break;
-                        }
-                    }
-                    /* (2)/(3) otherwise the lazily-fetched member list (supergroups,
-                       off-MorphOS); one synchronous fetch per open group. */
-                    if (name == 0) {
-                        name = tg_gui_session_resolve_typing_member(stream);
-                    }
-                }
-                if (name != 0) {
-                    static const char suffix[] = " is typing...";
-                    unsigned long di;
-                    unsigned long si;
-
-                    di = 0UL;
-                    while (di + sizeof(suffix) < sizeof(built) &&
-                           name[di] != '\0') {
-                        built[di] = name[di];
-                        ++di;
-                    }
-                    for (si = 0UL; si + 1UL < sizeof(suffix) &&
-                                   di + 1UL < sizeof(built); ++si) {
-                        built[di++] = suffix[si];
-                    }
-                    built[di] = '\0';
-                    want = built;
-                } else {
-                    want = "someone is typing...";
-                }
-            }
-            if (strcmp(gs->typing, want) != 0) {
-                unsigned long n;
-
-                n = (unsigned long)strlen(want);
-                if (n >= sizeof(gs->typing)) {
-                    n = sizeof(gs->typing) - 1UL;
-                }
-                memcpy(gs->typing, want, n);
-                gs->typing[n] = '\0';
-                dirty = 1;
-            }
-        }
     }
     return dirty;
 }
@@ -14507,6 +14776,7 @@ void tg_gui_session_close(void)
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
         tg_chat_read_outbox_target = 0;
+        tg_chat_edit_target = 0;
         return;
     }
     tg_gui_log("close: closing context");
@@ -14526,6 +14796,7 @@ void tg_gui_session_close(void)
     tg_chat_nq = 0;
     tg_chat_typing_target = 0;
     tg_chat_read_outbox_target = 0;
+    tg_chat_edit_target = 0;
     tg_gui_session_state.open = 0;
 }
 

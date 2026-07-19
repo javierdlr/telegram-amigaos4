@@ -804,6 +804,42 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
     return TG_NET_OK;
 }
 
+int tg_platform_tcp_poll_readable(tg_net_connection *connection,
+                                  char *error_buffer,
+                                  unsigned long error_buffer_size)
+{
+    fd_set read_fds;
+    struct timeval timeout;
+    long rc;
+
+    if (error_buffer != 0 && error_buffer_size > 0UL) {
+        error_buffer[0] = '\0';
+    }
+    if (connection == 0 || !connection->is_open) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket is not open");
+        return -1;
+    }
+    FD_ZERO(&read_fds);
+    FD_SET((int)connection->platform_handle, &read_fds);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+#if TG_AMIGAOS3_BSDSOCKET_DIRECT
+    rc = WaitSelect((int)connection->platform_handle + 1, &read_fds, 0, 0,
+                    (void *)&timeout, 0);
+#else
+    rc = select((int)connection->platform_handle + 1, &read_fds, 0, 0,
+                &timeout);
+#endif
+    if (rc < 0) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket poll failed");
+        return -1;
+    }
+    return rc > 0 &&
+           FD_ISSET((int)connection->platform_handle, &read_fds) ? 1 : 0;
+}
+
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
@@ -871,6 +907,17 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
         error_buffer[0] = '\0';
     }
     return TG_NET_UNSUPPORTED;
+}
+
+int tg_platform_tcp_poll_readable(tg_net_connection *connection,
+                                  char *error_buffer,
+                                  unsigned long error_buffer_size)
+{
+    (void)connection;
+    if (error_buffer != 0 && error_buffer_size > 0UL) {
+        error_buffer[0] = '\0';
+    }
+    return -1;
 }
 
 void tg_platform_tcp_close(tg_net_connection *connection)
@@ -1619,7 +1666,6 @@ const char *tg_platform_console_drop_diag(void)
             tg_wb_drop_polls, tg_wb_drop_msgs);
     return diag_buf;
 }
-
 
 
 
