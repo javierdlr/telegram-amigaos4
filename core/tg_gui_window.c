@@ -138,6 +138,7 @@ struct Library *GadToolsBase = 0;
 #define TG_MENU_OWNSCREEN 7
 #define TG_MENU_COPY 8
 #define TG_MENU_PASTE 9
+#define TG_MENU_CUT 10
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -1382,6 +1383,8 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_COPY },
     { NM_ITEM,  (STRPTR)"Paste", (STRPTR)"V", 0, 0,
       (APTR)TG_MENU_PASTE },
+    { NM_ITEM,  (STRPTR)"Cut input", (STRPTR)"X", 0, 0,
+      (APTR)TG_MENU_CUT },
     { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
       (APTR)TG_MENU_ICONIFY },
     { NM_ITEM,  (STRPTR)"Own screen", 0, CHECKIT | MENUTOGGLE, 0,
@@ -2861,6 +2864,34 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                    sel < 0
                                                        ? "Right-click a message first"
                                                        : "Nothing to copy");
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        } else if (ud == (APTR)TG_MENU_CUT) {
+                            /* Cut the focused input line to the clipboard:
+                               the search box when active, else the composer.
+                               Completes the cut/copy/paste trio (issue #5). */
+                            char *field = state->search_active
+                                              ? state->search_query
+                                              : state->input;
+
+                            if (field[0] != '\0' &&
+                                tg_gui_clip_write_text(field)) {
+                                field[0] = '\0';
+                                if (state->search_active) {
+                                    state->search_caret = 0;
+                                    state->search_dirty = 1;
+                                    search_idle_ticks = 0;
+                                } else {
+                                    state->input_caret = 0;
+                                    tg_gui_window_mention_refresh(state);
+                                }
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Cut to clipboard");
+                            } else {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Nothing to cut");
                             }
                             tg_gui_window_paint(state, &backend);
                         } else if (ud == (APTR)TG_MENU_PASTE) {
