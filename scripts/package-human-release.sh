@@ -59,6 +59,7 @@ if [ "$AMINET" = "1" ]; then rm -rf "$AMINET_ROOT"; mkdir -p "$AMINET_ROOT"; fi
 fill_platform_text() {
     case "$1" in
     "AmigaOS 3.x")
+        upload_limit="31 MiB"
         req_en="- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) with a TCP/IP stack (Roadshow, AmiTCP,
   Miami/MiamiDx) providing bsdsocket.library, and an internet connection.
 - A 68020 or better CPU (this build uses the 68020 32x32 multiply and will
@@ -89,6 +90,7 @@ fill_platform_text() {
   client console), poi usare TelegramAmiga (riusa il login salvato)."
         ;;
     "MorphOS")
+        upload_limit="250 MiB"
         req_en="- MorphOS (3.x) with its TCP/IP stack and an internet connection.
 - A few MB of free RAM."
         notes_en="Notes for MorphOS
@@ -115,6 +117,7 @@ fill_platform_text() {
 - Modalita' schermo proprio: consigliato MorphOS 3.16 o piu' recente."
         ;;
     *)
+        upload_limit="250 MiB"
         req_en="- $1 with a working TCP/IP stack (bsdsocket) and an internet connection.
 - A few MB of free RAM."
         notes_en="Notes for $1
@@ -143,16 +146,12 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
-New in $VERSION: FILE SHARING -- download any received file (right-click ->
-Download) and send one to the open chat (right-click -> Send file...), up to
-10 MB. A pinned Saved Messages chat turns Telegram's cloud into a transfer
-drawer between your Amiga and your phone/PC (everything there can be edited
-and deleted). No more launcher scripts: the two icons start the program
-directly (TelegramAmiga = GUI, TelegramAmiga-TUI = console). Click places the
-text cursor; Del forward-deletes; an Iconify menu item parks the client on a
-Workbench AppIcon; avatar colours are truer, and rich on RTG screens. The
-program is now called TelegramAmiga. (0.0.5 added real avatars, @mentions,
-remembered window position and an own screen.)
+New in $VERSION: LARGE FILE UPLOADS -- files over 10 MiB now use Telegram's
+big-file protocol, with progress shown during transfer (limit on this build:
+$upload_limit). The TUI can also send/download files and accepts Workbench
+drag-and-drop. In the GUI you can select transcript or composer text and
+Copy/Cut/Paste it. Messages edited on another Telegram device update live,
+and incoming activity keeps updating while you compose.
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
@@ -230,12 +229,18 @@ Using the GUI
 - FILES: a message carrying a file shows as [File: name (size)]. Right-click
   it and pick Download -- the file lands in the downloads/ drawer. To send
   one, open the chat and use the Telegram menu's "Send file..." (Amiga+F):
-  a standard file requester picks it, up to 10 MB.
+  a standard file requester picks it, up to $upload_limit on this build.
+  Large transfers show percentage progress in the status line.
 - SAVED MESSAGES: the last chat in the list is you. Send files or notes to
   it from your phone or PC and pick them up on the Amiga (or the other way
   round) -- Telegram's cloud as your transfer drawer. It cannot be removed.
 - Click inside the composer or the search box to place the text cursor
   exactly where you want to edit.
+- Drag across transcript or composer text to select it. Right-Amiga+C copies;
+  Right-Amiga+X cuts selected composer text; Right-Amiga+V pastes. The same
+  actions are in the Telegram menu.
+- Edits made from another Telegram client update the visible message live.
+  Incoming activity also keeps updating while you type.
 - "Iconify" in the Telegram menu (Amiga+I) closes the window and leaves a
   TelegramAmiga icon on the Workbench: double-click it to come back.
 - F1..F10 jump to chats 1..10 (Shift+F1..F10 to 11..20).
@@ -350,12 +355,18 @@ Usare la GUI
 - FILE: un messaggio con allegato appare come [File: nome (dimensione)].
   Click destro -> Download e il file finisce nel cassetto downloads/. Per
   inviarne uno: apri la chat e usa "Send file..." nel menu Telegram
-  (Amiga+F): lo scegli dal requester di sistema, fino a 10 MB.
+  (Amiga+F): lo scegli dal requester di sistema, fino a $upload_limit su
+  questa build. Durante i trasferimenti grandi compare la percentuale.
 - MESSAGGI SALVATI: l'ultima chat della lista sei tu. Mandaci file o appunti
   dal telefono o dal PC e riprendili sull'Amiga (o viceversa) -- il cloud di
   Telegram come cassetto di scambio. Non si puo' rimuovere.
 - Un click dentro il composer o la casella di ricerca posiziona il cursore
   esattamente dove vuoi correggere.
+- Trascina sul testo della conversazione o del composer per selezionarlo.
+  Amiga-destro+C copia; Amiga-destro+X taglia il testo selezionato nel composer;
+  Amiga-destro+V incolla. Le stesse azioni sono nel menu Telegram.
+- Le modifiche fatte da un altro client Telegram aggiornano il messaggio
+  visibile in tempo reale. Anche l'attivita' in arrivo continua mentre scrivi.
 - "Iconify" nel menu Telegram (Amiga+I) chiude la finestra e lascia
   un'icona TelegramAmiga sul Workbench: doppio click per tornare.
 - F1..F10 saltano alle chat 1..10 (Shift+F1..F10 alle 11..20).
@@ -476,7 +487,8 @@ Two programs share one engine and one saved login:
 WHAT CAN I ACTUALLY DO WITH IT?
 -------------------------------
 Read and send messages in private chats, groups and channels. Download a
-received file (right-click -> Download) or send one from disk, up to 10 MB.
+received file (right-click -> Download) or send one from disk, up to
+$upload_limit on this build, including files over 10 MiB.
 Use the pinned Saved Messages chat as a cloud transfer drawer between the
 Amiga and your phone or PC. Reply to a specific message (right-click it).
 Edit or delete your own messages. See

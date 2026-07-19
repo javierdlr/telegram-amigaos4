@@ -38,13 +38,17 @@ on at least one real Amiga-like platform.
 The project has moved past the Bot-API diagnostic tester to a real MTProto
 client:
 
-- MTProto human releases ship for AmigaOS 3.x, MorphOS, AROS i386 and
-  AmigaOS 4.x: login wizard, 2FA/SRP, saved chat list, read and send.
+- MTProto human releases ship for AmigaOS 3.x, AmigaOS 4.x, MorphOS,
+  AROS i386 and AROS x86_64: login wizard, 2FA/SRP, saved chat list,
+  text chat and file transfer.
+- The 0.0.7 candidate adds large-file uploads, GUI text selection and
+  Copy/Cut/Paste, TUI file transfer/drop support, live remote edits and
+  receive-only updates while composing.
 - A Bot-API text path stays available as a fallback for tokens/bots.
 - TLS certificate validation has passed a live CA-bundle smoke test on all four
   platforms (see `docs/TLS_CERTIFICATES.md`).
-- Ongoing: entropy hardening on emulated targets, broader community testing and
-  packaging polish.
+- Ongoing: 0.0.7 hardware validation, broader community testing and packaging
+  polish.
 
 ## Phase 4: User Interface
 

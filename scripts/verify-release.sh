@@ -6,13 +6,16 @@
 # Post-publish check: download each GitHub release asset and confirm it matches
 # the locally-built binary (md5), is the right architecture, leaks no session
 # file, ships the flashless icon and the expected files. Catches a stale upload
-# or a missed --clobber. Usage: VERSION=0.0.2 sh scripts/verify-release.sh
+# or a missed --clobber. VERSION defaults to include/tg_version.h and can be
+# overridden: VERSION=0.0.7 sh scripts/verify-release.sh
 
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPO=${REPO:-kaffeine1/telegram-amiga}
-VERSION=${VERSION:-0.0.2}
+VERSION=${VERSION:-$(sed -n 's/.*define TG_VERSION "\([^"]*\)".*/\1/p' \
+    "$ROOT_DIR/include/tg_version.h" 2>/dev/null)}
+VERSION=${VERSION:-0.0.0}
 
 md5of() { if command -v md5 >/dev/null 2>&1; then md5 -q "$1"; else md5sum "$1" | awk '{print $1}'; fi; }
 
