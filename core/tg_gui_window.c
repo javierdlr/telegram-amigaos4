@@ -118,9 +118,9 @@ typedef struct timerequest tg_gui_timereq;
 #endif
 
 /* graphics.library is not opened by the C startup or by any platform file, so
-   this translation unit owns its base (single definition program-wide). The
-   OS4 type is a plain Library plus a separate interface. intuition.library's
-   base is defined by the platform file; we only borrow it here. */
+   this translation unit defines and owns its base. intuition.library's global
+   is defined by the platform file, but this window owner holds its open
+   reference for the GUI lifetime. OS4 pairs each base with an interface. */
 #if defined(__amigaos4__)
 struct Library *GfxBase = 0;
 struct GraphicsIFace *IGraphics = 0;
@@ -130,6 +130,96 @@ struct GadToolsIFace *IGadTools = 0;
 struct GfxBase *GfxBase = 0;
 struct Library *GadToolsBase = 0;
 #endif
+
+/* Core GUI libraries share the window lifetime. Keep the required
+   Intuition/Graphics pair and the optional GadTools menu in one symmetric
+   owner so every OS4 interface is dropped before its base is closed. ASL and
+   Workbench/Icon deliberately remain scoped to the requester and iconified
+   wait: holding them here would increase the parked footprint. */
+static void tg_gui_amiga_close_core_libs(void)
+{
+#if defined(__amigaos4__)
+    if (IGadTools != 0) {
+        DropInterface((struct Interface *)IGadTools);
+        IGadTools = 0;
+    }
+#endif
+    if (GadToolsBase != 0) {
+        CloseLibrary(GadToolsBase);
+        GadToolsBase = 0;
+    }
+#if defined(__amigaos4__)
+    if (IGraphics != 0) {
+        DropInterface((struct Interface *)IGraphics);
+        IGraphics = 0;
+    }
+#endif
+    if (GfxBase != 0) {
+        CloseLibrary((struct Library *)GfxBase);
+        GfxBase = 0;
+    }
+#if defined(__amigaos4__)
+    if (IIntuition != 0) {
+        DropInterface((struct Interface *)IIntuition);
+        IIntuition = 0;
+    }
+#endif
+    if (IntuitionBase != 0) {
+        CloseLibrary((struct Library *)IntuitionBase);
+        IntuitionBase = 0;
+    }
+}
+
+static int tg_gui_amiga_open_core_libs(void)
+{
+#if defined(__amigaos4__)
+    IntuitionBase = OpenLibrary((CONST_STRPTR)"intuition.library", 39L);
+#else
+    IntuitionBase = (struct IntuitionBase *)OpenLibrary(
+        (CONST_STRPTR)"intuition.library", 39L);
+#endif
+    if (IntuitionBase == 0) {
+        return 0;
+    }
+#if defined(__amigaos4__)
+    IIntuition = (struct IntuitionIFace *)GetInterface(
+        (struct Library *)IntuitionBase, "main", 1L, 0);
+    if (IIntuition == 0) {
+        tg_gui_amiga_close_core_libs();
+        return 0;
+    }
+    GfxBase = OpenLibrary((CONST_STRPTR)"graphics.library", 39L);
+    if (GfxBase != 0) {
+        IGraphics = (struct GraphicsIFace *)GetInterface(GfxBase, "main", 1L,
+                                                         0);
+        if (IGraphics == 0) {
+            CloseLibrary(GfxBase);
+            GfxBase = 0;
+        }
+    }
+#else
+    GfxBase = (struct GfxBase *)OpenLibrary(
+        (CONST_STRPTR)"graphics.library", 39L);
+#endif
+    if (GfxBase == 0) {
+        tg_gui_amiga_close_core_libs();
+        return 0;
+    }
+
+    /* A missing GadTools library only removes the menu, as before. */
+    GadToolsBase = OpenLibrary((CONST_STRPTR)"gadtools.library", 39L);
+#if defined(__amigaos4__)
+    if (GadToolsBase != 0) {
+        IGadTools = (struct GadToolsIFace *)GetInterface(GadToolsBase, "main",
+                                                         1L, 0);
+        if (IGadTools == 0) {
+            CloseLibrary(GadToolsBase);
+            GadToolsBase = 0;
+        }
+    }
+#endif
+    return 1;
+}
 
 /* Menu item ids (GadTools NM_USERDATA), decoded on IDCMP_MENUPICK. */
 #define TG_MENU_ABOUT  1
@@ -1530,14 +1620,42 @@ static void tg_gui_amiga_set_rmbtrap(struct Window *win, int on)
     Permit();
 }
 
+typedef struct tg_gui_upload_ui {
+    tg_gui_state *state;
+    tg_gui_backend *backend;
+    unsigned long last_percent;
+} tg_gui_upload_ui;
+
+static void tg_gui_window_upload_progress(unsigned long completed_parts,
+                                          unsigned long total_parts,
+                                          void *user_data)
+{
+    tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
+    unsigned long percent;
+
+    if (ui == 0 || ui->state == 0 || ui->backend == 0 ||
+        total_parts == 0UL) {
+        return;
+    }
+    percent = (completed_parts * 100UL) / total_parts;
+    if (completed_parts != 1UL && completed_parts != total_parts &&
+        percent < ui->last_percent + 5UL) {
+        return;
+    }
+    ui->last_percent = percent;
+    sprintf(ui->state->status, "Uploading... %lu%%", percent);
+    tg_gui_window_paint(ui->state, ui->backend);
+}
+
 /* "Send file...": ASL file requester -> chunk-5 uploader on the open chat.
    The requester is synchronous and system-rendered (safe while we are the
    caller); the upload itself is the same blocking on-context class as the
-   download, with the status row narrating the outcome. */
+   download, with bounded progress repaints narrating a long transfer. */
 static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
                                     tg_gui_backend *backend)
 {
     struct FileRequester *req;
+    tg_gui_upload_ui progress_ui;
     char path[256];
     int rc;
 
@@ -1597,12 +1715,20 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     }
     tg_gui_window_copy(state->status, sizeof(state->status), "Uploading...");
     tg_gui_window_paint(state, backend);
-    rc = tg_gui_session_send_document(path, stdout);
+    progress_ui.state = state;
+    progress_ui.backend = backend;
+    progress_ui.last_percent = 0UL;
+    rc = tg_gui_session_send_document(
+        path, stdout, tg_gui_window_upload_progress, &progress_ui);
     if (rc == 0) {
         tg_gui_window_copy(state->status, sizeof(state->status), "File sent");
     } else if (rc == 2) {
         tg_gui_window_copy(state->status, sizeof(state->status),
-                           "File too big (10 MB limit for now)");
+#if defined(__m68k__)
+                           "File too big (31 MiB limit on this build)");
+#else
+                           "File too big (250 MiB limit on this build)");
+#endif
     } else if (rc == 3) {
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "Could not read that file");
@@ -1974,52 +2100,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         return 2;
     }
 
-    /* We borrow the program-global IntuitionBase that the per-platform file
-       defines and that tg_platform_display_beep() also opens transiently.
-       Invariant for this lane: nothing may issue a DisplayBeep (or anything
-       routed through that shared base) between OpenWindowTagList and
-       CloseWindow below -- it would close the base out from under the live
-       window. --gui-test honours this (no network, no notifications); the real
-       client will own a single base centrally. graphics.library's base is
-       genuinely owned by this file. */
-#if defined(__amigaos4__)
-    IntuitionBase = OpenLibrary("intuition.library", 39L); /* struct Library * */
-#else
-    IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library",
-                                                        39L);
-#endif
-    if (IntuitionBase == 0) {
-        puts("gui window: cannot open intuition.library");
-        return 2;
-    }
-#if defined(__amigaos4__)
-    IIntuition = (struct IntuitionIFace *)GetInterface(
-        (struct Library *)IntuitionBase, "main", 1L, 0);
-    if (IIntuition == 0) {
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
-        puts("gui window: cannot get intuition interface");
-        return 2;
-    }
-    GfxBase = OpenLibrary("graphics.library", 39L);
-    if (GfxBase != 0) {
-        IGraphics = (struct GraphicsIFace *)GetInterface(GfxBase, "main", 1L, 0);
-        if (IGraphics == 0) {
-            CloseLibrary(GfxBase);
-            GfxBase = 0;
-        }
-    }
-#else
-    GfxBase = (struct GfxBase *)OpenLibrary("graphics.library", 39L);
-#endif
-    if (GfxBase == 0) {
-        puts("gui window: cannot open graphics.library");
-#if defined(__amigaos4__)
-        DropInterface((struct Interface *)IIntuition);
-        IIntuition = 0;
-#endif
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
+    if (!tg_gui_amiga_open_core_libs()) {
+        puts("gui window: cannot open core GUI libraries");
         return 2;
     }
 
@@ -2179,19 +2261,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     }
     if (ctx.window == 0) {
         puts("gui window: cannot open window");
-#if defined(__amigaos4__)
-        DropInterface((struct Interface *)IGraphics);
-        IGraphics = 0;
-        CloseLibrary(GfxBase);
-        GfxBase = 0;
-        DropInterface((struct Interface *)IIntuition);
-        IIntuition = 0;
-#else
-        CloseLibrary((struct Library *)GfxBase);
-        GfxBase = 0;
-#endif
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
+        tg_gui_amiga_close_core_libs();
         return 2;
     }
 
@@ -2225,19 +2295,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
        layout failure just leaves the window menu-less). */
     vi = 0;
     menu = 0;
-#if defined(__amigaos4__)
-    GadToolsBase = OpenLibrary("gadtools.library", 39L);
-    if (GadToolsBase != 0) {
-        IGadTools = (struct GadToolsIFace *)GetInterface(GadToolsBase, "main",
-                                                         1L, 0);
-        if (IGadTools == 0) {
-            CloseLibrary(GadToolsBase);
-            GadToolsBase = 0;
-        }
-    }
-#else
-    GadToolsBase = OpenLibrary("gadtools.library", 39L);
-#endif
     if (GadToolsBase != 0) {
         vi = GetVisualInfoA(ctx.window->WScreen, 0);
         if (vi != 0) {
@@ -4049,16 +4106,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         FreeVisualInfo(vi);
         vi = 0;
     }
-#if defined(__amigaos4__)
-    if (IGadTools != 0) {
-        DropInterface((struct Interface *)IGadTools);
-        IGadTools = 0;
-    }
-#endif
-    if (GadToolsBase != 0) {
-        CloseLibrary(GadToolsBase);
-        GadToolsBase = 0;
-    }
     /* Heartbeat teardown: abort any in-flight request BEFORE freeing (a
        firing request after DeleteIORequest is a guaranteed crash). */
     if (timer_ok) {
@@ -4102,19 +4149,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         }
         own_scr = 0;
     }
-#if defined(__amigaos4__)
-    DropInterface((struct Interface *)IGraphics);
-    IGraphics = 0;
-    CloseLibrary(GfxBase);
-    GfxBase = 0;
-    DropInterface((struct Interface *)IIntuition);
-    IIntuition = 0;
-#else
-    CloseLibrary((struct Library *)GfxBase);
-    GfxBase = 0;
-#endif
-    CloseLibrary((struct Library *)IntuitionBase);
-    IntuitionBase = 0;
+    tg_gui_amiga_close_core_libs();
     tg_gui_log("window: libraries closed");
     /* 2 = iconified (park on AppIcon), 3 = reopen (own-screen toggle). */
     return (done == 2) ? 2 : (done == 3) ? 3 : 0;

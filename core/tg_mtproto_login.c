@@ -1774,7 +1774,39 @@ tg_mtproto_tl_status tg_mtproto_build_upload_save_file_part(
     return status;
 }
 
-tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
+tg_mtproto_tl_status tg_mtproto_build_upload_save_big_file_part(
+    tg_mtproto_tl_writer *writer,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long part_index,
+    unsigned long total_parts,
+    const unsigned char *data,
+    unsigned long data_length)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || data == 0 || data_length == 0UL ||
+        data_length > 524288UL || total_parts == 0UL ||
+        total_parts > 8000UL || part_index >= total_parts) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer, 0xde7b673dUL);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, file_id_hi, file_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, part_index);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, total_parts);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_bytes(writer, data, data_length);
+    }
+    return status;
+}
+
+static tg_mtproto_tl_status tg_build_messages_send_media_document_common(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,
     unsigned long peer_id_hi,
@@ -1788,7 +1820,8 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
     const char *file_name,
     const char *mime_type,
     unsigned long random_id_hi,
-    unsigned long random_id_lo)
+    unsigned long random_id_lo,
+    int big_file)
 {
     tg_mtproto_tl_status status;
 
@@ -1812,8 +1845,11 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u32(writer, 16UL); /* force_file */
     }
-    if (status == TG_MTPROTO_TL_OK) { /* file: inputFile#f52ff27f */
-        status = tg_mtproto_tl_write_u32(writer, 0xf52ff27fUL);
+    if (status == TG_MTPROTO_TL_OK) {
+        /* Files above 10 MB, uploaded with saveBigFilePart, must use
+           inputFileBig#fa4f0bb5. Small files keep inputFile#f52ff27f. */
+        status = tg_mtproto_tl_write_u32(
+            writer, big_file ? 0xfa4f0bb5UL : 0xf52ff27fUL);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u64(writer, file_id_hi, file_id_lo);
@@ -1824,7 +1860,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_write_string(writer, file_name);
     }
-    if (status == TG_MTPROTO_TL_OK) {
+    if (status == TG_MTPROTO_TL_OK && !big_file) {
         status = tg_write_string(writer, ""); /* md5: server-side optional */
     }
     if (status == TG_MTPROTO_TL_OK) {
@@ -1849,6 +1885,50 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
         status = tg_mtproto_tl_write_u64(writer, random_id_hi, random_id_lo);
     }
     return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long file_parts,
+    const char *file_name,
+    const char *mime_type,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo)
+{
+    return tg_build_messages_send_media_document_common(
+        writer, peer_constructor, peer_id_hi, peer_id_lo, access_hash_hi,
+        access_hash_lo, has_access_hash, file_id_hi, file_id_lo, file_parts,
+        file_name, mime_type, random_id_hi, random_id_lo, 0);
+}
+
+tg_mtproto_tl_status tg_mtproto_build_messages_send_media_big_document(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long file_parts,
+    const char *file_name,
+    const char *mime_type,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo)
+{
+    return tg_build_messages_send_media_document_common(
+        writer, peer_constructor, peer_id_hi, peer_id_lo, access_hash_hi,
+        access_hash_lo, has_access_hash, file_id_hi, file_id_lo, file_parts,
+        file_name, mime_type, random_id_hi, random_id_lo, 1);
 }
 
 tg_mtproto_tl_status tg_mtproto_parse_rpc_result(
@@ -4979,6 +5059,13 @@ int tg_mtproto_login_self_test(void)
             0x03, 0xaa, 0xbb, 0xcc                          /* bytes {3} */
         };
         static const unsigned char part_data[3] = { 0xaa, 0xbb, 0xcc };
+        static const unsigned char big_part_expected[24] = {
+            0x3d, 0x67, 0x7b, 0xde,                         /* saveBigFilePart */
+            0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, /* file_id */
+            0x02, 0x00, 0x00, 0x00,                         /* part 2 */
+            0x09, 0x00, 0x00, 0x00,                         /* total 9 */
+            0x03, 0xaa, 0xbb, 0xcc                          /* bytes {3} */
+        };
         tg_mtproto_document_meta doc;
 
         tg_mtproto_tl_writer_init(&w, q, sizeof(q));
@@ -4989,6 +5076,22 @@ int tg_mtproto_login_self_test(void)
             w.length != sizeof(part_expected) ||
             memcmp(q, part_expected, sizeof(part_expected)) != 0) {
             puts("f9 self-test: saveFilePart bytes mismatch");
+            return 2;
+        }
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_upload_save_big_file_part(
+                &w, 0x11223344UL, 0x55667788UL, 2UL, 9UL,
+                part_data, 3UL) != TG_MTPROTO_TL_OK ||
+            w.length != sizeof(big_part_expected) ||
+            memcmp(q, big_part_expected, sizeof(big_part_expected)) != 0) {
+            puts("f9 self-test: saveBigFilePart bytes mismatch");
+            return 2;
+        }
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_upload_save_big_file_part(
+                &w, 0x11223344UL, 0x55667788UL, 9UL, 9UL,
+                part_data, 3UL) != TG_MTPROTO_TL_INVALID_ARGUMENT) {
+            puts("f9 self-test: saveBigFilePart accepted part == total");
             return 2;
         }
         memset(&doc, 0, sizeof(doc));
@@ -5031,6 +5134,17 @@ int tg_mtproto_login_self_test(void)
             q[32] != 0x10U ||                        /* force_file flag */
             q[36] != 0x7fU || q[37] != 0xf2U) {      /* inputFile LE */
             puts("f9 self-test: sendMedia(document) layout mismatch");
+            return 2;
+        }
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_messages_send_media_big_document(
+                &w, TG_PEER_USER_CONSTRUCTOR, 0UL, 1UL, 0UL, 2UL, 1,
+                0x0000deadUL, 0x0000beefUL, 9UL, "b.bin",
+                "application/octet-stream", 0x11UL, 0x22UL) !=
+                TG_MTPROTO_TL_OK ||
+            q[36] != 0xb5U || q[37] != 0x0bU ||
+            q[38] != 0x4fU || q[39] != 0xfaU) {
+            puts("f9 self-test: inputFileBig layout mismatch");
             return 2;
         }
     }

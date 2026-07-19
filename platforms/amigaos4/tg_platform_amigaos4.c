@@ -1265,17 +1265,34 @@ void tg_platform_display_beep(void)
 #if defined(__amigaos4__)
     /* The screen flash is the Amiga-native notification; a BEL byte lets
        console handlers improvise (AmiKit's console clears the window). */
-    IntuitionBase = OpenLibrary("intuition.library", 0L);
+    /* The GUI owns this global base/interface for its whole window lifetime.
+       Borrow them when already open; otherwise acquire and release only the
+       references created here. Overwriting the held pointers made the first
+       notification close Intuition out from under the live OS4 window. */
+    int opened_base = 0;
+    int opened_interface = 0;
+
+    if (IntuitionBase == 0) {
+        IntuitionBase = OpenLibrary("intuition.library", 0L);
+        opened_base = 1;
+    }
     if (IntuitionBase != 0) {
-        IIntuition = (struct IntuitionIFace *)GetInterface(IntuitionBase,
-                                                           "main", 1L, 0);
+        if (IIntuition == 0) {
+            IIntuition = (struct IntuitionIFace *)GetInterface(
+                IntuitionBase, "main", 1L, 0);
+            opened_interface = IIntuition != 0;
+        }
         if (IIntuition != 0) {
             DisplayBeep(0);
+        }
+        if (opened_interface) {
             DropInterface((struct Interface *)IIntuition);
             IIntuition = 0;
         }
-        CloseLibrary(IntuitionBase);
-        IntuitionBase = 0;
+        if (opened_base) {
+            CloseLibrary(IntuitionBase);
+            IntuitionBase = 0;
+        }
     }
 #endif
 }

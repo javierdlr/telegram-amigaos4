@@ -346,7 +346,9 @@ static int tg_mtproto_file_download(const struct tg_mtproto_file_ctx *fc,
                                     unsigned long msg_id, char *out_path,
                                     unsigned long out_path_size, FILE *stream);
 static int tg_mtproto_file_send(const struct tg_mtproto_file_ctx *fc,
-                                const char *path, FILE *stream);
+                                const char *path, FILE *stream,
+                                tg_gui_upload_progress_fn progress,
+                                void *progress_data);
 /* Live read-receipt sink (5c): the push collector records the most recent
    updateReadHistoryOutbox (which peer read up to which id); the GUI loop applies
    it when the peer matches the open chat. NULL outside a GUI session. */
@@ -10164,7 +10166,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /remove n     remove cached chat n",
         "  /history      show recent messages without new-message filtering",
         "  /getfile      download the newest file in this chat to downloads/",
-        "  /sendfile p   send the file at path p to this chat (up to 10 MB)",
+        "  /sendfile p   send a file (large files supported; build limit applies)",
         "  /saved        open Saved Messages (your cloud transfer drawer)",
         "  /watch sec    set auto-read interval",
         "  /watch off    disable auto-read",
@@ -10910,7 +10912,7 @@ int tg_mtproto_auth_chat_file(const char *host,
             continue;
         }
         if (tg_mtproto_chat_named_command_arg(line, "/sendfile", &cmd_arg)) {
-            /* Upload a file (<= 10 MB) to the open chat: /sendfile <path>.
+            /* Upload a file to the open chat: /sendfile <path>.
                The helper matches the bare and tab forms too, so a syntax probe
                can never fall through and be SENT as a literal message. */
             const char *fpath = cmd_arg;
@@ -10948,12 +10950,17 @@ int tg_mtproto_auth_chat_file(const char *host,
                 fc.peer_cache_file = peer_cache_file;
                 fc.peer_index = peer_index;
                 tg_mtproto_chat_print_system_line(stream, "Uploading...");
-                frc = tg_mtproto_file_send(&fc, fpath, stream);
+                frc = tg_mtproto_file_send(&fc, fpath, stream, 0, 0);
                 tui_cap = tg_console_tui_capture_begin(stream);
                 if (frc == 0) {
                     fprintf(tui_cap, "File sent.\n");
                 } else if (frc == 2) {
-                    fprintf(tui_cap, "File too big (10 MB limit for now).\n");
+                    fprintf(tui_cap,
+#if defined(__m68k__)
+                            "File too big (31 MiB limit on this build).\n");
+#else
+                            "File too big (250 MiB limit on this build).\n");
+#endif
                 } else if (frc == 3) {
                     fprintf(tui_cap, "Could not read that file.\n");
                 } else if (frc == 5) {
@@ -13931,17 +13938,22 @@ static int tg_mtproto_file_find_document(const tg_mtproto_file_ctx *fc,
     return 1;
 }
 
-/* F9 chunk 5: send a file from disk to the OPEN chat. Small-file path only
-   (inputFile, <= 10 MB): the file streams up in uniform saveFilePart chunks
-   read straight from disk (never buffered whole), then one sendMedia with a
-   force_file document, the filename attribute and an octet-stream mime -- the
-   receiver sees the same "[File: name (size)]" our chunk 2 renders. Returns:
-   0 ok, 1 fail, 2 too big for the small-file path, 3 unreadable file.
+/* F9 upload: stream from disk to the OPEN chat without buffering the whole
+   file. At <=10 MiB use saveFilePart + inputFile; above that use
+   saveBigFilePart + inputFileBig. Telegram's current non-Premium config allows
+   4000 parts. Keeping the already-proven per-platform chunks avoids adding
+   several 512 KiB send buffers to a low-memory Amiga: this yields a conservative
+   ceiling of 31.25 MiB on m68k (8 KiB parts) and 250 MiB elsewhere (64 KiB).
+   Returns 0 ok, 1 transfer failure, 2 over this build's limit, 3 unreadable.
    Blocking on-context call from the explicit user action, never the tick. */
-#define TG_GUI_UL_LIMIT (10UL * 1048576UL)
+#define TG_GUI_UL_BIG_THRESHOLD (10UL * 1048576UL)
+#define TG_GUI_UL_MAX_PARTS 4000UL
+#define TG_GUI_UL_LIMIT (TG_GUI_DL_CHUNK * TG_GUI_UL_MAX_PARTS)
 
 static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
-                                const char *path, FILE *stream)
+                                const char *path, FILE *stream,
+                                tg_gui_upload_progress_fn progress,
+                                void *progress_data)
 {
     static unsigned char part_buf[TG_GUI_DL_CHUNK];
     static unsigned char part_query[TG_GUI_DL_CHUNK + 64UL];
@@ -13958,6 +13970,7 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
     unsigned long parts, part;
     const char *name;
     const char *p;
+    int big_file;
 
     if (fc == 0 || stream == 0 || path == 0 || path[0] == '\0' ||
         fc->peer_index == 0 || fc->peer_index[0] == '\0') {
@@ -13978,8 +13991,9 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
     }
     if ((unsigned long)file_size > TG_GUI_UL_LIMIT) {
         fclose(f);
-        return 2; /* saveBigFilePart territory: a later chunk */
+        return 2;
     }
+    big_file = (unsigned long)file_size > TG_GUI_UL_BIG_THRESHOLD;
     /* Bare filename: whatever follows the last '/' or ':' of the path. */
     name = path;
     for (p = path; *p != '\0'; ++p) {
@@ -14005,6 +14019,11 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
     file_id_hi = tg_mtproto_read_u32_le(rnd + 4U);
     parts = ((unsigned long)file_size + TG_GUI_DL_CHUNK - 1UL) /
             TG_GUI_DL_CHUNK;
+    if (parts == 0UL || parts > TG_GUI_UL_MAX_PARTS) {
+        fclose(f);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
     for (part = 0UL; part < parts; ++part) {
         unsigned long got = (unsigned long)fread(part_buf, 1, TG_GUI_DL_CHUNK,
                                                  f);
@@ -14013,9 +14032,13 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
             break; /* short read = disk trouble: bail (parts check below) */
         }
         tg_mtproto_tl_writer_init(&writer, part_query, sizeof(part_query));
-        if (tg_mtproto_build_upload_save_file_part(&writer, file_id_hi,
-                                                   file_id_lo, part, part_buf,
-                                                   got) != TG_MTPROTO_TL_OK) {
+        if ((big_file
+                 ? tg_mtproto_build_upload_save_big_file_part(
+                       &writer, file_id_hi, file_id_lo, part, parts,
+                       part_buf, got)
+                 : tg_mtproto_build_upload_save_file_part(
+                       &writer, file_id_hi, file_id_lo, part, part_buf,
+                       got)) != TG_MTPROTO_TL_OK) {
             break;
         }
         memset(&result, 0, sizeof(result));
@@ -14024,9 +14047,15 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
                 fc->api_id, fc->auth_file,
                 fc->dc_id_text,
                 fc->context, part_query, writer.length,
-                &result, quiet, "mtproto saveFilePart", 600U) != 0 ||
+                &result, quiet,
+                big_file ? "mtproto saveBigFilePart"
+                         : "mtproto saveFilePart",
+                600U) != 0 ||
             result.result_constructor != 0x997275b5UL /* boolTrue */) {
             break;
+        }
+        if (progress != 0) {
+            progress(part + 1UL, parts, progress_data);
         }
     }
     fclose(f);
@@ -14038,10 +14067,15 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
     rand_lo = tg_mtproto_read_u32_le(rnd);
     rand_hi = tg_mtproto_read_u32_le(rnd + 4U);
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if (tg_mtproto_build_messages_send_media_document(
-            &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi, file_id_lo,
-            parts, name, "application/octet-stream", rand_hi, rand_lo) !=
-        TG_MTPROTO_TL_OK) {
+    if ((big_file
+             ? tg_mtproto_build_messages_send_media_big_document(
+                   &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi,
+                   file_id_lo, parts, name, "application/octet-stream",
+                   rand_hi, rand_lo)
+             : tg_mtproto_build_messages_send_media_document(
+                   &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi,
+                   file_id_lo, parts, name, "application/octet-stream",
+                   rand_hi, rand_lo)) != TG_MTPROTO_TL_OK) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 1;
     }
@@ -14280,7 +14314,9 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                     stream);
 }
 
-int tg_gui_session_send_document(const char *path, FILE *stream)
+int tg_gui_session_send_document(const char *path, FILE *stream,
+                                 tg_gui_upload_progress_fn progress,
+                                 void *progress_data)
 {
     tg_mtproto_file_ctx fc;
 
@@ -14288,7 +14324,7 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
         return 1;
     }
     tg_gui_session_file_ctx(&fc);
-    return tg_mtproto_file_send(&fc, path, stream);
+    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data);
 }
 
 

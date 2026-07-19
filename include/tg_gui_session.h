@@ -51,9 +51,18 @@ int tg_gui_session_receive_pending(FILE *stream);
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                      unsigned long out_path_size, FILE *stream);
 
-/* F9: send the file at `path` to the open chat (small-file path, <= 10 MB).
-   0 ok, 1 fail, 2 too big, 3 unreadable. Blocking; never from the tick. */
-int tg_gui_session_send_document(const char *path, FILE *stream);
+typedef void (*tg_gui_upload_progress_fn)(unsigned long completed_parts,
+                                          unsigned long total_parts,
+                                          void *user_data);
+
+/* F9: send the file at `path` to the open chat. Files over 10 MB use
+   upload.saveBigFilePart/inputFileBig. The conservative 4000-part bound gives
+   a per-build ceiling of about 31 MiB on m68k and 250 MiB elsewhere.
+   0 ok, 1 fail, 2 too big for this build, 3 unreadable. Blocking; never from
+   the tick. `progress` is optional and runs after each confirmed part. */
+int tg_gui_session_send_document(const char *path, FILE *stream,
+                                 tg_gui_upload_progress_fn progress,
+                                 void *progress_data);
 
 /* F10 Saved Messages: the sidebar row index that opens the self chat (cloud
    archive) is TG_GUI_SAVED_PEER_INDEX, defined in tg_gui.h (the UI layer needs
