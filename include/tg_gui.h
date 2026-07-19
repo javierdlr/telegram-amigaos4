@@ -256,6 +256,14 @@ typedef struct tg_gui_state {
     unsigned long sel_press_gen;
     int sel_press_x;
     int sel_press_y;
+    /* Composer text selection: live range = [in_sel_anchor .. input_caret]
+       while active; extended by Shift+cursor or a mouse drag in the input
+       box. Cleared by plain moves, edits consume it (delete/replace). */
+    int in_sel_active;
+    int in_sel_anchor;
+    int in_drag_armed;   /* mouse press latched inside the input box */
+    int in_drag_anchor;
+
     /* Transcript GENERATION: bumped on EVERY mutation of messages[] (append,
        own echo, load-older prepend, reload, chat switch). A count snapshot is
        NOT enough: a full ring shifts every index at constant count. */

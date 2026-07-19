@@ -1431,6 +1431,43 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
         /* If the message wraps past the box, show its LAST `rows` lines so the
            caret (normally at the end while typing) stays in view. */
         first = (n > rows) ? (n - rows) : 0;
+        /* Composer selection tint: behind the glyphs, per visual line. */
+        if (state->composing && state->in_sel_active) {
+            long tl = (long)strlen(state->input);
+            long a = (long)state->in_sel_anchor;
+            long b = (long)state->input_caret;
+            long lo = a < b ? a : b;
+            long hi = a > b ? a : b;
+
+            if (lo < 0) {
+                lo = 0;
+            }
+            if (hi > tl) {
+                hi = tl;
+            }
+            for (k = first; k < n && (k - first) < rows && hi > lo; ++k) {
+                long ls = (long)starts[k];
+                long le = ls + (long)lengths[k];
+                long slo = lo > ls ? lo : ls;
+                long shi = hi < le ? hi : le;
+
+                if (shi > slo) {
+                    int x0 = area_x +
+                             backend->text_width(
+                                 backend, state->input + ls,
+                                 (unsigned long)(slo - ls));
+                    int sw = backend->text_width(
+                        backend, state->input + slo,
+                        (unsigned long)(shi - slo));
+
+                    backend->fill_rect(
+                        backend, TG_GUI_PEN_SELECT,
+                        tg_gui_make_rect(x0,
+                                         box_top + ((k - first) * lh) + 4,
+                                         sw, lh));
+                }
+            }
+        }
         for (k = first; k < n && (k - first) < rows; ++k) {
             backend->draw_text(backend, TG_GUI_PEN_TEXT, area_x,
                                box_top + ((k - first) * lh) + lh + 2,

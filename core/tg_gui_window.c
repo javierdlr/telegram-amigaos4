@@ -1802,8 +1802,43 @@ static void tg_gui_window_mention_complete(tg_gui_state *state)
         caret = (unsigned long)strlen(state->input);
     }
     state->input_caret = (int)caret;
+    state->in_sel_active = 0; /* the rebuilt input invalidates a selection */
     state->mention_active = 0;
     state->mention_count = 0;
+}
+
+/* Deletes the composer's selected range, moving the caret to its start.
+   1 = a selection was consumed (callers repaint / then insert); 0 = none. */
+static int tg_gui_window_input_delete_sel(tg_gui_state *state)
+{
+    unsigned long n;
+    long a;
+    long b;
+    long lo;
+    long hi;
+
+    if (!state->in_sel_active) {
+        return 0;
+    }
+    state->in_sel_active = 0;
+    n = (unsigned long)strlen(state->input);
+    a = (long)state->in_sel_anchor;
+    b = (long)state->input_caret;
+    lo = a < b ? a : b;
+    hi = a > b ? a : b;
+    if (lo < 0) {
+        lo = 0;
+    }
+    if (hi > (long)n) {
+        hi = (long)n;
+    }
+    if (hi <= lo) {
+        return 0;
+    }
+    memmove(&state->input[lo], &state->input[hi],
+            n - (unsigned long)hi + 1UL);
+    state->input_caret = (int)lo;
+    return 1;
 }
 
 /* Load the last online search's openable results into the sidebar list so the
@@ -2558,6 +2593,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                        state->reply_to_id,
                                                        stdout) == 0) {
                             tg_gui_history_add(state, state->input);
+                            state->in_sel_active = 0;
                             state->reply_to_id = 0UL; /* clear only on success */
                             state->reply_sender[0] = '\0';
                             state->reply_snippet[0] = '\0';
@@ -2595,6 +2631,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     unsigned long n;
                     unsigned long c;
 
+                    if (tg_gui_window_input_delete_sel(state)) {
+                        /* a selection consumes the keypress whole */
+                        tg_gui_window_mention_refresh(state);
+                        tg_gui_window_paint(state, &backend);
+                    } else {
                     n = (unsigned long)strlen(state->input);
                     c = (unsigned long)state->input_caret;
                     if (c > n) {
@@ -2608,10 +2649,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
+                    }
                 } else if (msg_code == 127) { /* Canc/Del: delete AT the caret */
                     unsigned long n;
                     unsigned long c;
 
+                    if (tg_gui_window_input_delete_sel(state)) {
+                        tg_gui_window_mention_refresh(state);
+                        tg_gui_window_paint(state, &backend);
+                    } else {
                     n = (unsigned long)strlen(state->input);
                     c = (unsigned long)state->input_caret;
                     if (c < n) {
@@ -2623,10 +2669,13 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
+                    }
                 } else if (msg_code >= 32 && msg_code < 256) {
                     unsigned long n;
                     unsigned long c;
 
+                    /* typing REPLACES an active selection (classic field) */
+                    (void)tg_gui_window_input_delete_sel(state);
                     n = (unsigned long)strlen(state->input);
                     c = (unsigned long)state->input_caret;
                     if (c > n) {
@@ -2722,15 +2771,36 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 : 0;
                     }
                     tg_gui_window_paint(state, &backend);
-                } else if (msg_code == 0x4F) { /* cursor left */
-                    if (state->input_caret > 0) {
-                        state->input_caret--;
-                        tg_gui_window_mention_refresh(state);
-                        tg_gui_window_paint(state, &backend);
+                } else if (msg_code == 0x4F || msg_code == 0x4E) {
+                    /* cursor left/right; with SHIFT they grow/shrink the
+                       composer selection anchored where Shift was first
+                       pressed (the classic text-field gesture). */
+                    int shifted =
+                        (msg_qual &
+                         (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
+                    int changed = 0;
+
+                    if (shifted && !state->in_sel_active) {
+                        state->in_sel_active = 1;
+                        state->in_sel_anchor = state->input_caret;
+                    } else if (!shifted && state->in_sel_active) {
+                        state->in_sel_active = 0;
+                        changed = 1;
                     }
-                } else if (msg_code == 0x4E) { /* cursor right */
-                    if (state->input_caret < (int)strlen(state->input)) {
+                    if (msg_code == 0x4F && state->input_caret > 0) {
+                        state->input_caret--;
+                        changed = 1;
+                    } else if (msg_code == 0x4E &&
+                               state->input_caret <
+                                   (int)strlen(state->input)) {
                         state->input_caret++;
+                        changed = 1;
+                    }
+                    if (shifted &&
+                        state->input_caret == state->in_sel_anchor) {
+                        state->in_sel_active = 0; /* collapsed back */
+                    }
+                    if (changed) {
                         tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
@@ -2753,6 +2823,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_copy(state->input, sizeof(state->input),
                                            state->history[hidx]);
                         state->input_caret = (int)strlen(state->input);
+                        state->in_sel_active = 0;
                         tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 0x4D) { /* cursor down: newer sent line */
@@ -2845,7 +2916,31 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             int sel = state->selected_msg;
                             const char *src = 0;
 
-                            if (tg_gui_selection_get(state, selbuf,
+                            if (state->composing && state->in_sel_active) {
+                                /* composer selection: copy [anchor..caret] */
+                                long a = (long)state->in_sel_anchor;
+                                long b = (long)state->input_caret;
+                                long lo = a < b ? a : b;
+                                long hi = a > b ? a : b;
+                                long tl = (long)strlen(state->input);
+
+                                if (lo < 0) {
+                                    lo = 0;
+                                }
+                                if (hi > tl) {
+                                    hi = tl;
+                                }
+                                if (hi > lo &&
+                                    (unsigned long)(hi - lo) <
+                                        sizeof(selbuf)) {
+                                    memcpy(selbuf, state->input + lo,
+                                           (unsigned long)(hi - lo));
+                                    selbuf[hi - lo] = '\0';
+                                    src = selbuf;
+                                }
+                            }
+                            if (src == 0 &&
+                                tg_gui_selection_get(state, selbuf,
                                                      sizeof(selbuf))) {
                                 src = selbuf; /* the dragged range wins */
                             } else if (sel >= 0 &&
@@ -2874,7 +2969,49 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                               ? state->search_query
                                               : state->input;
 
-                            if (field[0] != '\0' &&
+                            if (!state->search_active && state->composing &&
+                                state->in_sel_active) {
+                                /* cut ONLY the selected composer range */
+                                static char cutbuf[TG_GUI_MSG_TEXT_MAX];
+                                long a = (long)state->in_sel_anchor;
+                                long b = (long)state->input_caret;
+                                long lo = a < b ? a : b;
+                                long hi = a > b ? a : b;
+                                long tl = (long)strlen(state->input);
+
+                                if (lo < 0) {
+                                    lo = 0;
+                                }
+                                if (hi > tl) {
+                                    hi = tl;
+                                }
+                                if (hi > lo &&
+                                    (unsigned long)(hi - lo) <
+                                        sizeof(cutbuf)) {
+                                    memcpy(cutbuf, state->input + lo,
+                                           (unsigned long)(hi - lo));
+                                    cutbuf[hi - lo] = '\0';
+                                    if (tg_gui_clip_write_text(cutbuf)) {
+                                        (void)
+                                        tg_gui_window_input_delete_sel(state);
+                                        tg_gui_window_mention_refresh(state);
+                                        tg_gui_window_copy(
+                                            state->status,
+                                            sizeof(state->status),
+                                            "Cut to clipboard");
+                                    } else {
+                                        tg_gui_window_copy(
+                                            state->status,
+                                            sizeof(state->status),
+                                            "Copy failed");
+                                    }
+                                } else {
+                                    tg_gui_window_copy(state->status,
+                                                       sizeof(state->status),
+                                                       "Nothing to cut");
+                                }
+                                tg_gui_window_paint(state, &backend);
+                            } else if (field[0] != '\0' &&
                                 tg_gui_clip_write_text(field)) {
                                 field[0] = '\0';
                                 if (state->search_active) {
@@ -2946,8 +3083,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 tg_gui_window_paint(state, &backend);
                             } else if (tg_gui_session_is_open() &&
                                        state->mode == TG_GUI_MODE_CHAT) {
-                                unsigned long n =
-                                    (unsigned long)strlen(state->input);
+                                unsigned long n;
+
+                                (void)tg_gui_window_input_delete_sel(state);
+                                n = (unsigned long)strlen(state->input);
                                 unsigned long c =
                                     (unsigned long)state->input_caret;
                                 unsigned long room =
@@ -3263,6 +3402,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                     tg_gui_window_paint(state, &backend);
                 } else if (msg_code == SELECTUP) {
+                    state->in_drag_armed = 0;
                     if (state->sel_press_armed) {
                         state->sel_press_armed = 0;
                         if (!state->sel_active &&
@@ -3527,6 +3667,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                           hy);
 
                         if (cc >= 0) {
+                            state->in_sel_active = 0;
+                            state->in_drag_armed = 1;
+                            state->in_drag_anchor = cc;
                             state->input_caret = cc;
                             state->cursor_on = 1;
                             caret_ticks = 0;
@@ -3551,6 +3694,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                               hx, hy);
 
                             if (cc >= 0) {
+                                state->in_sel_active = 0;
+                                state->in_drag_armed = 1;
+                                state->in_drag_anchor = cc;
                                 state->input_caret = cc;
                             }
                         }
@@ -3599,6 +3745,27 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                 }
             } else if (msg_class == IDCMP_MOUSEMOVE) {
+                if (state->mode == TG_GUI_MODE_CHAT && state->in_drag_armed &&
+                    state->composing) {
+                    /* Drag inside the input box: grow the composer selection
+                       from the press anchor to the char under the pointer. */
+                    int hx = (int)mouse_x - ctx.origin_x;
+                    int hy = (int)mouse_y - ctx.origin_y;
+                    int cc = tg_gui_input_click_caret(state, &backend, hx, hy);
+
+                    if (cc >= 0) {
+                        if (!state->in_sel_active &&
+                            cc != state->in_drag_anchor) {
+                            state->in_sel_active = 1;
+                            state->in_sel_anchor = state->in_drag_anchor;
+                        }
+                        if (state->in_sel_active &&
+                            cc != state->input_caret) {
+                            state->input_caret = cc;
+                            tg_gui_window_paint(state, &backend);
+                        }
+                    }
+                }
                 if (state->mode == TG_GUI_MODE_CHAT && state->sel_press_armed) {
                     /* Latched press: past a small threshold it becomes a text
                        selection anchored at the press char; every further move
