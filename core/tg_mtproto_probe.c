@@ -2827,24 +2827,93 @@ static void tg_chat_edit_parse_update(tg_mtproto_tl_reader *reader)
         message.id == 0UL || dest.peer_constructor == 0UL) {
         return;
     }
-    if (tg_chat_edit_target->count >= TG_CHAT_EDIT_QUEUE_MAX) {
+    entry = 0;
+    for (i = 0UL; i < tg_chat_edit_target->count; ++i) {
+        tg_chat_edit_entry *queued;
+
+        queued = &tg_chat_edit_target->queue[i];
+        if (queued->peer_constructor == dest.peer_constructor &&
+            queued->peer_id_hi == dest.id_hi &&
+            queued->peer_id_lo == dest.id_lo &&
+            queued->message_id == message.id) {
+            entry = queued;
+            break;
+        }
+    }
+    if (entry == 0 &&
+        tg_chat_edit_target->count >= TG_CHAT_EDIT_QUEUE_MAX) {
         for (i = 1UL; i < TG_CHAT_EDIT_QUEUE_MAX; ++i) {
             tg_chat_edit_target->queue[i - 1UL] =
                 tg_chat_edit_target->queue[i];
         }
         tg_chat_edit_target->count = TG_CHAT_EDIT_QUEUE_MAX - 1UL;
     }
-    entry = &tg_chat_edit_target->queue[tg_chat_edit_target->count++];
-    entry->peer_constructor = dest.peer_constructor;
-    entry->peer_id_hi = dest.id_hi;
-    entry->peer_id_lo = dest.id_lo;
-    entry->message_id = message.id;
+    if (entry == 0) {
+        entry = &tg_chat_edit_target->queue[tg_chat_edit_target->count++];
+        entry->peer_constructor = dest.peer_constructor;
+        entry->peer_id_hi = dest.id_hi;
+        entry->peer_id_lo = dest.id_lo;
+        entry->message_id = message.id;
+    }
     copy_length = (unsigned long)strlen(message.text);
     if (copy_length >= sizeof(entry->text)) {
         copy_length = sizeof(entry->text) - 1UL;
     }
     memcpy(entry->text, message.text, copy_length);
     entry->text[copy_length] = '\0';
+}
+
+static int tg_chat_edit_peer_matches_open(const tg_chat_edit_entry *entry,
+                                          unsigned long peer_constructor,
+                                          unsigned long peer_id_hi,
+                                          unsigned long peer_id_lo)
+{
+    if (entry == 0) {
+        return 0;
+    }
+    if (entry->peer_constructor == peer_constructor &&
+        entry->peer_id_hi == peer_id_hi &&
+        entry->peer_id_lo == peer_id_lo) {
+        return 1;
+    }
+    /* Saved Messages is addressed locally as inputPeerSelf (ids 0/0), while
+       message.peer_id in the edit update is PeerUser(our id). The subsequent
+       transcript lookup by message id is the final guard. */
+    return peer_constructor == TG_MTPROTO_PEER_SELF_CONSTRUCTOR &&
+           entry->peer_constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR;
+}
+
+/* A Vector<Update> is not length-prefixed per item. The normal collector can
+   therefore consume only its first known item safely: a Message parser may
+   intentionally stop after text when optional media/reply fields follow.
+   Remote edits still have a strong aligned signature
+   updateEdit*(message#9815cec8 ...), so scan the complete updates envelope and
+   validate every candidate with the real Message parser. This catches an edit
+   preceded by read/draft/status updates, as observed with Saved Messages. */
+static void tg_chat_edit_scan_updates(const unsigned char *body,
+                                      unsigned long body_length,
+                                      unsigned long start_offset)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long constructor;
+    unsigned long offset;
+
+    if (tg_chat_edit_target == 0 || body == 0 ||
+        start_offset >= body_length) {
+        return;
+    }
+    offset = (start_offset + 3UL) & ~3UL;
+    while (offset + 8UL <= body_length) {
+        constructor = tg_mtproto_read_u32_le(body + offset);
+        if (constructor == TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR ||
+            constructor ==
+                TG_MTPROTO_UPDATE_EDIT_CHANNEL_MESSAGE_CONSTRUCTOR) {
+            tg_mtproto_tl_reader_init(&reader, body, body_length);
+            reader.offset = offset + 4UL;
+            tg_chat_edit_parse_update(&reader);
+        }
+        offset += 4UL;
+    }
 }
 
 /* Parse one Update with the reader positioned immediately after its
@@ -2922,6 +2991,9 @@ static void tg_chat_notify_collect_updates(const unsigned char *body,
         constructor != TG_MTPROTO_TL_VECTOR_CONSTRUCTOR ||
         tg_mtproto_tl_read_u32(&reader, &count) != TG_MTPROTO_TL_OK) {
         return;
+    }
+    if (count > 0UL) {
+        tg_chat_edit_scan_updates(body, body_length, reader.offset);
     }
     for (i = 0UL; i < count; ++i) {
         if (tg_mtproto_tl_read_u32(&reader, &item_constructor) !=
@@ -12384,6 +12456,72 @@ int tg_mtproto_probe_self_test(void)
             return 2;
         }
 
+        /* Saved Messages commonly bundles another update before the edit.
+           Verify that the aligned scan finds the second vector item and that
+           PeerUser(own id) matches the open inputPeerSelf sentinel. */
+        memset(&edit_sink, 0, sizeof(edit_sink));
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_UPDATES_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_TL_VECTOR_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 2UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer,
+                 TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x44UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 70UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 10UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, TG_MTPROTO_MESSAGE_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL << 8) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 0UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 78UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x44UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x44UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000002UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_bytes(
+                 &writer, (const unsigned char *)"saved newer", 11UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 11UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL) == TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || edit_sink.count != 1UL ||
+            edit_sink.queue[0].message_id != 78UL ||
+            strcmp(edit_sink.queue[0].text, "saved newer") != 0 ||
+            !tg_chat_edit_peer_matches_open(
+                &edit_sink.queue[0], TG_MTPROTO_PEER_SELF_CONSTRUCTOR,
+                0UL, 0UL)) {
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            tg_chat_edit_target = 0;
+            puts("probe self-test: Saved Messages bundled edit wrong");
+            return 2;
+        }
+
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
         tg_chat_edit_target = 0;
@@ -14360,23 +14498,10 @@ static int tg_gui_session_apply_edit_updates(void)
         int peer_match;
 
         entry = &tg_gui_session_state.edit_sink.queue[i];
-        peer_match =
-            entry->peer_constructor ==
-                tg_gui_session_state.open_peer_constructor &&
-            entry->peer_id_hi == tg_gui_session_state.open_peer_id_hi &&
-            entry->peer_id_lo == tg_gui_session_state.open_peer_id_lo;
-        /* Saved Messages: the open chat holds the inputPeerSelf SENTINEL with
-           ids 0/0, but the wire edit carries peerUser(own id) -- the exact
-           match can never fire there. Accept USER-peer entries instead: the
-           by-id transcript lookup below is the real filter (non-channel
-           message ids are unique across the account's box, and channel edits
-           carry peerChannel, still excluded). */
-        if (!peer_match &&
-            tg_gui_session_state.open_peer_constructor ==
-                TG_MTPROTO_PEER_SELF_CONSTRUCTOR &&
-            entry->peer_constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR) {
-            peer_match = 1;
-        }
+        peer_match = tg_chat_edit_peer_matches_open(
+            entry, tg_gui_session_state.open_peer_constructor,
+            tg_gui_session_state.open_peer_id_hi,
+            tg_gui_session_state.open_peer_id_lo);
         if (tg_gui_session_state.current_peer_index[0] != '\0' &&
             peer_match &&
             tg_gui_driver_update_text_utf8(
