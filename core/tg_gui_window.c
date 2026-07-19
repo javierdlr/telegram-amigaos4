@@ -2584,6 +2584,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else if (msg_code == 13 || msg_code == 10) {
                     if (state->input[0] != '\0') {
                         if (state->edit_to_id != 0UL) {
+                            state->in_sel_active = 0;
                             /* Edit mode: save the edit, then leave edit mode (the
                                bubble is updated in place by the session call). */
                             (void)tg_gui_session_edit(state->input,
@@ -2827,6 +2828,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 0x4D) { /* cursor down: newer sent line */
+                    state->in_sel_active = 0; /* input is about to be rebuilt */
                     if (state->history_pos >= 0) {
                         int hidx;
 
@@ -2943,7 +2945,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 tg_gui_selection_get(state, selbuf,
                                                      sizeof(selbuf))) {
                                 src = selbuf; /* the dragged range wins */
-                            } else if (sel >= 0 &&
+                            } else if (src == 0 && sel >= 0 &&
                                        sel < state->message_count &&
                                        state->messages[sel].text[0] !=
                                            '\0') {
@@ -3084,14 +3086,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             } else if (tg_gui_session_is_open() &&
                                        state->mode == TG_GUI_MODE_CHAT) {
                                 unsigned long n;
+                                unsigned long c;
+                                unsigned long room;
+                                unsigned long p;
 
                                 (void)tg_gui_window_input_delete_sel(state);
                                 n = (unsigned long)strlen(state->input);
-                                unsigned long c =
-                                    (unsigned long)state->input_caret;
-                                unsigned long room =
-                                    sizeof(state->input) - 1UL - n;
-                                unsigned long p = got > room ? room : got;
+                                c = (unsigned long)state->input_caret;
+                                room = sizeof(state->input) - 1UL - n;
+                                p = got > room ? room : got;
 
                                 if (c > n) {
                                     c = n;
@@ -3282,6 +3285,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     state->ctx_visible = 0;
                     if (it == TG_GUI_CTX_REPLY && m != 0 && !m->is_system &&
                         m->id != 0UL) {
+                        state->in_sel_active = 0;
                         state->reply_to_id = m->id;
                         tg_gui_window_copy(state->reply_sender,
                                            sizeof(state->reply_sender),
@@ -3298,6 +3302,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Reply - ENTER sends, ESC cancels");
                     } else if (it == TG_GUI_CTX_EDIT && m != 0 &&
+                               (state->in_sel_active = 0, 1) &&
                                (m->is_own ||
                                 tg_gui_open_chat_is_self(state)) &&
                                m->id != 0UL) {
@@ -3439,6 +3444,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                     tg_gui_window_paint(state, &backend);
                                 } else if (!m->is_system && m->id != 0UL &&
                                     m->id == state->sel_press_id) {
+                                    state->in_sel_active = 0;
                                     state->selected_msg = mi;
                                     state->reply_to_id = m->id;
                                     tg_gui_window_copy(
@@ -3631,6 +3637,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             "Search: type then PAUSE to auto-find (or ENTER)");
                         tg_gui_window_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
+                        state->in_sel_active = 0; /* input is consumed below */
                         if (state->input[0] != '\0') {
                             if (state->edit_to_id != 0UL) {
                                 (void)tg_gui_session_edit(state->input,
@@ -3688,6 +3695,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_session_refresh_chats();
                         }
                         state->composing = 1;
+                        state->in_sel_active = 0; /* fresh focus, no ghosts */
                         state->input_caret = (int)strlen(state->input);
                         if (hit == TG_GUI_HIT_INPUT) { /* F8: caret at click */
                             int cc = tg_gui_input_click_caret(state, &backend,
@@ -3760,8 +3768,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             state->in_sel_anchor = state->in_drag_anchor;
                         }
                         if (state->in_sel_active &&
+                            cc == state->in_sel_anchor &&
+                            cc == state->input_caret) {
+                            state->in_sel_active = 0; /* collapsed on anchor */
+                            tg_gui_window_paint(state, &backend);
+                        } else if (state->in_sel_active &&
                             cc != state->input_caret) {
                             state->input_caret = cc;
+                            if (cc == state->in_sel_anchor) {
+                                state->in_sel_active = 0;
+                            }
                             tg_gui_window_paint(state, &backend);
                         }
                     }
