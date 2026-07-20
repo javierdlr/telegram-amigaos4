@@ -152,6 +152,14 @@ int tg_platform_workbench_tui_console(void);
    when the console was never opened. */
 void tg_platform_workbench_tui_console_close(void);
 
+/* Reads the TUI_MODE tooltype of the icon that launched us (WBStartup arg 0)
+   so a packager can pick the front-end explicitly (issue #9). Returns 1 when
+   TUI_MODE is present and true, 0 when present and NO/FALSE/OFF, and -1 when
+   absent / no icon / not applicable -- the caller then falls back to the
+   filename heuristic, keeping the default byte-identical icons working.
+   `argv` is main()'s argv, i.e. the WBStartup pointer on a Workbench launch. */
+int tg_platform_wb_tui_mode(char **argv);
+
 /* Drag-and-drop for the Workbench TUI console: a file icon dropped on the
    window delivers its path so the user can just drop it after "/sendfile ".
    Non-blocking poll called from the console read loop; returns 1 with a NUL-

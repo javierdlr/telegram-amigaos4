@@ -80,7 +80,11 @@ int main(int argc, char **argv)
            named "...-TUI" whose DefaultTool is this binary, so scanning the
            WBStartup arg names for "TUI" tells the two apart -- no wrapper
            scripts (papiosaur / Easy2Install suggestion). */
-        int want_tui = tg_main_wb_wants_tui(argv);
+        /* Prefer an explicit TUI_MODE tooltype on the launched icon (issue #9,
+           javierdlr); fall back to the filename heuristic so the default
+           byte-identical icons still work with no tooltype at all. */
+        int tt = tg_platform_wb_tui_mode(argv);
+        int want_tui = (tt >= 0) ? tt : tg_main_wb_wants_tui(argv);
 
         if (want_tui) {
             static char *tui_argv[6];

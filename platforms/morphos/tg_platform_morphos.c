@@ -101,6 +101,55 @@ unsigned long tg_platform_local_epoch(void)
          + 252460800UL;
 }
 
+
+/* issue #9: read the launched icon's TUI_MODE tooltype (classic icon.library).
+   arg 0 of WBStartup is the icon the user double-clicked. Returns 1 (TUI),
+   0 (GUI: NO/FALSE/OFF), -1 (no tooltype / no icon -> caller uses the name
+   heuristic). Opening icon.library here is cheap and one-shot at startup. */
+int tg_platform_wb_tui_mode(char **argv)
+{
+    struct WBStartup *wb = (struct WBStartup *)argv;
+    struct Library *IconBase;
+    struct WBArg *a;
+    struct DiskObject *dobj;
+    int result = -1;
+
+    if (wb == 0 || wb->sm_ArgList == 0 || wb->sm_NumArgs < 1) {
+        return -1;
+    }
+    IconBase = OpenLibrary((CONST_STRPTR)"icon.library", 36L);
+    if (IconBase == 0) {
+        return -1;
+    }
+    a = &wb->sm_ArgList[0];
+    if (a->wa_Name != 0 && a->wa_Name[0] != '\0') {
+        BPTR olddir = 0;
+        int have_dir = 0;
+
+        if (a->wa_Lock != 0) {
+            olddir = CurrentDir(a->wa_Lock);
+            have_dir = 1;
+        }
+        dobj = GetDiskObject((STRPTR)a->wa_Name);
+        if (dobj != 0) {
+            STRPTR tt = FindToolType(dobj->do_ToolTypes,
+                                     (STRPTR)"TUI_MODE");
+
+            if (tt != 0) {
+                result = (MatchToolValue(tt, (STRPTR)"NO") ||
+                          MatchToolValue(tt, (STRPTR)"FALSE") ||
+                          MatchToolValue(tt, (STRPTR)"OFF")) ? 0 : 1;
+            }
+            FreeDiskObject(dobj);
+        }
+        if (have_dir) {
+            CurrentDir(olddir);
+        }
+    }
+    CloseLibrary(IconBase);
+    return result;
+}
+
 void tg_platform_workbench_init(void)
 {
 #if defined(__MORPHOS__) || defined(__MORPHOS)

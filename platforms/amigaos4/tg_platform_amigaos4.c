@@ -109,6 +109,70 @@ unsigned long tg_platform_local_epoch(void)
          + 252460800UL;
 }
 
+/* issue #9: read the launched icon's TUI_MODE tooltype on OS4. Uses the same
+   local-IIcon alias trick as ensure_drawer_icon so the __USE_INLINE__ icon
+   macros resolve to our opened interface; SetCurrentDir goes through the
+   auto-provided IDOS. Returns 1 (TUI), 0 (GUI), -1 (no tooltype -> heuristic). */
+int tg_platform_wb_tui_mode(char **argv)
+{
+#if defined(__amigaos4__)
+    struct WBStartup *wb = (struct WBStartup *)argv;
+    struct Library *IconBase;
+    struct IconIFace *iicon;
+    struct WBArg *a;
+    int result = -1;
+
+    if (wb == 0 || wb->sm_ArgList == 0 || wb->sm_NumArgs < 1) {
+        return -1;
+    }
+    IconBase = OpenLibrary((CONST_STRPTR)"icon.library", 44L);
+    if (IconBase == 0) {
+        return -1;
+    }
+    iicon = (struct IconIFace *)GetInterface(IconBase, "main", 1L, 0);
+    if (iicon == 0) {
+        CloseLibrary(IconBase);
+        return -1;
+    }
+    {
+        struct IconIFace *IIcon = iicon; (void)IIcon;
+        struct DiskObject *dobj;
+
+        a = &wb->sm_ArgList[0];
+        if (a->wa_Name != 0 && a->wa_Name[0] != '\0') {
+            BPTR olddir = 0;
+            int have_dir = 0;
+
+            if (a->wa_Lock != 0) {
+                olddir = SetCurrentDir(a->wa_Lock);
+                have_dir = 1;
+            }
+            dobj = GetDiskObject((STRPTR)a->wa_Name);
+            if (dobj != 0) {
+                STRPTR tt = FindToolType(dobj->do_ToolTypes,
+                                         (CONST_STRPTR)"TUI_MODE");
+
+                if (tt != 0) {
+                    result = (MatchToolValue(tt, (CONST_STRPTR)"NO") ||
+                              MatchToolValue(tt, (CONST_STRPTR)"FALSE") ||
+                              MatchToolValue(tt, (CONST_STRPTR)"OFF")) ? 0 : 1;
+                }
+                FreeDiskObject(dobj);
+            }
+            if (have_dir) {
+                SetCurrentDir(olddir);
+            }
+        }
+    }
+    DropInterface((struct Interface *)iicon);
+    CloseLibrary(IconBase);
+    return result;
+#else
+    (void)argv;
+    return -1;
+#endif
+}
+
 void tg_platform_workbench_init(void)
 {
 #if defined(__amigaos4__)
