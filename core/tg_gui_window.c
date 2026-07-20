@@ -1463,6 +1463,9 @@ static unsigned long tg_gui_clip_read_text(char *out, unsigned long out_size)
 }
 #endif /* TG_GUI_AMIGA */
 
+/* Cut/copy/paste live in their own Edit menu per the AmigaOS UI Style Guide
+   (an issue #5 follow-up); the MENUPICK handler keys off GTMENUITEM_USERDATA,
+   so item positions are free to move. */
 static struct NewMenu tg_gui_newmenu[] = {
     { NM_TITLE, (STRPTR)"Telegram", 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"About...", 0, 0, 0, (APTR)TG_MENU_ABOUT },
@@ -1472,18 +1475,19 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_REMOVE },
     { NM_ITEM,  (STRPTR)"Send file...", (STRPTR)"F", 0, 0,
       (APTR)TG_MENU_SENDFILE },
-    { NM_ITEM,  (STRPTR)"Copy message", (STRPTR)"C", 0, 0,
-      (APTR)TG_MENU_COPY },
-    { NM_ITEM,  (STRPTR)"Paste", (STRPTR)"V", 0, 0,
-      (APTR)TG_MENU_PASTE },
-    { NM_ITEM,  (STRPTR)"Cut input", (STRPTR)"X", 0, 0,
-      (APTR)TG_MENU_CUT },
     { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
       (APTR)TG_MENU_ICONIFY },
     { NM_ITEM,  (STRPTR)"Own screen", 0, CHECKIT | MENUTOGGLE, 0,
       (APTR)TG_MENU_OWNSCREEN },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
+    { NM_TITLE, (STRPTR)"Edit", 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Cut", (STRPTR)"X", 0, 0,
+      (APTR)TG_MENU_CUT },
+    { NM_ITEM,  (STRPTR)"Copy", (STRPTR)"C", 0, 0,
+      (APTR)TG_MENU_COPY },
+    { NM_ITEM,  (STRPTR)"Paste", (STRPTR)"V", 0, 0,
+      (APTR)TG_MENU_PASTE },
     { NM_END,   0, 0, 0, 0, 0 }
 };
 
