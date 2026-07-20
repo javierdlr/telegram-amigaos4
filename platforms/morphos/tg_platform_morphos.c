@@ -113,8 +113,11 @@ void tg_platform_workbench_init(void)
 #endif
 }
 
+static void tg_morphos_timer_close(void);
+
 void tg_platform_shutdown(void)
 {
+    tg_morphos_timer_close(); /* E-Clock entropy plumbing: device+port+req */
 }
 
 void tg_platform_log(const char *level, const char *message)
@@ -270,6 +273,28 @@ struct Library *TimerBase = 0; /* declared (extern) by <proto/timer.h> */
 static struct MsgPort *tg_morphos_timer_port = 0;
 static struct timerequest *tg_morphos_timer_req = 0;
 static int tg_morphos_timer_state = -1; /* -1 untried, 0 unavailable, 1 ready */
+
+/* Teardown mirror of tg_morphos_timer_open, called from tg_platform_shutdown:
+   MorphOS shares OS3's exec semantics (no resource tracking of device opens
+   or Create* allocations at exit), so without this every launch bumped
+   timer.device's open count and leaked the port+request until reboot -- the
+   one lane the shutdown contract had left as a false no-op. */
+static void tg_morphos_timer_close(void)
+{
+    if (tg_morphos_timer_state == 1 && tg_morphos_timer_req != 0) {
+        CloseDevice((struct IORequest *)tg_morphos_timer_req);
+    }
+    TimerBase = 0;
+    if (tg_morphos_timer_req != 0) {
+        DeleteIORequest((struct IORequest *)tg_morphos_timer_req);
+        tg_morphos_timer_req = 0;
+    }
+    if (tg_morphos_timer_port != 0) {
+        DeleteMsgPort(tg_morphos_timer_port);
+        tg_morphos_timer_port = 0;
+    }
+    tg_morphos_timer_state = 0;
+}
 
 static void tg_morphos_timer_open(void)
 {
