@@ -25,15 +25,19 @@ Two front-ends share one engine:
 
 ![Telegram Amiga GUI on AmigaOS 4](assets/screenshots/telegram-amiga-gui-os4.png)
 
-Status: **alpha 0.0.7** — everyday direct-message and group chat works on all
-five platforms below. 0.0.7 adds large-file uploads using
-Telegram's big-file protocol (about 31 MiB on m68k and 250 MiB elsewhere),
-file send/download and Workbench drop support in the TUI, transcript and
-composer text selection with Copy/Cut/Paste, live updates for messages edited
-on another device, and receive-only updates while composing. It builds on
-0.0.6's file sharing, pinned Saved Messages transfer drawer, script-free
-launch icons, click-to-place caret, Iconify/AppIcon support and RTG avatar
-colours.
+Status: **alpha 0.0.6** — everyday direct-message and group chat works on all
+five platforms below. 0.0.6 adds file sharing (download any received file,
+send files up to 10 MB), a pinned Saved Messages chat that turns Telegram's
+cloud into a transfer drawer between your Amiga and your phone/PC,
+script-free launch icons (double-click TelegramAmiga for the GUI or
+TelegramAmiga-TUI for the console — no more IconX), click-to-place text
+caret, forward-delete on Del, an Iconify menu item that parks the client on
+a Workbench AppIcon (plus the native titlebar gadget on OS4), and truer
+avatar colours, rich on RTG screens — on top of 0.0.5's real avatars,
+@username autocomplete, remembered window position and optional own screen,
+0.0.4's edit & delete, live read receipts, multi-device sync and system-clock times,
+0.0.3's replies, checkmarks and flicker-free drawing, and 0.0.2's history
+paging, search, badges and chat management.
 
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:
@@ -41,16 +45,16 @@ community. Development diary:
 
 ## Platforms & releases
 
-Each 0.0.7 package bundles both clients, icons, a public `telegram-api.txt` and
+Each package bundles both clients, icons, a public `telegram-api.txt` and
 per-architecture IT/EN manuals — and **no private files**.
 
 | Platform | CPU | Release |
 |---|---|---|
-| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.7) |
-| AmigaOS 4.x | PPC | [os4-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.7) |
-| MorphOS | PPC | [morphos-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.7) |
-| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.7) |
-| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.7) |
+| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.6](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.6) |
+| AmigaOS 4.x | PPC | [os4-alpha-0.0.6](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.6) |
+| MorphOS | PPC | [morphos-alpha-0.0.6](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.6) |
+| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.6](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.6) |
+| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.6](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.6) |
 
 All releases: <https://github.com/kaffeine1/telegram-amiga/releases>
 
@@ -84,13 +88,9 @@ Full IT/EN instructions are inside each package.
   (menu / Del / right-Amiga+R), online search to add, persistent unread badges.
 - Reading history with scroll-to-top paging (load older on demand) and sending
   long, multi-line text where the account has permission.
-- **File sharing**: download any received file; upload up to about 31 MiB on
-  m68k or 250 MiB on the other builds; use pinned **Saved Messages** as a cloud
-  transfer drawer. The TUI supports send/download and Workbench drops too.
-- Message **edit & delete** (right-click), live remote-edit updates, replies,
-  @username autocomplete.
-- Mouse/keyboard text selection and **Copy/Cut/Paste** in the transcript and
-  composer.
+- **File sharing**: download any received file, send files up to 10 MB, and a
+  pinned **Saved Messages** chat as a cloud transfer drawer (fully editable).
+- Message **edit & delete** (right-click), replies, @username autocomplete.
 - Real **profile-picture avatars** (blurred previews instantly, crisp on open).
 - Native GUI scrolling (wheel / scrollbar / arrows / pixel), remembered window
   size and position, optional own screen, Iconify to a Workbench AppIcon, dark
@@ -101,9 +101,10 @@ Full IT/EN instructions are inside each package.
 
 ## Not yet
 
-Inline photo rendering, reactions, contact management, cross-DC file downloads,
-and background/cancellable transfers. The aim is a dependable text-and-files
-client first; rich media comes later only where the platform makes it realistic.
+Inline photo rendering, reactions, contact management, clipboard copy/paste in
+the GUI, live updates for messages edited elsewhere, and files over 10 MB. The
+aim is a dependable text-and-files client first; rich media comes later only
+where the platform makes it realistic.
 
 ## Privacy & security
 

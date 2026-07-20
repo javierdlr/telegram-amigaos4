@@ -41,7 +41,7 @@ client:
 - MTProto human releases ship for AmigaOS 3.x, AmigaOS 4.x, MorphOS,
   AROS i386 and AROS x86_64: login wizard, 2FA/SRP, saved chat list,
   text chat and file transfer.
-- Release 0.0.7 adds large-file uploads, GUI text selection and
+- In development for 0.0.7: large-file uploads, GUI text selection and
   Copy/Cut/Paste, TUI file transfer/drop support, live remote edits and
   receive-only updates while composing.
 - A Bot-API text path stays available as a fallback for tokens/bots.

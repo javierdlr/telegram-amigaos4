@@ -10,8 +10,8 @@
 #ifndef TG_VERSION_H
 #define TG_VERSION_H
 
-#define TG_VERSION "0.0.7"
+#define TG_VERSION "0.0.6"
 /* Release date for the Amiga $VER tag (dd.mm.yyyy) -- bump WITH the version. */
-#define TG_VERSION_DATE "19.07.2026"
+#define TG_VERSION_DATE "14.07.2026"
 
 #endif
