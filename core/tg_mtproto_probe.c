@@ -7771,6 +7771,20 @@ static int tg_mtproto_auth_search_global_on_context(
         fprintf(stream, "Type a name, username, or group to add.\n");
         return 2;
     }
+#if TG_MTPROTO_DISPLAY_LATIN1
+    /* Latin-1 keymap -> UTF-8 for the wire (same as message send); without it
+       a query with accented letters is rejected by the server. */
+    {
+        static char search_utf8[256];
+
+        if (tg_mtproto_latin1_to_utf8(trimmed_query, search_utf8,
+                                      sizeof(search_utf8))) {
+            tg_mtproto_copy_plain_cache_text(trimmed_query,
+                                             sizeof(trimmed_query),
+                                             search_utf8);
+        }
+    }
+#endif
 
     quiet = tg_mtproto_open_quiet_stream(stream);
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
@@ -13462,6 +13476,20 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
     if (trimmed[0] == '\0') {
         return -1;
     }
+#if TG_MTPROTO_DISPLAY_LATIN1
+    /* The query is Latin-1 (Amiga keymap); Telegram wants UTF-8. Without this
+       a name with a-ring/a-uml/o-uml went out as invalid UTF-8 and the server
+       rejected the whole search (the user saw "network problem"). */
+    {
+        static char query_utf8[256];
+
+        if (tg_mtproto_latin1_to_utf8(trimmed, query_utf8,
+                                      sizeof(query_utf8))) {
+            tg_mtproto_copy_plain_cache_text(trimmed, sizeof(trimmed),
+                                             query_utf8);
+        }
+    }
+#endif
 
     quiet = tg_mtproto_open_quiet_stream(stream);
     prev_timeout = tg_net_connect_timeout_seconds();
@@ -13508,6 +13536,48 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
     return tg_gui_search_openable_n;
 }
 
+/* UTF-8 (wire) -> Latin-1 (GUI display), for search-result titles that reach
+   the sidebar directly rather than through the driver's copy_latin1. Without
+   it a name like "Bjorn" with o-umlaut showed as the raw two-byte "A~ 3/4".
+   No-op copy when the build is not Latin-1 (host/utf8). */
+static void tg_mtproto_utf8_to_latin1_name(char *dst, unsigned long dst_size,
+                                           const char *src)
+{
+#if TG_MTPROTO_DISPLAY_LATIN1
+    unsigned long i;
+    unsigned long o;
+
+    if (dst == 0 || dst_size == 0UL) {
+        return;
+    }
+    i = 0UL;
+    o = 0UL;
+    while (src != 0 && src[i] != '\0' && o + 1UL < dst_size) {
+        unsigned long cp;
+        char one[8];
+        unsigned long got;
+
+        cp = tg_mtproto_utf8_read_codepoint(src, &i);
+        got = tg_mtproto_display_codepoint_to_latin1(cp, one, sizeof(one));
+        if (got == 0UL || o + got >= dst_size) {
+            break;
+        }
+        memcpy(dst + o, one, got);
+        o += got;
+    }
+    dst[o] = '\0';
+#else
+    if (dst != 0 && dst_size > 0UL) {
+        unsigned long i;
+
+        for (i = 0UL; src != 0 && src[i] != '\0' && i + 1UL < dst_size; ++i) {
+            dst[i] = src[i];
+        }
+        dst[(src != 0) ? i : 0UL] = '\0';
+    }
+#endif
+}
+
 int tg_gui_session_search_count(void)
 {
     return tg_gui_search_openable_n;
@@ -13523,7 +13593,15 @@ const char *tg_gui_session_search_name(int i)
     /* Username-only contacts (no title) are openable too -- fall back to the
        @username so the picker row is not blank, matching the console printer. */
     e = &tg_gui_search_results.entries[tg_gui_search_openable_idx[i]];
-    return (e->title[0] != '\0') ? e->title : e->username;
+    {
+        static char latin1_name[TG_GUI_NAME_MAX];
+        const char *raw = (e->title[0] != '\0') ? e->title : e->username;
+
+        /* the wire title is UTF-8; the sidebar renders Latin-1 (bug: "o-uml"
+           showed as two chars). Convert like the chat-list path does. */
+        tg_mtproto_utf8_to_latin1_name(latin1_name, sizeof(latin1_name), raw);
+        return latin1_name;
+    }
 }
 
 /* Open the i-th openable result of the last search (add it to the cache + open). */
