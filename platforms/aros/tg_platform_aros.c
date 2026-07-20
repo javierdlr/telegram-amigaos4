@@ -157,8 +157,19 @@ void tg_platform_workbench_init(void)
 #endif
 }
 
+#if defined(__AROS__)
+static void tg_aros_close_socket_library(void);
+#endif
+
 void tg_platform_shutdown(void)
 {
+#if defined(__AROS__)
+    /* bsdsocket.library is opened once (first connect) and owned process-wide:
+       closing it per-connection zeroed the shared SocketBase under live
+       connections (GUI keeps several open), and the next send() was an LVO
+       call through a NULL base -> the x86_64 relaunch bus-fault. */
+    tg_aros_close_socket_library();
+#endif
 }
 
 void tg_platform_log(const char *level, const char *message)
@@ -795,9 +806,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
                 host_entry->h_addr_list[0] == 0) {
                 tg_platform_set_error(error_buffer, error_buffer_size,
                                       "host lookup failed");
-#if defined(__AROS__)
-                tg_aros_close_socket_library();
-#endif
                 return TG_NET_RESOLVE_FAILED;
             }
             memcpy(&address.sin_addr, host_entry->h_addr_list[0],
@@ -808,9 +816,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
-#if defined(__AROS__)
-        tg_aros_close_socket_library();
-#endif
         return TG_NET_CONNECT_FAILED;
     }
 
@@ -832,7 +837,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
        AROSTCP's list and the CloseLibrary below would re-close it and crash. */
     CloseSocket(sock);
     tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
-    tg_aros_close_socket_library();
 #else
     close(sock);
 #endif
@@ -851,6 +855,15 @@ tg_net_status tg_platform_tcp_send(tg_net_connection *connection, const void *da
     if (error_buffer != 0 && error_buffer_size > 0) {
         error_buffer[0] = '\0';
     }
+#if defined(__AROS__)
+    if (SocketBase == 0) {
+        /* A bsdsocket macro through a NULL base is an LVO call through 0:
+           fail cleanly instead (can only happen on a connection misuse). */
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket library not open");
+        return TG_NET_SEND_FAILED;
+    }
+#endif
 
     rc = send((int)connection->platform_handle, data, byte_count, 0);
     if (rc < 0) {
@@ -878,6 +891,13 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
     if (error_buffer != 0 && error_buffer_size > 0) {
         error_buffer[0] = '\0';
     }
+#if defined(__AROS__)
+    if (SocketBase == 0) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket library not open");
+        return TG_NET_RECV_FAILED;
+    }
+#endif
 
     /* Bound the blocking recv() with a select() timeout, mirroring the MorphOS
        backend. Without this the encrypted-query receive loop in
@@ -936,6 +956,13 @@ int tg_platform_tcp_poll_readable(tg_net_connection *connection,
                               "socket is not open");
         return -1;
     }
+#if defined(__AROS__)
+    if (SocketBase == 0) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket library not open");
+        return -1;
+    }
+#endif
     FD_ZERO(&read_fds);
     FD_SET((int)connection->platform_handle, &read_fds);
     timeout.tv_sec = 0;
@@ -953,12 +980,18 @@ int tg_platform_tcp_poll_readable(tg_net_connection *connection,
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
+#if defined(__AROS__)
+        /* CloseSocket(), not close(): close() leaves the socket in AROSTCP's
+           list, and the CloseLibrary at shutdown would re-close it and corrupt
+           the TLSF heap (same defect the failed-connect path already fixed). */
+        CloseSocket((long)connection->platform_handle);
+#else
         close((int)connection->platform_handle);
+#endif
         connection->is_open = 0;
     }
-#if defined(__AROS__)
-    tg_aros_close_socket_library();
-#endif
+    /* The socket library itself stays open until tg_platform_shutdown(): other
+       connections may still be using the shared base. */
 }
 
 #if TG_ENABLE_TLS

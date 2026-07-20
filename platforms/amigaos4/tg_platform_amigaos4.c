@@ -417,9 +417,12 @@ static void tg_os4_timebase_close(void)
     tg_os4_tb_state = 0;
 }
 
+static void tg_os4_socket_shutdown(void);
+
 void tg_platform_shutdown(void)
 {
     tg_os4_timebase_close();
+    tg_os4_socket_shutdown();
 }
 
 static unsigned long tg_os4_timebase(void)
@@ -902,10 +905,21 @@ void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
         CloseSocket((int)connection->platform_handle);
-#if !TG_AMIGAOS4_ENABLE_AMISSL
-        tg_amigaos4_socket_close_library();
-#endif
+        connection->is_open = 0;
     }
+    /* The shared ISocket/SocketBase stays open for the other live connections;
+       it is released once, in tg_platform_shutdown() (or by the AmiSSL
+       teardown when that owns it). Per-close CloseLibrary zeroed the base
+       under live connections (reproduced as a relaunch bus-fault on AROS). */
+}
+
+/* Process-exit mirror of the lazy open in tcp_connect (non-AmiSSL builds;
+   the AmiSSL teardown closes the base itself when enabled). */
+static void tg_os4_socket_shutdown(void)
+{
+#if !TG_AMIGAOS4_ENABLE_AMISSL
+    tg_amigaos4_socket_close_library();
+#endif
 }
 
 #else

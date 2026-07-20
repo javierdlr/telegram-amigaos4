@@ -164,9 +164,17 @@ void tg_platform_workbench_init(void)
 
 static void tg_morphos_timer_close(void);
 
+static void tg_morphos_close_socket_library(void);
+
 void tg_platform_shutdown(void)
 {
     tg_morphos_timer_close(); /* E-Clock entropy plumbing: device+port+req */
+    /* bsdsocket.library: still closed IN-PROCESS (the whole point of owning
+       SocketBase -- no deferred libnix-exit CloseLibrary, which hard-froze
+       MorphOS on GUI close), but only ONCE at shutdown now: closing it per
+       tcp_close zeroed the shared base under other live connections and the
+       next send() jumped through a NULL base (reproduced on AROS x86_64). */
+    tg_morphos_close_socket_library();
 }
 
 void tg_platform_log(const char *level, const char *message)
@@ -769,7 +777,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     host_entry = gethostbyname((const UBYTE *)host);
     if (host_entry == 0 || host_entry->h_addr_list == 0 || host_entry->h_addr_list[0] == 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, "host lookup failed");
-        tg_morphos_close_socket_library();
         return TG_NET_RESOLVE_FAILED;
     }
 
@@ -781,7 +788,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     sock = (int)socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
-        tg_morphos_close_socket_library();
         return TG_NET_CONNECT_FAILED;
     }
 
@@ -793,7 +799,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     }
 
     CloseSocket((long)sock);
-    tg_morphos_close_socket_library();
     return TG_NET_CONNECT_FAILED;
 }
 
@@ -918,11 +923,8 @@ void tg_platform_tcp_close(tg_net_connection *connection)
         CloseSocket((long)connection->platform_handle);
         connection->is_open = 0;
     }
-    /* Close bsdsocket.library IN-PROCESS while the task is still alive. We OWN
-       SocketBase now (opened in tg_platform_tcp_connect), so this is the only
-       CloseLibrary -- the libnix exit-list __exitsocket stub is never linked,
-       which removes the deferred teardown that HARD-FROZE MorphOS on GUI close. */
-    tg_morphos_close_socket_library();
+    /* The library base stays open for the other live connections; the single
+       in-process CloseLibrary now happens in tg_platform_shutdown(). */
 }
 
 #if TG_ENABLE_TLS

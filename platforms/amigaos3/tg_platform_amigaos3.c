@@ -445,9 +445,12 @@ static void tg_os3_timer_open(void)
     }
 }
 
+static void tg_os3_socket_shutdown(void);
+
 void tg_platform_shutdown(void)
 {
     tg_os3_timer_close();
+    tg_os3_socket_shutdown();
 }
 
 static unsigned long tg_os3_timebase(void)
@@ -914,21 +917,35 @@ void tg_platform_tcp_close(tg_net_connection *connection)
     if (connection != 0 && connection->is_open) {
 #if TG_AMIGAOS3_BSDSOCKET_DIRECT
         CloseSocket((long)connection->platform_handle);
-#if TG_AMIGAOS3_ENABLE_AMISSL
-        if (!tg_amigaos3_amissl_initialized && SocketBase != 0) {
-            CloseLibrary(SocketBase);
-            SocketBase = 0;
-        }
-#else
-        if (SocketBase != 0) {
-            CloseLibrary(SocketBase);
-            SocketBase = 0;
-        }
-#endif
 #else
         close((int)connection->platform_handle);
 #endif
+        connection->is_open = 0;
     }
+    /* bsdsocket.library stays open until tg_platform_shutdown(): closing it
+       here zeroed the shared SocketBase under the OTHER live connections (the
+       GUI keeps several open), and their next send()/recv() jumped through a
+       NULL library base. Found as a reproducible relaunch bus-fault on AROS
+       x86_64; the m68k lane had the identical pattern. */
+}
+
+/* Process-exit mirror of the lazy OpenLibrary in tcp_connect. When AmiSSL owns
+   the base its own teardown closes it (tg_amigaos3_amissl_shutdown). */
+static void tg_os3_socket_shutdown(void)
+{
+#if TG_AMIGAOS3_BSDSOCKET_DIRECT
+#if TG_AMIGAOS3_ENABLE_AMISSL
+    if (!tg_amigaos3_amissl_initialized && SocketBase != 0) {
+        CloseLibrary(SocketBase);
+        SocketBase = 0;
+    }
+#else
+    if (SocketBase != 0) {
+        CloseLibrary(SocketBase);
+        SocketBase = 0;
+    }
+#endif
+#endif
 }
 
 #else
