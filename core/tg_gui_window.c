@@ -1624,6 +1624,45 @@ static void tg_gui_amiga_set_rmbtrap(struct Window *win, int on)
     Permit();
 }
 
+/* Recompute the dynamic right-button trap from the current pointer position:
+   claim it (WFLG_RMBTRAP -> our transcript context menu) ONLY over a real
+   message bubble, release it everywhere else so the standard Intuition menu
+   bar opens. Driven from BOTH the MOUSEMOVE and the ~10/s INTUITICKS handlers.
+   The tick pass matters: the OS4 emulated mouse coalesces/drops moves, so a
+   move-only update could leave the trap stuck ON after the pointer had already
+   left the transcript -- a right-click on the sidebar was then delivered to us
+   (not a bubble -> nothing happens, the click is swallowed) and the menu bar
+   never appeared. The periodic re-check makes the trap self-heal within
+   ~100 ms regardless of how moves are delivered. No-op while our own context
+   menu is up (its clicks must keep reaching us). */
+static void tg_gui_window_track_rmbtrap(tg_gui_state *state,
+                                        const tg_gui_amiga_ctx *ctx,
+                                        int mouse_x, int mouse_y)
+{
+    int hx;
+    int hy;
+    int hit;
+    int over_msg;
+
+    if (state == 0 || ctx == 0 || ctx->window == 0 ||
+        state->mode != TG_GUI_MODE_CHAT || state->ctx_visible) {
+        return;
+    }
+    hx = mouse_x - ctx->origin_x;
+    hy = mouse_y - ctx->origin_y;
+    hit = tg_gui_hit_test(state, ctx->inner_w, ctx->inner_h, ctx->line_h,
+                          hx, hy);
+    over_msg = 0;
+    if (hit <= TG_GUI_HIT_MESSAGE_BASE) {
+        int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
+
+        over_msg = (mi >= 0 && mi < state->message_count &&
+                    !state->messages[mi].is_system &&
+                    state->messages[mi].id != 0UL);
+    }
+    tg_gui_amiga_set_rmbtrap(ctx->window, over_msg);
+}
+
 typedef struct tg_gui_upload_ui {
     tg_gui_state *state;
     tg_gui_backend *backend;
@@ -3239,6 +3278,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else {
                     time_t now;
 
+                    /* Self-heal the right-button trap from the current pointer
+                       position, in case the MOUSEMOVE that should have released
+                       it (over the sidebar/menu-bar area) was dropped by the
+                       OS4 emulated mouse -- otherwise the sidebar right-click
+                       had no menu. mouse_x/mouse_y hold this tick's position. */
+                    tg_gui_window_track_rmbtrap(state, &ctx, (int)mouse_x,
+                                                (int)mouse_y);
+
                     /* Blink the composer caret (~2 Hz) while typing. */
                     if ((state->composing || state->search_active) &&
                         ++caret_ticks >= 5) {
@@ -3890,23 +3937,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                 }
                 /* Right-button trap follows the pointer: claimed over a real
-                   bubble (our context menu), released elsewhere (menu bar). */
-                if (state->mode == TG_GUI_MODE_CHAT && !state->ctx_visible) {
-                    int hx = (int)mouse_x - ctx.origin_x;
-                    int hy = (int)mouse_y - ctx.origin_y;
-                    int hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
-                                              ctx.line_h, hx, hy);
-                    int over_msg = 0;
-
-                    if (hit <= TG_GUI_HIT_MESSAGE_BASE) {
-                        int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
-
-                        over_msg = (mi >= 0 && mi < state->message_count &&
-                                    !state->messages[mi].is_system &&
-                                    state->messages[mi].id != 0UL);
-                    }
-                    tg_gui_amiga_set_rmbtrap(ctx.window, over_msg);
-                }
+                   bubble (our context menu), released elsewhere (menu bar).
+                   The INTUITICKS handler runs the same check so a dropped move
+                   cannot leave it stuck (see tg_gui_window_track_rmbtrap). */
+                tg_gui_window_track_rmbtrap(state, &ctx, (int)mouse_x,
+                                            (int)mouse_y);
                 /* Context-menu hover: highlight the item under the pointer so the
                    user sees which of Reply/Edit/Delete the click will pick.
                    REPORTMOUSE floods moves, so repaint ONLY when the highlighted
