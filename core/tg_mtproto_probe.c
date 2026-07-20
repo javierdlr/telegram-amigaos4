@@ -8761,6 +8761,12 @@ static void tg_chat_history_add(const char *text)
     tg_chat_history_recall = -1L;
 }
 
+/* One-line command cheat-sheet shown when a lone '/' starts the input row
+   (both the TUI-transcript and the linear-raw printers use it). */
+#define TG_CHAT_SLASH_HINT_TEXT \
+    "Commands: /peers /saved /getfile /sendfile /search /add /remove\n" \
+    "          /history /swap /watch /diff /color /bell /resize /help /quit\n"
+
 /*
  * Chat input reader. In raw mode it echoes characters itself and supports
  * backspace plus, when use_history is set, Up/Down command-history recall
@@ -9102,11 +9108,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                    the input row is redrawn below with the '/' kept. */
                 FILE *hint_cap = tg_console_tui_capture_begin(stream);
 
-                fprintf(hint_cap,
-                        "Commands: /peers /saved /getfile /sendfile /search"
-                        " /add /remove\n"
-                        "          /history /swap /watch /diff /color /bell"
-                        " /resize /help /quit\n");
+                fputs(TG_CHAT_SLASH_HINT_TEXT, hint_cap);
                 tg_console_tui_capture_end(hint_cap, stream);
             }
             tg_console_tui_input(tg_chat_tui_stream,
@@ -9119,6 +9121,16 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             if (raw) {
                 fputc(ch, stream);
                 fflush(stream);
+                if (use_history && ch == '/' && *line_length == 1UL) {
+                    /* Command hint, linear-raw flavour (consoles with no
+                       full-screen layout -- AROS, plain pipes): print the
+                       list on its own lines, then re-echo the typed '/' so
+                       the user keeps typing on a fresh line. The TUI branch
+                       above prints the same hint into the transcript. */
+                    fputs("\n" TG_CHAT_SLASH_HINT_TEXT, stream);
+                    fwrite(line, 1, (size_t)*line_length, stream);
+                    fflush(stream);
+                }
             }
         }
     }
