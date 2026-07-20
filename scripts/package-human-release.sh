@@ -6,10 +6,11 @@
 # Build the human-facing release packages for Telegram Amiga.
 # Version comes from include/tg_version.h (override with VERSION=... if needed).
 #
-# Each package contains ONLY the program, the two launchers (GUI + TUI) with
-# their icons, the PUBLIC Telegram API app credentials and per-architecture
-# IT/EN manuals. No user session is ever bundled: telegram-auth.bin and the
-# peer cache are created locally by the user on first login (see the manual).
+# Each package contains ONLY the program (one binary), its two self-launching
+# icons (TelegramAmiga = GUI, TelegramAmiga-TUI = console; no launcher scripts),
+# the PUBLIC Telegram API app credentials and per-architecture IT/EN manuals.
+# No user session is ever bundled: telegram-auth.bin and the peer cache are
+# created locally by the user on first login (see the manual).
 
 set -eu
 
@@ -58,6 +59,7 @@ if [ "$AMINET" = "1" ]; then rm -rf "$AMINET_ROOT"; mkdir -p "$AMINET_ROOT"; fi
 fill_platform_text() {
     case "$1" in
     "AmigaOS 3.x")
+        upload_limit="31 MiB"
         req_en="- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) with a TCP/IP stack (Roadshow, AmiTCP,
   Miami/MiamiDx) providing bsdsocket.library, and an internet connection.
 - A 68020 or better CPU (this build uses the 68020 32x32 multiply and will
@@ -68,8 +70,8 @@ fill_platform_text() {
 - Photos/files are shown as [Photo] / [File] labels (no image decoding on 68k).
 - The cloud-password (2FA) step is heavy on a 68k (PBKDF2) and can take a while.
 - First login: on some 68k setups the in-GUI fresh login is still rough. The
-  reliable path is to log in ONCE with TelegramTUI (the console launcher), then
-  use TelegramGUI from then on (it reuses the saved login).
+  reliable path is to log in ONCE with TelegramAmiga-TUI (the text/console client), then
+  use TelegramAmiga from then on (it reuses the saved login).
 - Emoji are drawn as text emoticons (:) :D <3); the console has no emoji font."
         req_it="- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) con uno stack TCP/IP (Roadshow, AmiTCP,
   Miami/MiamiDx) che fornisca bsdsocket.library, e una connessione internet.
@@ -84,10 +86,11 @@ fill_platform_text() {
 - Il passo della password cloud (2FA) e' pesante su 68k (PBKDF2) e puo' metterci
   un po'.
 - Primo accesso: su alcune configurazioni 68k il login fresco dentro la GUI e'
-  ancora instabile. La via affidabile e' accedere UNA volta con TelegramTUI (il
-  launcher console), poi usare TelegramGUI (riusa il login salvato)."
+  ancora instabile. La via affidabile e' accedere UNA volta con TelegramAmiga-TUI (il
+  client console), poi usare TelegramAmiga (riusa il login salvato)."
         ;;
     "MorphOS")
+        upload_limit="250 MiB"
         req_en="- MorphOS (3.x) with its TCP/IP stack and an internet connection.
 - A few MB of free RAM."
         notes_en="Notes for MorphOS
@@ -98,8 +101,7 @@ fill_platform_text() {
 - In groups the typing line shows \"someone is typing\" (the per-member name
   fetch is skipped on MorphOS on purpose, to avoid a freeze).
 - Auto-read runs at a gentle pace; emoji are text emoticons.
-- Avatars stay as blurred previews / initials (the crisp-photo download is
-  disabled on MorphOS on purpose); the @ member autocomplete is off too.
+- The @ member autocomplete is off on MorphOS (freeze guard).
 - Own-screen mode: MorphOS 3.16 or newer is recommended."
         req_it="- MorphOS (3.x) con il suo stack TCP/IP e una connessione internet.
 - Qualche MB di RAM libera."
@@ -111,12 +113,11 @@ fill_platform_text() {
   badge non letti restano comunque persistenti.
 - Nei gruppi la riga di scrittura mostra \"someone is typing\" (il recupero del
   nome del membro e' disattivato su MorphOS apposta, per evitare un freeze).
-- Gli avatar restano anteprime sfocate / iniziali (il download della foto
-  nitida e' disattivato su MorphOS apposta); anche l'autocompletamento @ dei
-  membri e' spento.
+- L'autocompletamento @ dei membri e' spento su MorphOS (guardia anti-freeze).
 - Modalita' schermo proprio: consigliato MorphOS 3.16 o piu' recente."
         ;;
     *)
+        upload_limit="250 MiB"
         req_en="- $1 with a working TCP/IP stack (bsdsocket) and an internet connection.
 - A few MB of free RAM."
         notes_en="Notes for $1
@@ -139,19 +140,18 @@ Telegram Amiga - $2 - alpha $VERSION
 A from-scratch, native Telegram (MTProto) client. Zero dependencies: no MUI,
 no ixemul, no AmiSSL. Two clients, one engine:
 
-  TelegramGUI  - graphical (Intuition), with scrollbars + mouse.
-  TelegramTUI  - text-mode / console.
+  TelegramAmiga  - graphical (Intuition), with scrollbars + mouse.
+  TelegramAmiga-TUI  - text-mode / console.
 
 Quick start: copy this drawer to a WRITABLE volume, then double-click
-TelegramGUI (or TelegramTUI). First run signs you in (phone -> code -> 2FA).
+TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
-New in $VERSION: FILE SHARING -- download any received file (right-click ->
-Download) and send one to the open chat (menu: Send file...), up to 10 MB.
-A pinned Saved Messages chat turns Telegram's cloud into a transfer drawer
-between your Amiga and your phone/PC. Click places the text cursor in the
-composer and the search box; an Iconify menu item parks the client on a
-Workbench AppIcon. The program is now called TelegramAmiga. (0.0.5 added
-real avatars, @mentions, remembered window position and an own screen.)
+New in $VERSION: LARGE FILE UPLOADS -- files over 10 MiB now use Telegram's
+big-file protocol, with progress shown during transfer (limit on this build:
+$upload_limit). The TUI can also send/download files and accepts Workbench
+drag-and-drop. In the GUI you can select transcript or composer text and
+Copy/Cut/Paste it. Messages edited on another Telegram device update live,
+and incoming activity keeps updating while you compose.
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
@@ -183,14 +183,21 @@ $req_en
 
 Two launchers
 -------------
-- TelegramGUI -- the native Intuition/GadTools GUI (chat list + conversation).
+- TelegramAmiga -- the native Intuition/GadTools GUI (chat list + conversation).
   Double-click it: it starts the GUI directly, with no flashing console window.
-- TelegramTUI -- a full-screen text/console client for low-end or mouse-less
+- TelegramAmiga-TUI -- a full-screen text/console client for low-end or mouse-less
   setups. Both share the same login and the same saved session.
+  To quit it: /quit, Ctrl+C, or the window's close gadget. The window then
+  stays so you can read the last lines: one more click on the close gadget
+  dismisses it.
+  Sending a file by drag-and-drop: type "/sendfile " in the chat, then drop
+  the file's icon straight onto the console window (AmigaOS 3.x, MorphOS,
+  AROS) or onto the "TG drop" Workbench icon (AmigaOS 4.x, where the system
+  reserves window drops); the path appears in the input line, Enter sends.
 
 First start (logging in)
 ------------------------
-1. Unpack the drawer and double-click TelegramGUI (or TelegramTUI).
+1. Unpack the drawer and double-click TelegramAmiga (or TelegramAmiga-TUI).
 2. If there is no saved login, a login panel appears. Enter your phone number
    in full international form (for example +39 333 1234567), then the code
    Telegram sends you. If your account has a cloud password (2FA), type it on
@@ -222,12 +229,18 @@ Using the GUI
 - FILES: a message carrying a file shows as [File: name (size)]. Right-click
   it and pick Download -- the file lands in the downloads/ drawer. To send
   one, open the chat and use the Telegram menu's "Send file..." (Amiga+F):
-  a standard file requester picks it, up to 10 MB.
+  a standard file requester picks it, up to $upload_limit on this build.
+  Large transfers show percentage progress in the status line.
 - SAVED MESSAGES: the last chat in the list is you. Send files or notes to
   it from your phone or PC and pick them up on the Amiga (or the other way
   round) -- Telegram's cloud as your transfer drawer. It cannot be removed.
 - Click inside the composer or the search box to place the text cursor
   exactly where you want to edit.
+- Drag across transcript or composer text to select it. Right-Amiga+C copies;
+  Right-Amiga+X cuts selected composer text; Right-Amiga+V pastes. The same
+  actions are in the Telegram menu.
+- Edits made from another Telegram client update the visible message live.
+  Incoming activity also keeps updating while you type.
 - "Iconify" in the Telegram menu (Amiga+I) closes the window and leaves a
   TelegramAmiga icon on the Workbench: double-click it to come back.
 - F1..F10 jump to chats 1..10 (Shift+F1..F10 to 11..20).
@@ -296,14 +309,22 @@ $req_it
 
 I due launcher
 --------------
-- TelegramGUI -- la GUI nativa Intuition/GadTools (lista chat + conversazione).
+- TelegramAmiga -- la GUI nativa Intuition/GadTools (lista chat + conversazione).
   Doppio click: avvia direttamente la GUI, senza finestra console che lampeggia.
-- TelegramTUI -- un client testuale a schermo intero per macchine leggere o
+- TelegramAmiga-TUI -- un client testuale a schermo intero per macchine leggere o
   senza mouse. Condividono lo stesso login e la stessa sessione salvata.
+  Per uscire: /quit, Ctrl+C o il gadget di chiusura della finestra. La
+  finestra poi resta aperta per farti leggere le ultime righe: un altro
+  click sul gadget la congeda.
+  Inviare un file col drag-and-drop: scrivi "/sendfile " in chat, poi
+  trascina l'icona del file direttamente sulla finestra console (AmigaOS
+  3.x, MorphOS, AROS) o sull'icona Workbench "TG drop" (AmigaOS 4.x, dove i
+  drop sulla finestra sono riservati al sistema); il percorso compare nella
+  riga di input, Invio lo spedisce.
 
 Primo avvio (accesso)
 ---------------------
-1. Scompatta il drawer e fai doppio click su TelegramGUI (o TelegramTUI).
+1. Scompatta il drawer e fai doppio click su TelegramAmiga (o TelegramAmiga-TUI).
 2. Se non c'e' un login salvato, compare il pannello di accesso. Inserisci il
    numero di telefono in formato internazionale completo (es. +39 333 1234567),
    poi il codice che Telegram ti invia. Se il tuo account ha una password cloud
@@ -334,12 +355,18 @@ Usare la GUI
 - FILE: un messaggio con allegato appare come [File: nome (dimensione)].
   Click destro -> Download e il file finisce nel cassetto downloads/. Per
   inviarne uno: apri la chat e usa "Send file..." nel menu Telegram
-  (Amiga+F): lo scegli dal requester di sistema, fino a 10 MB.
+  (Amiga+F): lo scegli dal requester di sistema, fino a $upload_limit su
+  questa build. Durante i trasferimenti grandi compare la percentuale.
 - MESSAGGI SALVATI: l'ultima chat della lista sei tu. Mandaci file o appunti
   dal telefono o dal PC e riprendili sull'Amiga (o viceversa) -- il cloud di
   Telegram come cassetto di scambio. Non si puo' rimuovere.
 - Un click dentro il composer o la casella di ricerca posiziona il cursore
   esattamente dove vuoi correggere.
+- Trascina sul testo della conversazione o del composer per selezionarlo.
+  Amiga-destro+C copia; Amiga-destro+X taglia il testo selezionato nel composer;
+  Amiga-destro+V incolla. Le stesse azioni sono nel menu Telegram.
+- Le modifiche fatte da un altro client Telegram aggiornano il messaggio
+  visibile in tempo reale. Anche l'attivita' in arrivo continua mentre scrivi.
 - "Iconify" nel menu Telegram (Amiga+I) chiude la finestra e lascia
   un'icona TelegramAmiga sul Workbench: doppio click per tornare.
 - F1..F10 saltano alle chat 1..10 (Shift+F1..F10 alle 11..20).
@@ -451,16 +478,17 @@ beyond your system's own bsdsocket stack.
 
 Two programs share one engine and one saved login:
 
-  TelegramGUI  - the native Intuition/GadTools GUI: chat list with real
+  TelegramAmiga  - the native Intuition/GadTools GUI: chat list with real
                  profile-picture avatars, message bubbles, scrollbars,
                  mouse wheel, context menus.
-  TelegramTUI  - the text/console client, at home on a 68030 with a
+  TelegramAmiga-TUI  - the text/console client, at home on a 68030 with a
                  serial console or an ssh session.
 
 WHAT CAN I ACTUALLY DO WITH IT?
 -------------------------------
 Read and send messages in private chats, groups and channels. Download a
-received file (right-click -> Download) or send one from disk, up to 10 MB.
+received file (right-click -> Download) or send one from disk, up to
+$upload_limit on this build, including files over 10 MiB.
 Use the pinned Saved Messages chat as a cloud transfer drawer between the
 Amiga and your phone or PC. Reply to a specific message (right-click it).
 Edit or delete your own messages. See
@@ -476,7 +504,7 @@ on its own screen if you prefer a dedicated page for chatting.
 GETTING STARTED
 ---------------
 1. Copy this drawer to a WRITABLE volume (not from the archive directly).
-2. Double-click TelegramGUI (or TelegramTUI on very low-end setups).
+2. Double-click TelegramAmiga (or TelegramAmiga-TUI on very low-end setups).
 3. First run walks you through the normal Telegram login: phone number,
    the code Telegram sends you, and your cloud password if you use
    two-factor. That is all -- next time it goes straight to your chats.
@@ -539,13 +567,16 @@ package_one() {
     mkdir -p "$dest"
 
     cp "$binary" "$dest/TelegramAmiga"
-    # Launchers (shared with the repo). TelegramGUI's icon is flashless
-    # (DefaultTool = TelegramAmiga, Stack 1 MiB): a double-click starts the GUI
-    # directly. TelegramTUI keeps the IconX console launcher.
-    cp "$ROOT_DIR/scripts/TelegramGUI" "$dest/TelegramGUI"
-    cp "$ROOT_DIR/scripts/TelegramTUI" "$dest/TelegramTUI"
-    cp "$ROOT_DIR/assets/TelegramGUI.info" "$dest/TelegramGUI.info"
-    cp "$ROOT_DIR/assets/TelegramAmigaOS4.info" "$dest/TelegramTUI.info"
+    # Self-launching, script-free (papiosaur / Easy2Install suggestion). Two
+    # byte-identical flashless icons (DefaultTool = TelegramAmiga, Stack 1 MiB)
+    # both point at the one binary; the binary reads the WBStartup arg names and
+    # picks GUI vs TUI. TelegramAmiga.info owns the binary itself -> GUI.
+    # TelegramAmiga-TUI.info owns a 0-byte marker whose name carries "TUI" -> the
+    # binary opens a CON: window and runs the console client. No IconX, no shell
+    # scripts.
+    cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
+    : > "$dest/TelegramAmiga-TUI"
+    cp "$ROOT_DIR/assets/TelegramAmiga-TUI.info" "$dest/TelegramAmiga-TUI.info"
     mkdir -p "$dest/data"
     cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/data/telegram-api.txt"
 
@@ -584,7 +615,7 @@ package_one() {
         amiwork="$AMINET_ROOT/$AMINET_DRAWER"
         lhafile="$AMINET_ROOT/$lhaname.lha"
         rm -rf "$amiwork"; mkdir -p "$amiwork"
-        cp "$dest"/* "$amiwork"/
+        cp -R "$dest"/* "$amiwork"/ # -R: the package now contains data/
         rm -f "$lhafile"
         ( cd "$AMINET_ROOT" && "$LHA_BIN" a "$lhaname.lha" "$AMINET_DRAWER" >/dev/null )
         rm -rf "$amiwork"
@@ -626,4 +657,48 @@ if [ "$AMINET" = "1" ] && ls "$AMINET_ROOT"/TelegramAmiga*.lha >/dev/null 2>&1; 
     echo "Upload (Michele): FTP main.aminet.net -> cd /new -> binary -> put each"
     echo "  TelegramAmiga[<-suffix>].lha AND matching .readme (5 + 5 files)."
     echo "  Web form may be back at https://aminet.net/upload. See memory/aminet-publishing.md"
+fi
+
+# --- OS4Depot (fixed release channel since 0.0.6) ----------------------------
+# Anonymous FTP to os4depot.net /upload: the archive FIRST, the readme LAST
+# (their processor keys off the readme). Readme = THEIR header format
+# (name:/description:/.../hend:) + our Aminet body. Queue shows on
+# https://os4depot.net/index.php?function=uploads after ~15 min.
+if [ "$AMINET" = "1" ] && [ -f "$AMINET_ROOT/TelegramAmiga-OS4.lha" ]; then
+    cp "$AMINET_ROOT/TelegramAmiga-OS4.lha" "$AMINET_ROOT/telegramamiga.lha"
+    {
+        printf 'name:TelegramAmiga\n'
+        printf 'description:Native MTProto Telegram chat client\n'
+        printf 'version:%s\n' "$VERSION"
+        printf 'author:Michele Dipace\n'
+        printf 'submitter:Michele Dipace\n'
+        printf 'email:michele.dipace@kaffeine.net\n'
+        printf 'url:%s\n' "$REPO_URL"
+        printf 'category:network/chat\n'
+        printf 'requirements:AmigaOS 4.x with its TCP/IP stack\n'
+        printf 'license:MIT\n'
+        printf 'distribute:yes\n'
+        printf 'minosversion:4.0\n'
+        printf 'hend:\n\n'
+        # body: the Aminet OS4 readme minus its header block
+        awk 'flip { print } /^$/ && !flip { flip = 1 }' \
+            "$AMINET_ROOT/TelegramAmiga-OS4.readme"
+    } > "$AMINET_ROOT/telegramamiga_lha.readme"
+    echo
+    echo "OS4Depot pair ready: telegramamiga.lha + telegramamiga_lha.readme"
+    echo "Upload: curl -T telegramamiga.lha ftp://os4depot.net/upload/ --user anonymous:"
+    echo "        then the readme (LAST). Queue: os4depot.net ?function=uploads"
+fi
+
+# --- MorphOS-Storage (fixed release channel since 0.0.6) ---------------------
+# Web form only (https://www.morphos-storage.net/?page=submit), no account but
+# a CAPTCHA: Michele submits. Hand him TelegramAmiga-MOS.lha + its readme and
+# the description block; agent prepares, human clicks.
+if [ "$AMINET" = "1" ] && [ -f "$AMINET_ROOT/TelegramAmiga-MOS.lha" ]; then
+    echo
+    echo "MorphOS-Storage (Michele, web form + captcha):"
+    echo "  https://www.morphos-storage.net/?page=submit"
+    echo "  archive: $AMINET_ROOT/TelegramAmiga-MOS.lha"
+    echo "  readme:  $AMINET_ROOT/TelegramAmiga-MOS.readme"
+    echo "  name: TelegramAmiga  version: $VERSION"
 fi

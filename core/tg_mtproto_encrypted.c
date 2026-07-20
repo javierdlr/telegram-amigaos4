@@ -8,7 +8,21 @@
 #include "tg_mtproto_crypto.h"
 #include "tg_mtproto_encrypted.h"
 
+/* Size of one MTProto message's AES plaintext (envelope + body + padding), used
+   for the intermediate decrypt/encrypt buffers below. It MUST track
+   TG_MTPROTO_ENCRYPTED_BODY_MAX: a getFile reply whose body fits out->body[]
+   still trips the sizeof(decrypted) guard in decrypt_encrypted_message_x if this
+   is smaller. This was the OS4/MorphOS/AROS file-download failure -- the body[]
+   buffer was raised to 72 KB for a 64 KB chunk, but this intermediate buffer
+   stayed at 12 KB, so every full-chunk reply (encrypted ~66 KB) was rejected as
+   "no reply @off 0" while m68k's 8 KB chunks slipped under 12 KB and worked.
+   (Same lesson as the body[] fix: size EVERY buffer in the recv->decrypt chain.)
+   m68k stays lean at 12 KB (8 KB chunk); the other lanes hold a 64 KB chunk. */
+#if defined(__m68k__)
 #define TG_MTPROTO_ENCRYPTED_PACKET_MAX 12288U
+#else
+#define TG_MTPROTO_ENCRYPTED_PACKET_MAX 73728U
+#endif
 
 static unsigned long tg_read_le32(const unsigned char *data)
 {
@@ -330,6 +344,49 @@ int tg_mtproto_encrypted_self_test(void)
         decoded.body_length != sizeof(body) ||
         memcmp(decoded.body, body, sizeof(body)) != 0) {
         return 2;
+    }
+
+    /* Full-chunk round-trip: a getFile download chunk is RAW (uncompressed) and
+       must survive encrypt->decrypt whole. This is the exact path that failed on
+       OS4/MorphOS/AROS when the intermediate plaintext/decrypted buffers stayed
+       at 12 KB while body[] was 72 KB: a full 64 KB chunk (8 KB on m68k) has to
+       round-trip without tripping the sizeof() guards. Without the platform-gated
+       TG_MTPROTO_ENCRYPTED_PACKET_MAX this returns 2 on the non-m68k lanes. */
+    {
+#if defined(__m68k__)
+        static unsigned char big[8192];
+#else
+        static unsigned char big[65536];
+#endif
+        static unsigned char big_packet[TG_MTPROTO_ENCRYPTED_PACKET_MAX + 64U];
+        static unsigned char big_pad[32];
+        static tg_mtproto_encrypted_message big_decoded;
+        tg_mtproto_tl_writer big_writer;
+        unsigned long pad_len;
+        unsigned int j;
+
+        for (j = 0U; j < sizeof(big); ++j) {
+            big[j] = (unsigned char)((j * 7U + 3U) & 0xffU);
+        }
+        pad_len = 12UL;
+        while (((32UL + sizeof(big) + pad_len) % 16UL) != 0UL) {
+            ++pad_len;
+        }
+        for (j = 0U; j < (unsigned int)pad_len; ++j) {
+            big_pad[j] = (unsigned char)(0x50U + j);
+        }
+        tg_mtproto_tl_writer_init(&big_writer, big_packet, sizeof(big_packet));
+        if (tg_mtproto_write_encrypted_message(
+                &big_writer, auth_key, 0x99aabbccUL, 0xddeeff00UL, session_id,
+                0x6777e5ebUL, 0x0005976dUL, 1UL, big, sizeof(big),
+                big_pad, pad_len) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_decrypt_encrypted_message_x(
+                big_packet, big_writer.length, auth_key, 0U, &big_decoded) !=
+                TG_MTPROTO_TL_OK ||
+            big_decoded.body_length != sizeof(big) ||
+            memcmp(big_decoded.body, big, sizeof(big)) != 0) {
+            return 2;
+        }
     }
 
     return 0;

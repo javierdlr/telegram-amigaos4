@@ -38,6 +38,9 @@
    composer was focused, and "keep composer focus after send" leaves it focused,
    so reception + the typing header silently stopped until a chat switch. */
 #define TG_GUI_COMPOSE_IDLE_POLL_SECONDS 3UL
+/* While keys are flowing, drain at most one already-queued MTProto frame each
+   second. This path sends no RPC and therefore cannot leave a reply pending. */
+#define TG_GUI_COMPOSE_RECEIVE_SECONDS 1UL
 
 #if defined(TG_GUI_AMIGA)
 
@@ -52,6 +55,7 @@
 #include <exec/memory.h>
 #include <intuition/intuition.h>
 #include <devices/timer.h>
+#include <devices/clipboard.h>
 #include <libraries/asl.h>
 #include <workbench/workbench.h>
 #include <workbench/startup.h>
@@ -114,9 +118,9 @@ typedef struct timerequest tg_gui_timereq;
 #endif
 
 /* graphics.library is not opened by the C startup or by any platform file, so
-   this translation unit owns its base (single definition program-wide). The
-   OS4 type is a plain Library plus a separate interface. intuition.library's
-   base is defined by the platform file; we only borrow it here. */
+   this translation unit defines and owns its base. intuition.library's global
+   is defined by the platform file, but this window owner holds its open
+   reference for the GUI lifetime. OS4 pairs each base with an interface. */
 #if defined(__amigaos4__)
 struct Library *GfxBase = 0;
 struct GraphicsIFace *IGraphics = 0;
@@ -127,6 +131,96 @@ struct GfxBase *GfxBase = 0;
 struct Library *GadToolsBase = 0;
 #endif
 
+/* Core GUI libraries share the window lifetime. Keep the required
+   Intuition/Graphics pair and the optional GadTools menu in one symmetric
+   owner so every OS4 interface is dropped before its base is closed. ASL and
+   Workbench/Icon deliberately remain scoped to the requester and iconified
+   wait: holding them here would increase the parked footprint. */
+static void tg_gui_amiga_close_core_libs(void)
+{
+#if defined(__amigaos4__)
+    if (IGadTools != 0) {
+        DropInterface((struct Interface *)IGadTools);
+        IGadTools = 0;
+    }
+#endif
+    if (GadToolsBase != 0) {
+        CloseLibrary(GadToolsBase);
+        GadToolsBase = 0;
+    }
+#if defined(__amigaos4__)
+    if (IGraphics != 0) {
+        DropInterface((struct Interface *)IGraphics);
+        IGraphics = 0;
+    }
+#endif
+    if (GfxBase != 0) {
+        CloseLibrary((struct Library *)GfxBase);
+        GfxBase = 0;
+    }
+#if defined(__amigaos4__)
+    if (IIntuition != 0) {
+        DropInterface((struct Interface *)IIntuition);
+        IIntuition = 0;
+    }
+#endif
+    if (IntuitionBase != 0) {
+        CloseLibrary((struct Library *)IntuitionBase);
+        IntuitionBase = 0;
+    }
+}
+
+static int tg_gui_amiga_open_core_libs(void)
+{
+#if defined(__amigaos4__)
+    IntuitionBase = OpenLibrary((CONST_STRPTR)"intuition.library", 39L);
+#else
+    IntuitionBase = (struct IntuitionBase *)OpenLibrary(
+        (CONST_STRPTR)"intuition.library", 39L);
+#endif
+    if (IntuitionBase == 0) {
+        return 0;
+    }
+#if defined(__amigaos4__)
+    IIntuition = (struct IntuitionIFace *)GetInterface(
+        (struct Library *)IntuitionBase, "main", 1L, 0);
+    if (IIntuition == 0) {
+        tg_gui_amiga_close_core_libs();
+        return 0;
+    }
+    GfxBase = OpenLibrary((CONST_STRPTR)"graphics.library", 39L);
+    if (GfxBase != 0) {
+        IGraphics = (struct GraphicsIFace *)GetInterface(GfxBase, "main", 1L,
+                                                         0);
+        if (IGraphics == 0) {
+            CloseLibrary(GfxBase);
+            GfxBase = 0;
+        }
+    }
+#else
+    GfxBase = (struct GfxBase *)OpenLibrary(
+        (CONST_STRPTR)"graphics.library", 39L);
+#endif
+    if (GfxBase == 0) {
+        tg_gui_amiga_close_core_libs();
+        return 0;
+    }
+
+    /* A missing GadTools library only removes the menu, as before. */
+    GadToolsBase = OpenLibrary((CONST_STRPTR)"gadtools.library", 39L);
+#if defined(__amigaos4__)
+    if (GadToolsBase != 0) {
+        IGadTools = (struct GadToolsIFace *)GetInterface(GadToolsBase, "main",
+                                                         1L, 0);
+        if (IGadTools == 0) {
+            CloseLibrary(GadToolsBase);
+            GadToolsBase = 0;
+        }
+    }
+#endif
+    return 1;
+}
+
 /* Menu item ids (GadTools NM_USERDATA), decoded on IDCMP_MENUPICK. */
 #define TG_MENU_ABOUT  1
 #define TG_MENU_HELP   2
@@ -135,6 +229,9 @@ struct Library *GadToolsBase = 0;
 #define TG_MENU_SENDFILE 5
 #define TG_MENU_ICONIFY 6
 #define TG_MENU_OWNSCREEN 7
+#define TG_MENU_COPY 8
+#define TG_MENU_PASTE 9
+#define TG_MENU_CUT 10
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -294,13 +391,14 @@ static ULONG tg_gui_amiga_rgb32(unsigned char component);
 #else
 #define TG_GUI_AV_SLOTS 32
 #endif
-#if defined(__m68k__)
-#define TG_GUI_AV_POOL 48        /* paletted screens: pens are scarce */
-#define TG_GUI_AV_SHARE_D 192L   /* share pool pens aggressively */
-#else
-#define TG_GUI_AV_POOL 96        /* truecolor screens: pens are cheap */
-#define TG_GUI_AV_SHARE_D 48L    /* much finer colour steps */
-#endif
+/* Pen budget for the shared avatar pool, chosen at RUNTIME from the screen
+   depth when the pool is armed at window open: paletted screens (<= 8 bit)
+   get the lean profile (pens are scarce and shared with Workbench), truecolor
+   RTG screens the rich one. This used to be a compile-time m68k gate, which
+   kept avatars needlessly dull on truecolor RTG under OS3 (e.g. a Vampire):
+   the machine is m68k but its screen affords the fine profile. Arrays are
+   sized for the rich cap; the lean profile just uses less of them. */
+#define TG_GUI_AV_POOL_MAX 96
 
 typedef struct tg_gui_av_slot {
     unsigned long id_hi;
@@ -312,9 +410,14 @@ typedef struct tg_gui_av_slot {
 static tg_gui_av_slot tg_gui_av_slots[TG_GUI_AV_SLOTS];
 static unsigned long tg_gui_av_evict = 0UL;
 static struct ColorMap *tg_gui_av_cmap = 0;
-static LONG tg_gui_av_pool_pen[TG_GUI_AV_POOL];
-static unsigned char tg_gui_av_pool_rgb[TG_GUI_AV_POOL][3];
+static LONG tg_gui_av_pool_pen[TG_GUI_AV_POOL_MAX];
+static unsigned char tg_gui_av_pool_rgb[TG_GUI_AV_POOL_MAX][3];
 static int tg_gui_av_pool_n = 0;
+/* Runtime profile (set where the cmap is armed; lean defaults are the safe
+   fallback if the depth probe ever fails). */
+static int tg_gui_av_pool_cap = 48;   /* 48 paletted / 96 truecolor */
+static long tg_gui_av_share_d = 192L; /* 192 paletted / 48 truecolor */
+static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 
 static void tg_gui_av_reset(void)
 {
@@ -354,6 +457,68 @@ void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo)
     }
 }
 
+/* Obtain one pool pen for an exact RGB (used by the seeder; the miss path in
+   pen_for keeps its own inline copy because it needs the pen value back).
+   Skips silently when the pool is full or the obtain fails. */
+static void tg_gui_av_pool_add(unsigned char r, unsigned char g,
+                               unsigned char b)
+{
+    LONG p;
+
+    if (tg_gui_av_pool_n >= tg_gui_av_pool_cap || tg_gui_av_cmap == 0) {
+        return;
+    }
+    p = ObtainBestPenA(tg_gui_av_cmap, tg_gui_amiga_rgb32(r),
+                       tg_gui_amiga_rgb32(g), tg_gui_amiga_rgb32(b), 0);
+    if (p != -1) {
+        tg_gui_av_pool_pen[tg_gui_av_pool_n] = p;
+        tg_gui_av_pool_rgb[tg_gui_av_pool_n][0] = r;
+        tg_gui_av_pool_rgb[tg_gui_av_pool_n][1] = g;
+        tg_gui_av_pool_rgb[tg_gui_av_pool_n][2] = b;
+        ++tg_gui_av_pool_n;
+    }
+}
+
+/* Pre-seed the shared pool with a neutral colour lattice. Without this the
+   first 2-3 avatars filled the pool with THEIR shades and, once full, every
+   later colour snapped to the nearest of those with no bound: whites picked
+   up a pink or blue cast depending on which avatars happened to paint first
+   (tester reports: pinkish whites on MorphOS, blueish on OS4 -- same code,
+   different chat lists). A fixed 4x4x4 RGB cube plus a grey ramp bounds the
+   full-pool fallback error and keeps neutrals neutral; the remaining slots
+   stay dynamic for frequent exact colours. Paletted screens (lean profile,
+   any CPU) seed greys only: pens are scarce there and the coarse share step
+   already merges shades. */
+static void tg_gui_av_seed_pool(void)
+{
+    static const unsigned char lv[4] = { 0U, 85U, 170U, 255U };
+    int r;
+    int g;
+    int b;
+    int i;
+
+    if (tg_gui_av_rich) { /* truecolor: full cube + grey ramp (76 of 96) */
+        for (r = 0; r < 4; ++r) {
+            for (g = 0; g < 4; ++g) {
+                for (b = 0; b < 4; ++b) {
+                    tg_gui_av_pool_add(lv[r], lv[g], lv[b]);
+                }
+            }
+        }
+        for (i = 17; i < 255; i += 17) {
+            if ((i % 85) != 0) { /* skip the greys already in the cube */
+                tg_gui_av_pool_add((unsigned char)i, (unsigned char)i,
+                                   (unsigned char)i);
+            }
+        }
+    } else { /* paletted: 6 greys keep whites neutral on a lean budget */
+        for (i = 0; i <= 255; i += 51) {
+            tg_gui_av_pool_add((unsigned char)i, (unsigned char)i,
+                               (unsigned char)i);
+        }
+    }
+}
+
 /* Pool pen for an RGB pixel: reuse a close pool entry, else obtain a new one
    (PRECISION-default like the theme pens), else nearest of what we have. */
 static LONG tg_gui_av_pen_for(const unsigned char *rgb)
@@ -362,6 +527,9 @@ static LONG tg_gui_av_pen_for(const unsigned char *rgb)
     int best = -1;
     long best_d = 0x7fffffffL;
 
+    if (tg_gui_av_pool_n == 0) {
+        tg_gui_av_seed_pool(); /* once per screen (reset drops the pool) */
+    }
     for (i = 0; i < tg_gui_av_pool_n; ++i) {
         long dr = (long)tg_gui_av_pool_rgb[i][0] - (long)rgb[0];
         long dg = (long)tg_gui_av_pool_rgb[i][1] - (long)rgb[1];
@@ -373,10 +541,10 @@ static LONG tg_gui_av_pen_for(const unsigned char *rgb)
             best = i;
         }
     }
-    if (best >= 0 && best_d <= TG_GUI_AV_SHARE_D) {
+    if (best >= 0 && best_d <= tg_gui_av_share_d) {
         return tg_gui_av_pool_pen[best]; /* close enough: share */
     }
-    if (tg_gui_av_pool_n < TG_GUI_AV_POOL && tg_gui_av_cmap != 0) {
+    if (tg_gui_av_pool_n < tg_gui_av_pool_cap && tg_gui_av_cmap != 0) {
         LONG p = ObtainBestPenA(tg_gui_av_cmap, tg_gui_amiga_rgb32(rgb[0]),
                                 tg_gui_amiga_rgb32(rgb[1]),
                                 tg_gui_amiga_rgb32(rgb[2]), 0);
@@ -860,6 +1028,7 @@ static void tg_gui_window_open_selection(tg_gui_state *state, int sel,
     tg_gui_window_apply_selection(state);
     if (tg_gui_session_is_open()) {
         state->message_count = 0;
+        state->msg_gen++;
         tg_gui_window_paint(state, backend);
         tg_gui_log("open_selection: open_chat begin");
         (void)tg_gui_session_open_chat(state->chats[sel].index, stdout);
@@ -1116,6 +1285,187 @@ static void tg_gui_window_login_key(tg_gui_state *state, UWORD code,
 
 /* The right-button menu strip (laid out by GadTools so the metrics follow the
    screen font). Quit also gets the standard Right-Amiga+Q shortcut. */
+/* ---- clipboard.device, zero-dep IFF-FTXT ---------------------------------
+   Copy/paste for issue #5. The IFF is built and parsed BY HAND (FORM/FTXT/
+   CHRS) with explicit big-endian 32-bit sizes: IFF is big-endian on the
+   clipboard while the AROS lanes are little-endian CPUs. Unit 0, the one
+   every Amiga clipboard tool shares. */
+#if defined(TG_GUI_AMIGA)
+static void tg_gui_clip_u32be(unsigned char *p, unsigned long v)
+{
+    p[0] = (unsigned char)(v >> 24);
+    p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);
+    p[3] = (unsigned char)v;
+}
+
+static unsigned long tg_gui_clip_u32be_read(const unsigned char *p)
+{
+    return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) |
+           ((unsigned long)p[2] << 8) | (unsigned long)p[3];
+}
+
+static struct IOClipReq *tg_gui_clip_open(struct MsgPort **port_out)
+{
+    struct MsgPort *port;
+    struct IOClipReq *io;
+
+    port = CreateMsgPort();
+    if (port == 0) {
+        return 0;
+    }
+    io = (struct IOClipReq *)CreateIORequest(port, sizeof(struct IOClipReq));
+    if (io == 0 ||
+        OpenDevice((CONST_STRPTR)"clipboard.device", 0,
+                   (struct IORequest *)io, 0) != 0) {
+        if (io != 0) {
+            DeleteIORequest((struct IORequest *)io);
+        }
+        DeleteMsgPort(port);
+        return 0;
+    }
+    *port_out = port;
+    return io;
+}
+
+static void tg_gui_clip_close(struct IOClipReq *io, struct MsgPort *port)
+{
+    CloseDevice((struct IORequest *)io);
+    DeleteIORequest((struct IORequest *)io);
+    DeleteMsgPort(port);
+}
+
+/* Writes `text` to clip unit 0 as FORM FTXT / CHRS. 1 = ok. */
+static int tg_gui_clip_write_text(const char *text)
+{
+    static unsigned char iff[TG_GUI_MSG_TEXT_MAX + 24];
+    struct MsgPort *port;
+    struct IOClipReq *io;
+    unsigned long tlen, even;
+    int ok = 0;
+
+    if (text == 0 || text[0] == '\0') {
+        return 0;
+    }
+    tlen = (unsigned long)strlen(text);
+    if (tlen > (unsigned long)TG_GUI_MSG_TEXT_MAX) {
+        tlen = TG_GUI_MSG_TEXT_MAX;
+    }
+    even = tlen + (tlen & 1UL);
+    memcpy(iff, "FORM", 4);
+    tg_gui_clip_u32be(iff + 4, 4UL + 8UL + even); /* FTXT + CHRS hdr + data */
+    memcpy(iff + 8, "FTXT", 4);
+    memcpy(iff + 12, "CHRS", 4);
+    tg_gui_clip_u32be(iff + 16, tlen);
+    memcpy(iff + 20, text, tlen);
+    if (tlen & 1UL) {
+        iff[20 + tlen] = 0; /* IFF pad byte */
+    }
+    io = tg_gui_clip_open(&port);
+    if (io == 0) {
+        return 0;
+    }
+    io->io_Offset = 0;
+    io->io_ClipID = 0;
+    io->io_Command = CMD_WRITE;
+    io->io_Data = (STRPTR)iff;
+    io->io_Length = (LONG)(20UL + even);
+    if (DoIO((struct IORequest *)io) == 0) {
+        io->io_Command = CMD_UPDATE;
+        ok = DoIO((struct IORequest *)io) == 0;
+    }
+    tg_gui_clip_close(io, port);
+    return ok;
+}
+
+/* One positioned CMD_READ helper; the device advances io_Offset itself. */
+static long tg_gui_clip_read(struct IOClipReq *io, void *buf,
+                             unsigned long len)
+{
+    io->io_Command = CMD_READ;
+    io->io_Data = (STRPTR)buf;
+    io->io_Length = (LONG)len;
+    if (DoIO((struct IORequest *)io) != 0) {
+        return -1;
+    }
+    return (long)io->io_Actual;
+}
+
+/* Reads the first CHRS chunk of a FORM FTXT clip into out (NUL-terminated).
+   Returns the number of bytes copied (0 = empty clip / not text). */
+static unsigned long tg_gui_clip_read_text(char *out, unsigned long out_size)
+{
+    struct MsgPort *port;
+    struct IOClipReq *io;
+    unsigned char hdr[12];
+    unsigned long copied = 0;
+
+    if (out == 0 || out_size == 0UL) {
+        return 0;
+    }
+    out[0] = '\0';
+    io = tg_gui_clip_open(&port);
+    if (io == 0) {
+        return 0;
+    }
+    io->io_Offset = 0;
+    io->io_ClipID = 0;
+    if (tg_gui_clip_read(io, hdr, 12UL) == 12L &&
+        memcmp(hdr, "FORM", 4) == 0 && memcmp(hdr + 8, "FTXT", 4) == 0) {
+        for (;;) {
+            unsigned char chdr[8];
+            unsigned long clen;
+
+            if (tg_gui_clip_read(io, chdr, 8UL) != 8L) {
+                break;
+            }
+            clen = tg_gui_clip_u32be_read(chdr + 4);
+            if (memcmp(chdr, "CHRS", 4) == 0 && copied == 0UL) {
+                unsigned long want = clen;
+
+                if (want > out_size - 1UL) {
+                    want = out_size - 1UL;
+                }
+                if (want > 0UL &&
+                    tg_gui_clip_read(io, out, want) == (long)want) {
+                    copied = want;
+                }
+                out[copied] = '\0';
+                break; /* first text chunk is all we paste */
+            }
+            /* skip a foreign chunk (+ IFF pad) by dummy reads */
+            {
+                static unsigned char sink[256];
+                unsigned long skip = clen + (clen & 1UL);
+
+                while (skip > 0UL) {
+                    unsigned long step = skip > sizeof(sink) ? sizeof(sink)
+                                                             : skip;
+
+                    if (tg_gui_clip_read(io, sink, step) <= 0L) {
+                        skip = 0UL;
+                        break;
+                    }
+                    skip -= step;
+                }
+            }
+        }
+    }
+    /* drain to the end so the device releases the clip */
+    {
+        static unsigned char sink[256];
+
+        while (tg_gui_clip_read(io, sink, sizeof(sink)) > 0L) {
+        }
+    }
+    tg_gui_clip_close(io, port);
+    return copied;
+}
+#endif /* TG_GUI_AMIGA */
+
+/* Cut/copy/paste live in their own Edit menu per the AmigaOS UI Style Guide
+   (an issue #5 follow-up); the MENUPICK handler keys off GTMENUITEM_USERDATA,
+   so item positions are free to move. */
 static struct NewMenu tg_gui_newmenu[] = {
     { NM_TITLE, (STRPTR)"Telegram", 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"About...", 0, 0, 0, (APTR)TG_MENU_ABOUT },
@@ -1131,6 +1481,13 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_OWNSCREEN },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
+    { NM_TITLE, (STRPTR)"Edit", 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Cut", (STRPTR)"X", 0, 0,
+      (APTR)TG_MENU_CUT },
+    { NM_ITEM,  (STRPTR)"Copy", (STRPTR)"C", 0, 0,
+      (APTR)TG_MENU_COPY },
+    { NM_ITEM,  (STRPTR)"Paste", (STRPTR)"V", 0, 0,
+      (APTR)TG_MENU_PASTE },
     { NM_END,   0, 0, 0, 0, 0 }
 };
 
@@ -1267,14 +1624,81 @@ static void tg_gui_amiga_set_rmbtrap(struct Window *win, int on)
     Permit();
 }
 
+/* Recompute the dynamic right-button trap from the current pointer position:
+   claim it (WFLG_RMBTRAP -> our transcript context menu) ONLY over a real
+   message bubble, release it everywhere else so the standard Intuition menu
+   bar opens. Driven from BOTH the MOUSEMOVE and the ~10/s INTUITICKS handlers.
+   The tick pass matters: the OS4 emulated mouse coalesces/drops moves, so a
+   move-only update could leave the trap stuck ON after the pointer had already
+   left the transcript -- a right-click on the sidebar was then delivered to us
+   (not a bubble -> nothing happens, the click is swallowed) and the menu bar
+   never appeared. The periodic re-check makes the trap self-heal within
+   ~100 ms regardless of how moves are delivered. No-op while our own context
+   menu is up (its clicks must keep reaching us). */
+static void tg_gui_window_track_rmbtrap(tg_gui_state *state,
+                                        const tg_gui_amiga_ctx *ctx,
+                                        int mouse_x, int mouse_y)
+{
+    int hx;
+    int hy;
+    int hit;
+    int over_msg;
+
+    if (state == 0 || ctx == 0 || ctx->window == 0 ||
+        state->mode != TG_GUI_MODE_CHAT || state->ctx_visible) {
+        return;
+    }
+    hx = mouse_x - ctx->origin_x;
+    hy = mouse_y - ctx->origin_y;
+    hit = tg_gui_hit_test(state, ctx->inner_w, ctx->inner_h, ctx->line_h,
+                          hx, hy);
+    over_msg = 0;
+    if (hit <= TG_GUI_HIT_MESSAGE_BASE) {
+        int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
+
+        over_msg = (mi >= 0 && mi < state->message_count &&
+                    !state->messages[mi].is_system &&
+                    state->messages[mi].id != 0UL);
+    }
+    tg_gui_amiga_set_rmbtrap(ctx->window, over_msg);
+}
+
+typedef struct tg_gui_upload_ui {
+    tg_gui_state *state;
+    tg_gui_backend *backend;
+    unsigned long last_percent;
+} tg_gui_upload_ui;
+
+static void tg_gui_window_upload_progress(unsigned long completed_parts,
+                                          unsigned long total_parts,
+                                          void *user_data)
+{
+    tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
+    unsigned long percent;
+
+    if (ui == 0 || ui->state == 0 || ui->backend == 0 ||
+        total_parts == 0UL) {
+        return;
+    }
+    percent = (completed_parts * 100UL) / total_parts;
+    if (completed_parts != 1UL && completed_parts != total_parts &&
+        percent < ui->last_percent + 5UL) {
+        return;
+    }
+    ui->last_percent = percent;
+    sprintf(ui->state->status, "Uploading... %lu%%", percent);
+    tg_gui_window_paint(ui->state, ui->backend);
+}
+
 /* "Send file...": ASL file requester -> chunk-5 uploader on the open chat.
    The requester is synchronous and system-rendered (safe while we are the
    caller); the upload itself is the same blocking on-context class as the
-   download, with the status row narrating the outcome. */
+   download, with bounded progress repaints narrating a long transfer. */
 static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
                                     tg_gui_backend *backend)
 {
     struct FileRequester *req;
+    tg_gui_upload_ui progress_ui;
     char path[256];
     int rc;
 
@@ -1334,15 +1758,26 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     }
     tg_gui_window_copy(state->status, sizeof(state->status), "Uploading...");
     tg_gui_window_paint(state, backend);
-    rc = tg_gui_session_send_document(path, stdout);
+    progress_ui.state = state;
+    progress_ui.backend = backend;
+    progress_ui.last_percent = 0UL;
+    rc = tg_gui_session_send_document(
+        path, stdout, tg_gui_window_upload_progress, &progress_ui);
     if (rc == 0) {
         tg_gui_window_copy(state->status, sizeof(state->status), "File sent");
     } else if (rc == 2) {
         tg_gui_window_copy(state->status, sizeof(state->status),
-                           "File too big (10 MB limit for now)");
+#if defined(__m68k__)
+                           "File too big (31 MiB limit on this build)");
+#else
+                           "File too big (250 MiB limit on this build)");
+#endif
     } else if (rc == 3) {
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "Could not read that file");
+    } else if (rc == 5) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "That file is empty (0 bytes)");
     } else {
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "Upload failed");
@@ -1394,6 +1829,7 @@ static void tg_gui_window_remove_selected(tg_gui_state *state,
     } else {
         state->selected_chat = 0;
         state->message_count = 0;
+        state->msg_gen++;
         state->title[0] = '\0';
         state->subtitle[0] = '\0';
         tg_gui_window_paint(state, backend);
@@ -1538,8 +1974,43 @@ static void tg_gui_window_mention_complete(tg_gui_state *state)
         caret = (unsigned long)strlen(state->input);
     }
     state->input_caret = (int)caret;
+    state->in_sel_active = 0; /* the rebuilt input invalidates a selection */
     state->mention_active = 0;
     state->mention_count = 0;
+}
+
+/* Deletes the composer's selected range, moving the caret to its start.
+   1 = a selection was consumed (callers repaint / then insert); 0 = none. */
+static int tg_gui_window_input_delete_sel(tg_gui_state *state)
+{
+    unsigned long n;
+    long a;
+    long b;
+    long lo;
+    long hi;
+
+    if (!state->in_sel_active) {
+        return 0;
+    }
+    state->in_sel_active = 0;
+    n = (unsigned long)strlen(state->input);
+    a = (long)state->in_sel_anchor;
+    b = (long)state->input_caret;
+    lo = a < b ? a : b;
+    hi = a > b ? a : b;
+    if (lo < 0) {
+        lo = 0;
+    }
+    if (hi > (long)n) {
+        hi = (long)n;
+    }
+    if (hi <= lo) {
+        return 0;
+    }
+    memmove(&state->input[lo], &state->input[hi],
+            n - (unsigned long)hi + 1UL);
+    state->input_caret = (int)lo;
+    return 1;
 }
 
 /* Load the last online search's openable results into the sidebar list so the
@@ -1665,58 +2136,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     unsigned long effective_watch;
     time_t session_boot;
     time_t last_session_poll;
+    time_t last_receive_drain;
     time_t last_key_time;
 
     if (state == 0) {
         return 2;
     }
 
-    /* We borrow the program-global IntuitionBase that the per-platform file
-       defines and that tg_platform_display_beep() also opens transiently.
-       Invariant for this lane: nothing may issue a DisplayBeep (or anything
-       routed through that shared base) between OpenWindowTagList and
-       CloseWindow below -- it would close the base out from under the live
-       window. --gui-test honours this (no network, no notifications); the real
-       client will own a single base centrally. graphics.library's base is
-       genuinely owned by this file. */
-#if defined(__amigaos4__)
-    IntuitionBase = OpenLibrary("intuition.library", 39L); /* struct Library * */
-#else
-    IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library",
-                                                        39L);
-#endif
-    if (IntuitionBase == 0) {
-        puts("gui window: cannot open intuition.library");
-        return 2;
-    }
-#if defined(__amigaos4__)
-    IIntuition = (struct IntuitionIFace *)GetInterface(
-        (struct Library *)IntuitionBase, "main", 1L, 0);
-    if (IIntuition == 0) {
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
-        puts("gui window: cannot get intuition interface");
-        return 2;
-    }
-    GfxBase = OpenLibrary("graphics.library", 39L);
-    if (GfxBase != 0) {
-        IGraphics = (struct GraphicsIFace *)GetInterface(GfxBase, "main", 1L, 0);
-        if (IGraphics == 0) {
-            CloseLibrary(GfxBase);
-            GfxBase = 0;
-        }
-    }
-#else
-    GfxBase = (struct GfxBase *)OpenLibrary("graphics.library", 39L);
-#endif
-    if (GfxBase == 0) {
-        puts("gui window: cannot open graphics.library");
-#if defined(__amigaos4__)
-        DropInterface((struct Interface *)IIntuition);
-        IIntuition = 0;
-#endif
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
+    if (!tg_gui_amiga_open_core_libs()) {
+        puts("gui window: cannot open core GUI libraries");
         return 2;
     }
 
@@ -1880,19 +2308,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     }
     if (ctx.window == 0) {
         puts("gui window: cannot open window");
-#if defined(__amigaos4__)
-        DropInterface((struct Interface *)IGraphics);
-        IGraphics = 0;
-        CloseLibrary(GfxBase);
-        GfxBase = 0;
-        DropInterface((struct Interface *)IIntuition);
-        IIntuition = 0;
-#else
-        CloseLibrary((struct Library *)GfxBase);
-        GfxBase = 0;
-#endif
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
+        tg_gui_amiga_close_core_libs();
         return 2;
     }
 
@@ -1909,6 +2325,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     tg_gui_amiga_obtain_pens(&ctx, cmap);
     tg_gui_av_reset();          /* pens are per-screen: drop stale avatar pens */
     tg_gui_av_cmap = cmap;      /* arms the real-avatar path */
+    {
+        /* Avatar pen profile from THIS screen's depth: truecolor RTG affords
+           the rich budget even on m68k (Vampire); paletted stays lean. */
+        ULONG av_depth = GetBitMapAttr(ctx.window->WScreen->RastPort.BitMap,
+                                       BMA_DEPTH);
+
+        tg_gui_av_rich = av_depth > 8UL;
+        tg_gui_av_pool_cap = tg_gui_av_rich ? TG_GUI_AV_POOL_MAX : 48;
+        tg_gui_av_share_d = tg_gui_av_rich ? 48L : 192L;
+    }
     tg_gui_amiga_measure_geometry(&ctx);
     tg_gui_amiga_buffer_alloc(&ctx); /* off-screen double-buffer (flicker-free) */
 
@@ -1916,19 +2342,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
        layout failure just leaves the window menu-less). */
     vi = 0;
     menu = 0;
-#if defined(__amigaos4__)
-    GadToolsBase = OpenLibrary("gadtools.library", 39L);
-    if (GadToolsBase != 0) {
-        IGadTools = (struct GadToolsIFace *)GetInterface(GadToolsBase, "main",
-                                                         1L, 0);
-        if (IGadTools == 0) {
-            CloseLibrary(GadToolsBase);
-            GadToolsBase = 0;
-        }
-    }
-#else
-    GadToolsBase = OpenLibrary("gadtools.library", 39L);
-#endif
     if (GadToolsBase != 0) {
         vi = GetVisualInfoA(ctx.window->WScreen, 0);
         if (vi != 0) {
@@ -2033,6 +2446,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 #endif
     session_boot = time(0);
     last_session_poll = time(0);
+    last_receive_drain = time(0);
     last_key_time = time(0);
     done = 0;
     state->composing = 0;
@@ -2216,7 +2630,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_window_paint(state, &backend);
-                } else if (msg_code == 8 || msg_code == 127) { /* BACKSPACE */
+                } else if (msg_code == 8) { /* BACKSPACE: delete BEFORE the caret */
                     unsigned long n;
                     int sc;
 
@@ -2230,6 +2644,26 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 state->search_query + sc, n - (unsigned long)sc
                                 + 1UL);
                         state->search_caret = sc - 1;
+                        state->search_dirty = 1; /* re-search after the pause */
+                        search_idle_ticks = 0;   /* restart the debounce */
+                        last_key_time = time(0);
+                        tg_gui_window_copy(state->status, sizeof(state->status),
+                                           "Searching when you pause...");
+                        tg_gui_window_paint(state, &backend);
+                    }
+                } else if (msg_code == 127) { /* Canc/Del: delete AT the caret */
+                    unsigned long n;
+                    int sc;
+
+                    n = (unsigned long)strlen(state->search_query);
+                    sc = state->search_caret;
+                    if (sc < 0 || sc > (int)n) {
+                        sc = (int)n;
+                    }
+                    if (sc < (int)n) { /* forward-delete: pull the tail one left */
+                        memmove(state->search_query + sc,
+                                state->search_query + sc + 1,
+                                n - (unsigned long)sc);
                         state->search_dirty = 1; /* re-search after the pause */
                         search_idle_ticks = 0;   /* restart the debounce */
                         last_key_time = time(0);
@@ -2278,6 +2712,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else if (msg_code == 13 || msg_code == 10) {
                     if (state->input[0] != '\0') {
                         if (state->edit_to_id != 0UL) {
+                            state->in_sel_active = 0;
                             /* Edit mode: save the edit, then leave edit mode (the
                                bubble is updated in place by the session call). */
                             (void)tg_gui_session_edit(state->input,
@@ -2287,6 +2722,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                        state->reply_to_id,
                                                        stdout) == 0) {
                             tg_gui_history_add(state, state->input);
+                            state->in_sel_active = 0;
                             state->reply_to_id = 0UL; /* clear only on success */
                             state->reply_sender[0] = '\0';
                             state->reply_snippet[0] = '\0';
@@ -2320,10 +2756,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Live - F1-F10 chats, Q quits");
                     tg_gui_window_paint(state, &backend);
-                } else if (msg_code == 8 || msg_code == 127) {
+                } else if (msg_code == 8) { /* BACKSPACE: delete BEFORE the caret */
                     unsigned long n;
                     unsigned long c;
 
+                    if (tg_gui_window_input_delete_sel(state)) {
+                        /* a selection consumes the keypress whole */
+                        tg_gui_window_mention_refresh(state);
+                        tg_gui_window_paint(state, &backend);
+                    } else {
                     n = (unsigned long)strlen(state->input);
                     c = (unsigned long)state->input_caret;
                     if (c > n) {
@@ -2337,10 +2778,33 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
+                    }
+                } else if (msg_code == 127) { /* Canc/Del: delete AT the caret */
+                    unsigned long n;
+                    unsigned long c;
+
+                    if (tg_gui_window_input_delete_sel(state)) {
+                        tg_gui_window_mention_refresh(state);
+                        tg_gui_window_paint(state, &backend);
+                    } else {
+                    n = (unsigned long)strlen(state->input);
+                    c = (unsigned long)state->input_caret;
+                    if (c < n) {
+                        /* forward-delete: pull the tail (incl. NUL) one left,
+                           the caret stays put. Backspace (0x08) deletes left;
+                           this splits the two so Canc is not folded into it. */
+                        memmove(&state->input[c], &state->input[c + 1UL],
+                                n - c);
+                        tg_gui_window_mention_refresh(state);
+                        tg_gui_window_paint(state, &backend);
+                    }
+                    }
                 } else if (msg_code >= 32 && msg_code < 256) {
                     unsigned long n;
                     unsigned long c;
 
+                    /* typing REPLACES an active selection (classic field) */
+                    (void)tg_gui_window_input_delete_sel(state);
                     n = (unsigned long)strlen(state->input);
                     c = (unsigned long)state->input_caret;
                     if (c > n) {
@@ -2436,15 +2900,36 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 : 0;
                     }
                     tg_gui_window_paint(state, &backend);
-                } else if (msg_code == 0x4F) { /* cursor left */
-                    if (state->input_caret > 0) {
-                        state->input_caret--;
-                        tg_gui_window_mention_refresh(state);
-                        tg_gui_window_paint(state, &backend);
+                } else if (msg_code == 0x4F || msg_code == 0x4E) {
+                    /* cursor left/right; with SHIFT they grow/shrink the
+                       composer selection anchored where Shift was first
+                       pressed (the classic text-field gesture). */
+                    int shifted =
+                        (msg_qual &
+                         (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0;
+                    int changed = 0;
+
+                    if (shifted && !state->in_sel_active) {
+                        state->in_sel_active = 1;
+                        state->in_sel_anchor = state->input_caret;
+                    } else if (!shifted && state->in_sel_active) {
+                        state->in_sel_active = 0;
+                        changed = 1;
                     }
-                } else if (msg_code == 0x4E) { /* cursor right */
-                    if (state->input_caret < (int)strlen(state->input)) {
+                    if (msg_code == 0x4F && state->input_caret > 0) {
+                        state->input_caret--;
+                        changed = 1;
+                    } else if (msg_code == 0x4E &&
+                               state->input_caret <
+                                   (int)strlen(state->input)) {
                         state->input_caret++;
+                        changed = 1;
+                    }
+                    if (shifted &&
+                        state->input_caret == state->in_sel_anchor) {
+                        state->in_sel_active = 0; /* collapsed back */
+                    }
+                    if (changed) {
                         tg_gui_window_mention_refresh(state);
                         tg_gui_window_paint(state, &backend);
                     }
@@ -2467,9 +2952,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_copy(state->input, sizeof(state->input),
                                            state->history[hidx]);
                         state->input_caret = (int)strlen(state->input);
+                        state->in_sel_active = 0;
                         tg_gui_window_paint(state, &backend);
                     }
                 } else if (msg_code == 0x4D) { /* cursor down: newer sent line */
+                    state->in_sel_active = 0; /* input is about to be rebuilt */
                     if (state->history_pos >= 0) {
                         int hidx;
 
@@ -2551,6 +3038,213 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_SENDFILE) {
                             tg_gui_window_send_file(state, ctx.window,
                                                     &backend);
+                        } else if (ud == (APTR)TG_MENU_COPY) {
+                            /* Copy the highlighted message's text (issue #5).
+                               Selection = the row the user last right-clicked
+                               or picked; without one, say what to do. */
+                            static char selbuf[TG_GUI_MSG_TEXT_MAX];
+                            int sel = state->selected_msg;
+                            const char *src = 0;
+
+                            if (state->composing && state->in_sel_active) {
+                                /* composer selection: copy [anchor..caret] */
+                                long a = (long)state->in_sel_anchor;
+                                long b = (long)state->input_caret;
+                                long lo = a < b ? a : b;
+                                long hi = a > b ? a : b;
+                                long tl = (long)strlen(state->input);
+
+                                if (lo < 0) {
+                                    lo = 0;
+                                }
+                                if (hi > tl) {
+                                    hi = tl;
+                                }
+                                if (hi > lo &&
+                                    (unsigned long)(hi - lo) <
+                                        sizeof(selbuf)) {
+                                    memcpy(selbuf, state->input + lo,
+                                           (unsigned long)(hi - lo));
+                                    selbuf[hi - lo] = '\0';
+                                    src = selbuf;
+                                }
+                            }
+                            if (src == 0 &&
+                                tg_gui_selection_get(state, selbuf,
+                                                     sizeof(selbuf))) {
+                                src = selbuf; /* the dragged range wins */
+                            } else if (src == 0 && sel >= 0 &&
+                                       sel < state->message_count &&
+                                       state->messages[sel].text[0] !=
+                                           '\0') {
+                                src = state->messages[sel].text;
+                            }
+                            if (src != 0 && tg_gui_clip_write_text(src)) {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Copied to clipboard");
+                            } else {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   sel < 0
+                                                       ? "Right-click a message first"
+                                                       : "Nothing to copy");
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        } else if (ud == (APTR)TG_MENU_CUT) {
+                            /* Cut the focused input line to the clipboard:
+                               the search box when active, else the composer.
+                               Completes the cut/copy/paste trio (issue #5). */
+                            char *field = state->search_active
+                                              ? state->search_query
+                                              : state->input;
+
+                            if (!state->search_active && state->composing &&
+                                state->in_sel_active) {
+                                /* cut ONLY the selected composer range */
+                                static char cutbuf[TG_GUI_MSG_TEXT_MAX];
+                                long a = (long)state->in_sel_anchor;
+                                long b = (long)state->input_caret;
+                                long lo = a < b ? a : b;
+                                long hi = a > b ? a : b;
+                                long tl = (long)strlen(state->input);
+
+                                if (lo < 0) {
+                                    lo = 0;
+                                }
+                                if (hi > tl) {
+                                    hi = tl;
+                                }
+                                if (hi > lo &&
+                                    (unsigned long)(hi - lo) <
+                                        sizeof(cutbuf)) {
+                                    memcpy(cutbuf, state->input + lo,
+                                           (unsigned long)(hi - lo));
+                                    cutbuf[hi - lo] = '\0';
+                                    if (tg_gui_clip_write_text(cutbuf)) {
+                                        (void)
+                                        tg_gui_window_input_delete_sel(state);
+                                        tg_gui_window_mention_refresh(state);
+                                        tg_gui_window_copy(
+                                            state->status,
+                                            sizeof(state->status),
+                                            "Cut to clipboard");
+                                    } else {
+                                        tg_gui_window_copy(
+                                            state->status,
+                                            sizeof(state->status),
+                                            "Copy failed");
+                                    }
+                                } else {
+                                    tg_gui_window_copy(state->status,
+                                                       sizeof(state->status),
+                                                       "Nothing to cut");
+                                }
+                                tg_gui_window_paint(state, &backend);
+                            } else if (field[0] != '\0' &&
+                                tg_gui_clip_write_text(field)) {
+                                field[0] = '\0';
+                                if (state->search_active) {
+                                    state->search_caret = 0;
+                                    state->search_dirty = 1;
+                                    search_idle_ticks = 0;
+                                } else {
+                                    state->input_caret = 0;
+                                    tg_gui_window_mention_refresh(state);
+                                }
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Cut to clipboard");
+                            } else {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Nothing to cut");
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        } else if (ud == (APTR)TG_MENU_PASTE) {
+                            /* Paste the clipboard's FTXT at the caret: into
+                               the search box when it is active, else into the
+                               composer. Newlines/tabs become spaces (the
+                               input row is one visual line); other control
+                               bytes are dropped. */
+                            static char clip[TG_GUI_MSG_TEXT_MAX];
+                            unsigned long got =
+                                tg_gui_clip_read_text(clip, sizeof(clip));
+                            unsigned long src, dst = 0UL;
+
+                            for (src = 0UL; src < got; ++src) {
+                                unsigned char cch = (unsigned char)clip[src];
+
+                                if (cch == '\n' || cch == '\r' ||
+                                    cch == '\t') {
+                                    clip[dst++] = ' ';
+                                } else if (cch >= 32) {
+                                    clip[dst++] = (char)cch;
+                                }
+                            }
+                            got = dst;
+                            clip[got] = '\0';
+                            if (got == 0UL) {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Clipboard is empty");
+                                tg_gui_window_paint(state, &backend);
+                            } else if (state->search_active) {
+                                unsigned long n = (unsigned long)strlen(
+                                    state->search_query);
+                                unsigned long c =
+                                    (unsigned long)state->search_caret;
+                                unsigned long room =
+                                    sizeof(state->search_query) - 1UL - n;
+                                unsigned long p = got > room ? room : got;
+
+                                if (c > n) {
+                                    c = n;
+                                }
+                                memmove(&state->search_query[c + p],
+                                        &state->search_query[c], n - c + 1UL);
+                                memcpy(&state->search_query[c], clip, p);
+                                state->search_caret = (int)(c + p);
+                                state->search_dirty = 1;
+                                search_idle_ticks = 0;
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Searching when you pause...");
+                                tg_gui_window_paint(state, &backend);
+                            } else if (tg_gui_session_is_open() &&
+                                       state->mode == TG_GUI_MODE_CHAT) {
+                                unsigned long n;
+                                unsigned long c;
+                                unsigned long room;
+                                unsigned long p;
+
+                                (void)tg_gui_window_input_delete_sel(state);
+                                n = (unsigned long)strlen(state->input);
+                                c = (unsigned long)state->input_caret;
+                                room = sizeof(state->input) - 1UL - n;
+                                p = got > room ? room : got;
+
+                                if (c > n) {
+                                    c = n;
+                                }
+                                memmove(&state->input[c + p],
+                                        &state->input[c], n - c + 1UL);
+                                memcpy(&state->input[c], clip, p);
+                                state->input_caret = (int)(c + p);
+                                state->composing = 1;
+                                state->cursor_on = 1;
+                                caret_ticks = 0;
+                                tg_gui_window_mention_refresh(state);
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Pasted");
+                                tg_gui_window_paint(state, &backend);
+                            } else {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Open a chat first");
+                                tg_gui_window_paint(state, &backend);
+                            }
                         } else if (ud == (APTR)TG_MENU_ICONIFY) {
                             /* Tear down window (and own screen) via the normal
                                path; the outer loop parks on an AppIcon. */
@@ -2607,6 +3301,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else {
                     time_t now;
 
+                    /* Self-heal the right-button trap from the current pointer
+                       position, in case the MOUSEMOVE that should have released
+                       it (over the sidebar/menu-bar area) was dropped by the
+                       OS4 emulated mouse -- otherwise the sidebar right-click
+                       had no menu. mouse_x/mouse_y hold this tick's position. */
+                    tg_gui_window_track_rmbtrap(state, &ctx, (int)mouse_x,
+                                                (int)mouse_y);
+
                     /* Blink the composer caret (~2 Hz) while typing. */
                     if ((state->composing || state->search_active) &&
                         ++caret_ticks >= 5) {
@@ -2626,6 +3328,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                        for TG_GUI_COMPOSE_IDLE_POLL_SECONDS; skip it entirely when
                        a close/quit is already queued this drain. */
                     now = time(0);
+                    if (!done && state->composing && now != (time_t)-1 &&
+                        now >= last_receive_drain &&
+                        (unsigned long)(now - last_receive_drain) >=
+                            TG_GUI_COMPOSE_RECEIVE_SECONDS) {
+                        last_receive_drain = now;
+                        if (tg_gui_session_receive_pending(stdout)) {
+                            session_dirty = 1;
+                        }
+                    }
                     /* As-you-type search: count INTUITICKS since the query last
                        changed and fire once the user pauses (~12 ticks ~= 1.2s).
                        Tick-based, NOT wall-clock: stray VM/RustDesk key events kept
@@ -2690,6 +3401,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_paint(state, &backend);
                         }
                     }
+                } else if (msg_code == SELECTDOWN &&
+                           (state->sel_press_armed = 0, 0)) {
+                    /* never taken: clears a stale press latch before ANY other
+                       SELECTDOWN branch runs (ctx menu, sidebar, gadgets...);
+                       the bubble branch below re-arms it deliberately. */
                 } else if (msg_code == SELECTDOWN && state->composing &&
                            state->mention_active &&
                            tg_gui_mention_click(state, &backend, hx, hy) >= 0) {
@@ -2714,6 +3430,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     state->ctx_visible = 0;
                     if (it == TG_GUI_CTX_REPLY && m != 0 && !m->is_system &&
                         m->id != 0UL) {
+                        state->in_sel_active = 0;
                         state->reply_to_id = m->id;
                         tg_gui_window_copy(state->reply_sender,
                                            sizeof(state->reply_sender),
@@ -2729,7 +3446,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Reply - ENTER sends, ESC cancels");
-                    } else if (it == TG_GUI_CTX_EDIT && m != 0 && m->is_own &&
+                    } else if (it == TG_GUI_CTX_EDIT && m != 0 &&
+                               (state->in_sel_active = 0, 1) &&
+                               (m->is_own ||
+                                tg_gui_open_chat_is_self(state)) &&
                                m->id != 0UL) {
                         /* Edit mode: pre-fill the composer with the message text;
                            the next ENTER routes to editMessage (edit_to_id). */
@@ -2746,7 +3466,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         caret_ticks = 0;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Editing - ENTER saves, ESC cancels");
-                    } else if (it == TG_GUI_CTX_DELETE && m != 0 && m->is_own &&
+                    } else if (it == TG_GUI_CTX_DELETE && m != 0 &&
+                               (m->is_own ||
+                                tg_gui_open_chat_is_self(state)) &&
                                m->id != 0UL) {
                         unsigned long del_id = m->id;
 
@@ -2803,9 +3525,102 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status), nmsg);
                         }
+                    } else if (it == TG_GUI_CTX_COPY && m != 0 &&
+                               m->text[0] != '\0') {
+                        static char ctxsel[TG_GUI_MSG_TEXT_MAX];
+                        const char *src = m->text;
+
+                        /* A dragged selection in THIS message wins over the
+                           whole text. */
+                        if (state->sel_active && state->sel_msg == mi &&
+                            tg_gui_selection_get(state, ctxsel,
+                                                 sizeof(ctxsel))) {
+                            src = ctxsel;
+                        }
+                        state->selected_msg = mi; /* keep the row highlighted */
+                        tg_gui_window_copy(state->status,
+                                           sizeof(state->status),
+                                           tg_gui_clip_write_text(src)
+                                               ? "Copied to clipboard"
+                                               : "Copy failed");
+                        tg_gui_window_paint(state, &backend);
+                    } else if (it == TG_GUI_CTX_SENDFILE) {
+                        /* Chat-level action (not tied to the clicked message):
+                           send a file to the open chat, same as the menubar
+                           "Send file..." item. */
+                        tg_gui_window_send_file(state, ctx.window, &backend);
                     }
                     tg_gui_window_paint(state, &backend);
                 } else if (msg_code == SELECTUP) {
+                    state->in_drag_armed = 0;
+                    if (state->sel_press_armed) {
+                        state->sel_press_armed = 0;
+                        if (!state->sel_active &&
+                            tg_gui_session_is_open() && !state->in_search) {
+                            /* Plain click (never dragged): the classic gesture
+                               -- reply to the bubble, exactly as before. The
+                               press-time ID must still match: a transcript
+                               shift between press and release would otherwise
+                               aim the reply at the wrong message. */
+                            int mi = state->sel_press_msg;
+
+                            if (mi >= 0 && mi < state->message_count) {
+                                const tg_gui_message *m = &state->messages[mi];
+
+                                if (!m->is_system && m->id != 0UL &&
+                                    m->id == state->sel_press_id &&
+                                    mi == state->selected_msg) {
+                                    /* Click on the ALREADY-highlighted message
+                                       = toggle it off: deselect and cancel a
+                                       pending reply to it. Covers the
+                                       post-copy flow, where a stray click
+                                       must not drag the user into reply
+                                       mode -- and gives the missing deselect
+                                       gesture. */
+                                    state->selected_msg = -1;
+                                    if (state->reply_to_id == m->id) {
+                                        state->reply_to_id = 0UL;
+                                        state->reply_sender[0] = '\0';
+                                        state->reply_snippet[0] = '\0';
+                                    }
+                                    tg_gui_window_copy(state->status,
+                                                       sizeof(state->status),
+                                                       "");
+                                    tg_gui_window_paint(state, &backend);
+                                } else if (!m->is_system && m->id != 0UL &&
+                                    m->id == state->sel_press_id) {
+                                    state->in_sel_active = 0;
+                                    state->selected_msg = mi;
+                                    state->reply_to_id = m->id;
+                                    tg_gui_window_copy(
+                                        state->reply_sender,
+                                        sizeof(state->reply_sender),
+                                        m->sender);
+                                    tg_gui_window_copy(
+                                        state->reply_snippet,
+                                        sizeof(state->reply_snippet),
+                                        m->text);
+                                    state->search_active = 0;
+                                    state->composing = 1;
+                                    state->input_caret =
+                                        (int)strlen(state->input);
+                                    state->cursor_on = 1;
+                                    caret_ticks = 0;
+                                    tg_gui_window_copy(
+                                        state->status, sizeof(state->status),
+                                        "Reply - ENTER sends, ESC cancels");
+                                    tg_gui_window_paint(state, &backend);
+                                }
+                            }
+                        } else {
+                            /* Drag finished: keep the selection, tell how to
+                               use it. */
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status),
+                                               "Selected - A+C copies");
+                            tg_gui_window_paint(state, &backend);
+                        }
+                    }
                     state->sb_drag = 0;
                     if (state->drag_src >= 0) {
                         if (!state->drag_active) {
@@ -2967,6 +3782,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             "Search: type then PAUSE to auto-find (or ENTER)");
                         tg_gui_window_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
+                        state->in_sel_active = 0; /* input is consumed below */
                         if (state->input[0] != '\0') {
                             if (state->edit_to_id != 0UL) {
                                 (void)tg_gui_session_edit(state->input,
@@ -3003,6 +3819,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                           hy);
 
                         if (cc >= 0) {
+                            state->in_sel_active = 0;
+                            state->in_drag_armed = 1;
+                            state->in_drag_anchor = cc;
                             state->input_caret = cc;
                             state->cursor_on = 1;
                             caret_ticks = 0;
@@ -3021,12 +3840,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_session_refresh_chats();
                         }
                         state->composing = 1;
+                        state->in_sel_active = 0; /* fresh focus, no ghosts */
                         state->input_caret = (int)strlen(state->input);
                         if (hit == TG_GUI_HIT_INPUT) { /* F8: caret at click */
                             int cc = tg_gui_input_click_caret(state, &backend,
                                                               hx, hy);
 
                             if (cc >= 0) {
+                                state->in_sel_active = 0;
+                                state->in_drag_armed = 1;
+                                state->in_drag_anchor = cc;
                                 state->input_caret = cc;
                             }
                         }
@@ -3044,55 +3867,104 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_paint(state, &backend);
                     } else if (hit <= TG_GUI_HIT_MESSAGE_BASE &&
                                tg_gui_session_is_open() && !state->in_search) {
-                        /* Click a transcript bubble to reply to it: latch its id +
-                           a "<sender>: <snippet>" reference and focus the composer
-                           so the next send carries reply_to_msg_id. */
+                        /* Press on a bubble: LATCH it. A drag past the
+                           threshold becomes a text selection; a click that
+                           never drags keeps the old gesture (reply), executed
+                           on SELECTUP -- same defer pattern as the sidebar. */
                         int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
 
                         if (mi >= 0 && mi < state->message_count) {
                             const tg_gui_message *m = &state->messages[mi];
 
                             if (!m->is_system && m->id != 0UL) {
-                                state->selected_msg = mi; /* highlight it */
-                                state->reply_to_id = m->id;
-                                tg_gui_window_copy(state->reply_sender,
-                                                   sizeof(state->reply_sender),
-                                                   m->sender);
-                                tg_gui_window_copy(state->reply_snippet,
-                                                   sizeof(state->reply_snippet),
-                                                   m->text);
-                                state->search_active = 0;
-                                state->composing = 1;
-                                state->input_caret = (int)strlen(state->input);
-                                state->cursor_on = 1;
-                                caret_ticks = 0;
-                                tg_gui_window_copy(
-                                    state->status, sizeof(state->status),
-                                    "Reply - ENTER sends, ESC cancels");
-                                tg_gui_window_paint(state, &backend);
+                                int repaint = state->sel_active;
+
+                                state->sel_active = 0; /* new press resets */
+                                state->sel_press_armed = 1;
+                                state->sel_press_msg = mi;
+                                state->sel_press_id = m->id;
+                                state->sel_press_gen = state->msg_gen;
+                                state->sel_press_x = hx;
+                                state->sel_press_y = hy;
+                                state->sel_press_char =
+                                    tg_gui_transcript_char_at(state, &backend,
+                                                              ctx.line_h, mi,
+                                                              hx, hy);
+                                if (repaint) {
+                                    tg_gui_window_paint(state, &backend);
+                                }
                             }
                         }
                     }
                 }
             } else if (msg_class == IDCMP_MOUSEMOVE) {
-                /* Right-button trap follows the pointer: claimed over a real
-                   bubble (our context menu), released elsewhere (menu bar). */
-                if (state->mode == TG_GUI_MODE_CHAT && !state->ctx_visible) {
+                if (state->mode == TG_GUI_MODE_CHAT && state->in_drag_armed &&
+                    state->composing) {
+                    /* Drag inside the input box: grow the composer selection
+                       from the press anchor to the char under the pointer. */
                     int hx = (int)mouse_x - ctx.origin_x;
                     int hy = (int)mouse_y - ctx.origin_y;
-                    int hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
-                                              ctx.line_h, hx, hy);
-                    int over_msg = 0;
+                    int cc = tg_gui_input_click_caret(state, &backend, hx, hy);
 
-                    if (hit <= TG_GUI_HIT_MESSAGE_BASE) {
-                        int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
-
-                        over_msg = (mi >= 0 && mi < state->message_count &&
-                                    !state->messages[mi].is_system &&
-                                    state->messages[mi].id != 0UL);
+                    if (cc >= 0) {
+                        if (!state->in_sel_active &&
+                            cc != state->in_drag_anchor) {
+                            state->in_sel_active = 1;
+                            state->in_sel_anchor = state->in_drag_anchor;
+                        }
+                        if (state->in_sel_active &&
+                            cc == state->in_sel_anchor &&
+                            cc == state->input_caret) {
+                            state->in_sel_active = 0; /* collapsed on anchor */
+                            tg_gui_window_paint(state, &backend);
+                        } else if (state->in_sel_active &&
+                            cc != state->input_caret) {
+                            state->input_caret = cc;
+                            if (cc == state->in_sel_anchor) {
+                                state->in_sel_active = 0;
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        }
                     }
-                    tg_gui_amiga_set_rmbtrap(ctx.window, over_msg);
                 }
+                if (state->mode == TG_GUI_MODE_CHAT && state->sel_press_armed) {
+                    /* Latched press: past a small threshold it becomes a text
+                       selection anchored at the press char; every further move
+                       extends it (clamped inside the SAME message by the
+                       char-at helper). */
+                    int hx = (int)mouse_x - ctx.origin_x;
+                    int hy = (int)mouse_y - ctx.origin_y;
+
+                    if (!state->sel_active && state->sel_press_char >= 0 &&
+                        state->msg_gen == state->sel_press_gen) {
+                        int dx = hx - state->sel_press_x;
+                        int dy = hy - state->sel_press_y;
+
+                        if (dx > 2 || dx < -2 || dy > 2 || dy < -2) {
+                            state->sel_active = 1;
+                            state->sel_msg = state->sel_press_msg;
+                            state->sel_a = state->sel_press_char;
+                            state->sel_b = state->sel_press_char;
+                            state->sel_gen_snap = state->msg_gen;
+                        }
+                    }
+                    if (state->sel_active) {
+                        long c = tg_gui_transcript_char_at(
+                            state, &backend, ctx.line_h, state->sel_msg, hx,
+                            hy);
+
+                        if (c >= 0 && c != state->sel_b) {
+                            state->sel_b = c;
+                            tg_gui_window_paint(state, &backend);
+                        }
+                    }
+                }
+                /* Right-button trap follows the pointer: claimed over a real
+                   bubble (our context menu), released elsewhere (menu bar).
+                   The INTUITICKS handler runs the same check so a dropped move
+                   cannot leave it stuck (see tg_gui_window_track_rmbtrap). */
+                tg_gui_window_track_rmbtrap(state, &ctx, (int)mouse_x,
+                                            (int)mouse_y);
                 /* Context-menu hover: highlight the item under the pointer so the
                    user sees which of Reply/Edit/Delete the click will pick.
                    REPORTMOUSE floods moves, so repaint ONLY when the highlighted
@@ -3231,6 +4103,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     (unsigned long)(hb_now - session_boot) < watch_boot_grace) {
                     hb_eff = watch_boot_seconds;
                 }
+                if (state->composing && hb_now != (time_t)-1 &&
+                    hb_now >= last_receive_drain &&
+                    (unsigned long)(hb_now - last_receive_drain) >=
+                        TG_GUI_COMPOSE_RECEIVE_SECONDS) {
+                    last_receive_drain = hb_now;
+                    if (tg_gui_session_receive_pending(stdout)) {
+                        session_dirty = 1;
+                    }
+                }
                 if (hb_now != (time_t)-1 &&
                     (unsigned long)(hb_now - last_session_poll) >= hb_eff &&
                     (!state->composing ||
@@ -3287,16 +4168,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         FreeVisualInfo(vi);
         vi = 0;
     }
-#if defined(__amigaos4__)
-    if (IGadTools != 0) {
-        DropInterface((struct Interface *)IGadTools);
-        IGadTools = 0;
-    }
-#endif
-    if (GadToolsBase != 0) {
-        CloseLibrary(GadToolsBase);
-        GadToolsBase = 0;
-    }
     /* Heartbeat teardown: abort any in-flight request BEFORE freeing (a
        firing request after DeleteIORequest is a guaranteed crash). */
     if (timer_ok) {
@@ -3348,19 +4219,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         }
         own_scr = 0;
     }
-#if defined(__amigaos4__)
-    DropInterface((struct Interface *)IGraphics);
-    IGraphics = 0;
-    CloseLibrary(GfxBase);
-    GfxBase = 0;
-    DropInterface((struct Interface *)IIntuition);
-    IIntuition = 0;
-#else
-    CloseLibrary((struct Library *)GfxBase);
-    GfxBase = 0;
-#endif
-    CloseLibrary((struct Library *)IntuitionBase);
-    IntuitionBase = 0;
+    tg_gui_amiga_close_core_libs();
     tg_gui_log("window: libraries closed");
     /* 2 = iconified (park on AppIcon), 3 = reopen (own-screen toggle). */
     return (done == 2) ? 2 : (done == 3) ? 3 : 0;
@@ -3404,7 +4263,11 @@ static int tg_gui_window_iconify_wait(void)
     if (port == 0) {
         goto out;
     }
-    dobj = GetDiskObject((STRPTR)"PROGDIR:TelegramGUI");
+    /* Our own program icon (TelegramAmiga.info) so the AppIcon shows the
+       Telegram image, not a generic tool icon. The pre-0.0.6 name was
+       "TelegramGUI"; after the rename that file no longer ships, so this used to
+       miss and fall through to GetDefDiskObject (the generic icon seen on OS4). */
+    dobj = GetDiskObject((STRPTR)"PROGDIR:TelegramAmiga");
     if (dobj == 0) {
         dobj = GetDefDiskObject(WBTOOL);
     }

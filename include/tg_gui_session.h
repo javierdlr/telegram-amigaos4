@@ -39,19 +39,34 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
    when no session is open (returns 0). */
 int tg_gui_session_tick(FILE *stream);
 
+/* Receive-only live drain for the composer path. It never starts an RPC: when
+   the held socket already has an encrypted frame queued, consumes at most one,
+   ACKs it and applies typing/read-receipt/edit/notification pushes. Returns 1
+   when GUI state changed. Safe to call frequently and with no open session. */
+int tg_gui_session_receive_pending(FILE *stream);
+
 /* F9: download the document attached to message msg_id in the open chat into
    downloads/<name>. 0 ok (path in out_path), 1 fail, 2 foreign DC (unsupported
    yet), 3 disk error. Blocking on-context call -- never from the tick. */
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                      unsigned long out_path_size, FILE *stream);
 
-/* F9: send the file at `path` to the open chat (small-file path, <= 10 MB).
-   0 ok, 1 fail, 2 too big, 3 unreadable. Blocking; never from the tick. */
-int tg_gui_session_send_document(const char *path, FILE *stream);
+typedef void (*tg_gui_upload_progress_fn)(unsigned long completed_parts,
+                                          unsigned long total_parts,
+                                          void *user_data);
+
+/* F9: send the file at `path` to the open chat. Files over 10 MB use
+   upload.saveBigFilePart/inputFileBig. The conservative 4000-part bound gives
+   a per-build ceiling of about 31 MiB on m68k and 250 MiB elsewhere.
+   0 ok, 1 fail, 2 too big for this build, 3 unreadable. Blocking; never from
+   the tick. `progress` is optional and runs after each confirmed part. */
+int tg_gui_session_send_document(const char *path, FILE *stream,
+                                 tg_gui_upload_progress_fn progress,
+                                 void *progress_data);
 
 /* F10 Saved Messages: the sidebar row index that opens the self chat (cloud
-   archive). Pinned as the LAST row; remove/reorder skip it. */
-#define TG_GUI_SAVED_PEER_INDEX 0xfffffffeUL
+   archive) is TG_GUI_SAVED_PEER_INDEX, defined in tg_gui.h (the UI layer needs
+   it too). Pinned as the LAST row; remove/reorder skip it. */
 
 /* Opens the chat at the given 1-based peer-cache index: clears the transcript,
    fetches its recent history (incoming + outgoing) into tg_gui_state.messages

@@ -132,6 +132,49 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count);
  */
 void tg_platform_workbench_init(void);
 
+/**
+ * Releases process-lifetime platform resources opened lazily by the client.
+ *
+ * Called exactly once by main() after the application has stopped. Backends
+ * with no such resources implement this as a no-op.
+ */
+void tg_platform_shutdown(void);
+
+/* Workbench-launched TUI: open an interactive CON: window and make it this
+   process's stdin/stdout, since a double-clicked binary has no console.
+   1 = a console is in place, 0 = not available (host / failure). */
+int tg_platform_workbench_tui_console(void);
+
+/* Teardown mirror of the above, called after the console client returns: puts
+   the original process streams and console task back and CLOSES our CON:
+   handle. Without it the con-handler keeps the window alive forever -- the
+   close gadget could never dismiss it after quit. No-op on the host build or
+   when the console was never opened. */
+void tg_platform_workbench_tui_console_close(void);
+
+/* Reads the TUI_MODE tooltype of the icon that launched us (WBStartup arg 0)
+   so a packager can pick the front-end explicitly (issue #9). Returns 1 when
+   TUI_MODE is present and true, 0 when present and NO/FALSE/OFF, and -1 when
+   absent / no icon / not applicable -- the caller then falls back to the
+   filename heuristic, keeping the default byte-identical icons working.
+   `argv` is main()'s argv, i.e. the WBStartup pointer on a Workbench launch. */
+int tg_platform_wb_tui_mode(char **argv);
+
+/* Drag-and-drop for the Workbench TUI console: a file icon dropped on the
+   window delivers its path so the user can just drop it after "/sendfile ".
+   Non-blocking poll called from the console read loop; returns 1 with a NUL-
+   terminated path in `out` when a file was dropped, else 0. Arming/disarming
+   is folded into the console open/close. Only AmigaOS 4 implements it (via an
+   AppWindow whose Window pointer is validated against the screen window list
+   before use, so a bad handle degrades to "no drop" rather than a crash);
+   every other build is a no-op that returns 0. */
+int tg_platform_console_drop_poll(char *out, unsigned long out_size);
+
+/* One-line, human-readable status of the drag-and-drop arming ("ready", or
+   which step bailed). Printed at console startup so a field report can say
+   WHY drops are inactive without a debug build. */
+const char *tg_platform_console_drop_diag(void);
+
 /*
  * Returns non-zero when the user asked to abort (Amiga family: the shell
  * break signal SIGBREAKF_CTRL_C, left pending so the caller's main loop can
@@ -171,6 +214,16 @@ tg_net_status tg_platform_tcp_send(tg_net_connection *connection, const void *da
 tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
                                    unsigned long buffer_size, unsigned long *bytes_received,
                                    char *error_buffer, unsigned long error_buffer_size);
+
+/**
+ * Non-blocking TCP readability test used by live-session push drains.
+ *
+ * Returns 1 when data (or EOF) is ready, 0 when no data is queued, and -1 on
+ * error. Implementations must not wait for network traffic.
+ */
+int tg_platform_tcp_poll_readable(tg_net_connection *connection,
+                                  char *error_buffer,
+                                  unsigned long error_buffer_size);
 
 /**
  * Platform TCP close implementation used by tg_net_close().

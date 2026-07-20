@@ -23,6 +23,7 @@
 
 #if defined(__AROS__)
 #include <exec/libraries.h>
+#include <dos/dosextens.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
 #include <dos/dos.h>
@@ -46,7 +47,11 @@ struct Library *SocketBase = 0;
 
 #if defined(__AROS__) || defined(__amigaos4__) || defined(__MORPHOS__) || defined(__amigaos3__) || defined(__m68k__)
 #include <workbench/workbench.h>
+#include <workbench/startup.h>
 #include <proto/icon.h>
+#if defined(__AROS__)
+#include <proto/wb.h>
+#endif
 #endif
 #include "tg_platform.h"
 #include "tg_mtproto_crypto.h"
@@ -83,6 +88,63 @@ unsigned long tg_platform_local_epoch(void)
 #endif
 }
 
+#if defined(__AROS__)
+
+/* issue #9: read the launched icon's TUI_MODE tooltype (classic icon.library).
+   arg 0 of WBStartup is the icon the user double-clicked. Returns 1 (TUI),
+   0 (GUI: NO/FALSE/OFF), -1 (no tooltype / no icon -> caller uses the name
+   heuristic). Opening icon.library here is cheap and one-shot at startup. */
+int tg_platform_wb_tui_mode(char **argv)
+{
+    struct WBStartup *wb = (struct WBStartup *)argv;
+    struct Library *IconBase;
+    struct WBArg *a;
+    struct DiskObject *dobj;
+    int result = -1;
+
+    if (wb == 0 || wb->sm_ArgList == 0 || wb->sm_NumArgs < 1) {
+        return -1;
+    }
+    IconBase = OpenLibrary((CONST_STRPTR)"icon.library", 36L);
+    if (IconBase == 0) {
+        return -1;
+    }
+    a = &wb->sm_ArgList[0];
+    if (a->wa_Name != 0 && a->wa_Name[0] != '\0') {
+        BPTR olddir = 0;
+        int have_dir = 0;
+
+        if (a->wa_Lock != 0) {
+            olddir = CurrentDir(a->wa_Lock);
+            have_dir = 1;
+        }
+        dobj = GetDiskObject((STRPTR)a->wa_Name);
+        if (dobj != 0) {
+            STRPTR tt = FindToolType(dobj->do_ToolTypes,
+                                     (STRPTR)"TUI_MODE");
+
+            if (tt != 0) {
+                result = (MatchToolValue(tt, (STRPTR)"NO") ||
+                          MatchToolValue(tt, (STRPTR)"FALSE") ||
+                          MatchToolValue(tt, (STRPTR)"OFF")) ? 0 : 1;
+            }
+            FreeDiskObject(dobj);
+        }
+        if (have_dir) {
+            CurrentDir(olddir);
+        }
+    }
+    CloseLibrary(IconBase);
+    return result;
+}
+#else
+int tg_platform_wb_tui_mode(char **argv)
+{
+    (void)argv;
+    return -1; /* host build: no Workbench icons */
+}
+#endif
+
 void tg_platform_workbench_init(void)
 {
 #if defined(__AROS__)
@@ -92,6 +154,21 @@ void tg_platform_workbench_init(void)
     if (progdir != 0) {
         CurrentDir(progdir);
     }
+#endif
+}
+
+#if defined(__AROS__)
+static void tg_aros_close_socket_library(void);
+#endif
+
+void tg_platform_shutdown(void)
+{
+#if defined(__AROS__)
+    /* bsdsocket.library is opened once (first connect) and owned process-wide:
+       closing it per-connection zeroed the shared SocketBase under live
+       connections (GUI keeps several open), and the next send() was an LVO
+       call through a NULL base -> the x86_64 relaunch bus-fault. */
+    tg_aros_close_socket_library();
 #endif
 }
 
@@ -729,9 +806,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
                 host_entry->h_addr_list[0] == 0) {
                 tg_platform_set_error(error_buffer, error_buffer_size,
                                       "host lookup failed");
-#if defined(__AROS__)
-                tg_aros_close_socket_library();
-#endif
                 return TG_NET_RESOLVE_FAILED;
             }
             memcpy(&address.sin_addr, host_entry->h_addr_list[0],
@@ -742,9 +816,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
-#if defined(__AROS__)
-        tg_aros_close_socket_library();
-#endif
         return TG_NET_CONNECT_FAILED;
     }
 
@@ -766,7 +837,6 @@ tg_net_status tg_platform_tcp_connect(tg_net_connection *connection, const char 
        AROSTCP's list and the CloseLibrary below would re-close it and crash. */
     CloseSocket(sock);
     tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
-    tg_aros_close_socket_library();
 #else
     close(sock);
 #endif
@@ -785,6 +855,15 @@ tg_net_status tg_platform_tcp_send(tg_net_connection *connection, const void *da
     if (error_buffer != 0 && error_buffer_size > 0) {
         error_buffer[0] = '\0';
     }
+#if defined(__AROS__)
+    if (SocketBase == 0) {
+        /* A bsdsocket macro through a NULL base is an LVO call through 0:
+           fail cleanly instead (can only happen on a connection misuse). */
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket library not open");
+        return TG_NET_SEND_FAILED;
+    }
+#endif
 
     rc = send((int)connection->platform_handle, data, byte_count, 0);
     if (rc < 0) {
@@ -812,6 +891,13 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
     if (error_buffer != 0 && error_buffer_size > 0) {
         error_buffer[0] = '\0';
     }
+#if defined(__AROS__)
+    if (SocketBase == 0) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket library not open");
+        return TG_NET_RECV_FAILED;
+    }
+#endif
 
     /* Bound the blocking recv() with a select() timeout, mirroring the MorphOS
        backend. Without this the encrypted-query receive loop in
@@ -854,15 +940,58 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
     return TG_NET_OK;
 }
 
+int tg_platform_tcp_poll_readable(tg_net_connection *connection,
+                                  char *error_buffer,
+                                  unsigned long error_buffer_size)
+{
+    fd_set read_fds;
+    struct timeval timeout;
+    long rc;
+
+    if (error_buffer != 0 && error_buffer_size > 0UL) {
+        error_buffer[0] = '\0';
+    }
+    if (connection == 0 || !connection->is_open) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket is not open");
+        return -1;
+    }
+#if defined(__AROS__)
+    if (SocketBase == 0) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket library not open");
+        return -1;
+    }
+#endif
+    FD_ZERO(&read_fds);
+    FD_SET((int)connection->platform_handle, &read_fds);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+    rc = select((int)connection->platform_handle + 1, &read_fds, 0, 0,
+                &timeout);
+    if (rc < 0) {
+        tg_platform_set_error(error_buffer, error_buffer_size, strerror(errno));
+        return -1;
+    }
+    return rc > 0 &&
+           FD_ISSET((int)connection->platform_handle, &read_fds) ? 1 : 0;
+}
+
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
+#if defined(__AROS__)
+        /* CloseSocket(), not close(): close() leaves the socket in AROSTCP's
+           list, and the CloseLibrary at shutdown would re-close it and corrupt
+           the TLSF heap (same defect the failed-connect path already fixed). */
+        CloseSocket((long)connection->platform_handle);
+#else
         close((int)connection->platform_handle);
+#endif
         connection->is_open = 0;
     }
-#if defined(__AROS__)
-    tg_aros_close_socket_library();
-#endif
+    /* The socket library itself stays open until tg_platform_shutdown(): other
+       connections may still be using the shared base. */
 }
 
 #if TG_ENABLE_TLS
@@ -1155,12 +1284,23 @@ void tg_platform_display_beep(void)
 #if defined(__AROS__)
     /* The screen flash is the Amiga-native notification; a BEL byte lets
        console handlers improvise (one icon console draws it as a glyph). */
-    IntuitionBase = (struct IntuitionBase *)OpenLibrary("intuition.library",
-                                                        0L);
+    /* Respect a base someone else is HOLDING (the console drag-and-drop arms
+       intuition for the session): only open/close/zero when it was closed on
+       entry, or the holder's CloseLibrary at teardown is skipped and the
+       open count leaks (review finding on the drop port). */
+    int beep_opened = 0;
+
+    if (IntuitionBase == 0) {
+        IntuitionBase = (struct IntuitionBase *)
+            OpenLibrary("intuition.library", 0L);
+        beep_opened = 1;
+    }
     if (IntuitionBase != 0) {
         DisplayBeep(0L);
-        CloseLibrary((struct Library *)IntuitionBase);
-        IntuitionBase = 0;
+        if (beep_opened) {
+            CloseLibrary((struct Library *)IntuitionBase);
+            IntuitionBase = 0;
+        }
     }
 #endif
 }
@@ -1200,5 +1340,342 @@ void tg_platform_ensure_drawer_icon(const char *drawer)
 void tg_platform_ensure_drawer_icon(const char *drawer)
 {
     (void)drawer; /* host build: no Workbench icons */
+}
+#endif
+#if defined(__AROS__)
+
+static void tg_wb_drop_arm(void);
+static void tg_wb_drop_disarm(void);
+
+static BPTR tg_wb_tui_con = 0;
+static BPTR tg_wb_tui_old_in = 0;
+static BPTR tg_wb_tui_old_out = 0;
+static struct MsgPort *tg_wb_tui_old_ct = 0;
+
+int tg_platform_workbench_tui_console(void)
+{
+    BPTR con;
+
+    con = Open((CONST_STRPTR)"CON:20/20/640/440/Telegram Amiga TUI/CLOSE/WAIT",
+               MODE_OLDFILE);
+    if (con == 0) {
+        return 0;
+    }
+    /* Make this window the process console. SelectInput/SelectOutput switch
+       the DOS channels (pr_CIS/pr_COS), but "*" and the C runtime's lazy
+       console resolve through pr_ConsoleTask, which a Workbench-launched
+       process does NOT have -- without setting it, Open("*") fails, a failed
+       freopen() still closes the stdio stream (C89), and the runtime opens
+       its own "Output" window on the first write while reads hang: the
+       two-window freeze seen on OS3/OS4. SetConsoleTask (dos V36+) points it
+       at this CON: handler first. */
+    tg_wb_tui_old_ct = (struct MsgPort *)
+        SetConsoleTask(((struct FileHandle *)BADDR(con))->fh_Type);
+    tg_wb_tui_old_in = SelectInput(con);
+    tg_wb_tui_old_out = SelectOutput(con);
+    tg_wb_tui_con = con;
+    /* Rebind C stdio only if "*" actually resolves now: freopen on a failed
+       open would CLOSE stdin/stdout for good, so probe with dos Open first. */
+    {
+        BPTR probe = Open((CONST_STRPTR)"*", MODE_OLDFILE);
+
+        if (probe != 0) {
+            Close(probe);
+            (void)freopen("*", "r", stdin);
+            (void)freopen("*", "w", stdout);
+            (void)freopen("*", "w", stderr);
+        }
+    }
+    tg_wb_drop_arm(); /* best-effort file drag-and-drop */
+    return 1;
+}
+
+void tg_platform_workbench_tui_console_close(void)
+{
+    if (tg_wb_tui_con == 0) {
+        return; /* console never opened (CLI launch or open failure) */
+    }
+    tg_wb_drop_disarm();
+    /* Put the original process plumbing back BEFORE closing our handle, so
+       nothing keeps referencing the console we are about to release. The
+       stdio streams freopen'd onto "*" are closed by the C runtime at exit;
+       once this handle goes too the con-handler can honour the CLOSE gadget
+       (WAIT keeps the window readable until that click). */
+    SelectInput(tg_wb_tui_old_in);
+    SelectOutput(tg_wb_tui_old_out);
+    SetConsoleTask(tg_wb_tui_old_ct);
+    Close(tg_wb_tui_con);
+    tg_wb_tui_con = 0;
+}
+
+/* ---- Workbench TUI drag-and-drop (AppIcon + AppWindow, classic API) ------
+   Port of the OS4 lane, proven there in the field: drops on the console
+   WINDOW may be owned by the system (they are on OS4), so the reliable lane
+   is the "TG drop" APPICON on the Workbench; both feed the same MsgPort.
+   Library bases are the shared globals the GUI iconify already uses
+   (gui_window.o owns them); we open them only when still closed and close
+   only what we opened. */
+
+extern struct Library *WorkbenchBase; /* owned by core/tg_gui_window.c */
+extern struct Library *IconBase;
+
+static const char *tg_wb_drop_diag = "not armed";
+static unsigned long tg_wb_drop_polls = 0;
+static unsigned long tg_wb_drop_msgs = 0;
+static struct MsgPort *tg_wb_app_port = 0;
+static struct AppWindow *tg_wb_app_win = 0;
+static struct AppIcon *tg_wb_app_icon = 0;
+static struct DiskObject *tg_wb_drop_dobj = 0;
+static int tg_wb_drop_opened_wb = 0;
+static int tg_wb_drop_opened_icon = 0;
+static int tg_wb_drop_opened_int = 0;
+
+static int tg_wb_window_is_live(struct Window *cand)
+{
+    struct Screen *scr;
+    struct Window *w;
+    int found = 0;
+
+    if (cand == 0 || IntuitionBase == 0) {
+        return 0;
+    }
+    scr = LockPubScreen(0);
+    if (scr == 0) {
+        return 0;
+    }
+    /* LockPubScreen keeps the screen alive but not its window list. */
+    Forbid();
+    for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
+        if (w == cand) {
+            found = 1;
+            break;
+        }
+    }
+    Permit();
+    UnlockPubScreen(0, scr);
+    return found;
+}
+
+static struct Window *tg_wb_find_window_by_title(const char *title)
+{
+    struct Screen *scr;
+    struct Window *w;
+    struct Window *found = 0;
+
+    if (IntuitionBase == 0) {
+        return 0;
+    }
+    scr = LockPubScreen(0);
+    if (scr == 0) {
+        return 0;
+    }
+    Forbid();
+    for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
+        if (w->Title != 0 && strcmp((const char *)w->Title, title) == 0) {
+            found = w;
+            break;
+        }
+    }
+    Permit();
+    UnlockPubScreen(0, scr);
+    return found;
+}
+
+static void tg_wb_drop_disarm(void)
+{
+    if (tg_wb_app_icon != 0) {
+        RemoveAppIcon(tg_wb_app_icon);
+        tg_wb_app_icon = 0;
+    }
+    if (tg_wb_app_win != 0) {
+        RemoveAppWindow(tg_wb_app_win);
+        tg_wb_app_win = 0;
+    }
+    if (tg_wb_app_port != 0) {
+        struct Message *m;
+
+        while ((m = GetMsg(tg_wb_app_port)) != 0) {
+            ReplyMsg(m);
+        }
+        DeleteMsgPort(tg_wb_app_port);
+        tg_wb_app_port = 0;
+    }
+    if (tg_wb_drop_dobj != 0 && IconBase != 0) {
+        FreeDiskObject(tg_wb_drop_dobj);
+        tg_wb_drop_dobj = 0;
+    }
+    if (tg_wb_drop_opened_icon && IconBase != 0) {
+        CloseLibrary(IconBase);
+        IconBase = 0;
+        tg_wb_drop_opened_icon = 0;
+    }
+    if (tg_wb_drop_opened_wb && WorkbenchBase != 0) {
+        CloseLibrary(WorkbenchBase);
+        WorkbenchBase = 0;
+        tg_wb_drop_opened_wb = 0;
+    }
+    if (tg_wb_drop_opened_int && IntuitionBase != 0) {
+        CloseLibrary((struct Library *)IntuitionBase);
+        IntuitionBase = 0;
+        tg_wb_drop_opened_int = 0;
+    }
+}
+
+static void tg_wb_drop_arm(void)
+{
+    struct InfoData *id;
+    struct FileHandle *fh;
+    struct Window *win;
+
+    if (tg_wb_tui_con == 0) {
+        tg_wb_drop_diag = "no Workbench console";
+        return;
+    }
+    if (tg_wb_app_port != 0 || tg_wb_app_win != 0 || tg_wb_app_icon != 0) {
+        return; /* already armed */
+    }
+    fh = (struct FileHandle *)BADDR(tg_wb_tui_con);
+    if (fh == 0) {
+        tg_wb_drop_diag = "no console handle";
+        return;
+    }
+    if (IntuitionBase == 0) {
+        IntuitionBase = (struct IntuitionBase *)
+            OpenLibrary((CONST_STRPTR)"intuition.library", 36L);
+        if (IntuitionBase == 0) {
+            tg_wb_drop_diag = "intuition.library open failed";
+            return;
+        }
+        tg_wb_drop_opened_int = 1;
+    }
+    /* InfoData must be longword-aligned for the packet: AllocMem it. */
+    id = (struct InfoData *)AllocMem(sizeof(struct InfoData),
+                                     MEMF_PUBLIC | MEMF_CLEAR);
+    if (id == 0) {
+        tg_wb_drop_diag = "no memory";
+        tg_wb_drop_disarm();
+        return;
+    }
+    win = 0;
+    /* SIPTR, NOT LONG: on AROS x86_64 LONG is 32-bit while pointers are
+       64-bit -- a LONG cast truncates the InfoData address and the handler
+       would write through garbage (found by review before it shipped). */
+    if (DoPkt(fh->fh_Type, ACTION_DISK_INFO, (SIPTR)MKBADDR(id),
+              0, 0, 0, 0)) {
+        /* the handler stuffs a RAW window pointer into the BPTR-typed
+           field: plain cast, no BADDR (it would shift it into garbage) */
+        win = (struct Window *)id->id_VolumeNode;
+    }
+    FreeMem(id, sizeof(struct InfoData));
+    if (tg_wb_window_is_live(win)) {
+        tg_wb_drop_diag = "ready (handler window)";
+    } else {
+        win = tg_wb_find_window_by_title("Telegram Amiga TUI");
+        tg_wb_drop_diag = "ready (title match)";
+    }
+    if (win == 0) {
+        tg_wb_drop_diag = "console window not found";
+        tg_wb_drop_disarm();
+        return;
+    }
+    if (WorkbenchBase == 0) {
+        WorkbenchBase = OpenLibrary((CONST_STRPTR)"workbench.library", 36L);
+        if (WorkbenchBase == 0) {
+            tg_wb_drop_diag = "workbench.library open failed";
+            tg_wb_drop_disarm();
+            return;
+        }
+        tg_wb_drop_opened_wb = 1;
+    }
+    tg_wb_app_port = CreateMsgPort();
+    if (tg_wb_app_port == 0) {
+        tg_wb_drop_diag = "message port failed";
+        tg_wb_drop_disarm();
+        return;
+    }
+    tg_wb_app_win = AddAppWindowA(0UL, 0UL, win, tg_wb_app_port, 0);
+    if (tg_wb_app_win == 0) {
+        tg_wb_drop_diag = "AddAppWindow failed";
+        tg_wb_drop_disarm();
+        return;
+    }
+    /* NO AppIcon on AROS: field test showed Wanderer displays it but never
+       delivers drops to it (its AppIcon support is incomplete), while drops
+       on the console WINDOW work -- the opposite of OS4. An inert icon is
+       just confusion, so the window lane is the AROS path. */
+}
+
+int tg_platform_console_drop_poll(char *out, unsigned long out_size)
+{
+    struct AppMessage *am;
+    int got = 0;
+
+    if (out == 0 || out_size == 0UL) {
+        return 0;
+    }
+    out[0] = '\0';
+    if (tg_wb_app_port == 0) {
+        return 0;
+    }
+    ++tg_wb_drop_polls;
+    while ((am = (struct AppMessage *)GetMsg(tg_wb_app_port)) != 0) {
+        ++tg_wb_drop_msgs;
+        if (!got && am->am_NumArgs > 0 && am->am_ArgList != 0) {
+            BPTR lock = am->am_ArgList[0].wa_Lock;
+            const char *name = (const char *)am->am_ArgList[0].wa_Name;
+
+            out[0] = '\0';
+            if (lock != 0 &&
+                NameFromLock(lock, (STRPTR)out, (LONG)out_size) != 0) {
+                if (name != 0 && name[0] != '\0') {
+                    AddPart((STRPTR)out, (CONST_STRPTR)name, (ULONG)out_size);
+                }
+                got = 1;
+            } else if (name != 0 && name[0] != '\0') {
+                strncpy(out, name, out_size - 1UL);
+                out[out_size - 1UL] = '\0';
+                got = 1;
+            }
+        }
+        ReplyMsg((struct Message *)am);
+    }
+    return got;
+}
+
+const char *tg_platform_console_drop_diag(void)
+{
+    static char diag_buf[96];
+
+    sprintf(diag_buf, "%s, polls %lu, drops %lu", tg_wb_drop_diag,
+            tg_wb_drop_polls, tg_wb_drop_msgs);
+    return diag_buf;
+}
+
+
+#else
+int tg_platform_workbench_tui_console(void)
+{
+    return 0; /* host build: no Workbench console */
+}
+
+void tg_platform_workbench_tui_console_close(void)
+{
+    /* host build: nothing was opened */
+}
+#endif
+
+#if !defined(__AROS__)
+/* Host build: no Workbench, no console drops. */
+int tg_platform_console_drop_poll(char *out, unsigned long out_size)
+{
+    if (out != 0 && out_size > 0UL) {
+        out[0] = '\0';
+    }
+    return 0;
+}
+
+const char *tg_platform_console_drop_diag(void)
+{
+    return "unsupported on this platform";
 }
 #endif

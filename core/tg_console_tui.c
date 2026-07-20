@@ -29,26 +29,17 @@ static void tg_tui_goto(FILE *stream, unsigned int row, unsigned int column)
     fprintf(stream, TG_UI_CSI "%u;%uH", row, column);
 }
 
-int tg_console_tui_query_size(FILE *stream,
-                              unsigned int *rows,
-                              unsigned int *columns)
+/* Reads one CSI report from the console input, skipping unrelated queued
+   reports (e.g. NEWSIZE events, CSI 12;...|) until one ends with `final`.
+   Returns 1 with the numeric parameters in values/value_count, 0 on timeout
+   or when nothing matching shows up within the guard budget. */
+static int tg_tui_read_csi_report(char final, unsigned long values[8],
+                                  unsigned long *value_count)
 {
     char ch;
-    unsigned long values[8];
-    unsigned long value_count;
     unsigned long current;
     int have_digit;
     int guard;
-
-    if (stream == 0 || rows == 0 || columns == 0) {
-        return 0;
-    }
-    /* WINDOW STATUS REQUEST: the console answers on the input stream with
-       CSI 1;1;<rows>;<cols> SP r. The input may also hold queued NEWSIZE
-       event reports (CSI 12;...|), especially mid-drag: skip those and keep
-       parsing CSI sequences until the 'r' answer shows up. */
-    fputs(TG_UI_CSI "0 q", stream);
-    fflush(stream);
 
     for (guard = 0; guard < 16; ++guard) {
         int introducer_tries;
@@ -73,7 +64,7 @@ int tg_console_tui_query_size(FILE *stream,
                 return 0;
             }
         }
-        value_count = 0UL;
+        *value_count = 0UL;
         current = 0UL;
         have_digit = 0;
         for (byte_tries = 0; byte_tries < 32; ++byte_tries) {
@@ -85,9 +76,9 @@ int tg_console_tui_query_size(FILE *stream,
                 have_digit = 1;
                 continue;
             }
-            if (have_digit && value_count < 8UL) {
-                values[value_count] = current;
-                ++value_count;
+            if (have_digit && *value_count < 8UL) {
+                values[*value_count] = current;
+                ++(*value_count);
             }
             current = 0UL;
             have_digit = 0;
@@ -96,11 +87,43 @@ int tg_console_tui_query_size(FILE *stream,
             }
             break; /* final byte */
         }
-        if (ch != 'r') {
+        if (ch != final) {
             /* Another report (e.g. a queued NEWSIZE event, final '|'):
                ignore it and wait for the real answer. */
             continue;
         }
+        return 1;
+    }
+    return 0;
+}
+
+int tg_console_tui_query_size(FILE *stream,
+                              unsigned int *rows,
+                              unsigned int *columns)
+{
+    unsigned long values[8];
+    unsigned long value_count;
+
+    if (stream == 0 || rows == 0 || columns == 0) {
+        return 0;
+    }
+#if defined(__AROS__)
+    /* The AROS console does not interpret CSI on OUTPUT while the handler is
+       in RAW mode (verified on the modern x86_64/deadwood base: cooked mode
+       executes SGR and cursor moves, raw mode DRAWS them as text; the classic
+       i386 console never answered the probe either). The chat needs raw for
+       per-key input, so a full-screen layout is not attainable here -- and
+       sending the probe would only paint "0 q" garbage into the scrollback.
+       Skip it: the caller marks the query unanswered, the mini-termcap keeps
+       CSI output off, and the linear flow is the honest presentation. */
+    return 0;
+#endif
+    /* Stage 1 -- Amiga WINDOW STATUS REQUEST: the classic console answers on
+       the input stream with CSI 1;1;<rows>;<cols> SP r. Understood by every
+       console.device descendant (OS3/OS4/MorphOS, AROS i386). */
+    fputs(TG_UI_CSI "0 q", stream);
+    fflush(stream);
+    if (tg_tui_read_csi_report('r', values, &value_count)) {
         if (value_count < 4UL || values[2] < TG_TUI_MIN_ROWS ||
             values[3] < TG_TUI_MIN_COLUMNS || values[2] > 300UL ||
             values[3] > 1000UL) {
@@ -108,6 +131,24 @@ int tg_console_tui_query_size(FILE *stream,
         }
         *rows = (unsigned int)values[2];
         *columns = (unsigned int)values[3];
+        return 1;
+    }
+    /* Stage 2 -- ANSI DSR fallback: the modern AROS x86_64 (deadwood) console
+       does not implement the Amiga status request (prints it as text) but
+       handles core ANSI: park the cursor at the far corner (clamped to the
+       window edge) and ask for its position -- the CSI <row>;<col> R report
+       IS the window size. No cursor restore needed: the caller either paints
+       the full-screen chrome right away or the linear flow scrolls on. */
+    fputs(TG_UI_CSI "9999;9999H" TG_UI_CSI "6n", stream);
+    fflush(stream);
+    if (tg_tui_read_csi_report('R', values, &value_count)) {
+        if (value_count < 2UL || values[0] < TG_TUI_MIN_ROWS ||
+            values[1] < TG_TUI_MIN_COLUMNS || values[0] > 300UL ||
+            values[1] > 1000UL) {
+            return 0;
+        }
+        *rows = (unsigned int)values[0];
+        *columns = (unsigned int)values[1];
         return 1;
     }
     return 0;
@@ -381,10 +422,11 @@ int tg_console_tui_enter(FILE *stream, const char *status_text)
     tg_tui_columns = columns;
     tg_tui_active = 1;
     tg_tui_resize_flag = 0;
-    /* Subscribe to the console's NEWSIZE raw event: resizes then arrive on
-       stdin as CSI 12;...| reports, which the line editor turns into a
-       pending-resize flag. */
-    fputs(TG_UI_CSI "12{", stream);
+    /* Subscribe to the console's NEWSIZE (12) and CLOSEWINDOW (11) raw
+       events: resizes arrive on stdin as CSI 12;...| reports (turned into a
+       pending-resize flag) and a close-gadget click as CSI 11;...| (turned
+       into a clean quit by the line editor). */
+    fputs(TG_UI_CSI "11;12{", stream);
     tg_tui_paint_chrome(stream, status_text);
     return 1;
 }
@@ -533,7 +575,7 @@ void tg_console_tui_leave(FILE *stream)
     }
     tg_tui_active = 0;
     tg_tui_resize_flag = 0;
-    fputs(TG_UI_CSI "12}", stream); /* unsubscribe the NEWSIZE raw event */
+    fputs(TG_UI_CSI "11;12}", stream); /* unsubscribe CLOSE+NEWSIZE raw events */
     tg_tui_goto(stream, tg_tui_rows, 1U);
     fputs(TG_UI_CSI "0m\n", stream);
     fflush(stream);

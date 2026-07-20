@@ -91,6 +91,15 @@ tg_net_status tg_net_recv(tg_net_connection *connection, void *buffer,
                           char *error_buffer, unsigned long error_buffer_size);
 
 /**
+ * Tests whether an open TCP connection can be read without blocking.
+ *
+ * Returns 1 when data (or EOF) is ready, 0 when the socket is currently quiet,
+ * and -1 on invalid arguments or a platform polling error.
+ */
+int tg_net_poll_readable(tg_net_connection *connection,
+                         char *error_buffer, unsigned long error_buffer_size);
+
+/**
  * Closes an open connection. Safe to call on an already closed object.
  */
 void tg_net_close(tg_net_connection *connection);

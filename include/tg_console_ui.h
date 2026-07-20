@@ -16,11 +16,17 @@
 
 /* CSI introducer for console control sequences. The AROS console does not
    translate ESC '[' into CSI (it prints it literally on screen), so AROS
-   uses the native Amiga single-byte CSI 0x9B. Every other target keeps
-   ESC '[', which Amiga console.device descendants accept natively and ANSI
-   terminals over ssh/serial require. Adjacent string-literal concatenation
-   builds the full sequences at compile time. */
-#if defined(__AROS__)
+   i386 (ABIv0, the old console) uses the native Amiga single-byte CSI 0x9B.
+   The x86_64 lane runs on the modern (deadwood) base whose console is the
+   exact OPPOSITE: it no longer recognises lone 0x9B on output (drawn as a
+   glyph -- it is an invalid UTF-8 byte there) but interprets 7-bit ESC '['
+   fine (verified on the hosted bench: the size probe printed "0 q" as text
+   with 0x9B, while ESC[ SGR rendered). So the CSI form is per-AROS-lane;
+   input parsing accepts both forms everywhere already. Every other target
+   keeps ESC '[', which Amiga console.device descendants accept natively and
+   ANSI terminals over ssh/serial require. Adjacent string-literal
+   concatenation builds the full sequences at compile time. */
+#if defined(__AROS__) && !defined(__x86_64__)
 #define TG_UI_CSI "\x9b"
 #else
 #define TG_UI_CSI "\033["

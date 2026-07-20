@@ -3844,6 +3844,10 @@ int tg_app_run(int argc, char **argv)
      * every platform.
      */
     setvbuf(stdout, (char *)0, _IONBF, 0);
+    /* In-place upgrade: drop the pre-0.0.6 leftovers (old binary name, IconX
+       launcher scripts + icons) from the program's drawer before anything
+       else, so Workbench never shows the stale duplicates. */
+    tg_config_remove_superseded();
     setvbuf(stderr, (char *)0, _IONBF, 0);
 
     program_name = "TelegramAmiga";

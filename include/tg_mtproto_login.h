@@ -120,7 +120,7 @@ tg_mtproto_tl_status tg_mtproto_build_upload_get_document(
     unsigned long offset,
     unsigned long limit);
 
-/* upload.saveFilePart#b304a621 (small-file upload, <= 10 MB / 3000 parts). */
+/* upload.saveFilePart#b304a621 (small-file upload, <= 10 MB). */
 tg_mtproto_tl_status tg_mtproto_build_upload_save_file_part(
     tg_mtproto_tl_writer *writer,
     unsigned long file_id_hi,
@@ -129,9 +129,37 @@ tg_mtproto_tl_status tg_mtproto_build_upload_save_file_part(
     const unsigned char *data,
     unsigned long data_length);
 
+/* upload.saveBigFilePart#de7b673d (large-file upload, > 10 MB). */
+tg_mtproto_tl_status tg_mtproto_build_upload_save_big_file_part(
+    tg_mtproto_tl_writer *writer,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long part_index,
+    unsigned long total_parts,
+    const unsigned char *data,
+    unsigned long data_length);
+
 /* messages.sendMedia#ac55d9c1 with inputMediaUploadedDocument (force_file,
-   filename attribute, empty caption). random_id must be fresh per send. */
+   filename attribute, empty caption) and inputFile. random_id must be fresh. */
 tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long file_parts,
+    const char *file_name,
+    const char *mime_type,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo);
+
+/* Same sendMedia envelope, but the uploaded file is referenced as inputFileBig
+   after upload.saveBigFilePart. */
+tg_mtproto_tl_status tg_mtproto_build_messages_send_media_big_document(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,
     unsigned long peer_id_hi,

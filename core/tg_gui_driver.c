@@ -129,6 +129,8 @@ int tg_gui_driver_color_for(const char *name)
 
 static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
 {
+    /* any outcome below mutates or may mutate the transcript layout */
+
     tg_gui_chat_driver *gui;
     tg_gui_state *state;
     tg_gui_message *message;
@@ -198,16 +200,19 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
             }
             state->message_count = TG_GUI_MAX_MESSAGES - 1; /* drop newest tail */
             state->newest_dropped = 1; /* ring-bottom now stale -> jump must reload */
+            state->msg_gen++;
         }
         if (at > state->message_count) {
             at = state->message_count;
         }
+        state->msg_gen++;
         for (i = state->message_count; i > at; --i) {
             state->messages[i] = state->messages[i - 1];
         }
         message = &state->messages[at];
         gui->prepend_at = at + 1;
         state->message_count += 1;
+        state->msg_gen++;
     } else {
         /* Keep the most recent TG_GUI_MAX_MESSAGES: drop the oldest when full. */
         if (state->message_count >= TG_GUI_MAX_MESSAGES) {
@@ -220,6 +225,7 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
         }
         message = &state->messages[state->message_count];
         state->message_count += 1;
+        state->msg_gen++;
         /* A live message arrived while the user is NOT at the true newest: count
            it for the scroll-to-bottom button's badge. (Own sends jump to the
            bottom, so they are never "unread"; the painter resets this on a jump
@@ -290,6 +296,7 @@ void tg_gui_driver_append_own(tg_gui_chat_driver *gui, const char *text,
         return;
     }
     state = gui->state;
+    state->msg_gen++;
     if (state->message_count >= TG_GUI_MAX_MESSAGES) {
         int i;
 
@@ -393,12 +400,28 @@ int tg_gui_driver_update_text(tg_gui_chat_driver *gui, unsigned long message_id,
         if (gui->state->messages[i].id == message_id) {
             /* Latin-1 verbatim (the composer text is already Latin-1, like the
                optimistic echo); the bubble re-wraps on the next paint. */
-            tg_gui_driver_copy(gui->state->messages[i].text,
-                               sizeof(gui->state->messages[i].text), text);
+            if (strcmp(gui->state->messages[i].text, text) != 0) {
+                tg_gui_driver_copy(gui->state->messages[i].text,
+                                   sizeof(gui->state->messages[i].text), text);
+                gui->state->msg_gen++;
+            }
             return 1;
         }
     }
     return 0;
+}
+
+int tg_gui_driver_update_text_utf8(tg_gui_chat_driver *gui,
+                                   unsigned long message_id,
+                                   const char *text)
+{
+    static char latin1[TG_GUI_MSG_TEXT_MAX];
+
+    if (text == 0) {
+        return 0;
+    }
+    tg_gui_driver_copy_latin1(latin1, sizeof(latin1), text);
+    return tg_gui_driver_update_text(gui, message_id, latin1);
 }
 
 int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui, unsigned long message_id)
@@ -415,6 +438,7 @@ int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui, unsigned long message_id
                 gui->state->messages[j - 1] = gui->state->messages[j];
             }
             gui->state->message_count -= 1;
+            gui->state->msg_gen++;
             return 1;
         }
     }
@@ -964,19 +988,40 @@ int tg_gui_driver_self_test(void)
             puts("gui driver self-test: id-less echo must reconcile by text");
             return 2;
         }
-        /* Edit: update a shown message's text by id (ds has ids 500,600,700). */
-        if (tg_gui_driver_update_text(&dg, 600UL, "modificato") != 1 ||
-            strcmp(ds.messages[1].text, "modificato") != 0 ||
-            tg_gui_driver_update_text(&dg, 999UL, "x") != 0) {
-            puts("gui driver self-test: edit update_text wrong");
-            return 2;
+        /* Edit: update a shown message's text by id (ds has ids 500,600,700).
+           Transcript mutations must invalidate any drag-selection snapshot. */
+        {
+            unsigned long gen;
+
+            gen = ds.msg_gen;
+            if (tg_gui_driver_update_text(&dg, 600UL, "modificato") != 1 ||
+                strcmp(ds.messages[1].text, "modificato") != 0 ||
+                ds.msg_gen != gen + 1UL ||
+                tg_gui_driver_update_text(&dg, 999UL, "x") != 0) {
+                puts("gui driver self-test: edit update_text wrong");
+                return 2;
+            }
+            gen = ds.msg_gen;
+            if (tg_gui_driver_update_text_utf8(
+                    &dg, 600UL, "pi\xc3\xb9 recente") != 1 ||
+                strcmp(ds.messages[1].text, "pi\xf9 recente") != 0 ||
+                ds.msg_gen != gen + 1UL) {
+                puts("gui driver self-test: UTF-8 edit conversion wrong");
+                return 2;
+            }
         }
         /* Delete: drop by id, shifting the tail up. */
-        if (tg_gui_driver_remove_by_id(&dg, 500UL) != 1 ||
-            ds.message_count != 2 || ds.messages[0].id != 600UL ||
-            tg_gui_driver_remove_by_id(&dg, 999UL) != 0) {
-            puts("gui driver self-test: delete remove_by_id wrong");
-            return 2;
+        {
+            unsigned long gen;
+
+            gen = ds.msg_gen;
+            if (tg_gui_driver_remove_by_id(&dg, 500UL) != 1 ||
+                ds.message_count != 2 || ds.messages[0].id != 600UL ||
+                ds.msg_gen != gen + 1UL ||
+                tg_gui_driver_remove_by_id(&dg, 999UL) != 0) {
+                puts("gui driver self-test: delete remove_by_id wrong");
+                return 2;
+            }
         }
     }
 

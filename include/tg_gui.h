@@ -109,6 +109,13 @@ struct tg_gui_backend {
    a click maps to the same strip the painter drew. */
 #define TG_GUI_SCROLLBAR_W 14
 
+/* Sidebar row index sentinel for the pinned "Saved Messages" (self chat) row.
+   Canonical home (tg_gui_session.h re-exports it via this header): the UI layer
+   needs it too, e.g. to offer Edit/Delete on every message of the self chat,
+   where the server clears the out flag (Telegram semantics: nothing in Saved
+   Messages is "outgoing", yet everything there is yours to edit/delete). */
+#define TG_GUI_SAVED_PEER_INDEX 0xfffffffeUL
+
 typedef struct tg_gui_chat {
     char name[TG_GUI_NAME_MAX];
     char preview[TG_GUI_TEXT_MAX];
@@ -229,6 +236,38 @@ typedef struct tg_gui_state {
     char reply_snippet[TG_GUI_REPLY_MAX];
     int msg_top[TG_GUI_MAX_MESSAGES];
     int msg_cached;
+    /* transcript area of the last paint (for the char-level hit test) */
+    int tr_area_x;
+    int tr_area_w;
+    /* mouse text selection inside ONE transcript message (issue #5 part two):
+       press latched on SELECTDOWN, becomes a selection when the pointer drags
+       past a small threshold, click-without-drag keeps the old reply gesture
+       (executed on SELECTUP). sel_a/sel_b are unordered char indexes. */
+    int sel_active;
+    int sel_msg;
+    long sel_a;
+    long sel_b;
+    unsigned long sel_gen_snap;  /* msg_gen when made: any shift invalidates */
+    int sel_press_armed;
+    int sel_press_msg;
+    long sel_press_char;
+    unsigned long sel_press_id;  /* the message ID latched at press: the
+                                    deferred reply verifies it at release */
+    unsigned long sel_press_gen;
+    int sel_press_x;
+    int sel_press_y;
+    /* Composer text selection: live range = [in_sel_anchor .. input_caret]
+       while active; extended by Shift+cursor or a mouse drag in the input
+       box. Cleared by plain moves, edits consume it (delete/replace). */
+    int in_sel_active;
+    int in_sel_anchor;
+    int in_drag_armed;   /* mouse press latched inside the input box */
+    int in_drag_anchor;
+
+    /* Transcript GENERATION: bumped on EVERY mutation of messages[] (append,
+       own echo, load-older prepend, reload, chat switch). A count snapshot is
+       NOT enough: a full ring shifts every index at constant count. */
+    unsigned long msg_gen;
 
     /* Right-click context menu: a small popup at the pointer over a message
        bubble. ctx_visible gates the paint + hit-test; ctx_msg is the target
@@ -293,12 +332,21 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
 #define TG_GUI_CTX_W 108
 /* Item ids returned by tg_gui_context_menu_hit. Which items the popup shows
    depends on the target message: Reply always; Edit + Delete only on an own
-   message that has a server id (you can only edit/delete your own). */
+   message that has a server id (you can only edit/delete your own). Send file is
+   chat-level (not tied to the clicked message) and mirrors the menubar item. */
 #define TG_GUI_CTX_REPLY 0
 #define TG_GUI_CTX_EDIT 1
 #define TG_GUI_CTX_DELETE 2
 #define TG_GUI_CTX_DOWNLOAD 3
-#define TG_GUI_CTX_ITEMS_MAX 4
+#define TG_GUI_CTX_SENDFILE 4
+#define TG_GUI_CTX_COPY 5
+#define TG_GUI_CTX_ITEMS_MAX 6
+
+/* 1 when the currently selected sidebar row is the pinned Saved Messages
+   (self) chat -- the row whose index carries TG_GUI_SAVED_PEER_INDEX. There
+   the server clears the out flag on every message (nothing in Saved Messages
+   is "outgoing"), yet everything is yours: Edit/Delete gate on this too. */
+int tg_gui_open_chat_is_self(const tg_gui_state *state);
 /* Maps a click at renderer-space (x, y) to a context-menu item id
    (TG_GUI_CTX_REPLY/EDIT/DELETE) when the popup is open, or -1 when the click is
    outside it (the caller then dismisses the menu). */
@@ -319,6 +367,19 @@ int tg_gui_mention_token(const char *input, int caret, int *start);
 
 /* F8 click-to-caret: map a click at renderer coords to a byte offset in the
    composer input / the sidebar search query. -1 = outside the field. */
+/* Char index inside message `msg_index` for a click at inner (x,y), clamped
+   to the message's text (above/left -> 0 side, below/right -> line/text end);
+   -1 when the cached layout is stale or the message has no text geometry.
+   Uses the SAME wrap + bubble geometry as the painter. */
+long tg_gui_transcript_char_at(const tg_gui_state *state,
+                               tg_gui_backend *backend, int lh, int msg_index,
+                               int x, int y);
+
+/* Copies the selected substring into out (NUL-terminated). 1 = a non-empty
+   selection was copied, 0 = no live selection. */
+int tg_gui_selection_get(const tg_gui_state *state, char *out,
+                         unsigned long out_size);
+
 int tg_gui_input_click_caret(const tg_gui_state *state,
                              tg_gui_backend *backend, int x, int y);
 int tg_gui_search_click_caret(const tg_gui_state *state,

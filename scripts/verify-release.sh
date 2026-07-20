@@ -6,13 +6,16 @@
 # Post-publish check: download each GitHub release asset and confirm it matches
 # the locally-built binary (md5), is the right architecture, leaks no session
 # file, ships the flashless icon and the expected files. Catches a stale upload
-# or a missed --clobber. Usage: VERSION=0.0.2 sh scripts/verify-release.sh
+# or a missed --clobber. VERSION defaults to include/tg_version.h and can be
+# overridden: VERSION=0.0.7 sh scripts/verify-release.sh
 
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 REPO=${REPO:-kaffeine1/telegram-amiga}
-VERSION=${VERSION:-0.0.2}
+VERSION=${VERSION:-$(sed -n 's/.*define TG_VERSION "\([^"]*\)".*/\1/p' \
+    "$ROOT_DIR/include/tg_version.h" 2>/dev/null)}
+VERSION=${VERSION:-0.0.0}
 
 md5of() { if command -v md5 >/dev/null 2>&1; then md5 -q "$1"; else md5sum "$1" | awk '{print $1}'; fi; }
 
@@ -30,13 +33,13 @@ verify() {
     want=$(md5of "$ROOT_DIR/$localbin"); got=$(md5of "$TMP/bin")
     arch=$(file "$TMP/bin" | grep -c "$archpat" || true)
     leak=$(unzip -l "$TMP/$tag.zip" | grep -icE "telegram-(auth|peers|seed|password|token)|phone-code-hash" || true)
-    icon=$(unzip -p "$TMP/$tag.zip" "*/TelegramGUI.info" 2>/dev/null | strings | grep -c "^TelegramAmiga$" || true)
-    files=$(unzip -l "$TMP/$tag.zip" | grep -cE "Manual-EN.txt|Manuale-IT.txt|TelegramGUI$|TelegramTUI$|telegram-api.txt" || true)
+    icon=$(unzip -p "$TMP/$tag.zip" "*/TelegramAmiga.info" 2>/dev/null | strings | grep -c "^TelegramAmiga$" || true)
+    files=$(unzip -l "$TMP/$tag.zip" | grep -cE "Manual-EN.txt|Manuale-IT.txt|/TelegramAmiga$|/TelegramAmiga-TUI$|telegram-api.txt" || true)
     ok=1
     [ "$want" = "$got" ] || { echo "FAIL $tag: published binary $got != local build $want"; ok=0; }
     [ "$arch" -ge 1 ]    || { echo "FAIL $tag: wrong architecture"; ok=0; }
     [ "$leak" = 0 ]      || { echo "FAIL $tag: SESSION FILE LEAK"; ok=0; }
-    [ "$icon" -ge 1 ]    || { echo "FAIL $tag: TelegramGUI.info not flashless"; ok=0; }
+    [ "$icon" -ge 1 ]    || { echo "FAIL $tag: TelegramAmiga.info not flashless"; ok=0; }
     [ "$files" = 5 ]     || { echo "FAIL $tag: $files/5 expected files"; ok=0; }
     if [ "$ok" = 1 ]; then echo "OK   $tag  [bin $(printf %.8s "$got")]"; else fail=1; fi
 }

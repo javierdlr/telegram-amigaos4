@@ -27,6 +27,11 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
+#include <devices/timer.h>
+#include <interfaces/timer.h> /* struct TimerIFace only: proto/timer.h's
+                                 __USE_INLINE__ macros would rewrite our
+                                 explicit iface->ReadEClock() call */
+#include <dos/dosextens.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
 #include <dos/dos.h>
@@ -46,7 +51,19 @@
 
 #if defined(__AROS__) || defined(__amigaos4__) || defined(__MORPHOS__) || defined(__amigaos3__) || defined(__m68k__)
 #include <workbench/workbench.h>
+#include <workbench/startup.h>
 #include <proto/icon.h>
+#endif
+#if defined(__amigaos4__)
+/* Types only, not proto/*.h: with __USE_INLINE__ the proto headers rewrite
+   every call as GlobalIface->method, and we hold our own interface pointers
+   (workbench + intuition are not auto-opened). */
+#include <interfaces/wb.h>
+#include <interfaces/intuition.h>
+#include <intuition/screens.h>
+#ifndef ACTION_DISK_INFO
+#define ACTION_DISK_INFO 25
+#endif
 #endif
 #include "tg_platform.h"
 #include "tg_mtproto_crypto.h"
@@ -90,6 +107,70 @@ unsigned long tg_platform_local_epoch(void)
          + (unsigned long)ds.ds_Minute * 60UL
          + (unsigned long)ds.ds_Tick / 50UL
          + 252460800UL;
+}
+
+/* issue #9: read the launched icon's TUI_MODE tooltype on OS4. Uses the same
+   local-IIcon alias trick as ensure_drawer_icon so the __USE_INLINE__ icon
+   macros resolve to our opened interface; SetCurrentDir goes through the
+   auto-provided IDOS. Returns 1 (TUI), 0 (GUI), -1 (no tooltype -> heuristic). */
+int tg_platform_wb_tui_mode(char **argv)
+{
+#if defined(__amigaos4__)
+    struct WBStartup *wb = (struct WBStartup *)argv;
+    struct Library *IconBase;
+    struct IconIFace *iicon;
+    struct WBArg *a;
+    int result = -1;
+
+    if (wb == 0 || wb->sm_ArgList == 0 || wb->sm_NumArgs < 1) {
+        return -1;
+    }
+    IconBase = OpenLibrary((CONST_STRPTR)"icon.library", 44L);
+    if (IconBase == 0) {
+        return -1;
+    }
+    iicon = (struct IconIFace *)GetInterface(IconBase, "main", 1L, 0);
+    if (iicon == 0) {
+        CloseLibrary(IconBase);
+        return -1;
+    }
+    {
+        struct IconIFace *IIcon = iicon; (void)IIcon;
+        struct DiskObject *dobj;
+
+        a = &wb->sm_ArgList[0];
+        if (a->wa_Name != 0 && a->wa_Name[0] != '\0') {
+            BPTR olddir = 0;
+            int have_dir = 0;
+
+            if (a->wa_Lock != 0) {
+                olddir = SetCurrentDir(a->wa_Lock);
+                have_dir = 1;
+            }
+            dobj = GetDiskObject((STRPTR)a->wa_Name);
+            if (dobj != 0) {
+                STRPTR tt = FindToolType(dobj->do_ToolTypes,
+                                         (CONST_STRPTR)"TUI_MODE");
+
+                if (tt != 0) {
+                    result = (MatchToolValue(tt, (CONST_STRPTR)"NO") ||
+                              MatchToolValue(tt, (CONST_STRPTR)"FALSE") ||
+                              MatchToolValue(tt, (CONST_STRPTR)"OFF")) ? 0 : 1;
+                }
+                FreeDiskObject(dobj);
+            }
+            if (have_dir) {
+                SetCurrentDir(olddir);
+            }
+        }
+    }
+    DropInterface((struct Interface *)iicon);
+    CloseLibrary(IconBase);
+    return result;
+#else
+    (void)argv;
+    return -1;
+#endif
 }
 
 void tg_platform_workbench_init(void)
@@ -297,13 +378,88 @@ int tg_platform_stdin_set_raw(int enabled)
 static unsigned char tg_os4_drbg_state[TG_MTPROTO_SHA256_LENGTH];
 static int tg_os4_drbg_ready = 0;
 
+/* Fine-grained tick for the entropy mix. The obvious mftb read is a TRAP on
+   the AmigaOne A1222: its e500v2 core does not implement the classic mftb
+   instruction (the time base is an SPR pair there) and the kernel does not
+   emulate it, so both clients died with a program exception in the entropy
+   paths -- GrimReaper put one crash at note_input_event (first keystroke) and
+   one inside drbg_generate during auth.sendCode (tester crashlogs, A1222).
+   Read the E-Clock through timer.device instead: a legal user-mode API with
+   the same jitter quality on EVERY OS4 machine (G3/G4/X5000/A1222). The
+   device is opened lazily once and stays open for the process lifetime; if
+   the open ever fails, gettimeofday microseconds keep the mix alive. */
+static struct MsgPort *tg_os4_tb_port = 0;
+static struct TimeRequest *tg_os4_tb_req = 0;
+static struct Library *tg_os4_tb_base = 0;
+static struct TimerIFace *tg_os4_itimer = 0;
+static int tg_os4_tb_device_open = 0;
+static int tg_os4_tb_state = 0; /* 0 untried, 1 EClock ready, -1 fallback */
+
+static void tg_os4_timebase_close(void)
+{
+    if (tg_os4_itimer != 0) {
+        DropInterface((struct Interface *)tg_os4_itimer);
+        tg_os4_itimer = 0;
+    }
+    if (tg_os4_tb_device_open && tg_os4_tb_req != 0) {
+        CloseDevice((struct IORequest *)tg_os4_tb_req);
+        tg_os4_tb_device_open = 0;
+    }
+    tg_os4_tb_base = 0;
+    if (tg_os4_tb_req != 0) {
+        DeleteIORequest((struct IORequest *)tg_os4_tb_req);
+        tg_os4_tb_req = 0;
+    }
+    if (tg_os4_tb_port != 0) {
+        DeleteMsgPort(tg_os4_tb_port);
+        tg_os4_tb_port = 0;
+    }
+    tg_os4_tb_state = 0;
+}
+
+static void tg_os4_socket_shutdown(void);
+
+void tg_platform_shutdown(void)
+{
+    tg_os4_timebase_close();
+    tg_os4_socket_shutdown();
+}
+
 static unsigned long tg_os4_timebase(void)
 {
-    unsigned long tb = 0;
-#if defined(__GNUC__)
-    __asm__ volatile("mftb %0" : "=r"(tb));
-#endif
-    return tb;
+    if (tg_os4_tb_state == 0) {
+        tg_os4_tb_state = -1;
+        tg_os4_tb_port = CreateMsgPort();
+        if (tg_os4_tb_port != 0) {
+            tg_os4_tb_req = (struct TimeRequest *)CreateIORequest(
+                tg_os4_tb_port, sizeof(struct TimeRequest));
+        }
+        if (tg_os4_tb_req != 0 &&
+            OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
+                       (struct IORequest *)tg_os4_tb_req, 0) == 0) {
+            tg_os4_tb_device_open = 1;
+            tg_os4_tb_base =
+                (struct Library *)tg_os4_tb_req->Request.io_Device;
+            tg_os4_itimer = (struct TimerIFace *)GetInterface(
+                tg_os4_tb_base, "main", 1L, 0);
+            if (tg_os4_itimer != 0) {
+                tg_os4_tb_state = 1;
+            }
+        }
+    }
+    if (tg_os4_tb_state == 1) {
+        struct EClockVal ecv;
+
+        tg_os4_itimer->ReadEClock(&ecv);
+        return ecv.ev_lo ^ (ecv.ev_hi << 16);
+    }
+    {
+        struct timeval tv;
+
+        gettimeofday(&tv, 0);
+        return (unsigned long)tv.tv_usec ^
+               ((unsigned long)tv.tv_sec << 20);
+    }
 }
 
 static unsigned long tg_os4_entropy_gather(unsigned char *buf, unsigned long cap)
@@ -714,14 +870,56 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
     return TG_NET_OK;
 }
 
+int tg_platform_tcp_poll_readable(tg_net_connection *connection,
+                                  char *error_buffer,
+                                  unsigned long error_buffer_size)
+{
+    fd_set read_fds;
+    struct timeval timeout;
+    long rc;
+
+    if (error_buffer != 0 && error_buffer_size > 0UL) {
+        error_buffer[0] = '\0';
+    }
+    if (connection == 0 || !connection->is_open) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket is not open");
+        return -1;
+    }
+    FD_ZERO(&read_fds);
+    FD_SET((int)connection->platform_handle, &read_fds);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+    rc = WaitSelect((int)connection->platform_handle + 1, &read_fds, 0, 0,
+                    &timeout, 0);
+    if (rc < 0) {
+        tg_platform_set_error(error_buffer, error_buffer_size,
+                              "socket poll failed");
+        return -1;
+    }
+    return rc > 0 &&
+           FD_ISSET((int)connection->platform_handle, &read_fds) ? 1 : 0;
+}
+
 void tg_platform_tcp_close(tg_net_connection *connection)
 {
     if (connection != 0 && connection->is_open) {
         CloseSocket((int)connection->platform_handle);
-#if !TG_AMIGAOS4_ENABLE_AMISSL
-        tg_amigaos4_socket_close_library();
-#endif
+        connection->is_open = 0;
     }
+    /* The shared ISocket/SocketBase stays open for the other live connections;
+       it is released once, in tg_platform_shutdown() (or by the AmiSSL
+       teardown when that owns it). Per-close CloseLibrary zeroed the base
+       under live connections (reproduced as a relaunch bus-fault on AROS). */
+}
+
+/* Process-exit mirror of the lazy open in tcp_connect (non-AmiSSL builds;
+   the AmiSSL teardown closes the base itself when enabled). */
+static void tg_os4_socket_shutdown(void)
+{
+#if !TG_AMIGAOS4_ENABLE_AMISSL
+    tg_amigaos4_socket_close_library();
+#endif
 }
 
 #else
@@ -769,6 +967,17 @@ tg_net_status tg_platform_tcp_recv(tg_net_connection *connection, void *buffer,
         error_buffer[0] = '\0';
     }
     return TG_NET_UNSUPPORTED;
+}
+
+int tg_platform_tcp_poll_readable(tg_net_connection *connection,
+                                  char *error_buffer,
+                                  unsigned long error_buffer_size)
+{
+    (void)connection;
+    if (error_buffer != 0 && error_buffer_size > 0UL) {
+        error_buffer[0] = '\0';
+    }
+    return -1;
 }
 
 void tg_platform_tcp_close(tg_net_connection *connection)
@@ -1163,17 +1372,34 @@ void tg_platform_display_beep(void)
 #if defined(__amigaos4__)
     /* The screen flash is the Amiga-native notification; a BEL byte lets
        console handlers improvise (AmiKit's console clears the window). */
-    IntuitionBase = OpenLibrary("intuition.library", 0L);
+    /* The GUI owns this global base/interface for its whole window lifetime.
+       Borrow them when already open; otherwise acquire and release only the
+       references created here. Overwriting the held pointers made the first
+       notification close Intuition out from under the live OS4 window. */
+    int opened_base = 0;
+    int opened_interface = 0;
+
+    if (IntuitionBase == 0) {
+        IntuitionBase = OpenLibrary("intuition.library", 0L);
+        opened_base = 1;
+    }
     if (IntuitionBase != 0) {
-        IIntuition = (struct IntuitionIFace *)GetInterface(IntuitionBase,
-                                                           "main", 1L, 0);
+        if (IIntuition == 0) {
+            IIntuition = (struct IntuitionIFace *)GetInterface(
+                IntuitionBase, "main", 1L, 0);
+            opened_interface = IIntuition != 0;
+        }
         if (IIntuition != 0) {
             DisplayBeep(0);
+        }
+        if (opened_interface) {
             DropInterface((struct Interface *)IIntuition);
             IIntuition = 0;
         }
-        CloseLibrary(IntuitionBase);
-        IntuitionBase = 0;
+        if (opened_base) {
+            CloseLibrary(IntuitionBase);
+            IntuitionBase = 0;
+        }
     }
 #endif
 }
@@ -1215,4 +1441,380 @@ void tg_platform_ensure_drawer_icon(const char *drawer)
         DropInterface((struct Interface *)iicon);
     }
     CloseLibrary(IconBase);
+}
+
+static BPTR tg_wb_tui_con = 0;
+static BPTR tg_wb_tui_old_in = 0;
+static BPTR tg_wb_tui_old_out = 0;
+static struct MsgPort *tg_wb_tui_old_ct = 0;
+
+static void tg_os4_drop_arm(void);
+static void tg_os4_drop_disarm(void);
+
+#define TG_OS4_TUI_TITLE "Telegram Amiga TUI"
+
+int tg_platform_workbench_tui_console(void)
+{
+    BPTR con;
+
+    con = Open((CONST_STRPTR)"CON:20/20/640/440/" TG_OS4_TUI_TITLE
+               "/CLOSE/WAIT", MODE_OLDFILE);
+    if (con == 0) {
+        return 0;
+    }
+    /* Make this window the process console. SelectInput/SelectOutput switch
+       the DOS channels (pr_CIS/pr_COS), but "*" and the C runtime's lazy
+       console resolve through pr_ConsoleTask, which a Workbench-launched
+       process does NOT have -- without setting it, Open("*") fails, a failed
+       freopen() still closes the stdio stream (C89), and the runtime opens
+       its own "Output" window on the first write while reads hang: the
+       two-window freeze seen on OS3/OS4. SetConsoleTask (dos V36+) points it
+       at this CON: handler first. */
+#if defined(__amigaos4__)
+    /* OS4 renamed the call and the FileHandle member. */
+    tg_wb_tui_old_ct =
+        SetConsolePort(((struct FileHandle *)BADDR(con))->fh_MsgPort);
+#else
+    SetConsoleTask(((struct FileHandle *)BADDR(con))->fh_Type);
+#endif
+    tg_wb_tui_old_in = SelectInput(con);
+    tg_wb_tui_old_out = SelectOutput(con);
+    tg_wb_tui_con = con;
+    /* Rebind C stdio only if "*" actually resolves now: freopen on a failed
+       open would CLOSE stdin/stdout for good, so probe with dos Open first. */
+    {
+        BPTR probe = Open((CONST_STRPTR)"*", MODE_OLDFILE);
+
+        if (probe != 0) {
+            Close(probe);
+            (void)freopen("*", "r", stdin);
+            (void)freopen("*", "w", stdout);
+            (void)freopen("*", "w", stderr);
+        }
+    }
+    tg_os4_drop_arm(); /* best-effort file drag-and-drop onto this window */
+    return 1;
+}
+
+void tg_platform_workbench_tui_console_close(void)
+{
+    if (tg_wb_tui_con == 0) {
+        return; /* console never opened (CLI launch or open failure) */
+    }
+    tg_os4_drop_disarm();
+    /* Put the original process plumbing back BEFORE closing our handle, so
+       nothing keeps referencing the console we are about to release. The
+       stdio streams freopen'd onto "*" are closed by the C runtime at exit;
+       once this handle goes too the con-handler can honour the CLOSE gadget
+       (WAIT keeps the window readable until that click). */
+    SelectInput(tg_wb_tui_old_in);
+    SelectOutput(tg_wb_tui_old_out);
+    SetConsolePort(tg_wb_tui_old_ct);
+    Close(tg_wb_tui_con);
+    tg_wb_tui_con = 0;
+}
+
+/* ---- Workbench TUI drag-and-drop (AppWindow, OS4-only) ------------------- */
+
+/* We call these four through OUR OWN stored interface pointers, so (now that
+   every header is in) drop the __USE_INLINE__ macros that would rewrite them
+   as GlobalIface->method. IExec/IDoS calls elsewhere keep their macros -- those
+   really are the auto-provided globals. */
+#undef LockPubScreen
+#undef UnlockPubScreen
+#undef AddAppWindowA
+#undef RemoveAppWindow
+#undef AddAppIconA
+#undef RemoveAppIcon
+#undef GetDiskObject
+#undef GetDefDiskObject
+#undef FreeDiskObject
+
+static const char *tg_os4_drop_diag = "not armed";
+static unsigned long tg_os4_drop_polls = 0;  /* poll calls (loop alive?) */
+static unsigned long tg_os4_drop_msgs = 0;   /* AppMessages ever received */
+
+static struct Library *tg_os4_wb_base = 0;
+static struct WorkbenchIFace *tg_os4_iwb = 0;
+static struct Library *tg_os4_int_base = 0;
+static struct IntuitionIFace *tg_os4_iint = 0;
+static struct MsgPort *tg_os4_app_port = 0;
+static struct AppWindow *tg_os4_app_win = 0;
+static struct AppIcon *tg_os4_app_icon = 0;
+static struct Library *tg_os4_icon_base = 0;
+static struct IconIFace *tg_os4_iicon = 0;
+static struct DiskObject *tg_os4_drop_dobj = 0;
+
+/* Confirm `cand` is a live window on the default public screen before handing
+   it to workbench.library. The DoPkt(ACTION_DISK_INFO) trick that yields the
+   CON: window pointer is not guaranteed on every handler (OS4's con-handler
+   is a rewrite), and a bogus pointer into AddAppWindow would crash; if it is
+   not in the screen's window list we simply do not arm drag-and-drop. */
+static int tg_os4_window_is_live(struct Window *cand)
+{
+    struct Screen *scr;
+    struct Window *w;
+    int found = 0;
+
+    if (cand == 0 || tg_os4_iint == 0) {
+        return 0;
+    }
+    scr = tg_os4_iint->LockPubScreen(0);
+    if (scr == 0) {
+        return 0;
+    }
+    /* LockPubScreen keeps the screen alive but not its window list: Forbid()
+       around the walk so no other task opens/closes a window mid-traversal
+       (a closing window would dangle NextWindow). */
+    Forbid();
+    for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
+        if (w == cand) {
+            found = 1;
+            break;
+        }
+    }
+    Permit();
+    tg_os4_iint->UnlockPubScreen(0, scr);
+    return found;
+}
+
+static void tg_os4_drop_disarm(void)
+{
+    if (tg_os4_app_icon != 0 && tg_os4_iwb != 0) {
+        tg_os4_iwb->RemoveAppIcon(tg_os4_app_icon);
+        tg_os4_app_icon = 0;
+    }
+    if (tg_os4_app_win != 0 && tg_os4_iwb != 0) {
+        tg_os4_iwb->RemoveAppWindow(tg_os4_app_win);
+        tg_os4_app_win = 0;
+    }
+    if (tg_os4_app_port != 0) {
+        struct Message *m;
+
+        while ((m = GetMsg(tg_os4_app_port)) != 0) {
+            ReplyMsg(m); /* drain and reply un-handled drops */
+        }
+        DeleteMsgPort(tg_os4_app_port);
+        tg_os4_app_port = 0;
+    }
+    if (tg_os4_drop_dobj != 0 && tg_os4_iicon != 0) {
+        tg_os4_iicon->FreeDiskObject(tg_os4_drop_dobj);
+        tg_os4_drop_dobj = 0;
+    }
+    if (tg_os4_iicon != 0) {
+        DropInterface((struct Interface *)tg_os4_iicon);
+        tg_os4_iicon = 0;
+    }
+    if (tg_os4_icon_base != 0) {
+        CloseLibrary(tg_os4_icon_base);
+        tg_os4_icon_base = 0;
+    }
+    if (tg_os4_iwb != 0) {
+        DropInterface((struct Interface *)tg_os4_iwb);
+        tg_os4_iwb = 0;
+    }
+    if (tg_os4_wb_base != 0) {
+        CloseLibrary(tg_os4_wb_base);
+        tg_os4_wb_base = 0;
+    }
+    if (tg_os4_iint != 0) {
+        DropInterface((struct Interface *)tg_os4_iint);
+        tg_os4_iint = 0;
+    }
+    if (tg_os4_int_base != 0) {
+        CloseLibrary(tg_os4_int_base);
+        tg_os4_int_base = 0;
+    }
+}
+
+/* Fallback window lookup: the CON: title is OURS (we put it in the spec), so
+   a title match on the public screen finds the console window even when the
+   handler does not answer the DISK_INFO trick. The window lives until the
+   console is closed, so the pointer stays valid for the AppWindow's life. */
+static struct Window *tg_os4_find_window_by_title(const char *title)
+{
+    struct Screen *scr;
+    struct Window *w;
+    struct Window *found = 0;
+
+    if (tg_os4_iint == 0) {
+        return 0;
+    }
+    scr = tg_os4_iint->LockPubScreen(0);
+    if (scr == 0) {
+        return 0;
+    }
+    Forbid();
+    for (w = scr->FirstWindow; w != 0; w = w->NextWindow) {
+        if (w->Title != 0 && strcmp((const char *)w->Title, title) == 0) {
+            found = w;
+            break;
+        }
+    }
+    Permit();
+    tg_os4_iint->UnlockPubScreen(0, scr);
+    return found;
+}
+
+static void tg_os4_drop_arm(void)
+{
+    struct InfoData id;
+    struct FileHandle *fh;
+    struct Window *win;
+
+    if (tg_wb_tui_con == 0) {
+        tg_os4_drop_diag = "no Workbench console";
+        return; /* only the console we opened from Workbench */
+    }
+    if (tg_os4_app_win != 0 || tg_os4_app_port != 0 ||
+        tg_os4_wb_base != 0 || tg_os4_int_base != 0) {
+        return; /* already armed: never leak a second set of resources */
+    }
+    fh = (struct FileHandle *)BADDR(tg_wb_tui_con);
+    if (fh == 0) {
+        return;
+    }
+    tg_os4_int_base = OpenLibrary((CONST_STRPTR)"intuition.library", 39);
+    if (tg_os4_int_base == 0) {
+        tg_os4_drop_diag = "intuition.library open failed";
+        return;
+    }
+    tg_os4_iint = (struct IntuitionIFace *)GetInterface(tg_os4_int_base,
+                                                        "main", 1L, 0);
+    if (tg_os4_iint == 0) {
+        tg_os4_drop_diag = "intuition interface failed";
+        tg_os4_drop_disarm();
+        return;
+    }
+    memset(&id, 0, sizeof(id));
+    /* Two ways to find OUR console window, in order of directness:
+       1. The CON: handler answers ACTION_DISK_INFO by stuffing a RAW window
+          pointer into the (BPTR-typed) id_VolumeNode field -- the documented
+          trick, read back as a PLAIN cast (BADDR would shift it x4). The
+          pointer is trusted only if it shows up in the screen window list.
+       2. If the handler does not play the trick (OS4's is a rewrite), find
+          the window by its TITLE: it is ours, set in the CON: spec above. */
+    win = 0;
+    if (DoPkt(fh->fh_MsgPort, ACTION_DISK_INFO, (LONG)MKBADDR(&id),
+              0, 0, 0, 0)) {
+        win = (struct Window *)id.id_VolumeNode;
+    }
+    if (tg_os4_window_is_live(win)) {
+        tg_os4_drop_diag = "ready (handler window)";
+    } else {
+        win = tg_os4_find_window_by_title(TG_OS4_TUI_TITLE);
+        /* NB a STALE console window with the same title (an old WAIT window
+           from a previous run) would be matched first: the diag says which
+           route armed so a field report can catch exactly that. */
+        tg_os4_drop_diag = "ready (title match)";
+    }
+    if (win == 0) {
+        tg_os4_drop_diag = "console window not found";
+        tg_os4_drop_disarm(); /* no drop, but no crash */
+        return;
+    }
+    tg_os4_wb_base = OpenLibrary((CONST_STRPTR)"workbench.library", 44);
+    if (tg_os4_wb_base == 0) {
+        tg_os4_drop_diag = "workbench.library open failed";
+        tg_os4_drop_disarm();
+        return;
+    }
+    tg_os4_iwb = (struct WorkbenchIFace *)GetInterface(tg_os4_wb_base, "main",
+                                                       1L, 0);
+    if (tg_os4_iwb == 0) {
+        tg_os4_drop_diag = "workbench interface failed";
+        tg_os4_drop_disarm();
+        return;
+    }
+    tg_os4_app_port = CreateMsgPort();
+    if (tg_os4_app_port == 0) {
+        tg_os4_drop_diag = "message port failed";
+        tg_os4_drop_disarm();
+        return;
+    }
+    tg_os4_app_win = tg_os4_iwb->AddAppWindowA(0UL, 0UL, win, tg_os4_app_port,
+                                               0);
+    if (tg_os4_app_win == 0) {
+        tg_os4_drop_diag = "AddAppWindow failed";
+        tg_os4_drop_disarm();
+        return;
+    }
+    /* Field result on OS4: the AppWindow registers fine but Workbench never
+       delivers console-window drops to it (the con-handler owns those). The
+       reliable lane is an APPICON on the same message port: drop the file on
+       the TelegramAmiga icon that appears on the Workbench while the console
+       client runs. Same port, same poll, same injection. */
+    tg_os4_icon_base = OpenLibrary((CONST_STRPTR)"icon.library", 36L);
+    if (tg_os4_icon_base != 0) {
+        tg_os4_iicon = (struct IconIFace *)GetInterface(tg_os4_icon_base,
+                                                        "main", 1L, 0);
+    }
+    if (tg_os4_iicon != 0) {
+        tg_os4_drop_dobj =
+            tg_os4_iicon->GetDiskObject((STRPTR)"PROGDIR:TelegramAmiga");
+        if (tg_os4_drop_dobj == 0) {
+            tg_os4_drop_dobj = tg_os4_iicon->GetDefDiskObject(WBTOOL);
+        }
+        if (tg_os4_drop_dobj != 0) {
+            tg_os4_drop_dobj->do_CurrentX = NO_ICON_POSITION;
+            tg_os4_drop_dobj->do_CurrentY = NO_ICON_POSITION;
+            tg_os4_drop_dobj->do_Type = 0; /* plain AppIcon, not a WB object */
+            tg_os4_app_icon = tg_os4_iwb->AddAppIconA(
+                0UL, 0UL, (CONST_STRPTR)"TG drop", tg_os4_app_port, 0,
+                tg_os4_drop_dobj, 0);
+        }
+    }
+    /* the diag already says WHICH route found the window; the icon lane is
+       best-effort on top (drops on either land on the same port) */
+}
+
+const char *tg_platform_console_drop_diag(void)
+{
+    /* Live counters make the field report decisive: polls==0 means the read
+       loop never asks, msgs==0 means Workbench never delivered (e.g. the
+       con-handler's own drop handling swallowed it). */
+    static char diag_buf[96];
+
+    sprintf(diag_buf, "%s, polls %lu, drops %lu", tg_os4_drop_diag,
+            tg_os4_drop_polls, tg_os4_drop_msgs);
+    return diag_buf;
+}
+
+int tg_platform_console_drop_poll(char *out, unsigned long out_size)
+{
+    struct AppMessage *am;
+    int got = 0;
+
+    if (out == 0 || out_size == 0UL) {
+        return 0;
+    }
+    out[0] = '\0';
+    if (tg_os4_app_port == 0) {
+        return 0;
+    }
+    ++tg_os4_drop_polls;
+    while ((am = (struct AppMessage *)GetMsg(tg_os4_app_port)) != 0) {
+        ++tg_os4_drop_msgs;
+        /* Take the FIRST dropped file only (one path per /sendfile); still
+           reply to every message so the sender is never left blocked. */
+        if (!got && am->am_NumArgs > 0 && am->am_ArgList != 0) {
+            BPTR lock = am->am_ArgList[0].wa_Lock;
+            const char *name = (const char *)am->am_ArgList[0].wa_Name;
+
+            out[0] = '\0';
+            if (lock != 0 &&
+                NameFromLock(lock, (STRPTR)out, (LONG)out_size) != 0) {
+                if (name != 0 && name[0] != '\0') {
+                    AddPart((STRPTR)out, (CONST_STRPTR)name, (ULONG)out_size);
+                }
+                got = 1;
+            } else if (name != 0 && name[0] != '\0') {
+                strncpy(out, name, out_size - 1UL);
+                out[out_size - 1UL] = '\0';
+                got = 1;
+            }
+        }
+        ReplyMsg((struct Message *)am);
+    }
+    return got;
 }

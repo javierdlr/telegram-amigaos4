@@ -132,6 +132,9 @@
    214 still uses the classic ids). */
 #define TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR 0x1f2b0afdUL
 #define TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR 0x62ba04d9UL
+#define TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR 0xe40370a3UL
+#define TG_MTPROTO_UPDATE_EDIT_CHANNEL_MESSAGE_CONSTRUCTOR 0x1b3f4df7UL
+#define TG_MTPROTO_MESSAGE_CONSTRUCTOR 0x9815cec8UL
 #define TG_MTPROTO_TL_VECTOR_CONSTRUCTOR 0x1cb5c415UL
 #define TG_MTPROTO_UPDATES_TOO_LONG_CONSTRUCTOR 0xe317af7eUL
 #define TG_MTPROTO_AUTH_SENT_CODE_CONSTRUCTOR 0x5e002502UL
@@ -158,6 +161,14 @@
 #else
 #define TG_MTPROTO_REPLY_RECV_MAX 131072U
 #endif
+/* Send-side buffers that must hold a whole upload chunk. The saveFilePart query
+   IS a file chunk (unlike getFile, whose query is a tiny ~40-byte request), so
+   the initConnection wrap buffers and the encrypted send buffers have to be
+   chunk-sized or build_init_connection overflows and the upload fails with
+   "Upload failed". Reuse the per-platform message-body bound (12 KB m68k / 72 KB
+   others), which comfortably holds an 8 KB / 64 KB chunk plus the wrap+envelope.
+   This is the send-direction twin of the download PACKET_MAX/body fix. */
+#define TG_MTPROTO_QUERY_SEND_MAX TG_MTPROTO_ENCRYPTED_BODY_MAX
 #define TG_MTPROTO_PEER_USER_CONSTRUCTOR 0x59511722UL
 #define TG_MTPROTO_PEER_CHAT_CONSTRUCTOR 0x36c6019aUL
 #define TG_MTPROTO_PEER_CHANNEL_CONSTRUCTOR 0xa2a5371eUL
@@ -312,6 +323,32 @@ typedef struct tg_chat_typing_sink {
     unsigned long seen_epoch; /* time() when last seen, for the TTL */
 } tg_chat_typing_sink;
 static tg_chat_typing_sink *tg_chat_typing_target = 0;
+
+/* Explicit context bundle for the file workers below, so the SAME machinery
+   serves both front-ends: the GUI wrappers fill it from the session
+   singleton, the console chat loop from its own locals (F9 parity for the
+   TUI). `context` is the caller's authenticated connection; `peer_index` is
+   the peer-cache index TEXT ("self" opens Saved Messages). */
+typedef struct tg_mtproto_file_ctx {
+    const char *host;
+    const char *port;
+    const char *api_id;
+    const char *auth_file;
+    const char *dc_id_text;
+    tg_mtproto_auth_context *context;
+    const char *peer_cache_file;
+    const char *peer_index;
+} tg_mtproto_file_ctx;
+
+/* File workers (defined with the GUI session code below; the console chat
+   loop calls them with its own locals). */
+static int tg_mtproto_file_download(const struct tg_mtproto_file_ctx *fc,
+                                    unsigned long msg_id, char *out_path,
+                                    unsigned long out_path_size, FILE *stream);
+static int tg_mtproto_file_send(const struct tg_mtproto_file_ctx *fc,
+                                const char *path, FILE *stream,
+                                tg_gui_upload_progress_fn progress,
+                                void *progress_data);
 /* Live read-receipt sink (5c): the push collector records the most recent
    updateReadHistoryOutbox (which peer read up to which id); the GUI loop applies
    it when the peer matches the open chat. NULL outside a GUI session. */
@@ -322,6 +359,22 @@ typedef struct tg_chat_read_outbox_sink {
     int pending;              /* 1 = a push not yet applied by the loop */
 } tg_chat_read_outbox_sink;
 static tg_chat_read_outbox_sink *tg_chat_read_outbox_target = 0;
+/* Remote edits arrive as updateEditMessage/updateEditChannelMessage pushes.
+   Keep a short queue because one encrypted-query receive loop may consume
+   several updates before the GUI gets control back. */
+#define TG_CHAT_EDIT_QUEUE_MAX 8U
+typedef struct tg_chat_edit_entry {
+    unsigned long peer_constructor;
+    unsigned long peer_id_hi;
+    unsigned long peer_id_lo;
+    unsigned long message_id;
+    char text[TG_GUI_MSG_TEXT_MAX];
+} tg_chat_edit_entry;
+typedef struct tg_chat_edit_sink {
+    tg_chat_edit_entry queue[TG_CHAT_EDIT_QUEUE_MAX];
+    unsigned long count;
+} tg_chat_edit_sink;
+static tg_chat_edit_sink *tg_chat_edit_target = 0;
 /* The real console stream while the chat runs, for TUI components that must
    bypass capture streams (input-row redraws from the editor and the
    sub-prompts). 0 outside the chat. */
@@ -1138,8 +1191,8 @@ static int tg_mtproto_send_encrypted_query_limited(
     unsigned long query_budget_seconds)
 {
     unsigned char encrypted_padding[64];
-    static unsigned char payload[3072];
-    static unsigned char packet[3200];
+    static unsigned char payload[TG_MTPROTO_QUERY_SEND_MAX];
+    static unsigned char packet[TG_MTPROTO_QUERY_SEND_MAX + 64U];
     /* getHistory of a busy group can return several messages plus the referenced
        users/chats; a too-small buffer makes recv_abridged_packet reject the
        frame (payload > capacity) and the read hard-fails with "Could not read
@@ -2678,7 +2731,15 @@ static void tg_chat_typing_record(int is_chat, unsigned long peer_id_hi,
                                   unsigned long from_id_lo)
 {
     if (tg_chat_typing_target == 0) {
+        tg_gui_log("typing: push seen but sink unarmed");
         return;
+    }
+    {
+        char d[96];
+
+        sprintf(d, "typing: record chat=%d peer=%08lx%08lx from=%08lx%08lx",
+                is_chat, peer_id_hi, peer_id_lo, from_id_hi, from_id_lo);
+        tg_gui_log(d);
     }
     tg_chat_typing_target->active = 1;
     tg_chat_typing_target->is_chat = is_chat;
@@ -2754,32 +2815,173 @@ static void tg_chat_typing_parse_update(tg_mtproto_tl_reader *reader,
     }
 }
 
+static void tg_chat_edit_parse_update(tg_mtproto_tl_reader *reader)
+{
+    static tg_mtproto_message_text message;
+    tg_mtproto_dialog_peer dest;
+    tg_chat_edit_entry *entry;
+    unsigned long copy_length;
+    unsigned long i;
+
+    if (tg_chat_edit_target == 0 ||
+        tg_mtproto_read_update_message_text(reader, &message, &dest) !=
+            TG_MTPROTO_TL_OK ||
+        message.id == 0UL || dest.peer_constructor == 0UL) {
+        return;
+    }
+    entry = 0;
+    for (i = 0UL; i < tg_chat_edit_target->count; ++i) {
+        tg_chat_edit_entry *queued;
+
+        queued = &tg_chat_edit_target->queue[i];
+        if (queued->peer_constructor == dest.peer_constructor &&
+            queued->peer_id_hi == dest.id_hi &&
+            queued->peer_id_lo == dest.id_lo &&
+            queued->message_id == message.id) {
+            entry = queued;
+            break;
+        }
+    }
+    if (entry == 0 &&
+        tg_chat_edit_target->count >= TG_CHAT_EDIT_QUEUE_MAX) {
+        for (i = 1UL; i < TG_CHAT_EDIT_QUEUE_MAX; ++i) {
+            tg_chat_edit_target->queue[i - 1UL] =
+                tg_chat_edit_target->queue[i];
+        }
+        tg_chat_edit_target->count = TG_CHAT_EDIT_QUEUE_MAX - 1UL;
+    }
+    if (entry == 0) {
+        entry = &tg_chat_edit_target->queue[tg_chat_edit_target->count++];
+        entry->peer_constructor = dest.peer_constructor;
+        entry->peer_id_hi = dest.id_hi;
+        entry->peer_id_lo = dest.id_lo;
+        entry->message_id = message.id;
+    }
+    copy_length = (unsigned long)strlen(message.text);
+    if (copy_length >= sizeof(entry->text)) {
+        copy_length = sizeof(entry->text) - 1UL;
+    }
+    memcpy(entry->text, message.text, copy_length);
+    entry->text[copy_length] = '\0';
+}
+
+static int tg_chat_edit_peer_matches_open(const tg_chat_edit_entry *entry,
+                                          unsigned long peer_constructor,
+                                          unsigned long peer_id_hi,
+                                          unsigned long peer_id_lo)
+{
+    if (entry == 0) {
+        return 0;
+    }
+    if (entry->peer_constructor == peer_constructor &&
+        entry->peer_id_hi == peer_id_hi &&
+        entry->peer_id_lo == peer_id_lo) {
+        return 1;
+    }
+    /* Saved Messages is addressed locally as inputPeerSelf (ids 0/0), while
+       message.peer_id in the edit update is PeerUser(our id). The subsequent
+       transcript lookup by message id is the final guard. */
+    return peer_constructor == TG_MTPROTO_PEER_SELF_CONSTRUCTOR &&
+           entry->peer_constructor == TG_MTPROTO_PEER_USER_CONSTRUCTOR;
+}
+
+/* A Vector<Update> is not length-prefixed per item. The normal collector can
+   therefore consume only its first known item safely: a Message parser may
+   intentionally stop after text when optional media/reply fields follow.
+   Remote edits still have a strong aligned signature
+   updateEdit*(message#9815cec8 ...), so scan the complete updates envelope and
+   validate every candidate with the real Message parser. This catches an edit
+   preceded by read/draft/status updates, as observed with Saved Messages. */
+static void tg_chat_edit_scan_updates(const unsigned char *body,
+                                      unsigned long body_length,
+                                      unsigned long start_offset)
+{
+    tg_mtproto_tl_reader reader;
+    unsigned long constructor;
+    unsigned long offset;
+
+    if (tg_chat_edit_target == 0 || body == 0 ||
+        start_offset >= body_length) {
+        return;
+    }
+    offset = (start_offset + 3UL) & ~3UL;
+    while (offset + 8UL <= body_length) {
+        constructor = tg_mtproto_read_u32_le(body + offset);
+        if (constructor == TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR ||
+            constructor ==
+                TG_MTPROTO_UPDATE_EDIT_CHANNEL_MESSAGE_CONSTRUCTOR) {
+            tg_mtproto_tl_reader_init(&reader, body, body_length);
+            reader.offset = offset + 4UL;
+            tg_chat_edit_parse_update(&reader);
+        }
+        offset += 4UL;
+    }
+}
+
+/* Parse one Update with the reader positioned immediately after its
+   constructor. Update items are not length-prefixed, so callers consume one
+   known item and stop rather than guessing where an unknown tail ends. */
+static void tg_chat_collect_update_item(tg_mtproto_tl_reader *reader,
+                                        unsigned long update_ctor)
+{
+    if (update_ctor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR ||
+        update_ctor == TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR ||
+        update_ctor == TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR) {
+        tg_chat_typing_parse_update(reader, update_ctor);
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) {
+        tg_mtproto_dialog_peer peer;
+        unsigned long max_id;
+
+        if (tg_chat_read_outbox_target != 0 &&
+            tg_mtproto_read_update_read_history_outbox(reader, &peer, &max_id) ==
+                TG_MTPROTO_TL_OK) {
+            tg_chat_read_outbox_target->peer_id_hi = peer.id_hi;
+            tg_chat_read_outbox_target->peer_id_lo = peer.id_lo;
+            tg_chat_read_outbox_target->max_id = max_id;
+            tg_chat_read_outbox_target->pending = 1;
+        }
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR ||
+        update_ctor == TG_MTPROTO_UPDATE_EDIT_CHANNEL_MESSAGE_CONSTRUCTOR) {
+        tg_chat_edit_parse_update(reader);
+        return;
+    }
+    if (update_ctor == TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR ||
+        update_ctor == TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR) {
+        static tg_mtproto_message_text message;
+        tg_mtproto_dialog_peer dest;
+
+        if (tg_mtproto_read_update_message_text(reader, &message, &dest) ==
+            TG_MTPROTO_TL_OK) {
+            tg_chat_notify_push_message(&message, &dest);
+        }
+    }
+}
+
 /* updateShort#78d4dec1 update:Update date:int -- the standard single-update
-   envelope that carries transient typing. */
-static void tg_chat_typing_collect_short(const unsigned char *body,
+   envelope used by typing, read receipts, new messages and remote edits. */
+static void tg_chat_update_collect_short(const unsigned char *body,
                                          unsigned long body_length)
 {
     tg_mtproto_tl_reader reader;
     unsigned long outer;
     unsigned long inner;
 
-    if (tg_chat_typing_target == 0) {
-        return;
-    }
     tg_mtproto_tl_reader_init(&reader, body, body_length);
     if (tg_mtproto_tl_read_u32(&reader, &outer) != TG_MTPROTO_TL_OK ||
         tg_mtproto_tl_read_u32(&reader, &inner) != TG_MTPROTO_TL_OK) {
         return;
     }
-    tg_chat_typing_parse_update(&reader, inner);
+    tg_chat_collect_update_item(&reader, inner);
 }
 
 static void tg_chat_notify_collect_updates(const unsigned char *body,
                                            unsigned long body_length)
 {
     tg_mtproto_tl_reader reader;
-    static tg_mtproto_message_text message;
-    tg_mtproto_dialog_peer dest;
     unsigned long constructor;
     unsigned long item_constructor;
     unsigned long count;
@@ -2792,63 +2994,40 @@ static void tg_chat_notify_collect_updates(const unsigned char *body,
         tg_mtproto_tl_read_u32(&reader, &count) != TG_MTPROTO_TL_OK) {
         return;
     }
+    if (count > 0UL) {
+        tg_chat_edit_scan_updates(body, body_length, reader.offset);
+    }
     for (i = 0UL; i < count; ++i) {
         if (tg_mtproto_tl_read_u32(&reader, &item_constructor) !=
             TG_MTPROTO_TL_OK) {
             return;
         }
-        if (item_constructor == TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR ||
-            item_constructor ==
-                TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR ||
-            item_constructor ==
-                TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR) {
-            /* A typing item leading the container: record it, then stop (items
-               are not length-prefixed, so the walk cannot continue past it). */
-            tg_chat_typing_parse_update(&reader, item_constructor);
-            return;
-        }
-        if (item_constructor ==
-            TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) {
-            /* The peer read our messages: record (peer, max_id) for the loop to
-               apply when it is the open chat. Then stop (items are not
-               length-prefixed, so the walk cannot continue past it). */
-            tg_mtproto_dialog_peer rpeer;
-            unsigned long rmax;
-
-            if (tg_chat_read_outbox_target != 0 &&
-                tg_mtproto_read_update_read_history_outbox(&reader, &rpeer,
-                                                           &rmax) ==
-                    TG_MTPROTO_TL_OK) {
-                tg_chat_read_outbox_target->peer_id_hi = rpeer.id_hi;
-                tg_chat_read_outbox_target->peer_id_lo = rpeer.id_lo;
-                tg_chat_read_outbox_target->max_id = rmax;
-                tg_chat_read_outbox_target->pending = 1;
-            }
-            return;
-        }
-        if (item_constructor != TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR &&
+        if (item_constructor != TG_MTPROTO_UPDATE_USER_TYPING_CONSTRUCTOR &&
             item_constructor !=
-                TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR) {
+                TG_MTPROTO_UPDATE_CHAT_USER_TYPING_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_CHANNEL_USER_TYPING_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR &&
+            item_constructor != TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR &&
+            item_constructor != TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR &&
+            item_constructor !=
+                TG_MTPROTO_UPDATE_EDIT_CHANNEL_MESSAGE_CONSTRUCTOR) {
             /* Unknown update items cannot be skipped (no length prefix). */
             return;
         }
-        if (tg_mtproto_read_update_message_text(&reader, &message, &dest) !=
-            TG_MTPROTO_TL_OK) {
+        tg_chat_collect_update_item(&reader, item_constructor);
 #ifdef TG_MTPROTO_DIAG
-            fprintf(stderr, "notify-diag rich parse-failed\n");
-#endif
-            return;
+        if (item_constructor == TG_MTPROTO_UPDATE_NEW_MESSAGE_CONSTRUCTOR ||
+            item_constructor ==
+                TG_MTPROTO_UPDATE_NEW_CHANNEL_MESSAGE_CONSTRUCTOR) {
+            fprintf(stderr, "notify-diag rich message/update consumed\n");
         }
-#ifdef TG_MTPROTO_DIAG
-        fprintf(stderr,
-                "notify-diag rich msg id=%lu has_text=%d out=%d dest=0x%08lx\n",
-                message.id, message.has_text, message.is_out,
-                dest.peer_constructor);
 #endif
-        tg_chat_notify_push_message(&message, &dest);
-        /* The rich message reader may leave unparsed tail bytes (reply
-           markup and friends), so do not trust the reader position for
-           further items. */
+        /* Known parsers may leave optional tail bytes, so do not trust the
+           reader position for further vector items. */
         return;
     }
 }
@@ -2898,8 +3077,7 @@ static void tg_chat_notify_collect(const unsigned char *body,
         return;
     }
     if (constructor == TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) {
-        /* The single-update envelope: the live "is typing" carrier. */
-        tg_chat_typing_collect_short(body, body_length);
+        tg_chat_update_collect_short(body, body_length);
         return;
     }
     if (constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR) {
@@ -2963,8 +3141,8 @@ static int tg_mtproto_build_initialized_query(tg_mtproto_tl_writer *writer,
                                               const unsigned char *query,
                                               unsigned long query_length)
 {
-    static unsigned char initialized_query[1200];
-    static unsigned char layered_query[1300];
+    static unsigned char initialized_query[TG_MTPROTO_QUERY_SEND_MAX];
+    static unsigned char layered_query[TG_MTPROTO_QUERY_SEND_MAX];
     unsigned long initialized_length;
     unsigned long layered_length;
     tg_mtproto_tl_status status;
@@ -3117,7 +3295,8 @@ static int tg_mtproto_send_saved_query_on_context(
     const char *label,
     unsigned int max_receive_attempts)
 {
-    unsigned char wrapped_query[1400];
+    /* static + chunk-sized: the saveFilePart body is a whole file chunk. */
+    static unsigned char wrapped_query[TG_MTPROTO_QUERY_SEND_MAX];
     unsigned long api_id;
     int qrc;
     tg_mtproto_session_status session_status;
@@ -6872,6 +7051,10 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
         return;
     }
     tg_mtproto_chat_list_render_console(stream, rows, count);
+    /* The GUI pins Saved Messages as the last sidebar row; the console pins
+       it as row 0 (cache indexes are 1-based, so 0 is forever free): it reads
+       and picks like every other row, at startup and in-chat alike. */
+    fprintf(stream, "0. Saved Messages (your cloud drawer)\n");
 }
 
 static const char tg_chat_list_golden[] =
@@ -7588,6 +7771,20 @@ static int tg_mtproto_auth_search_global_on_context(
         fprintf(stream, "Type a name, username, or group to add.\n");
         return 2;
     }
+#if TG_MTPROTO_DISPLAY_LATIN1
+    /* Latin-1 keymap -> UTF-8 for the wire (same as message send); without it
+       a query with accented letters is rejected by the server. */
+    {
+        static char search_utf8[256];
+
+        if (tg_mtproto_latin1_to_utf8(trimmed_query, search_utf8,
+                                      sizeof(search_utf8))) {
+            tg_mtproto_copy_plain_cache_text(trimmed_query,
+                                             sizeof(trimmed_query),
+                                             search_utf8);
+        }
+    }
+#endif
 
     quiet = tg_mtproto_open_quiet_stream(stream);
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
@@ -8564,6 +8761,12 @@ static void tg_chat_history_add(const char *text)
     tg_chat_history_recall = -1L;
 }
 
+/* One-line command cheat-sheet shown when a lone '/' starts the input row
+   (both the TUI-transcript and the linear-raw printers use it). */
+#define TG_CHAT_SLASH_HINT_TEXT \
+    "Commands: /peers /saved /getfile /sendfile /search /add /remove\n" \
+    "          /history /swap /watch /diff /color /bell /resize /help /quit\n"
+
 /*
  * Chat input reader. In raw mode it echoes characters itself and supports
  * backspace plus, when use_history is set, Up/Down command-history recall
@@ -8621,6 +8824,46 @@ static int tg_mtproto_chat_read_line_edit(char *line,
     }
     rc = tg_platform_stdin_read_char(timeout_seconds, &ch);
     if (rc <= 0) {
+        /* Read timeout: check for a file dropped on the console window and
+           inject its path at the caret, so "/sendfile " + drop just works.
+           Only in the interactive chat editor with the TUI live; a no-op on
+           every build but an armed OS4 console. */
+        if (rc == 0 && use_history && tg_console_tui_active() &&
+            tg_chat_tui_stream != 0) {
+            char drop[256];
+
+            if (tg_platform_console_drop_poll(drop, sizeof(drop))) {
+                unsigned long di;
+                char drop_note[300];
+
+                /* Visible proof in the transcript that the drop ARRIVED (a
+                   field report can then separate "never delivered" from
+                   "injection failed"). */
+                sprintf(drop_note, "Dropped: %.280s", drop);
+                tg_console_tui_line(tg_chat_tui_stream, drop_note);
+
+                for (di = 0UL; drop[di] != '\0'; ++di) {
+                    unsigned long c;
+
+                    if (*line_length + 1UL >= line_size) {
+                        break;
+                    }
+                    c = tg_chat_caret;
+                    if (c > *line_length) {
+                        c = *line_length;
+                    }
+                    memmove(&line[c + 1UL], &line[c], *line_length - c);
+                    line[c] = drop[di];
+                    ++(*line_length);
+                    tg_chat_caret = c + 1UL;
+                }
+                tg_console_tui_input(tg_chat_tui_stream,
+                                     tg_console_tui_prompt(), line,
+                                     *line_length);
+                tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
+                                        tg_chat_caret);
+            }
+        }
         return rc;
     }
     if (raw && ch == (char)0x03) {
@@ -8667,16 +8910,29 @@ static int tg_mtproto_chat_read_line_edit(char *line,
     if (ch == '\b' || ch == 127) {
         if (tg_console_tui_active() && tg_chat_tui_stream != 0) {
             unsigned long c;
+            int changed = 0;
 
             c = tg_chat_caret;
             if (c > *line_length) {
                 c = *line_length;
             }
-            if (c > 0UL) {
-                /* delete the char before the caret, shifting the tail left */
+            if (ch == 127) {
+                /* Canc/Del: forward-delete AT the caret (the GUI fix, TUI
+                   edition -- 0x7F is not a second backspace). */
+                if (c < *line_length) {
+                    memmove(&line[c], &line[c + 1UL],
+                            *line_length - c - 1UL);
+                    --(*line_length);
+                    changed = 1;
+                }
+            } else if (c > 0UL) {
+                /* Backspace: delete the char BEFORE the caret. */
                 memmove(&line[c - 1UL], &line[c], *line_length - c);
                 --(*line_length);
                 tg_chat_caret = c - 1UL;
+                changed = 1;
+            }
+            if (changed) {
                 tg_console_tui_input(tg_chat_tui_stream,
                                      tg_console_tui_prompt(), line,
                                      *line_length);
@@ -8768,6 +9024,11 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 /* Window NEWSIZE raw event: let the chat loop repaint the
                    full-screen layout with the new geometry. */
                 tg_console_tui_note_resize();
+            } else if (direction == '|' && fkey == 11UL) {
+                /* CLOSEWINDOW raw event: the user clicked the console's close
+                   gadget. Same clean quit as Ctrl+C/EOF -- the chat loop
+                   prints "Input closed.", leaves the TUI and returns. */
+                return -1;
             } else if (direction == 'T') {
                 /* Shift+Up (CSI T on every Amiga console; PgUp on most
                    modern keymaps): page back through the transcript. */
@@ -8841,6 +9102,15 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             line[c] = ch;
             ++(*line_length);
             tg_chat_caret = c + 1UL;
+            if (use_history && ch == '/' && *line_length == 1UL) {
+                /* Command hint: a lone leading '/' lists what can follow (the
+                   full stories live in /help). Printed to the transcript, then
+                   the input row is redrawn below with the '/' kept. */
+                FILE *hint_cap = tg_console_tui_capture_begin(stream);
+
+                fputs(TG_CHAT_SLASH_HINT_TEXT, hint_cap);
+                tg_console_tui_capture_end(hint_cap, stream);
+            }
             tg_console_tui_input(tg_chat_tui_stream,
                                  tg_console_tui_prompt(), line, *line_length);
             tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
@@ -8851,6 +9121,16 @@ static int tg_mtproto_chat_read_line_edit(char *line,
             if (raw) {
                 fputc(ch, stream);
                 fflush(stream);
+                if (use_history && ch == '/' && *line_length == 1UL) {
+                    /* Command hint, linear-raw flavour (consoles with no
+                       full-screen layout -- AROS, plain pipes): print the
+                       list on its own lines, then re-echo the typed '/' so
+                       the user keeps typing on a fresh line. The TUI branch
+                       above prints the same hint into the transcript. */
+                    fputs("\n" TG_CHAT_SLASH_HINT_TEXT, stream);
+                    fwrite(line, 1, (size_t)*line_length, stream);
+                    fflush(stream);
+                }
             }
         }
     }
@@ -9911,6 +10191,9 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /add name     search Telegram and add a chat",
         "  /remove n     remove cached chat n",
         "  /history      show recent messages without new-message filtering",
+        "  /getfile      download the newest file in this chat to downloads/",
+        "  /sendfile p   send a file (large files supported; build limit applies)",
+        "  /saved        open Saved Messages (your cloud transfer drawer)",
         "  /watch sec    set auto-read interval",
         "  /watch off    disable auto-read",
         "  /resize       redraw the layout after a window resize",
@@ -9931,6 +10214,12 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         fputs(help_lines[i], stream);
         tg_console_ui_end_line(stream);
     }
+    /* Live status of the console drag-and-drop (the startup print is wiped by
+       the TUI screen clear, so /help is where a field report can read WHY a
+       drop does nothing). */
+    fprintf(stream, "  file drag-and-drop: %s",
+            tg_platform_console_drop_diag());
+    tg_console_ui_end_line(stream);
     tg_console_ui_reset(stream);
     tg_console_ui_end_line(stream);
 }
@@ -10064,6 +10353,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     const char *peer_arg;
     const char *username_arg;
     const char *search_arg;
+    const char *cmd_arg;
     const char *remove_arg;
     const char *color_arg;
     unsigned long line_length;
@@ -10246,6 +10536,13 @@ int tg_mtproto_auth_chat_file(const char *host,
             if (chat_raw) { tg_platform_stdin_set_raw(0); }
             return 2;
         }
+        /* The picker footer advertises /saved: honour it (and its plain
+           forms) here too by normalising to the "self" sentinel index. */
+        if (strcmp(peer_index, "/saved") == 0 ||
+            strcmp(peer_index, "saved") == 0 ||
+            strcmp(peer_index, "0") == 0) {
+            strcpy(peer_index, "self");
+        }
         if (tg_mtproto_load_peer_cache_label(peer_cache_file, peer_index,
                                              peer_label,
                                              sizeof(peer_label)) != 0) {
@@ -10307,8 +10604,12 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
         }
         if (watch_seconds == 0UL) {
+            /* Auto-read is off, so we would otherwise block ~forever. Wake the
+               editor every few seconds anyway so a file dropped on the console
+               window (polled on the read timeout) is noticed promptly; rc==0
+               just re-loops without any network poll, keeping /watch off. */
             rc = tg_mtproto_chat_read_line_edit(line, sizeof(line),
-                                                &line_length, 3600UL, chat_raw,
+                                                &line_length, 3UL, chat_raw,
                                                 1, stream);
             if (rc == 0) {
                 continue;
@@ -10460,6 +10761,13 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
             continue;
         }
+        /* The chat loop never trimmed its line (only the startup picker did):
+           a habitual trailing space after an exact-match command ("/getfile ")
+           fell through the whole chain and was SENT as a message. Trim before
+           dispatch so every strcmp command tolerates trailing whitespace;
+           message text is unaffected beyond the trailing blanks nobody wants. */
+        tg_mtproto_trim_line(line);
+        line_length = (unsigned long)strlen(line);
         if (strcmp(line, "/quit") == 0 || strcmp(line, "quit") == 0) {
             tg_mtproto_chat_print_system_line(stream, "Bye.");
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
@@ -10581,6 +10889,135 @@ int tg_mtproto_auth_chat_file(const char *host,
             }
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
                                         0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (tg_mtproto_chat_named_command_arg(line, "/getfile", &cmd_arg)) {
+            /* F9 parity for the console: download the MOST RECENT document in
+               the open chat into downloads/ (same machinery as the GUI). */
+            if (peer_index[0] == '\0') {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Choose a chat first with /peers or /add name.");
+            } else {
+                tg_mtproto_file_ctx fc;
+                char saved_path[160];
+                int frc;
+                FILE *tui_cap;
+
+                fc.host = host; fc.port = port; fc.api_id = api_id;
+                fc.auth_file = auth_file; fc.dc_id_text = dc_id_text;
+                fc.context = &chat_context;
+                fc.peer_cache_file = peer_cache_file;
+                fc.peer_index = peer_index;
+                tg_mtproto_chat_print_system_line(stream, "Downloading...");
+                frc = tg_mtproto_file_download(&fc, 0UL, saved_path,
+                                               sizeof(saved_path), stream);
+                tui_cap = tg_console_tui_capture_begin(stream);
+                if (frc == 0) {
+                    fprintf(tui_cap, "Saved to %s\n", saved_path);
+                } else if (frc == 2) {
+                    fprintf(tui_cap,
+                            "File is on another server - not supported yet.\n");
+                } else if (frc == 3) {
+                    fprintf(tui_cap, "Could not write to downloads/.\n");
+                } else if (frc == 4) {
+                    if (saved_path[0] != '\0') {
+                        fprintf(tui_cap, "Transfer failed: %.110s\n",
+                                saved_path);
+                    } else {
+                        fprintf(tui_cap, "Transfer failed (server error).\n");
+                    }
+                } else if (saved_path[0] != '\0') {
+                    fprintf(tui_cap, "No file: %.120s\n", saved_path);
+                } else {
+                    fprintf(tui_cap, "Download failed.\n");
+                }
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (tg_mtproto_chat_named_command_arg(line, "/sendfile", &cmd_arg)) {
+            /* Upload a file to the open chat: /sendfile <path>.
+               The helper matches the bare and tab forms too, so a syntax probe
+               can never fall through and be SENT as a literal message. */
+            const char *fpath = cmd_arg;
+            char fpath_buf[256];
+
+            /* An icon dropped on the console injects the path QUOTED (the
+               con-handler quotes paths with spaces, Shell-style): accept
+               "path" by stripping the surrounding double quotes. */
+            if (fpath[0] == '"') {
+                unsigned long fl = 0UL;
+
+                ++fpath;
+                while (fpath[fl] != '\0' && fpath[fl] != '"' &&
+                       fl + 1UL < sizeof(fpath_buf)) {
+                    fpath_buf[fl] = fpath[fl];
+                    ++fl;
+                }
+                fpath_buf[fl] = '\0';
+                fpath = fpath_buf;
+            }
+            if (peer_index[0] == '\0') {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Choose a chat first with /peers or /add name.");
+            } else if (*fpath == '\0') {
+                tg_mtproto_chat_print_system_line(stream,
+                                                  "Usage: /sendfile <path>");
+            } else {
+                tg_mtproto_file_ctx fc;
+                int frc;
+                FILE *tui_cap;
+
+                fc.host = host; fc.port = port; fc.api_id = api_id;
+                fc.auth_file = auth_file; fc.dc_id_text = dc_id_text;
+                fc.context = &chat_context;
+                fc.peer_cache_file = peer_cache_file;
+                fc.peer_index = peer_index;
+                tg_mtproto_chat_print_system_line(stream, "Uploading...");
+                frc = tg_mtproto_file_send(&fc, fpath, stream, 0, 0);
+                tui_cap = tg_console_tui_capture_begin(stream);
+                if (frc == 0) {
+                    fprintf(tui_cap, "File sent.\n");
+                } else if (frc == 2) {
+                    fprintf(tui_cap,
+#if defined(__m68k__)
+                            "File too big (31 MiB limit on this build).\n");
+#else
+                            "File too big (250 MiB limit on this build).\n");
+#endif
+                } else if (frc == 3) {
+                    fprintf(tui_cap, "Could not read that file.\n");
+                } else if (frc == 5) {
+                    fprintf(tui_cap, "That file is empty (0 bytes).\n");
+                } else {
+                    fprintf(tui_cap, "Upload failed.\n");
+                }
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        if (strcmp(line, "/saved") == 0 || strcmp(line, "0") == 0) {
+            /* F10 parity: jump to Saved Messages (the self chat, peer index
+               "self" in the cache loaders) as the cloud transfer drawer. */
+            if (peer_index[0] != '\0' && strcmp(peer_index, "self") != 0) {
+                strcpy(prev_peer_index, peer_index);
+                strcpy(prev_peer_label, peer_label);
+            }
+            strcpy(peer_index, "self");
+            strcpy(peer_label, "Saved Messages");
+            last_seen_message_id = 0UL;
+            peer_history_ready = 0;
+            {
+                FILE *tui_cap = tg_console_tui_capture_begin(stream);
+
+                fprintf(tui_cap, "Current chat: Saved Messages\n");
+                tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_tui_status(peer_label);
             continue;
         }
         if (strcmp(line, "/diff") == 0 || strcmp(line, "/diff on") == 0 ||
@@ -11770,8 +12207,8 @@ int tg_mtproto_probe_self_test(void)
         "peer 1 type user id 0x0000000000000001 access_hash 0x0000000000000002 top 0 unread 0 self no bot no username ada title Ada\n"
         "peer 2 type chat id 0x0000000000000003 access_hash - top 0 unread 0 self no bot no username - title Test Group\n"
         "peer 3 type channel id 0x0000000000000004 access_hash 0x0000000000000005 top 0 unread 0 self no bot no username - title Test Channel\n";
-    unsigned char payload[64];
-    unsigned char packet[80];
+    unsigned char payload[128];
+    unsigned char packet[160];
     char api_id[32];
     char api_hash[96];
     char password[16];
@@ -11909,6 +12346,7 @@ int tg_mtproto_probe_self_test(void)
     {
         tg_chat_notify typing_nq;
         tg_chat_typing_sink typing_sink;
+        tg_chat_edit_sink edit_sink;
         int ok;
 
         memset(&typing_nq, 0, sizeof(typing_nq));
@@ -11994,8 +12432,186 @@ int tg_mtproto_probe_self_test(void)
             return 2;
         }
 
+        /* A remote edit in updateShort must preserve the destination peer and
+           UTF-8 text for the GUI-side in-place replacement. */
+        memset(&edit_sink, 0, sizeof(edit_sink));
+        tg_chat_edit_target = &edit_sink;
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_UPDATE_SHORT_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, TG_MTPROTO_MESSAGE_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL << 8) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 0UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 77UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x44UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x99UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000000UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_bytes(
+                 &writer, (const unsigned char *)"pi\xc3\xb9 recente", 12UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 10UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000001UL) ==
+                 TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || edit_sink.count != 1UL ||
+            edit_sink.queue[0].peer_constructor !=
+                TG_MTPROTO_PEER_USER_CONSTRUCTOR ||
+            edit_sink.queue[0].peer_id_lo != 0x99UL ||
+            edit_sink.queue[0].message_id != 77UL ||
+            strcmp(edit_sink.queue[0].text, "pi\xc3\xb9 recente") != 0) {
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            tg_chat_edit_target = 0;
+            printf("probe self-test: remote edit parse wrong "
+                   "(ok=%d count=%lu peer=0x%08lx id=%lu text=%s)\n",
+                   ok, edit_sink.count,
+                   edit_sink.queue[0].peer_constructor,
+                   edit_sink.queue[0].message_id,
+                   edit_sink.queue[0].text);
+            return 2;
+        }
+
+        /* Saved Messages commonly bundles another update before the edit.
+           Verify that the aligned scan finds the second vector item and that
+           PeerUser(own id) matches the open inputPeerSelf sentinel. */
+        memset(&edit_sink, 0, sizeof(edit_sink));
+        tg_mtproto_tl_writer_init(&writer, payload, sizeof(payload));
+        ok = tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_UPDATES_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_TL_VECTOR_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 2UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer,
+                 TG_MTPROTO_UPDATE_READ_HISTORY_OUTBOX_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x44UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 70UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 10UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_UPDATE_EDIT_MESSAGE_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, TG_MTPROTO_MESSAGE_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL << 8) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 0UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 78UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x44UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(
+                 &writer, TG_MTPROTO_PEER_USER_CONSTRUCTOR) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u64(&writer, 0UL, 0x44UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1700000002UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_bytes(
+                 &writer, (const unsigned char *)"saved newer", 11UL) ==
+                 TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 11UL) == TG_MTPROTO_TL_OK &&
+             tg_mtproto_tl_write_u32(&writer, 1UL) == TG_MTPROTO_TL_OK;
+        if (ok) {
+            tg_chat_notify_collect(payload, writer.length);
+        }
+        if (!ok || edit_sink.count != 1UL ||
+            edit_sink.queue[0].message_id != 78UL ||
+            strcmp(edit_sink.queue[0].text, "saved newer") != 0 ||
+            !tg_chat_edit_peer_matches_open(
+                &edit_sink.queue[0], TG_MTPROTO_PEER_SELF_CONSTRUCTOR,
+                0UL, 0UL)) {
+            tg_chat_nq = 0;
+            tg_chat_typing_target = 0;
+            tg_chat_edit_target = 0;
+            puts("probe self-test: Saved Messages bundled edit wrong");
+            return 2;
+        }
+
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
+        tg_chat_edit_target = 0;
+    }
+
+    /* Upload send-path guard (the twin of the download body/PACKET_MAX fix): a
+       saveFilePart query IS a whole file chunk, so build_initialized_query must
+       wrap a chunk-sized query without overflowing its buffers. A query at the
+       per-platform send bound stands in for a full upload chunk; the pre-fix
+       1.2 KB wrap buffers failed this and the upload reported "Upload failed". */
+    {
+        static unsigned char big_q[TG_MTPROTO_QUERY_SEND_MAX];
+        static unsigned char big_out[TG_MTPROTO_QUERY_SEND_MAX];
+        unsigned long big_len = TG_MTPROTO_QUERY_SEND_MAX - 2048U;
+        tg_mtproto_tl_writer bw;
+        unsigned long k;
+
+        for (k = 0UL; k < big_len; ++k) {
+            big_q[k] = (unsigned char)((k * 5U + 1U) & 0xffU);
+        }
+        if (tg_mtproto_build_initialized_query(&bw, big_out, sizeof(big_out),
+                                               12345UL, big_q, big_len) != 0) {
+            puts("probe self-test: chunk-sized query wrap overflowed");
+            return 2;
+        }
+        /* ...and its ENCRYPTED form must fit a buffer the size of payload[] /
+           packet[] in send_encrypted_query_limited (the rest of the send-path
+           fix). Reuse big_q as the output; a dummy key/session is enough since
+           we only check the writer does not overflow. */
+        {
+            static unsigned char akey[TG_MTPROTO_AUTH_KEY_LENGTH];
+            unsigned char sid[8];
+            unsigned char pad[64];
+            unsigned long plen = 12UL;
+            tg_mtproto_tl_writer ew;
+
+            for (k = 0UL; k < sizeof(akey); ++k) {
+                akey[k] = (unsigned char)k;
+            }
+            for (k = 0UL; k < sizeof(sid); ++k) {
+                sid[k] = (unsigned char)(0x30U + k);
+            }
+            while (((32UL + bw.length + plen) % 16UL) != 0UL) {
+                ++plen;
+            }
+            for (k = 0UL; k < plen; ++k) {
+                pad[k] = (unsigned char)(0x60U + k);
+            }
+            tg_mtproto_tl_writer_init(&ew, big_q, sizeof(big_q));
+            if (tg_mtproto_write_encrypted_message(
+                    &ew, akey, 0x11111111UL, 0x22222222UL, sid, 0x33333333UL,
+                    0x44444444UL, 1UL, big_out, bw.length, pad, plen) !=
+                TG_MTPROTO_TL_OK) {
+                puts("probe self-test: encrypted chunk exceeds send buffer");
+                return 2;
+            }
+        }
     }
 
     return 0;
@@ -12123,7 +12739,9 @@ static struct {
        (peer, max_id) here; the loop applies it next tick when the peer matches
        the open chat (the poll backstop still runs). Armed at open. */
     tg_chat_read_outbox_sink read_outbox_sink;
+    tg_chat_edit_sink edit_sink;   /* remote message edits, armed at open */
     tg_chat_typing_sink typing;     /* live "is typing" sink, armed at open */
+    unsigned long open_peer_constructor;
     unsigned long open_peer_id_hi;  /* the open chat's peer id, to match typing */
     unsigned long open_peer_id_lo;
     int open_peer_is_chat;
@@ -12255,6 +12873,9 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     memset(&tg_gui_session_state.read_outbox_sink, 0,
            sizeof(tg_gui_session_state.read_outbox_sink));
     tg_chat_read_outbox_target = &tg_gui_session_state.read_outbox_sink;
+    memset(&tg_gui_session_state.edit_sink, 0,
+           sizeof(tg_gui_session_state.edit_sink));
+    tg_chat_edit_target = &tg_gui_session_state.edit_sink;
     tg_mtproto_set_session_updates(1);
     tg_gui_chat_driver_bind(&tg_gui_session_state.gui_driver, state,
                             &tg_gui_session_state.driver);
@@ -12290,6 +12911,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
         tg_chat_read_outbox_target = 0;
+        tg_chat_edit_target = 0;
         return 2;
     }
     tg_gui_log("open: connected");
@@ -12412,6 +13034,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
        unread badge. */
     if (tg_gui_session_state.gui_driver.state != 0) {
         tg_gui_session_state.gui_driver.state->message_count = 0;
+        tg_gui_session_state.gui_driver.state->msg_gen++;
         tg_gui_session_state.gui_driver.state->newest_dropped = 0;
         tg_gui_session_state.gui_driver.state->unread_below = 0;
         /* A reply target points into the OLD chat -- never carry it across. */
@@ -12427,6 +13050,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     quiet = tg_mtproto_open_quiet_stream(stream);
     /* Remember the open peer's id so the tick can match inbound typing updates
        to this chat, and clear any stale "is typing" indicator on switch. */
+    tg_gui_session_state.open_peer_constructor = 0UL;
     tg_gui_session_state.open_peer_id_hi = 0UL;
     tg_gui_session_state.open_peer_id_lo = 0UL;
     tg_gui_session_state.open_peer_is_chat = 0;
@@ -12449,6 +13073,7 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
                 tg_gui_session_state.peer_cache_file,
                 tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
                 &ahl, &hah, quiet, "gui open peer") == 0) {
+            tg_gui_session_state.open_peer_constructor = pc;
             tg_gui_session_state.open_peer_id_hi = ph;
             tg_gui_session_state.open_peer_id_lo = pl;
             tg_gui_session_state.open_peer_is_chat =
@@ -12863,6 +13488,20 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
     if (trimmed[0] == '\0') {
         return -1;
     }
+#if TG_MTPROTO_DISPLAY_LATIN1
+    /* The query is Latin-1 (Amiga keymap); Telegram wants UTF-8. Without this
+       a name with a-ring/a-uml/o-uml went out as invalid UTF-8 and the server
+       rejected the whole search (the user saw "network problem"). */
+    {
+        static char query_utf8[256];
+
+        if (tg_mtproto_latin1_to_utf8(trimmed, query_utf8,
+                                      sizeof(query_utf8))) {
+            tg_mtproto_copy_plain_cache_text(trimmed, sizeof(trimmed),
+                                             query_utf8);
+        }
+    }
+#endif
 
     quiet = tg_mtproto_open_quiet_stream(stream);
     prev_timeout = tg_net_connect_timeout_seconds();
@@ -12909,6 +13548,48 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
     return tg_gui_search_openable_n;
 }
 
+/* UTF-8 (wire) -> Latin-1 (GUI display), for search-result titles that reach
+   the sidebar directly rather than through the driver's copy_latin1. Without
+   it a name like "Bjorn" with o-umlaut showed as the raw two-byte "A~ 3/4".
+   No-op copy when the build is not Latin-1 (host/utf8). */
+static void tg_mtproto_utf8_to_latin1_name(char *dst, unsigned long dst_size,
+                                           const char *src)
+{
+#if TG_MTPROTO_DISPLAY_LATIN1
+    unsigned long i;
+    unsigned long o;
+
+    if (dst == 0 || dst_size == 0UL) {
+        return;
+    }
+    i = 0UL;
+    o = 0UL;
+    while (src != 0 && src[i] != '\0' && o + 1UL < dst_size) {
+        unsigned long cp;
+        char one[8];
+        unsigned long got;
+
+        cp = tg_mtproto_utf8_read_codepoint(src, &i);
+        got = tg_mtproto_display_codepoint_to_latin1(cp, one, sizeof(one));
+        if (got == 0UL || o + got >= dst_size) {
+            break;
+        }
+        memcpy(dst + o, one, got);
+        o += got;
+    }
+    dst[o] = '\0';
+#else
+    if (dst != 0 && dst_size > 0UL) {
+        unsigned long i;
+
+        for (i = 0UL; src != 0 && src[i] != '\0' && i + 1UL < dst_size; ++i) {
+            dst[i] = src[i];
+        }
+        dst[(src != 0) ? i : 0UL] = '\0';
+    }
+#endif
+}
+
 int tg_gui_session_search_count(void)
 {
     return tg_gui_search_openable_n;
@@ -12924,7 +13605,15 @@ const char *tg_gui_session_search_name(int i)
     /* Username-only contacts (no title) are openable too -- fall back to the
        @username so the picker row is not blank, matching the console printer. */
     e = &tg_gui_search_results.entries[tg_gui_search_openable_idx[i]];
-    return (e->title[0] != '\0') ? e->title : e->username;
+    {
+        static char latin1_name[TG_GUI_NAME_MAX];
+        const char *raw = (e->title[0] != '\0') ? e->title : e->username;
+
+        /* the wire title is UTF-8; the sidebar renders Latin-1 (bug: "o-uml"
+           showed as two chars). Convert like the chat-list path does. */
+        tg_mtproto_utf8_to_latin1_name(latin1_name, sizeof(latin1_name), raw);
+        return latin1_name;
+    }
 }
 
 /* Open the i-th openable result of the last search (add it to the cache + open). */
@@ -13256,8 +13945,10 @@ static void tg_gui_dl_sanitize_name(const char *in, char *out,
    message with id == msg_id (fresh file_reference). 0 = found + has document. */
 static char tg_dl_diag[96]; /* find_open_document -> download status */
 
-static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
-                                             tg_mtproto_document_meta *out)
+static int tg_mtproto_file_find_document(const tg_mtproto_file_ctx *fc,
+                                         unsigned long msg_id, FILE *quiet,
+                                         tg_mtproto_document_meta *out,
+                                         unsigned long *resolved_id)
 {
     unsigned char query[64];
     unsigned long pc, ph, pl, ahh, ahl;
@@ -13269,25 +13960,30 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
     static const char label[] = "mtproto getHistory(download)";
 
     if (tg_mtproto_load_peer_cache_peer(
-            tg_gui_session_state.peer_cache_file,
-            tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+            fc->peer_cache_file,
+            fc->peer_index, &pc, &ph, &pl, &ahh,
             &ahl, &hah, quiet, label) != 0) {
         return 1;
     }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     /* Anchor the fetch AT the target: offset_id = msg_id + 1 makes the server
        return messages with id <= msg_id, newest first, so the wanted message
-       is the first result no matter how far back it was scrolled. */
+       is the first result no matter how far back it was scrolled. msg_id == 0
+       means "the most recent document" (console /getfile): fetch the newest
+       page and take the first message that carries one. */
     if (tg_mtproto_build_messages_get_history_peer(&writer, pc, ph, pl, ahh,
-                                                   ahl, hah, msg_id + 1UL,
-                                                   5UL) != TG_MTPROTO_TL_OK) {
+                                                   ahl, hah,
+                                                   msg_id != 0UL ? msg_id + 1UL
+                                                                 : 0UL,
+                                                   msg_id != 0UL ? 5UL : 20UL)
+        != TG_MTPROTO_TL_OK) {
         return 1;
     }
     memset(&result, 0, sizeof(result));
     if (tg_mtproto_send_saved_query_on_context(
-            tg_gui_session_state.host, tg_gui_session_state.port,
-            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            fc->host, fc->port,
+            fc->api_id, fc->auth_file,
+            fc->dc_id_text, fc->context,
             query, writer.length, &result, quiet, label, 600U) != 0 ||
         result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR ||
         tg_mtproto_unpack_gzip_result(&result, quiet, label) != 0 ||
@@ -13298,10 +13994,13 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
         return 1;
     }
     for (i = 0UL; i < texts.count; ++i) {
-        if (texts.messages[i].id != msg_id) {
+        if (msg_id != 0UL && texts.messages[i].id != msg_id) {
             continue;
         }
         if (!texts.messages[i].document.has_document) {
+            if (msg_id == 0UL) {
+                continue; /* latest-mode: keep scanning the page */
+            }
             strcpy(tg_dl_diag, "no document on message");
             return 1;
         }
@@ -13313,25 +14012,38 @@ static int tg_gui_session_find_open_document(unsigned long msg_id, FILE *quiet,
             return 1;
         }
         *out = texts.messages[i].document;
+        if (resolved_id != 0) {
+            /* Latest-mode callers pin the retry to THIS message: a mid-transfer
+               re-resolve of "the newest document" could bind a newer file and
+               write its bytes under the original name. */
+            *resolved_id = texts.messages[i].id;
+        }
         sprintf(tg_dl_diag, "dc=%lu size=%lu:%lu ref=%lu",
                 out->dc_id, out->size_hi, out->size_lo,
                 out->file_reference_len);
         return 0;
     }
-    strcpy(tg_dl_diag, "message not in history page");
+    strcpy(tg_dl_diag, msg_id != 0UL ? "message not in history page"
+                                     : "no recent file in this chat");
     return 1;
 }
 
-/* F9 chunk 5: send a file from disk to the OPEN chat. Small-file path only
-   (inputFile, <= 10 MB): the file streams up in uniform saveFilePart chunks
-   read straight from disk (never buffered whole), then one sendMedia with a
-   force_file document, the filename attribute and an octet-stream mime -- the
-   receiver sees the same "[File: name (size)]" our chunk 2 renders. Returns:
-   0 ok, 1 fail, 2 too big for the small-file path, 3 unreadable file.
+/* F9 upload: stream from disk to the OPEN chat without buffering the whole
+   file. At <=10 MiB use saveFilePart + inputFile; above that use
+   saveBigFilePart + inputFileBig. Telegram's current non-Premium config allows
+   4000 parts. Keeping the already-proven per-platform chunks avoids adding
+   several 512 KiB send buffers to a low-memory Amiga: this yields a conservative
+   ceiling of 31.25 MiB on m68k (8 KiB parts) and 250 MiB elsewhere (64 KiB).
+   Returns 0 ok, 1 transfer failure, 2 over this build's limit, 3 unreadable.
    Blocking on-context call from the explicit user action, never the tick. */
-#define TG_GUI_UL_LIMIT (10UL * 1048576UL)
+#define TG_GUI_UL_BIG_THRESHOLD (10UL * 1048576UL)
+#define TG_GUI_UL_MAX_PARTS 4000UL
+#define TG_GUI_UL_LIMIT (TG_GUI_DL_CHUNK * TG_GUI_UL_MAX_PARTS)
 
-int tg_gui_session_send_document(const char *path, FILE *stream)
+static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
+                                const char *path, FILE *stream,
+                                tg_gui_upload_progress_fn progress,
+                                void *progress_data)
 {
     static unsigned char part_buf[TG_GUI_DL_CHUNK];
     static unsigned char part_query[TG_GUI_DL_CHUNK + 64UL];
@@ -13348,15 +14060,19 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
     unsigned long parts, part;
     const char *name;
     const char *p;
+    int big_file;
 
-    if (!tg_gui_session_state.open || stream == 0 || path == 0 ||
-        path[0] == '\0' ||
-        tg_gui_session_state.current_peer_index[0] == '\0') {
+    if (fc == 0 || stream == 0 || path == 0 || path[0] == '\0' ||
+        fc->peer_index == 0 || fc->peer_index[0] == '\0') {
         return 1;
     }
     f = fopen(path, "rb");
     if (f == 0) {
         return 3;
+    }
+    if (fseek(f, 0L, SEEK_END) == 0 && ftell(f) == 0L) {
+        fclose(f);
+        return 5; /* empty file: nothing to upload (0-byte markers, etc.) */
     }
     if (fseek(f, 0L, SEEK_END) != 0 || (file_size = ftell(f)) <= 0L ||
         fseek(f, 0L, SEEK_SET) != 0) {
@@ -13365,8 +14081,9 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
     }
     if ((unsigned long)file_size > TG_GUI_UL_LIMIT) {
         fclose(f);
-        return 2; /* saveBigFilePart territory: a later chunk */
+        return 2;
     }
+    big_file = (unsigned long)file_size > TG_GUI_UL_BIG_THRESHOLD;
     /* Bare filename: whatever follows the last '/' or ':' of the path. */
     name = path;
     for (p = path; *p != '\0'; ++p) {
@@ -13380,8 +14097,8 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
     if (tg_mtproto_load_peer_cache_peer(
-            tg_gui_session_state.peer_cache_file,
-            tg_gui_session_state.current_peer_index, &pc, &ph, &pl, &ahh,
+            fc->peer_cache_file,
+            fc->peer_index, &pc, &ph, &pl, &ahh,
             &ahl, &hah, quiet, "mtproto sendMedia(document)") != 0) {
         fclose(f);
         tg_mtproto_close_quiet_stream(quiet, stream);
@@ -13392,6 +14109,11 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
     file_id_hi = tg_mtproto_read_u32_le(rnd + 4U);
     parts = ((unsigned long)file_size + TG_GUI_DL_CHUNK - 1UL) /
             TG_GUI_DL_CHUNK;
+    if (parts == 0UL || parts > TG_GUI_UL_MAX_PARTS) {
+        fclose(f);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 2;
+    }
     for (part = 0UL; part < parts; ++part) {
         unsigned long got = (unsigned long)fread(part_buf, 1, TG_GUI_DL_CHUNK,
                                                  f);
@@ -13400,20 +14122,30 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
             break; /* short read = disk trouble: bail (parts check below) */
         }
         tg_mtproto_tl_writer_init(&writer, part_query, sizeof(part_query));
-        if (tg_mtproto_build_upload_save_file_part(&writer, file_id_hi,
-                                                   file_id_lo, part, part_buf,
-                                                   got) != TG_MTPROTO_TL_OK) {
+        if ((big_file
+                 ? tg_mtproto_build_upload_save_big_file_part(
+                       &writer, file_id_hi, file_id_lo, part, parts,
+                       part_buf, got)
+                 : tg_mtproto_build_upload_save_file_part(
+                       &writer, file_id_hi, file_id_lo, part, part_buf,
+                       got)) != TG_MTPROTO_TL_OK) {
             break;
         }
         memset(&result, 0, sizeof(result));
         if (tg_mtproto_send_saved_query_on_context(
-                tg_gui_session_state.host, tg_gui_session_state.port,
-                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-                tg_gui_session_state.dc_id_text,
-                &tg_gui_session_state.context, part_query, writer.length,
-                &result, quiet, "mtproto saveFilePart", 600U) != 0 ||
+                fc->host, fc->port,
+                fc->api_id, fc->auth_file,
+                fc->dc_id_text,
+                fc->context, part_query, writer.length,
+                &result, quiet,
+                big_file ? "mtproto saveBigFilePart"
+                         : "mtproto saveFilePart",
+                600U) != 0 ||
             result.result_constructor != 0x997275b5UL /* boolTrue */) {
             break;
+        }
+        if (progress != 0) {
+            progress(part + 1UL, parts, progress_data);
         }
     }
     fclose(f);
@@ -13425,18 +14157,23 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
     rand_lo = tg_mtproto_read_u32_le(rnd);
     rand_hi = tg_mtproto_read_u32_le(rnd + 4U);
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if (tg_mtproto_build_messages_send_media_document(
-            &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi, file_id_lo,
-            parts, name, "application/octet-stream", rand_hi, rand_lo) !=
-        TG_MTPROTO_TL_OK) {
+    if ((big_file
+             ? tg_mtproto_build_messages_send_media_big_document(
+                   &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi,
+                   file_id_lo, parts, name, "application/octet-stream",
+                   rand_hi, rand_lo)
+             : tg_mtproto_build_messages_send_media_document(
+                   &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi,
+                   file_id_lo, parts, name, "application/octet-stream",
+                   rand_hi, rand_lo)) != TG_MTPROTO_TL_OK) {
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 1;
     }
     memset(&result, 0, sizeof(result));
     if (tg_mtproto_send_saved_query_on_context(
-            tg_gui_session_state.host, tg_gui_session_state.port,
-            tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-            tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+            fc->host, fc->port,
+            fc->api_id, fc->auth_file,
+            fc->dc_id_text, fc->context,
             query, writer.length, &result, quiet,
             "mtproto sendMedia(document)", 600U) != 0 ||
         result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
@@ -13449,8 +14186,9 @@ int tg_gui_session_send_document(const char *path, FILE *stream)
 
 /* Returns: 0 ok, 1 generic failure, 2 foreign DC (needs multi-DC, deferred),
    3 could not create/write the file. Writes the saved path into out_path. */
-int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
-                                     unsigned long out_path_size, FILE *stream)
+static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
+                                    unsigned long msg_id, char *out_path,
+                                    unsigned long out_path_size, FILE *stream)
 {
     tg_mtproto_document_meta doc;
     char safe[TG_MTPROTO_DOC_NAME_MAX];
@@ -13465,19 +14203,21 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     const unsigned char *bytes;
     unsigned long bytes_len;
     int cdn;
+    unsigned long resolved_msg_id = 0UL;
     int refetched = 0;
     int rc = 1;
 
     if (out_path != 0 && out_path_size > 0UL) {
         out_path[0] = '\0';
     }
-    if (!tg_gui_session_state.open || stream == 0 || msg_id == 0UL ||
-        tg_gui_session_state.current_peer_index[0] == '\0') {
+    if (fc == 0 || stream == 0 ||
+        fc->peer_index == 0 || fc->peer_index[0] == '\0') {
         return 1;
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
     tg_dl_diag[0] = '\0';
-    if (tg_gui_session_find_open_document(msg_id, quiet, &doc) != 0) {
+    if (tg_mtproto_file_find_document(fc, msg_id, quiet, &doc,
+                                      &resolved_msg_id) != 0) {
         tg_gui_log("download: not found");
         if (out_path != 0 && out_path_size > 0UL && tg_dl_diag[0] != '\0') {
             unsigned long e = 0UL;
@@ -13497,8 +14237,8 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     }
     /* Same-DC guard (foreign documents need export/importAuthorization). */
     home = 0UL;
-    if (tg_gui_session_state.dc_id_text[0] != '\0') {
-        const char *p = tg_gui_session_state.dc_id_text;
+    if (fc->dc_id_text[0] != '\0') {
+        const char *p = fc->dc_id_text;
 
         while (*p >= '0' && *p <= '9') {
             home = home * 10UL + (unsigned long)(*p - '0');
@@ -13533,10 +14273,10 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
             int gfrc;
             char gl[128];
             gfrc = tg_mtproto_send_saved_query_on_context(
-                tg_gui_session_state.host, tg_gui_session_state.port,
-                tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
-                tg_gui_session_state.dc_id_text,
-                &tg_gui_session_state.context, query, writer.length, &result,
+                fc->host, fc->port,
+                fc->api_id, fc->auth_file,
+                fc->dc_id_text,
+                fc->context, query, writer.length, &result,
                 quiet, "mtproto getFile(document)", 600U);
             sprintf(gl, "download: getFile off=%lu qlen=%lu rc=%d ctor=0x%08lx",
                     offset, writer.length, gfrc, result.result_constructor);
@@ -13578,7 +14318,9 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
             }
             /* FILE_REFERENCE_EXPIRED mid-transfer: re-fetch once, restart. */
             if (!refetched &&
-                tg_gui_session_find_open_document(msg_id, quiet, &doc) == 0) {
+                tg_mtproto_file_find_document(
+                    fc, resolved_msg_id != 0UL ? resolved_msg_id : msg_id,
+                    quiet, &doc, 0) == 0) {
                 refetched = 1;
                 offset = 0UL;
                 if (fseek(f, 0L, SEEK_SET) == 0) {
@@ -13632,6 +14374,49 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     tg_mtproto_close_quiet_stream(quiet, stream);
     return rc;
 }
+
+/* Fills the bundle from the GUI session singleton. */
+static void tg_gui_session_file_ctx(tg_mtproto_file_ctx *fc)
+{
+    fc->host = tg_gui_session_state.host;
+    fc->port = tg_gui_session_state.port;
+    fc->api_id = tg_gui_session_state.api_id;
+    fc->auth_file = tg_gui_session_state.auth_file;
+    fc->dc_id_text = tg_gui_session_state.dc_id_text;
+    fc->context = &tg_gui_session_state.context;
+    fc->peer_cache_file = tg_gui_session_state.peer_cache_file;
+    fc->peer_index = tg_gui_session_state.current_peer_index;
+}
+
+int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
+                                     unsigned long out_path_size, FILE *stream)
+{
+    tg_mtproto_file_ctx fc;
+
+    if (!tg_gui_session_state.open || msg_id == 0UL) {
+        if (out_path != 0 && out_path_size > 0UL) {
+            out_path[0] = '\0';
+        }
+        return 1;
+    }
+    tg_gui_session_file_ctx(&fc);
+    return tg_mtproto_file_download(&fc, msg_id, out_path, out_path_size,
+                                    stream);
+}
+
+int tg_gui_session_send_document(const char *path, FILE *stream,
+                                 tg_gui_upload_progress_fn progress,
+                                 void *progress_data)
+{
+    tg_mtproto_file_ctx fc;
+
+    if (!tg_gui_session_state.open) {
+        return 1;
+    }
+    tg_gui_session_file_ctx(&fc);
+    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data);
+}
+
 
 static void tg_gui_session_fetch_open_avatar(FILE *stream)
 {
@@ -13827,6 +14612,269 @@ static const char *tg_gui_session_resolve_typing_member(FILE *stream)
     return 0;
 }
 
+static int tg_gui_session_apply_edit_updates(void)
+{
+    unsigned long i;
+    int dirty;
+
+    dirty = 0;
+    for (i = 0UL; i < tg_gui_session_state.edit_sink.count; ++i) {
+        tg_chat_edit_entry *entry;
+
+        int peer_match;
+
+        entry = &tg_gui_session_state.edit_sink.queue[i];
+        peer_match = tg_chat_edit_peer_matches_open(
+            entry, tg_gui_session_state.open_peer_constructor,
+            tg_gui_session_state.open_peer_id_hi,
+            tg_gui_session_state.open_peer_id_lo);
+        if (tg_gui_session_state.current_peer_index[0] != '\0' &&
+            peer_match &&
+            tg_gui_driver_update_text_utf8(
+                &tg_gui_session_state.gui_driver, entry->message_id,
+                entry->text)) {
+            dirty = 1;
+        }
+    }
+    tg_gui_session_state.edit_sink.count = 0UL;
+    return dirty;
+}
+
+static int tg_gui_session_apply_read_update(void)
+{
+    int dirty;
+
+    dirty = 0;
+    if (tg_gui_session_state.read_outbox_sink.pending) {
+        tg_gui_session_state.read_outbox_sink.pending = 0;
+        if (tg_gui_session_state.current_peer_index[0] != '\0' &&
+            tg_gui_session_state.read_outbox_sink.peer_id_hi ==
+                tg_gui_session_state.open_peer_id_hi &&
+            tg_gui_session_state.read_outbox_sink.peer_id_lo ==
+                tg_gui_session_state.open_peer_id_lo &&
+            tg_gui_driver_set_read_outbox_max(
+                &tg_gui_session_state.gui_driver,
+                tg_gui_session_state.read_outbox_sink.max_id)) {
+            dirty = 1;
+        }
+    }
+    return dirty;
+}
+
+static int tg_gui_session_dispatch_notifications(void)
+{
+    unsigned long i;
+
+    if (tg_gui_session_state.engine.notify.count == 0UL) {
+        return 0;
+    }
+    for (i = 0UL; i < tg_gui_session_state.engine.notify.count; ++i) {
+        if (tg_gui_session_state.driver.on_notification != 0) {
+            tg_gui_session_state.driver.on_notification(
+                tg_gui_session_state.driver.ctx,
+                &tg_gui_session_state.engine.notify.queue[i]);
+        }
+    }
+    tg_gui_session_state.engine.notify.count = 0UL;
+    tg_gui_session_state.engine.notify.dropped = 0UL;
+    tg_gui_session_persist_unread();
+    return 1;
+}
+
+static int tg_gui_session_apply_typing(FILE *stream, int allow_member_fetch)
+{
+    tg_gui_state *gs;
+    const char *want;
+    char built[TG_GUI_NAME_MAX];
+    int fresh;
+    unsigned long now;
+
+    gs = tg_gui_session_state.gui_driver.state;
+    if (gs == 0) {
+        return 0;
+    }
+    now = (unsigned long)time(0);
+    fresh = 0;
+    if (tg_gui_session_state.typing.active &&
+        now >= tg_gui_session_state.typing.seen_epoch &&
+        (now - tg_gui_session_state.typing.seen_epoch) <=
+            TG_MTPROTO_TYPING_TTL_SECONDS) {
+        fresh = 1;
+    } else {
+        tg_gui_session_state.typing.active = 0;
+    }
+    if (fresh) {
+        char td[112];
+
+        sprintf(td, "typing: fresh sink=%08lx%08lx open=%08lx%08lx idx=%s",
+                tg_gui_session_state.typing.peer_id_hi,
+                tg_gui_session_state.typing.peer_id_lo,
+                tg_gui_session_state.open_peer_id_hi,
+                tg_gui_session_state.open_peer_id_lo,
+                tg_gui_session_state.current_peer_index);
+        tg_gui_log(td);
+    }
+    want = "";
+    if (fresh && tg_gui_session_state.current_peer_index[0] != '\0' &&
+        tg_gui_session_state.typing.peer_id_hi ==
+            tg_gui_session_state.open_peer_id_hi &&
+        tg_gui_session_state.typing.peer_id_lo ==
+            tg_gui_session_state.open_peer_id_lo) {
+        const char *name;
+
+        name = 0;
+        if (!tg_gui_session_state.open_peer_is_chat) {
+            if (tg_gui_session_state.current_peer_label[0] != '\0') {
+                name = tg_gui_session_state.current_peer_label;
+            }
+        } else {
+            int mi;
+
+            for (mi = 0; mi < gs->message_count; ++mi) {
+                if (!gs->messages[mi].is_own &&
+                    gs->messages[mi].from_id_hi ==
+                        tg_gui_session_state.typing.from_id_hi &&
+                    gs->messages[mi].from_id_lo ==
+                        tg_gui_session_state.typing.from_id_lo &&
+                    gs->messages[mi].sender[0] != '\0') {
+                    name = gs->messages[mi].sender;
+                    break;
+                }
+            }
+            /* The receive-only composing path must stay network-free. It may
+               consult an already-fetched cache, but never trigger the member
+               query itself. */
+            if (name == 0 &&
+                (allow_member_fetch ||
+                 tg_gui_session_state.member_fetch_done)) {
+                name = tg_gui_session_resolve_typing_member(stream);
+            }
+        }
+        if (name != 0) {
+            static const char suffix[] = " is typing...";
+            unsigned long di;
+            unsigned long si;
+
+            di = 0UL;
+            while (di + sizeof(suffix) < sizeof(built) &&
+                   name[di] != '\0') {
+                built[di] = name[di];
+                ++di;
+            }
+            for (si = 0UL; si + 1UL < sizeof(suffix) &&
+                           di + 1UL < sizeof(built); ++si) {
+                built[di++] = suffix[si];
+            }
+            built[di] = '\0';
+            want = built;
+        } else {
+            want = "someone is typing...";
+        }
+    }
+    if (strcmp(gs->typing, want) != 0) {
+        unsigned long n;
+
+        n = (unsigned long)strlen(want);
+        if (n >= sizeof(gs->typing)) {
+            n = sizeof(gs->typing) - 1UL;
+        }
+        memcpy(gs->typing, want, n);
+        gs->typing[n] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+static int tg_gui_session_apply_pushes(FILE *stream, int allow_member_fetch)
+{
+    int dirty;
+
+    dirty = 0;
+    if (tg_gui_session_apply_edit_updates()) {
+        dirty = 1;
+    }
+    if (tg_gui_session_apply_read_update()) {
+        dirty = 1;
+    }
+    if (tg_gui_session_dispatch_notifications()) {
+        dirty = 1;
+    }
+    if (tg_gui_session_apply_typing(stream, allow_member_fetch)) {
+        dirty = 1;
+    }
+    return dirty;
+}
+
+int tg_gui_session_receive_pending(FILE *stream)
+{
+    static unsigned char response[TG_MTPROTO_REPLY_RECV_MAX];
+    /* static like every other decrypt site in this file: the struct embeds a
+       ~72 KB body on PPC and this runs once a second inside the GUI event
+       loop -- a stack frame that size is a Guru on sub-1MB stacks. */
+    static tg_mtproto_encrypted_message decrypted;
+    unsigned long response_length;
+    unsigned long prev_timeout;
+    tg_net_status status;
+    char error_buffer[128];
+    FILE *quiet;
+    int ready;
+    int dirty;
+
+    if (!tg_gui_session_state.open || stream == 0) {
+        return 0;
+    }
+    dirty = 0;
+    /* Even a quiet socket may require the typing TTL to clear. */
+    if (!tg_gui_session_state.context.connection.is_open) {
+        return tg_gui_session_apply_pushes(stream, 0);
+    }
+    ready = tg_net_poll_readable(&tg_gui_session_state.context.connection,
+                                 error_buffer, sizeof(error_buffer));
+    if (ready <= 0) {
+        if (ready < 0) {
+            tg_gui_log("receive_pending: poll failed; reconnect on full tick");
+            tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+        }
+        return tg_gui_session_apply_pushes(stream, 0);
+    }
+
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    /* Readability only guarantees that the first byte is ready. Bound the rest
+       of the frame; a partial frame is not recoverable, so close and let the
+       next regular tick reconnect instead of leaving a desynchronised stream.
+       KNOWN TRADE-OFF: a frame trickling in can hold the GUI up to ~1s per
+       recv chunk while composing -- bounded and rare (pushes are small), and
+       the idle-tick poll already blocks comparably; async reassembly is not
+       worth its complexity here. */
+    tg_net_set_connect_timeout_seconds(1UL);
+    error_buffer[0] = '\0';
+    response_length = 0UL;
+    status = tg_mtproto_recv_abridged_packet(
+        &tg_gui_session_state.context.connection, response, sizeof(response),
+        &response_length, error_buffer, sizeof(error_buffer));
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    if (status != TG_NET_OK ||
+        tg_mtproto_decrypt_encrypted_message(
+            response, response_length, tg_gui_session_state.context.auth_key,
+            &decrypted) != TG_MTPROTO_TL_OK) {
+        tg_gui_log("receive_pending: frame failed; reconnect on full tick");
+        tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return tg_gui_session_apply_pushes(stream, 0);
+    }
+    tg_mtproto_sync_time_from_server(&tg_gui_session_state.context, &decrypted);
+    tg_mtproto_ack_encrypted_message(&tg_gui_session_state.context, &decrypted,
+                                     quiet, "gui receive");
+    tg_chat_notify_collect(decrypted.body, decrypted.body_length);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_gui_log("receive_pending: one frame");
+    if (tg_gui_session_apply_pushes(stream, 0)) {
+        dirty = 1;
+    }
+    return dirty;
+}
+
 int tg_gui_session_tick(FILE *stream)
 {
     FILE *quiet;
@@ -13872,21 +14920,6 @@ int tg_gui_session_tick(FILE *stream)
         tg_chat_message_driver_override = 0;
         if (printed > 0UL) {
             dirty = 1;
-        }
-        /* Real-time read receipt (5c): an updateReadHistoryOutbox push recorded
-           by the drain applies instantly when it is the open chat -- the poll
-           below stays as the backstop (dropped pushes / MorphOS). */
-        if (tg_gui_session_state.read_outbox_sink.pending) {
-            tg_gui_session_state.read_outbox_sink.pending = 0;
-            if (tg_gui_session_state.read_outbox_sink.peer_id_hi ==
-                    tg_gui_session_state.open_peer_id_hi &&
-                tg_gui_session_state.read_outbox_sink.peer_id_lo ==
-                    tg_gui_session_state.open_peer_id_lo &&
-                tg_gui_driver_set_read_outbox_max(
-                    &tg_gui_session_state.gui_driver,
-                    tg_gui_session_state.read_outbox_sink.max_id)) {
-                dirty = 1;
-            }
         }
         /* Refresh the peer's read cursor so own messages flip to the double-
            check once the peer reads them. Throttled: read state changes slowly
@@ -13981,120 +15014,8 @@ int tg_gui_session_tick(FILE *stream)
     }
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_gui_log("tick: end");
-
-    /* Dispatch every harvested notification to the GUI driver, then clear the
-       queue (same consume semantics as the console's print_notify_lines). */
-    if (tg_gui_session_state.engine.notify.count > 0UL) {
-        unsigned long i;
-
-        for (i = 0UL; i < tg_gui_session_state.engine.notify.count; ++i) {
-            if (tg_gui_session_state.driver.on_notification != 0) {
-                tg_gui_session_state.driver.on_notification(
-                    tg_gui_session_state.driver.ctx,
-                    &tg_gui_session_state.engine.notify.queue[i]);
-            }
-        }
-        tg_gui_session_state.engine.notify.count = 0UL;
-        tg_gui_session_state.engine.notify.dropped = 0UL;
+    if (tg_gui_session_apply_pushes(stream, 1)) {
         dirty = 1;
-        /* Live unread increments just landed -> persist so the badges are correct
-           after a restart (no-op write when nothing actually changed). */
-        tg_gui_session_persist_unread();
-    }
-
-    /* Reflect the live "is typing" sink into the open chat's header: shown only
-       for the open peer and only while fresh (the TTL); cleared otherwise. A
-       change in either direction is a repaint. */
-    {
-        tg_gui_state *gs;
-
-        gs = tg_gui_session_state.gui_driver.state;
-        if (gs != 0) {
-            const char *want;
-            char built[TG_GUI_NAME_MAX];
-            int fresh;
-            unsigned long now;
-
-            now = (unsigned long)time(0);
-            fresh = 0;
-            if (tg_gui_session_state.typing.active &&
-                now >= tg_gui_session_state.typing.seen_epoch &&
-                (now - tg_gui_session_state.typing.seen_epoch) <=
-                    TG_MTPROTO_TYPING_TTL_SECONDS) {
-                fresh = 1;
-            } else {
-                /* Stale or absent: disarm so a later identical push re-fires. */
-                tg_gui_session_state.typing.active = 0;
-            }
-            want = "";
-            if (fresh && tg_gui_session_state.current_peer_index[0] != '\0' &&
-                tg_gui_session_state.typing.peer_id_hi ==
-                    tg_gui_session_state.open_peer_id_hi &&
-                tg_gui_session_state.typing.peer_id_lo ==
-                    tg_gui_session_state.open_peer_id_lo) {
-                const char *name;
-
-                /* Name who is typing: in a DM it is the open peer; in a group
-                   match the typer's id against a recently shown sender. */
-                name = 0;
-                if (!tg_gui_session_state.open_peer_is_chat) {
-                    if (tg_gui_session_state.current_peer_label[0] != '\0') {
-                        name = tg_gui_session_state.current_peer_label;
-                    }
-                } else {
-                    int mi;
-
-                    /* (1) a recently shown sender (cheap, already loaded). */
-                    for (mi = 0; mi < gs->message_count; ++mi) {
-                        if (!gs->messages[mi].is_own &&
-                            gs->messages[mi].from_id_hi ==
-                                tg_gui_session_state.typing.from_id_hi &&
-                            gs->messages[mi].from_id_lo ==
-                                tg_gui_session_state.typing.from_id_lo &&
-                            gs->messages[mi].sender[0] != '\0') {
-                            name = gs->messages[mi].sender;
-                            break;
-                        }
-                    }
-                    /* (2)/(3) otherwise the lazily-fetched member list (supergroups,
-                       off-MorphOS); one synchronous fetch per open group. */
-                    if (name == 0) {
-                        name = tg_gui_session_resolve_typing_member(stream);
-                    }
-                }
-                if (name != 0) {
-                    static const char suffix[] = " is typing...";
-                    unsigned long di;
-                    unsigned long si;
-
-                    di = 0UL;
-                    while (di + sizeof(suffix) < sizeof(built) &&
-                           name[di] != '\0') {
-                        built[di] = name[di];
-                        ++di;
-                    }
-                    for (si = 0UL; si + 1UL < sizeof(suffix) &&
-                                   di + 1UL < sizeof(built); ++si) {
-                        built[di++] = suffix[si];
-                    }
-                    built[di] = '\0';
-                    want = built;
-                } else {
-                    want = "someone is typing...";
-                }
-            }
-            if (strcmp(gs->typing, want) != 0) {
-                unsigned long n;
-
-                n = (unsigned long)strlen(want);
-                if (n >= sizeof(gs->typing)) {
-                    n = sizeof(gs->typing) - 1UL;
-                }
-                memcpy(gs->typing, want, n);
-                gs->typing[n] = '\0';
-                dirty = 1;
-            }
-        }
     }
     return dirty;
 }
@@ -14106,6 +15027,7 @@ void tg_gui_session_close(void)
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;
         tg_chat_read_outbox_target = 0;
+        tg_chat_edit_target = 0;
         return;
     }
     tg_gui_log("close: closing context");
@@ -14125,6 +15047,7 @@ void tg_gui_session_close(void)
     tg_chat_nq = 0;
     tg_chat_typing_target = 0;
     tg_chat_read_outbox_target = 0;
+    tg_chat_edit_target = 0;
     tg_gui_session_state.open = 0;
 }
 
