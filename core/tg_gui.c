@@ -2179,6 +2179,9 @@ static void tg_gui_paint_login(const tg_gui_state *state,
                          "ENTER confirms   ESC quits");
 }
 
+static void tg_gui_paint_context_menu(const tg_gui_state *state,
+                                      tg_gui_backend *backend);
+
 /* Repaints ONLY the active caret region -- the composer input row in chat mode,
    or the login input box otherwise -- so the ~2 Hz caret blink no longer
    repaints the whole window (a visible, constant refresh on slow OS3 displays).
@@ -2194,6 +2197,13 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend)
         tg_gui_paint_search_box(state, backend);
     } else {
         tg_gui_paint_input_row(state, backend);
+        /* An open right-click menu can overlap the input row (opening it on
+           the LAST message pops it up right above the composer), and this
+           partial repaint would erase that slice of it a blink later -- the
+           full repaint draws the popup last for exactly that reason. Repaint
+           it on top; no-op while the menu is closed. (Sam460/OS4 field
+           report, issue #5 follow-up.) */
+        tg_gui_paint_context_menu(state, backend);
     }
 }
 
