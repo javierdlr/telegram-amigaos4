@@ -328,7 +328,35 @@ static struct MsgPort *tg_os4_tb_port = 0;
 static struct TimeRequest *tg_os4_tb_req = 0;
 static struct Library *tg_os4_tb_base = 0;
 static struct TimerIFace *tg_os4_itimer = 0;
+static int tg_os4_tb_device_open = 0;
 static int tg_os4_tb_state = 0; /* 0 untried, 1 EClock ready, -1 fallback */
+
+static void tg_os4_timebase_close(void)
+{
+    if (tg_os4_itimer != 0) {
+        DropInterface((struct Interface *)tg_os4_itimer);
+        tg_os4_itimer = 0;
+    }
+    if (tg_os4_tb_device_open && tg_os4_tb_req != 0) {
+        CloseDevice((struct IORequest *)tg_os4_tb_req);
+        tg_os4_tb_device_open = 0;
+    }
+    tg_os4_tb_base = 0;
+    if (tg_os4_tb_req != 0) {
+        DeleteIORequest((struct IORequest *)tg_os4_tb_req);
+        tg_os4_tb_req = 0;
+    }
+    if (tg_os4_tb_port != 0) {
+        DeleteMsgPort(tg_os4_tb_port);
+        tg_os4_tb_port = 0;
+    }
+    tg_os4_tb_state = 0;
+}
+
+void tg_platform_shutdown(void)
+{
+    tg_os4_timebase_close();
+}
 
 static unsigned long tg_os4_timebase(void)
 {
@@ -342,6 +370,7 @@ static unsigned long tg_os4_timebase(void)
         if (tg_os4_tb_req != 0 &&
             OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
                        (struct IORequest *)tg_os4_tb_req, 0) == 0) {
+            tg_os4_tb_device_open = 1;
             tg_os4_tb_base =
                 (struct Library *)tg_os4_tb_req->Request.io_Device;
             tg_os4_itimer = (struct TimerIFace *)GetInterface(

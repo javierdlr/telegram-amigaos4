@@ -100,6 +100,10 @@ void tg_platform_workbench_init(void)
 #endif
 }
 
+void tg_platform_shutdown(void)
+{
+}
+
 void tg_platform_log(const char *level, const char *message)
 {
     printf("[aros:%s] %s\n", level, message);

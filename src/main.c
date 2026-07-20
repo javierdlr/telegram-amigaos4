@@ -54,6 +54,12 @@ static int tg_main_wb_wants_tui(char **argv)
 }
 #endif
 
+static int tg_main_finish(int result)
+{
+    tg_platform_shutdown();
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     /*
@@ -81,7 +87,7 @@ int main(int argc, char **argv)
 
             tg_platform_workbench_init();
             if (!tg_platform_workbench_tui_console()) {
-                return 0; /* no console possible: nothing sane to do */
+                return tg_main_finish(0); /* no console possible */
             }
             /* One line of drop status in the console scrollback: when a field
                report says "drag-and-drop does nothing", this says WHY. */
@@ -106,7 +112,7 @@ int main(int argc, char **argv)
                 /* Give the CON: handle back, or the window can never die:
                    the close gadget only works once every handle is gone. */
                 tg_platform_workbench_tui_console_close();
-                return rc;
+                return tg_main_finish(rc);
             }
         } else {
             static char *wb_argv[3];
@@ -121,8 +127,8 @@ int main(int argc, char **argv)
             wb_argv[0] = "TelegramAmiga";
             wb_argv[1] = "--gui-live";
             wb_argv[2] = "data/telegram-peers.txt";
-            return tg_app_run(3, wb_argv);
+            return tg_main_finish(tg_app_run(3, wb_argv));
         }
     }
-    return tg_app_run(argc, argv);
+    return tg_main_finish(tg_app_run(argc, argv));
 }

@@ -132,6 +132,14 @@ int tg_platform_random_bytes(unsigned char *bytes, unsigned long byte_count);
  */
 void tg_platform_workbench_init(void);
 
+/**
+ * Releases process-lifetime platform resources opened lazily by the client.
+ *
+ * Called exactly once by main() after the application has stopped. Backends
+ * with no such resources implement this as a no-op.
+ */
+void tg_platform_shutdown(void);
+
 /* Workbench-launched TUI: open an interactive CON: window and make it this
    process's stdin/stdout, since a double-clicked binary has no console.
    1 = a console is in place, 0 = not available (host / failure). */

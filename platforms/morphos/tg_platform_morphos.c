@@ -113,6 +113,10 @@ void tg_platform_workbench_init(void)
 #endif
 }
 
+void tg_platform_shutdown(void)
+{
+}
+
 void tg_platform_log(const char *level, const char *message)
 {
     printf("[morphos:%s] %s\n", level, message);
@@ -1496,6 +1500,5 @@ const char *tg_platform_console_drop_diag(void)
             tg_wb_drop_polls, tg_wb_drop_msgs);
     return diag_buf;
 }
-
 
 

@@ -354,8 +354,22 @@ struct Device *TimerBase = 0;           /* used by the proto/timer.h inlines */
 static struct timerequest tg_os3_timereq;
 static struct MsgPort *tg_os3_timeport = 0;
 static int tg_os3_timer_tried = 0;
+static int tg_os3_timer_opened = 0;
 static unsigned char tg_os3_drbg_state[TG_MTPROTO_SHA256_LENGTH];
 static int tg_os3_drbg_ready = 0;
+
+static void tg_os3_timer_close(void)
+{
+    if (tg_os3_timer_opened) {
+        CloseDevice((struct IORequest *)&tg_os3_timereq);
+        tg_os3_timer_opened = 0;
+    }
+    TimerBase = 0;
+    if (tg_os3_timeport != 0) {
+        DeleteMsgPort(tg_os3_timeport);
+        tg_os3_timeport = 0;
+    }
+}
 
 static void tg_os3_timer_open(void)
 {
@@ -376,9 +390,15 @@ static void tg_os3_timer_open(void)
     if (OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
                    (struct IORequest *)&tg_os3_timereq, 0) == 0) {
         TimerBase = tg_os3_timereq.tr_node.io_Device;
+        tg_os3_timer_opened = 1;
     } else {
         puts("platform rng: WARNING timer.device failed - E-Clock entropy degraded");
     }
+}
+
+void tg_platform_shutdown(void)
+{
+    tg_os3_timer_close();
 }
 
 static unsigned long tg_os3_timebase(void)
@@ -1666,6 +1686,5 @@ const char *tg_platform_console_drop_diag(void)
             tg_wb_drop_polls, tg_wb_drop_msgs);
     return diag_buf;
 }
-
 
 
