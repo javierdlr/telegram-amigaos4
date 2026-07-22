@@ -45,15 +45,21 @@ int tg_gui_session_tick(FILE *stream);
    when GUI state changed. Safe to call frequently and with no open session. */
 int tg_gui_session_receive_pending(FILE *stream);
 
-/* F9: download the document attached to message msg_id in the open chat into
-   downloads/<name>. 0 ok (path in out_path), 1 fail, 2 foreign DC (unsupported
-   yet), 3 disk error. Blocking on-context call -- never from the tick. */
-int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
-                                     unsigned long out_path_size, FILE *stream);
-
+/* Optional progress hook for the blocking file transfers. `completed`/`total`
+   are parts for upload and bytes for download; the percentage is completed*100
+   /total either way. Runs on the calling task after each confirmed step. */
 typedef void (*tg_gui_upload_progress_fn)(unsigned long completed_parts,
                                           unsigned long total_parts,
                                           void *user_data);
+
+/* F9: download the document attached to message msg_id in the open chat into
+   downloads/<name>. 0 ok (path in out_path), 1 fail, 2 foreign DC (unsupported
+   yet), 3 disk error. Blocking on-context call -- never from the tick.
+   `progress` is optional and runs after each received chunk. */
+int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
+                                     unsigned long out_path_size, FILE *stream,
+                                     tg_gui_upload_progress_fn progress,
+                                     void *progress_data);
 
 /* F9: send the file at `path` to the open chat. Files over 10 MB use
    upload.saveBigFilePart/inputFileBig. The conservative 4000-part bound gives

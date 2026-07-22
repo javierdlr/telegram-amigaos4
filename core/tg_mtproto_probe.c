@@ -344,7 +344,9 @@ typedef struct tg_mtproto_file_ctx {
    loop calls them with its own locals). */
 static int tg_mtproto_file_download(const struct tg_mtproto_file_ctx *fc,
                                     unsigned long msg_id, char *out_path,
-                                    unsigned long out_path_size, FILE *stream);
+                                    unsigned long out_path_size, FILE *stream,
+                                    tg_gui_upload_progress_fn progress,
+                                    void *progress_data);
 static int tg_mtproto_file_send(const struct tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
                                 tg_gui_upload_progress_fn progress,
@@ -10910,7 +10912,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 fc.peer_index = peer_index;
                 tg_mtproto_chat_print_system_line(stream, "Downloading...");
                 frc = tg_mtproto_file_download(&fc, 0UL, saved_path,
-                                               sizeof(saved_path), stream);
+                                               sizeof(saved_path), stream,
+                                               0, 0); /* TUI: no % hook (yet) */
                 tui_cap = tg_console_tui_capture_begin(stream);
                 if (frc == 0) {
                     fprintf(tui_cap, "Saved to %s\n", saved_path);
@@ -14188,7 +14191,9 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
    3 could not create/write the file. Writes the saved path into out_path. */
 static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
                                     unsigned long msg_id, char *out_path,
-                                    unsigned long out_path_size, FILE *stream)
+                                    unsigned long out_path_size, FILE *stream,
+                                    tg_gui_upload_progress_fn progress,
+                                    void *progress_data)
 {
     tg_mtproto_document_meta doc;
     char safe[TG_MTPROTO_DOC_NAME_MAX];
@@ -14349,6 +14354,12 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
             break;
         }
         offset += bytes_len;
+        /* Progress report (same hook type as upload): bytes so far / total from
+           the document meta. size_lo alone is fine -- the transfer hard-stops
+           at 512 MB below, far under the 4 GB where size_hi would matter. */
+        if (progress != 0 && doc.size_lo != 0UL) {
+            progress(offset, doc.size_lo, progress_data);
+        }
         if (bytes_len < TG_GUI_DL_CHUNK) {
             rc = 0; /* short chunk = last chunk: done */
             break;
@@ -14389,7 +14400,9 @@ static void tg_gui_session_file_ctx(tg_mtproto_file_ctx *fc)
 }
 
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
-                                     unsigned long out_path_size, FILE *stream)
+                                     unsigned long out_path_size, FILE *stream,
+                                     tg_gui_upload_progress_fn progress,
+                                     void *progress_data)
 {
     tg_mtproto_file_ctx fc;
 
@@ -14401,7 +14414,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     }
     tg_gui_session_file_ctx(&fc);
     return tg_mtproto_file_download(&fc, msg_id, out_path, out_path_size,
-                                    stream);
+                                    stream, progress, progress_data);
 }
 
 int tg_gui_session_send_document(const char *path, FILE *stream,

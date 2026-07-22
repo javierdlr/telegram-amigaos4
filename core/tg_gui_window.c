@@ -1691,6 +1691,32 @@ static void tg_gui_window_upload_progress(unsigned long completed_parts,
     tg_gui_window_paint(ui->state, ui->backend);
 }
 
+/* Download twin of the progress hook above: `done`/`total` are BYTES. Same
+   throttle -- repaint on the first update, every +5%, and at 100%. */
+static void tg_gui_window_download_progress(unsigned long done_bytes,
+                                            unsigned long total_bytes,
+                                            void *user_data)
+{
+    tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
+    unsigned long percent;
+
+    if (ui == 0 || ui->state == 0 || ui->backend == 0 ||
+        total_bytes == 0UL) {
+        return;
+    }
+    percent = (done_bytes * 100UL) / total_bytes;
+    if (percent > 100UL) {
+        percent = 100UL; /* size meta can undercount; never show >100 */
+    }
+    if (ui->last_percent != 0UL && percent != 100UL &&
+        percent < ui->last_percent + 5UL) {
+        return;
+    }
+    ui->last_percent = percent;
+    sprintf(ui->state->status, "Downloading... %lu%%", percent);
+    tg_gui_window_paint(ui->state, ui->backend);
+}
+
 /* "Send file...": ASL file requester -> chunk-5 uploader on the open chat.
    The requester is synchronous and system-rendered (safe while we are the
    caller); the upload itself is the same blocking on-context class as the
@@ -3473,15 +3499,19 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         unsigned long dl_id = m->id;
                         char saved[160];
                         int drc;
+                        tg_gui_upload_ui dl_progress;
 
-                        /* Blocking download: tell the user it is working, then
-                           report where it landed (or why not). */
+                        /* Blocking download: show a live percentage (like the
+                           upload), then report where it landed (or why not). */
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Downloading...");
                         tg_gui_window_paint(state, &backend);
-                        drc = tg_gui_session_download_document(dl_id, saved,
-                                                              sizeof(saved),
-                                                              stdout);
+                        dl_progress.state = state;
+                        dl_progress.backend = &backend;
+                        dl_progress.last_percent = 0UL;
+                        drc = tg_gui_session_download_document(
+                            dl_id, saved, sizeof(saved), stdout,
+                            tg_gui_window_download_progress, &dl_progress);
                         if (drc == 0) {
                             char msg[192];
 
