@@ -2576,6 +2576,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             WORD mouse_y;
             ULONG msg_secs;   /* IntuiMessage timestamp, for double-click detect */
             ULONG msg_micros;
+            APTR key_menu_action = 0; /* Amiga+key mapped to a menu action */
 #if defined(__amigaos4__)
             WORD wheel_y = 0;
 #endif
@@ -2621,6 +2622,33 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                IDCMP_INTUITICKS handler below. */
             if (msg_class == IDCMP_VANILLAKEY || msg_class == IDCMP_RAWKEY) {
                 last_key_time = time(0);
+            }
+            /* Amiga+<key> is a menu shortcut, NEVER text. Intuition only turns
+               it into a MENUPICK for the RIGHT Amiga and only while the menu
+               strip is attached; otherwise it arrives as a plain VANILLAKEY and
+               the composer was inserting it as a letter (OS3 field report:
+               Amiga+C typed "c", Amiga+V typed "v"). Map it to the same action
+               ids the menu uses, accept either Amiga key, and swallow the rest
+               so no qualified key can ever be typed. */
+            if (msg_class == IDCMP_VANILLAKEY &&
+                (msg_qual & (IEQUALIFIER_LCOMMAND |
+                             IEQUALIFIER_RCOMMAND)) != 0) {
+                UWORD k = msg_code;
+
+                if (k >= 'a' && k <= 'z') {
+                    k = (UWORD)(k - 32); /* fold to the menu's upper-case key */
+                }
+                switch (k) {
+                case 'C': key_menu_action = (APTR)TG_MENU_COPY; break;
+                case 'V': key_menu_action = (APTR)TG_MENU_PASTE; break;
+                case 'X': key_menu_action = (APTR)TG_MENU_CUT; break;
+                case 'R': key_menu_action = (APTR)TG_MENU_REMOVE; break;
+                case 'F': key_menu_action = (APTR)TG_MENU_SENDFILE; break;
+                case 'I': key_menu_action = (APTR)TG_MENU_ICONIFY; break;
+                case 'Q': key_menu_action = (APTR)TG_MENU_QUIT; break;
+                default: break; /* unknown shortcut: swallowed, never typed */
+                }
+                msg_class = 0; /* consumed: keep it out of every text field */
             }
 #if defined(__amigaos4__)
             /* QEMU's emulated OS4 mouse delivers the wheel only as
@@ -3055,22 +3083,31 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else if (msg_code == 0x46) { /* Del: remove selected chat (confirm) */
                     tg_gui_window_remove_selected(state, ctx.window, &backend);
                 }
-            } else if (msg_class == IDCMP_MENUPICK) {
+            } else if (msg_class == IDCMP_MENUPICK || key_menu_action != 0) {
                 UWORD mnum;
 
                 tg_gui_log("menu: pick");
                 mnum = msg_code;
-                while (mnum != MENUNULL) {
-                    struct MenuItem *item;
+                for (;;) {
+                    struct MenuItem *item = 0;
 
-                    item = ItemAddress(menu, mnum);
-                    if (item == 0) {
-                        break;
-                    }
                     {
                         APTR ud;
 
-                        ud = GTMENUITEM_USERDATA(item);
+                        if (key_menu_action != 0) {
+                            /* keyboard path: one action, no NextSelect chain */
+                            ud = key_menu_action;
+                            key_menu_action = 0;
+                        } else {
+                            if (mnum == MENUNULL) {
+                                break;
+                            }
+                            item = ItemAddress(menu, mnum);
+                            if (item == 0) {
+                                break;
+                            }
+                            ud = GTMENUITEM_USERDATA(item);
+                        }
                         if (ud == (APTR)TG_MENU_ABOUT) {
                             tg_gui_amiga_easyreq(ctx.window,
                                                  "About Telegram Amiga",
@@ -3308,6 +3345,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_QUIT) {
                             done = 1;
                         }
+                    }
+                    if (item == 0) {
+                        break; /* keyboard path: a single action */
                     }
                     mnum = item->NextSelect;
                 }
