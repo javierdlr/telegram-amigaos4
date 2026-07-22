@@ -1668,6 +1668,7 @@ typedef struct tg_gui_upload_ui {
     tg_gui_state *state;
     tg_gui_backend *backend;
     unsigned long last_percent;
+    int painted;              /* download: a first progress paint happened */
 } tg_gui_upload_ui;
 
 static void tg_gui_window_upload_progress(unsigned long completed_parts,
@@ -1733,10 +1734,15 @@ static int tg_gui_window_download_progress(unsigned long done_bytes,
     if (percent > 100UL) {
         percent = 100UL; /* size meta can undercount; never show >100 */
     }
-    if (ui->last_percent != 0UL && percent != 100UL &&
+    /* Throttle: first update, then every +5%, then 100%. `painted` (not
+       last_percent) marks the first one -- on a big file the early chunks all
+       compute 0%, and keying off last_percent==0 made EVERY one of them repaint
+       the whole window instead of just the first. */
+    if (ui->painted && percent != 100UL &&
         percent < ui->last_percent + 5UL) {
         return 0;
     }
+    ui->painted = 1;
     ui->last_percent = percent;
     sprintf(ui->state->status, "Downloading... %lu%% (close to cancel)",
             percent);
@@ -1815,6 +1821,7 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     progress_ui.state = state;
     progress_ui.backend = backend;
     progress_ui.last_percent = 0UL;
+    progress_ui.painted = 0;
     rc = tg_gui_session_send_document(
         path, stdout, tg_gui_window_upload_progress, &progress_ui);
     if (rc == 0) {
@@ -3576,6 +3583,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         dl_progress.state = state;
                         dl_progress.backend = &backend;
                         dl_progress.last_percent = 0UL;
+                        dl_progress.painted = 0;
                         drc = tg_gui_session_download_document(
                             dl_id, saved, sizeof(saved), stdout,
                             tg_gui_window_download_progress, &dl_progress);

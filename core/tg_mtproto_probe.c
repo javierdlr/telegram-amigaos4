@@ -69,6 +69,11 @@
 #define TG_MTPROTO_QUERY_BUDGET_SECONDS 20UL
 #endif
 
+/* Why the last encrypted query gave up (budget vs transport). The reason is
+   otherwise printed only to the QUIET stream, so a GUI download could only say
+   a bare "no reply" -- useless when diagnosing a slow-link failure. */
+static char tg_mtproto_query_fail[64];
+
 /*
  * Consecutive failed reads/sends in the interactive chat loop before it drops
  * and reopens the connection. Recovers a wedged long-running session (stale
@@ -1295,6 +1300,7 @@ static int tg_mtproto_send_encrypted_query_limited(
             context->session.seq_no += 2UL;
         }
         memset(&bad_msg, 0, sizeof(bad_msg));
+        tg_mtproto_query_fail[0] = '\0';
         if (tg_platform_break_pending()) {
             fprintf(stream, "%s: user-break\n", label);
             return 2;
@@ -1303,6 +1309,8 @@ static int tg_mtproto_send_encrypted_query_limited(
              ++receive_attempt) {
             if ((unsigned long)time(0) - query_start_time >=
                     query_budget_seconds) {
+                sprintf(tg_mtproto_query_fail, "reply budget %lus expired",
+                        query_budget_seconds);
                 break;  /* time budget hit: soft-fail, connection still alive */
             }
             if (net_status == TG_NET_OK) {
@@ -1330,6 +1338,8 @@ static int tg_mtproto_send_encrypted_query_limited(
                 continue;
             }
             if (net_status != TG_NET_OK) {
+                sprintf(tg_mtproto_query_fail, "transport %.40s",
+                        tg_net_status_name(net_status));
                 fprintf(stream, "%s: transport-failed (%s)\n", label,
                         tg_net_status_name(net_status));
                 return 2;
@@ -13909,6 +13919,13 @@ static int tg_gui_avfetch_n = 0;
    getFile limits (4096*2^k dividing 1 MB). */
 #if defined(__m68k__)
 #define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, within the 40 KB decrypted body */
+#elif defined(__MORPHOS__) || defined(__MORPHOS)
+/* MorphOS bsdsocket streams LARGE replies slowly (see the query-budget note at
+   the top of this file). A 64 KB chunk could take longer than the 45s per-query
+   budget, which soft-failed mid-download as a bare "no reply @off N" once a few
+   chunks in -- while OS3's 32 KB sailed through the same 15 MB file. Halve it
+   here too: same proven per-query size, buffers stay at 72 KB. */
+#define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, well inside the 45s budget */
 #else
 #define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, within the 72 KB decrypted body */
 #endif
@@ -14288,8 +14305,12 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
             tg_gui_log(gl);
             if (gfrc != 0) {
             if (out_path != 0 && out_path_size > 0UL) {
-                sprintf(out_path, "no reply @off %lu (%.60s)", offset,
-                        tg_dl_diag);
+                /* Say WHY: a bare "no reply" hid a slow-link budget expiry
+                   (MorphOS streams big replies slowly) behind the document
+                   metadata, which told us nothing about the failure. */
+                sprintf(out_path, "@off %lu: %.60s", offset,
+                        tg_mtproto_query_fail[0] != '\0'
+                            ? tg_mtproto_query_fail : "no reply");
             }
             break;
             }
