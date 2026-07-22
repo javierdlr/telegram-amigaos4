@@ -1691,18 +1691,43 @@ static void tg_gui_window_upload_progress(unsigned long completed_parts,
     tg_gui_window_paint(ui->state, ui->backend);
 }
 
-/* Download twin of the progress hook above: `done`/`total` are BYTES. Same
-   throttle -- repaint on the first update, every +5%, and at 100%. */
-static void tg_gui_window_download_progress(unsigned long done_bytes,
-                                            unsigned long total_bytes,
-                                            void *user_data)
+/* Download twin of the progress hook above (`done`/`total` are BYTES), plus
+   the cancel path: the transfer blocks the event loop, so we drain the window
+   here and treat a close-gadget click or ESC as "cancel" (return non-zero) --
+   otherwise a slow download can only be escaped by resetting the machine. The
+   drained events are dropped; the window is busy until the transfer returns. */
+static int tg_gui_window_download_progress(unsigned long done_bytes,
+                                           unsigned long total_bytes,
+                                           void *user_data)
 {
     tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
+    tg_gui_amiga_ctx *c;
     unsigned long percent;
+    int cancel = 0;
 
-    if (ui == 0 || ui->state == 0 || ui->backend == 0 ||
-        total_bytes == 0UL) {
-        return;
+    if (ui == 0 || ui->state == 0 || ui->backend == 0) {
+        return 0;
+    }
+    c = (tg_gui_amiga_ctx *)ui->backend->context;
+    if (c != 0 && c->window != 0) {
+        struct IntuiMessage *im;
+
+        while ((im = (struct IntuiMessage *)GetMsg(c->window->UserPort)) != 0) {
+            if (im->Class == IDCMP_CLOSEWINDOW ||
+                (im->Class == IDCMP_VANILLAKEY && im->Code == 0x1B)) {
+                cancel = 1;
+            }
+            ReplyMsg((struct Message *)im);
+        }
+    }
+    if (cancel) {
+        tg_gui_window_copy(ui->state->status, sizeof(ui->state->status),
+                           "Cancelling download...");
+        tg_gui_window_paint(ui->state, ui->backend);
+        return 1;
+    }
+    if (total_bytes == 0UL) {
+        return 0; /* size unknown: no percentage, but stay cancellable */
     }
     percent = (done_bytes * 100UL) / total_bytes;
     if (percent > 100UL) {
@@ -1710,11 +1735,13 @@ static void tg_gui_window_download_progress(unsigned long done_bytes,
     }
     if (ui->last_percent != 0UL && percent != 100UL &&
         percent < ui->last_percent + 5UL) {
-        return;
+        return 0;
     }
     ui->last_percent = percent;
-    sprintf(ui->state->status, "Downloading... %lu%%", percent);
+    sprintf(ui->state->status, "Downloading... %lu%% (close to cancel)",
+            percent);
     tg_gui_window_paint(ui->state, ui->backend);
+    return 0;
 }
 
 /* "Send file...": ASL file requester -> chunk-5 uploader on the open chat.
@@ -3526,6 +3553,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status),
                                                "Could not write to downloads/");
+                        } else if (drc == 5) {
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status),
+                                               "Download cancelled");
                         } else if (drc == 4) {
                             char tmsg[192];
 

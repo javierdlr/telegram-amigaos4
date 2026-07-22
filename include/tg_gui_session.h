@@ -45,20 +45,28 @@ int tg_gui_session_tick(FILE *stream);
    when GUI state changed. Safe to call frequently and with no open session. */
 int tg_gui_session_receive_pending(FILE *stream);
 
-/* Optional progress hook for the blocking file transfers. `completed`/`total`
-   are parts for upload and bytes for download; the percentage is completed*100
-   /total either way. Runs on the calling task after each confirmed step. */
+/* Upload progress hook: `completed`/`total` are parts; percentage is
+   completed*100/total. Runs on the calling task after each confirmed part. */
 typedef void (*tg_gui_upload_progress_fn)(unsigned long completed_parts,
                                           unsigned long total_parts,
                                           void *user_data);
 
+/* Download progress + CANCEL hook: called after each received chunk with
+   (bytes so far, total). Return non-zero to abort the transfer -- the partial
+   file is then removed and the call returns 5. Distinct from the void upload
+   hook because a big download blocks the event loop, so it must be cancellable
+   (a close-gadget click) or the user has to reset the machine. */
+typedef int (*tg_gui_download_progress_fn)(unsigned long done_bytes,
+                                           unsigned long total_bytes,
+                                           void *user_data);
+
 /* F9: download the document attached to message msg_id in the open chat into
    downloads/<name>. 0 ok (path in out_path), 1 fail, 2 foreign DC (unsupported
-   yet), 3 disk error. Blocking on-context call -- never from the tick.
-   `progress` is optional and runs after each received chunk. */
+   yet), 3 disk error, 5 cancelled. Blocking on-context call -- never from the
+   tick. `progress` is optional and runs after each received chunk. */
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                      unsigned long out_path_size, FILE *stream,
-                                     tg_gui_upload_progress_fn progress,
+                                     tg_gui_download_progress_fn progress,
                                      void *progress_data);
 
 /* F9: send the file at `path` to the open chat. Files over 10 MB use

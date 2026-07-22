@@ -345,7 +345,7 @@ typedef struct tg_mtproto_file_ctx {
 static int tg_mtproto_file_download(const struct tg_mtproto_file_ctx *fc,
                                     unsigned long msg_id, char *out_path,
                                     unsigned long out_path_size, FILE *stream,
-                                    tg_gui_upload_progress_fn progress,
+                                    tg_gui_download_progress_fn progress,
                                     void *progress_data);
 static int tg_mtproto_file_send(const struct tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
@@ -13905,10 +13905,10 @@ static int tg_gui_avfetch_n = 0;
 /* The getFile RESPONSE (chunk bytes + upload.file wrapper + envelope) must fit
    inside TG_MTPROTO_ENCRYPTED_BODY_MAX after decryption -- file bytes are not
    gzip-compressed, so the raw chunk lands in that buffer whole. m68k body is
-   12 KB -> 8 KB chunk; the others hold 72 KB -> 64 KB chunk. Both are valid
+   40 KB -> 32 KB chunk; the others hold 72 KB -> 64 KB chunk. Both are valid
    getFile limits (4096*2^k dividing 1 MB). */
 #if defined(__m68k__)
-#define TG_GUI_DL_CHUNK 8192UL    /* 8 KB, within the 12 KB decrypted body */
+#define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, within the 40 KB decrypted body */
 #else
 #define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, within the 72 KB decrypted body */
 #endif
@@ -14192,7 +14192,7 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
 static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
                                     unsigned long msg_id, char *out_path,
                                     unsigned long out_path_size, FILE *stream,
-                                    tg_gui_upload_progress_fn progress,
+                                    tg_gui_download_progress_fn progress,
                                     void *progress_data)
 {
     tg_mtproto_document_meta doc;
@@ -14354,11 +14354,15 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
             break;
         }
         offset += bytes_len;
-        /* Progress report (same hook type as upload): bytes so far / total from
-           the document meta. size_lo alone is fine -- the transfer hard-stops
-           at 512 MB below, far under the 4 GB where size_hi would matter. */
-        if (progress != 0 && doc.size_lo != 0UL) {
-            progress(offset, doc.size_lo, progress_data);
+        /* Progress + cancel: report bytes-so-far / total (size_lo alone is
+           fine, the transfer hard-stops at 512 MB below), and honour a
+           non-zero return as "user cancelled" so a slow download can be
+           aborted from the window instead of resetting the machine. */
+        if (progress != 0 &&
+            progress(offset, doc.size_lo, progress_data) != 0) {
+            rc = 5; /* cancelled: the partial file is removed below (rc != 0) */
+            tg_gui_log("download: cancelled by user");
+            break;
         }
         if (bytes_len < TG_GUI_DL_CHUNK) {
             rc = 0; /* short chunk = last chunk: done */
@@ -14401,7 +14405,7 @@ static void tg_gui_session_file_ctx(tg_mtproto_file_ctx *fc)
 
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                      unsigned long out_path_size, FILE *stream,
-                                     tg_gui_upload_progress_fn progress,
+                                     tg_gui_download_progress_fn progress,
                                      void *progress_data)
 {
     tg_mtproto_file_ctx fc;
