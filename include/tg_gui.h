@@ -241,8 +241,9 @@ typedef struct tg_gui_state {
     int tr_area_w;
     /* mouse text selection inside ONE transcript message (issue #5 part two):
        press latched on SELECTDOWN, becomes a selection when the pointer drags
-       past a small threshold, click-without-drag keeps the old reply gesture
-       (executed on SELECTUP). sel_a/sel_b are unordered char indexes. */
+       past a small threshold. A click-without-drag selects/highlights the
+       bubble; a double-click on it opens the reply (both on SELECTUP).
+       sel_a/sel_b are unordered char indexes. */
     int sel_active;
     int sel_msg;
     long sel_a;

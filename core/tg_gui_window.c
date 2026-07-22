@@ -1504,6 +1504,7 @@ static const char tg_gui_help_text[] =
     "  F1 - F10          chats 1 to 10\n"
     "  Shift + F1 - F10  chats 11 to 20\n\n"
     "ENTER        write a message to the open chat\n"
+    "Click msg    select it (A+C copies); double-click replies\n"
     "Del / A+R    remove the selected chat from the list\n"
     "A+F          send a file to the open chat\n"
     "A+I          iconify to an AppIcon (double-click it to return)\n"
@@ -2130,6 +2131,17 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     int older_exhausted;   /* load-older confirmed the chat start; re-armed off-top / on open */
     int older_cooldown;    /* wakes to wait before another load-older (slow-link breather) */
     int prev_selected;     /* last selected_chat: a change means a (re)opened chat -> re-arm */
+    /* Double-click reply: a plain click selects/highlights a bubble; a second
+       click on the SAME bubble within the system double-click interval opens
+       the reply. dbl_last_id is the previous click's target MESSAGE ID (not a
+       row index -- indexes are reused when the chat changes) plus its press
+       time; dbl_press_* carries this click's press time from SELECTDOWN to the
+       SELECTUP where the gesture is decided. */
+    unsigned long dbl_last_secs = 0;
+    unsigned long dbl_last_micros = 0;
+    unsigned long dbl_last_id = 0;
+    unsigned long dbl_press_secs = 0;
+    unsigned long dbl_press_micros = 0;
     unsigned long watch_seconds;
     unsigned long watch_boot_seconds;
     unsigned long watch_boot_grace;
@@ -2509,6 +2521,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             UWORD msg_qual;
             WORD mouse_x;
             WORD mouse_y;
+            ULONG msg_secs;   /* IntuiMessage timestamp, for double-click detect */
+            ULONG msg_micros;
 #if defined(__amigaos4__)
             WORD wheel_y = 0;
 #endif
@@ -2518,6 +2532,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             msg_qual = msg->Qualifier;
             mouse_x = msg->MouseX;
             mouse_y = msg->MouseY;
+            msg_secs = msg->Seconds;
+            msg_micros = msg->Micros;
             /* Feed REAL user input (keys, clicks, pointer motion) into the
                platform entropy ring -- the DRBG absorbs it on every generate.
                This is what makes the first-run auth-key DH benefit from the
@@ -3534,64 +3550,74 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         state->sel_press_armed = 0;
                         if (!state->sel_active &&
                             tg_gui_session_is_open() && !state->in_search) {
-                            /* Plain click (never dragged): the classic gesture
-                               -- reply to the bubble, exactly as before. The
-                               press-time ID must still match: a transcript
-                               shift between press and release would otherwise
-                               aim the reply at the wrong message. */
+                            /* Plain click (never dragged). A single click just
+                               SELECTS/highlights the bubble; a second click on
+                               the SAME bubble within the system double-click
+                               interval opens the reply. The press-time ID must
+                               match, so a transcript shift between press and
+                               release cannot aim the gesture at another
+                               message. */
                             int mi = state->sel_press_msg;
 
                             if (mi >= 0 && mi < state->message_count) {
                                 const tg_gui_message *m = &state->messages[mi];
 
                                 if (!m->is_system && m->id != 0UL &&
-                                    m->id == state->sel_press_id &&
-                                    mi == state->selected_msg) {
-                                    /* Click on the ALREADY-highlighted message
-                                       = toggle it off: deselect and cancel a
-                                       pending reply to it. Covers the
-                                       post-copy flow, where a stray click
-                                       must not drag the user into reply
-                                       mode -- and gives the missing deselect
-                                       gesture. */
-                                    state->selected_msg = -1;
-                                    if (state->reply_to_id == m->id) {
-                                        state->reply_to_id = 0UL;
-                                        state->reply_sender[0] = '\0';
-                                        state->reply_snippet[0] = '\0';
-                                    }
-                                    tg_gui_window_copy(state->status,
-                                                       sizeof(state->status),
-                                                       "");
-                                    tg_gui_window_paint(state, &backend);
-                                } else if (!m->is_system && m->id != 0UL &&
                                     m->id == state->sel_press_id) {
-                                    state->in_sel_active = 0;
-                                    state->selected_msg = mi;
-                                    state->reply_to_id = m->id;
-                                    tg_gui_window_copy(
-                                        state->reply_sender,
-                                        sizeof(state->reply_sender),
-                                        m->sender);
-                                    tg_gui_window_copy(
-                                        state->reply_snippet,
-                                        sizeof(state->reply_snippet),
-                                        m->text);
-                                    state->search_active = 0;
-                                    state->composing = 1;
-                                    state->input_caret =
-                                        (int)strlen(state->input);
-                                    state->cursor_on = 1;
-                                    caret_ticks = 0;
-                                    tg_gui_window_copy(
-                                        state->status, sizeof(state->status),
-                                        "Reply - ENTER sends, ESC cancels");
-                                    tg_gui_window_paint(state, &backend);
+                                    int dbl = (dbl_last_id != 0UL &&
+                                               dbl_last_id == m->id &&
+                                               DoubleClick(dbl_last_secs,
+                                                           dbl_last_micros,
+                                                           dbl_press_secs,
+                                                           dbl_press_micros));
+
+                                    if (dbl) {
+                                        /* Double-click = reply to this bubble. */
+                                        dbl_last_id = 0UL; /* consume the pair */
+                                        state->in_sel_active = 0;
+                                        state->selected_msg = mi;
+                                        state->reply_to_id = m->id;
+                                        tg_gui_window_copy(
+                                            state->reply_sender,
+                                            sizeof(state->reply_sender),
+                                            m->sender);
+                                        tg_gui_window_copy(
+                                            state->reply_snippet,
+                                            sizeof(state->reply_snippet),
+                                            m->text);
+                                        state->search_active = 0;
+                                        state->composing = 1;
+                                        state->input_caret =
+                                            (int)strlen(state->input);
+                                        state->cursor_on = 1;
+                                        caret_ticks = 0;
+                                        tg_gui_window_copy(
+                                            state->status,
+                                            sizeof(state->status),
+                                            "Reply - ENTER sends, ESC cancels");
+                                        tg_gui_window_paint(state, &backend);
+                                    } else {
+                                        /* Single click = select/highlight;
+                                           record it so the next click can pair
+                                           into a double-click. */
+                                        dbl_last_secs = dbl_press_secs;
+                                        dbl_last_micros = dbl_press_micros;
+                                        dbl_last_id = m->id;
+                                        state->selected_msg = mi;
+                                        tg_gui_window_copy(
+                                            state->status,
+                                            sizeof(state->status),
+                                            "Selected - double-click to reply, "
+                                            "A+C copies");
+                                        tg_gui_window_paint(state, &backend);
+                                    }
                                 }
                             }
                         } else {
-                            /* Drag finished: keep the selection, tell how to
-                               use it. */
+                            /* Drag finished: keep the text selection, tell how
+                               to use it. Not a click -> break any double-click
+                               pairing. */
+                            dbl_last_id = 0UL;
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status),
                                                "Selected - A+C copies");
@@ -3791,10 +3817,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                        "Type - ENTER sends, ESC cancels");
                         tg_gui_window_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_INPUT && state->composing) {
-                        /* F8: click places the caret in the composer text. */
+                        /* F8: click places the caret in the composer text.
+                           Clicking the composer also drops any transcript
+                           message highlight (an active reply keeps its own
+                           header). */
                         int cc = tg_gui_input_click_caret(state, &backend, hx,
                                                           hy);
+                        int had_sel = (state->selected_msg >= 0);
 
+                        state->selected_msg = -1;
+                        dbl_last_id = 0UL;
                         if (cc >= 0) {
                             state->in_sel_active = 0;
                             state->in_drag_armed = 1;
@@ -3803,6 +3835,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             state->cursor_on = 1;
                             caret_ticks = 0;
                             tg_gui_window_mention_refresh(state);
+                            tg_gui_window_paint(state, &backend);
+                        } else if (had_sel) {
                             tg_gui_window_paint(state, &backend);
                         }
                     } else if ((hit == TG_GUI_HIT_INPUT ||
@@ -3818,6 +3852,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         }
                         state->composing = 1;
                         state->in_sel_active = 0; /* fresh focus, no ghosts */
+                        state->selected_msg = -1; /* clicking to type deselects */
+                        dbl_last_id = 0UL;
                         state->input_caret = (int)strlen(state->input);
                         if (hit == TG_GUI_HIT_INPUT) { /* F8: caret at click */
                             int cc = tg_gui_input_click_caret(state, &backend,
@@ -3863,6 +3899,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 state->sel_press_gen = state->msg_gen;
                                 state->sel_press_x = hx;
                                 state->sel_press_y = hy;
+                                /* Remember this press's time; SELECTUP compares
+                                   it with the previous click to spot a double-
+                                   click (= reply). */
+                                dbl_press_secs = msg_secs;
+                                dbl_press_micros = msg_micros;
                                 state->sel_press_char =
                                     tg_gui_transcript_char_at(state, &backend,
                                                               ctx.line_h, mi,
