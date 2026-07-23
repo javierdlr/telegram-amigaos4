@@ -1242,6 +1242,9 @@ static int tg_mtproto_send_encrypted_query_limited(
     }
     query_start_time = (unsigned long)time(0);
     rx_seen = tg_mtproto_rx_progress;
+    /* Cleared ONCE per query, not per attempt: a retry used to wipe the reason
+       recorded by the attempt that actually failed, leaving a bare "no reply". */
+    tg_mtproto_query_fail[0] = '\0';
 
 #ifdef TG_MTPROTO_DIAG
     fprintf(stream, "%s: encrypted query phase enter.\n", label);
@@ -1309,7 +1312,6 @@ static int tg_mtproto_send_encrypted_query_limited(
             context->session.seq_no += 2UL;
         }
         memset(&bad_msg, 0, sizeof(bad_msg));
-        tg_mtproto_query_fail[0] = '\0';
         if (tg_platform_break_pending()) {
             fprintf(stream, "%s: user-break\n", label);
             return 2;
@@ -1487,6 +1489,10 @@ static int tg_mtproto_send_encrypted_query_limited(
         }
         if (retry_request) {
             continue;
+        }
+        if (tg_mtproto_query_fail[0] == '\0') {
+            sprintf(tg_mtproto_query_fail, "no rpc result in %u tries",
+                    (unsigned int)(attempt + 1U));
         }
         fprintf(stream, "%s: rpc-response-not-received\n", label);
         return TG_MTPROTO_QUERY_SOFT_FAIL;
@@ -13947,6 +13953,10 @@ static int tg_gui_avfetch_n = 0;
 #else
 #define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, within the 72 KB decrypted body */
 #endif
+/* Per-chunk retries before a download gives up. A long transfer over a flaky
+   link (phone hotspot, PLIP, a busy DC) loses the odd chunk; re-asking for the
+   same offset costs one round-trip and saves the whole file. */
+#define TG_GUI_DL_CHUNK_RETRIES 4
 
 static void tg_gui_dl_sanitize_name(const char *in, char *out,
                                     unsigned long out_size)
@@ -14245,6 +14255,7 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
     int cdn;
     unsigned long resolved_msg_id = 0UL;
     int refetched = 0;
+    int chunk_retry;
     int rc = 1;
 
     if (out_path != 0 && out_path_size > 0UL) {
@@ -14301,6 +14312,7 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
     }
     rc = 4; /* found + file open: any further failure is a transfer error */
     offset = 0UL;
+    chunk_retry = 0;
     for (;;) {
         tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
         if (tg_mtproto_build_upload_get_document(&writer, &doc, offset,
@@ -14322,11 +14334,30 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
                     offset, writer.length, gfrc, result.result_constructor);
             tg_gui_log(gl);
             if (gfrc != 0) {
+            /* One flaky chunk must not throw away a transfer that is already
+               megabytes in (a phone hotspot dropped the 24th chunk of a 15 MB
+               file after 1.4 MB had landed fine). Retry the SAME offset a few
+               times -- nothing has been written for it yet, so re-asking is
+               safe -- and only give up once a chunk fails repeatedly. */
+            if (++chunk_retry <= TG_GUI_DL_CHUNK_RETRIES) {
+                char rl[96];
+
+                sprintf(rl, "download: retry %d @off %lu (%.40s)",
+                        chunk_retry, offset, tg_mtproto_query_fail);
+                tg_gui_log(rl);
+                if (progress != 0 &&
+                    progress(offset, doc.size_lo, progress_data) != 0) {
+                    rc = 5;
+                    break;
+                }
+                continue; /* same offset, fresh getFile */
+            }
             if (out_path != 0 && out_path_size > 0UL) {
                 /* Say WHY: a bare "no reply" hid a slow-link budget expiry
                    (MorphOS streams big replies slowly) behind the document
                    metadata, which told us nothing about the failure. */
-                sprintf(out_path, "@off %lu: %.60s", offset,
+                sprintf(out_path, "@off %lu after %d tries: %.48s", offset,
+                        chunk_retry - 1,
                         tg_mtproto_query_fail[0] != '\0'
                             ? tg_mtproto_query_fail : "no reply");
             }
@@ -14393,6 +14424,7 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
             break;
         }
         offset += bytes_len;
+        chunk_retry = 0; /* this chunk landed: the budget is per-chunk */
         /* Progress + cancel: report bytes-so-far / total (size_lo alone is
            fine, the transfer hard-stops at 512 MB below), and honour a
            non-zero return as "user cancelled" so a slow download can be
