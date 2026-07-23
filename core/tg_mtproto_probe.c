@@ -13940,16 +13940,14 @@ static int tg_gui_avfetch_n = 0;
    inside TG_MTPROTO_ENCRYPTED_BODY_MAX after decryption -- file bytes are not
    gzip-compressed, so the raw chunk lands in that buffer whole. m68k body is
    40 KB -> 32 KB chunk; the others hold 72 KB -> 64 KB chunk. Both are valid
-   getFile limits (4096*2^k dividing 1 MB). */
+   getFile limits (4096*2^k dividing 1 MB). A bigger chunk = fewer synchronous
+   round-trips = faster (each getFile waits for its whole reply before the next
+   is sent, so throughput is round-trip-bound, not bandwidth-bound). MorphOS
+   was briefly halved to 32 KB to fit a TOTAL-time query budget; that budget is
+   now idle-based, so it is back to 64 KB with the rest -- twice the speed on a
+   fast link, and its 72 KB buffers already hold it. */
 #if defined(__m68k__)
 #define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, within the 40 KB decrypted body */
-#elif defined(__MORPHOS__) || defined(__MORPHOS)
-/* MorphOS bsdsocket streams LARGE replies slowly (see the query-budget note at
-   the top of this file). A 64 KB chunk could take longer than the 45s per-query
-   budget, which soft-failed mid-download as a bare "no reply @off N" once a few
-   chunks in -- while OS3's 32 KB sailed through the same 15 MB file. Halve it
-   here too: same proven per-query size, buffers stay at 72 KB. */
-#define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, well inside the 45s budget */
 #else
 #define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, within the 72 KB decrypted body */
 #endif

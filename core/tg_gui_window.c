@@ -1683,8 +1683,11 @@ static void tg_gui_window_upload_progress(unsigned long completed_parts,
         return;
     }
     percent = (completed_parts * 100UL) / total_parts;
+    /* Repaint on every 1% step (not 5%): the status counter moves smoothly.
+       A repaint costs ~9ms on OS3, so at most ~100 over a whole transfer -- a
+       fraction of a second, invisible against the transfer time. */
     if (completed_parts != 1UL && completed_parts != total_parts &&
-        percent < ui->last_percent + 5UL) {
+        percent < ui->last_percent + 1UL) {
         return;
     }
     ui->last_percent = percent;
@@ -1734,12 +1737,13 @@ static int tg_gui_window_download_progress(unsigned long done_bytes,
     if (percent > 100UL) {
         percent = 100UL; /* size meta can undercount; never show >100 */
     }
-    /* Throttle: first update, then every +5%, then 100%. `painted` (not
+    /* Throttle: first update, then every +1%, then 100%. `painted` (not
        last_percent) marks the first one -- on a big file the early chunks all
        compute 0%, and keying off last_percent==0 made EVERY one of them repaint
-       the whole window instead of just the first. */
+       the whole window instead of just the first. 1% steps stay cheap: a
+       repaint is ~9ms on OS3, ~100 of them across a transfer. */
     if (ui->painted && percent != 100UL &&
-        percent < ui->last_percent + 5UL) {
+        percent < ui->last_percent + 1UL) {
         return 0;
     }
     ui->painted = 1;
