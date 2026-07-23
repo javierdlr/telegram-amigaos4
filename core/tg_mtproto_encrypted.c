@@ -17,12 +17,10 @@
    stayed at 12 KB, so every full-chunk reply (encrypted ~66 KB) was rejected as
    "no reply @off 0" while m68k's 8 KB chunks slipped under 12 KB and worked.
    (Same lesson as the body[] fix: size EVERY buffer in the recv->decrypt chain.)
-   m68k stays lean at 12 KB (8 KB chunk); the other lanes hold a 64 KB chunk. */
-#if defined(__m68k__)
-#define TG_MTPROTO_ENCRYPTED_PACKET_MAX 12288U
-#else
-#define TG_MTPROTO_ENCRYPTED_PACKET_MAX 73728U
-#endif
+   It bit a SECOND time when m68k went to a 32 KB chunk and only body[] was
+   raised -- same "no reply @off 0" on the first chunk. So stop hand-mirroring
+   the two numbers and DERIVE this one: it can no longer drift from body[]. */
+#define TG_MTPROTO_ENCRYPTED_PACKET_MAX TG_MTPROTO_ENCRYPTED_BODY_MAX
 
 static unsigned long tg_read_le32(const unsigned char *data)
 {

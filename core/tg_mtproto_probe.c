@@ -69,6 +69,11 @@
 #define TG_MTPROTO_QUERY_BUDGET_SECONDS 20UL
 #endif
 
+/* Why the last encrypted query gave up (budget vs transport). The reason is
+   otherwise printed only to the QUIET stream, so a GUI download could only say
+   a bare "no reply" -- useless when diagnosing a slow-link failure. */
+static char tg_mtproto_query_fail[64];
+
 /*
  * Consecutive failed reads/sends in the interactive chat loop before it drops
  * and reopens the connection. Recovers a wedged long-running session (stale
@@ -344,7 +349,9 @@ typedef struct tg_mtproto_file_ctx {
    loop calls them with its own locals). */
 static int tg_mtproto_file_download(const struct tg_mtproto_file_ctx *fc,
                                     unsigned long msg_id, char *out_path,
-                                    unsigned long out_path_size, FILE *stream);
+                                    unsigned long out_path_size, FILE *stream,
+                                    tg_gui_download_progress_fn progress,
+                                    void *progress_data);
 static int tg_mtproto_file_send(const struct tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
                                 tg_gui_upload_progress_fn progress,
@@ -644,6 +651,12 @@ static tg_net_status tg_mtproto_send_all(tg_net_connection *connection,
     return TG_NET_OK;
 }
 
+/* Bumped by every chunk of bytes the socket actually delivers. The encrypted
+   query loop watches it to tell "slow but progressing" from "wedged": its
+   budget must expire on IDLE time, never on total time, or a big reply on a
+   slow link is killed while it is still streaming in fine. */
+static unsigned long tg_mtproto_rx_progress;
+
 static tg_net_status tg_mtproto_recv_exact(tg_net_connection *connection,
                                            unsigned char *data,
                                            unsigned long length,
@@ -670,6 +683,7 @@ static tg_net_status tg_mtproto_recv_exact(tg_net_connection *connection,
         if (received == 0) {
             return TG_NET_CLOSED;
         }
+        tg_mtproto_rx_progress += received; /* data moved: query is alive */
         offset += received;
     }
 
@@ -1203,6 +1217,7 @@ static int tg_mtproto_send_encrypted_query_limited(
     unsigned long payload_length;
     unsigned long response_length;
     unsigned long query_start_time;
+    unsigned long rx_seen;      /* rx_progress snapshot: detects streaming */
     unsigned int attempt;
     unsigned int receive_attempt;
     int retry_request;
@@ -1226,6 +1241,10 @@ static int tg_mtproto_send_encrypted_query_limited(
         query_budget_seconds = TG_MTPROTO_QUERY_BUDGET_SECONDS;
     }
     query_start_time = (unsigned long)time(0);
+    rx_seen = tg_mtproto_rx_progress;
+    /* Cleared ONCE per query, not per attempt: a retry used to wipe the reason
+       recorded by the attempt that actually failed, leaving a bare "no reply". */
+    tg_mtproto_query_fail[0] = '\0';
 
 #ifdef TG_MTPROTO_DIAG
     fprintf(stream, "%s: encrypted query phase enter.\n", label);
@@ -1299,9 +1318,20 @@ static int tg_mtproto_send_encrypted_query_limited(
         }
         for (receive_attempt = 0U; receive_attempt < max_receive_attempts;
              ++receive_attempt) {
+            if (tg_mtproto_rx_progress != rx_seen) {
+                /* Bytes arrived since the last check: the reply is streaming,
+                   just slowly (a 64 KB file chunk over a phone hotspot easily
+                   outlasts a 20s TOTAL budget). Re-arm the deadline so the
+                   budget measures IDLE time -- a genuinely wedged session still
+                   trips it, a progressing transfer no longer dies mid-file. */
+                rx_seen = tg_mtproto_rx_progress;
+                query_start_time = (unsigned long)time(0);
+            }
             if ((unsigned long)time(0) - query_start_time >=
                     query_budget_seconds) {
-                break;  /* time budget hit: soft-fail, connection still alive */
+                sprintf(tg_mtproto_query_fail, "no data for %lus",
+                        query_budget_seconds);
+                break;  /* IDLE budget hit: soft-fail, connection still alive */
             }
             if (net_status == TG_NET_OK) {
 #ifdef TG_MTPROTO_DIAG
@@ -1328,6 +1358,8 @@ static int tg_mtproto_send_encrypted_query_limited(
                 continue;
             }
             if (net_status != TG_NET_OK) {
+                sprintf(tg_mtproto_query_fail, "transport %.40s",
+                        tg_net_status_name(net_status));
                 fprintf(stream, "%s: transport-failed (%s)\n", label,
                         tg_net_status_name(net_status));
                 return 2;
@@ -1457,6 +1489,10 @@ static int tg_mtproto_send_encrypted_query_limited(
         }
         if (retry_request) {
             continue;
+        }
+        if (tg_mtproto_query_fail[0] == '\0') {
+            sprintf(tg_mtproto_query_fail, "no rpc result in %u tries",
+                    (unsigned int)(attempt + 1U));
         }
         fprintf(stream, "%s: rpc-response-not-received\n", label);
         return TG_MTPROTO_QUERY_SOFT_FAIL;
@@ -10910,7 +10946,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                 fc.peer_index = peer_index;
                 tg_mtproto_chat_print_system_line(stream, "Downloading...");
                 frc = tg_mtproto_file_download(&fc, 0UL, saved_path,
-                                               sizeof(saved_path), stream);
+                                               sizeof(saved_path), stream,
+                                               0, 0); /* TUI: no % hook (yet) */
                 tui_cap = tg_console_tui_capture_begin(stream);
                 if (frc == 0) {
                     fprintf(tui_cap, "Saved to %s\n", saved_path);
@@ -13902,13 +13939,22 @@ static int tg_gui_avfetch_n = 0;
 /* The getFile RESPONSE (chunk bytes + upload.file wrapper + envelope) must fit
    inside TG_MTPROTO_ENCRYPTED_BODY_MAX after decryption -- file bytes are not
    gzip-compressed, so the raw chunk lands in that buffer whole. m68k body is
-   12 KB -> 8 KB chunk; the others hold 72 KB -> 64 KB chunk. Both are valid
-   getFile limits (4096*2^k dividing 1 MB). */
+   40 KB -> 32 KB chunk; the others hold 72 KB -> 64 KB chunk. Both are valid
+   getFile limits (4096*2^k dividing 1 MB). A bigger chunk = fewer synchronous
+   round-trips = faster (each getFile waits for its whole reply before the next
+   is sent, so throughput is round-trip-bound, not bandwidth-bound). MorphOS
+   was briefly halved to 32 KB to fit a TOTAL-time query budget; that budget is
+   now idle-based, so it is back to 64 KB with the rest -- twice the speed on a
+   fast link, and its 72 KB buffers already hold it. */
 #if defined(__m68k__)
-#define TG_GUI_DL_CHUNK 8192UL    /* 8 KB, within the 12 KB decrypted body */
+#define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, within the 40 KB decrypted body */
 #else
 #define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, within the 72 KB decrypted body */
 #endif
+/* Per-chunk retries before a download gives up. A long transfer over a flaky
+   link (phone hotspot, PLIP, a busy DC) loses the odd chunk; re-asking for the
+   same offset costs one round-trip and saves the whole file. */
+#define TG_GUI_DL_CHUNK_RETRIES 4
 
 static void tg_gui_dl_sanitize_name(const char *in, char *out,
                                     unsigned long out_size)
@@ -14039,6 +14085,15 @@ static int tg_mtproto_file_find_document(const tg_mtproto_file_ctx *fc,
 #define TG_GUI_UL_BIG_THRESHOLD (10UL * 1048576UL)
 #define TG_GUI_UL_MAX_PARTS 4000UL
 #define TG_GUI_UL_LIMIT (TG_GUI_DL_CHUNK * TG_GUI_UL_MAX_PARTS)
+
+/* The ceiling in MiB, for the "file too big" message. Derived, never spelled
+   out again: the GUI used to hardcode "31 MiB"/"250 MiB", which silently went
+   WRONG the moment the per-platform chunk changed (m68k really became 125 MiB
+   and MorphOS dropped from 250 to 125). */
+unsigned long tg_gui_session_upload_limit_mib(void)
+{
+    return (unsigned long)(TG_GUI_UL_LIMIT / 1048576UL);
+}
 
 static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
@@ -14188,7 +14243,9 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
    3 could not create/write the file. Writes the saved path into out_path. */
 static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
                                     unsigned long msg_id, char *out_path,
-                                    unsigned long out_path_size, FILE *stream)
+                                    unsigned long out_path_size, FILE *stream,
+                                    tg_gui_download_progress_fn progress,
+                                    void *progress_data)
 {
     tg_mtproto_document_meta doc;
     char safe[TG_MTPROTO_DOC_NAME_MAX];
@@ -14205,6 +14262,7 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
     int cdn;
     unsigned long resolved_msg_id = 0UL;
     int refetched = 0;
+    int chunk_retry;
     int rc = 1;
 
     if (out_path != 0 && out_path_size > 0UL) {
@@ -14261,6 +14319,7 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
     }
     rc = 4; /* found + file open: any further failure is a transfer error */
     offset = 0UL;
+    chunk_retry = 0;
     for (;;) {
         tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
         if (tg_mtproto_build_upload_get_document(&writer, &doc, offset,
@@ -14282,9 +14341,32 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
                     offset, writer.length, gfrc, result.result_constructor);
             tg_gui_log(gl);
             if (gfrc != 0) {
+            /* One flaky chunk must not throw away a transfer that is already
+               megabytes in (a phone hotspot dropped the 24th chunk of a 15 MB
+               file after 1.4 MB had landed fine). Retry the SAME offset a few
+               times -- nothing has been written for it yet, so re-asking is
+               safe -- and only give up once a chunk fails repeatedly. */
+            if (++chunk_retry <= TG_GUI_DL_CHUNK_RETRIES) {
+                char rl[96];
+
+                sprintf(rl, "download: retry %d @off %lu (%.40s)",
+                        chunk_retry, offset, tg_mtproto_query_fail);
+                tg_gui_log(rl);
+                if (progress != 0 &&
+                    progress(offset, doc.size_lo, progress_data) != 0) {
+                    rc = 5;
+                    break;
+                }
+                continue; /* same offset, fresh getFile */
+            }
             if (out_path != 0 && out_path_size > 0UL) {
-                sprintf(out_path, "no reply @off %lu (%.60s)", offset,
-                        tg_dl_diag);
+                /* Say WHY: a bare "no reply" hid a slow-link budget expiry
+                   (MorphOS streams big replies slowly) behind the document
+                   metadata, which told us nothing about the failure. */
+                sprintf(out_path, "@off %lu after %d tries: %.48s", offset,
+                        chunk_retry - 1,
+                        tg_mtproto_query_fail[0] != '\0'
+                            ? tg_mtproto_query_fail : "no reply");
             }
             break;
             }
@@ -14349,6 +14431,17 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
             break;
         }
         offset += bytes_len;
+        chunk_retry = 0; /* this chunk landed: the budget is per-chunk */
+        /* Progress + cancel: report bytes-so-far / total (size_lo alone is
+           fine, the transfer hard-stops at 512 MB below), and honour a
+           non-zero return as "user cancelled" so a slow download can be
+           aborted from the window instead of resetting the machine. */
+        if (progress != 0 &&
+            progress(offset, doc.size_lo, progress_data) != 0) {
+            rc = 5; /* cancelled: the partial file is removed below (rc != 0) */
+            tg_gui_log("download: cancelled by user");
+            break;
+        }
         if (bytes_len < TG_GUI_DL_CHUNK) {
             rc = 0; /* short chunk = last chunk: done */
             break;
@@ -14389,7 +14482,9 @@ static void tg_gui_session_file_ctx(tg_mtproto_file_ctx *fc)
 }
 
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
-                                     unsigned long out_path_size, FILE *stream)
+                                     unsigned long out_path_size, FILE *stream,
+                                     tg_gui_download_progress_fn progress,
+                                     void *progress_data)
 {
     tg_mtproto_file_ctx fc;
 
@@ -14401,7 +14496,7 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
     }
     tg_gui_session_file_ctx(&fc);
     return tg_mtproto_file_download(&fc, msg_id, out_path, out_path_size,
-                                    stream);
+                                    stream, progress, progress_data);
 }
 
 int tg_gui_session_send_document(const char *path, FILE *stream,

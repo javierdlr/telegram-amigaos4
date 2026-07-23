@@ -1504,6 +1504,7 @@ static const char tg_gui_help_text[] =
     "  F1 - F10          chats 1 to 10\n"
     "  Shift + F1 - F10  chats 11 to 20\n\n"
     "ENTER        write a message to the open chat\n"
+    "Click msg    select it (A+C copies); double-click replies\n"
     "Del / A+R    remove the selected chat from the list\n"
     "A+F          send a file to the open chat\n"
     "A+I          iconify to an AppIcon (double-click it to return)\n"
@@ -1667,6 +1668,7 @@ typedef struct tg_gui_upload_ui {
     tg_gui_state *state;
     tg_gui_backend *backend;
     unsigned long last_percent;
+    int painted;              /* download: a first progress paint happened */
 } tg_gui_upload_ui;
 
 static void tg_gui_window_upload_progress(unsigned long completed_parts,
@@ -1681,13 +1683,75 @@ static void tg_gui_window_upload_progress(unsigned long completed_parts,
         return;
     }
     percent = (completed_parts * 100UL) / total_parts;
+    /* Repaint on every 1% step (not 5%): the status counter moves smoothly.
+       A repaint costs ~9ms on OS3, so at most ~100 over a whole transfer -- a
+       fraction of a second, invisible against the transfer time. */
     if (completed_parts != 1UL && completed_parts != total_parts &&
-        percent < ui->last_percent + 5UL) {
+        percent < ui->last_percent + 1UL) {
         return;
     }
     ui->last_percent = percent;
     sprintf(ui->state->status, "Uploading... %lu%%", percent);
     tg_gui_window_paint(ui->state, ui->backend);
+}
+
+/* Download twin of the progress hook above (`done`/`total` are BYTES), plus
+   the cancel path: the transfer blocks the event loop, so we drain the window
+   here and treat a close-gadget click or ESC as "cancel" (return non-zero) --
+   otherwise a slow download can only be escaped by resetting the machine. The
+   drained events are dropped; the window is busy until the transfer returns. */
+static int tg_gui_window_download_progress(unsigned long done_bytes,
+                                           unsigned long total_bytes,
+                                           void *user_data)
+{
+    tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
+    tg_gui_amiga_ctx *c;
+    unsigned long percent;
+    int cancel = 0;
+
+    if (ui == 0 || ui->state == 0 || ui->backend == 0) {
+        return 0;
+    }
+    c = (tg_gui_amiga_ctx *)ui->backend->context;
+    if (c != 0 && c->window != 0) {
+        struct IntuiMessage *im;
+
+        while ((im = (struct IntuiMessage *)GetMsg(c->window->UserPort)) != 0) {
+            if (im->Class == IDCMP_CLOSEWINDOW ||
+                (im->Class == IDCMP_VANILLAKEY && im->Code == 0x1B)) {
+                cancel = 1;
+            }
+            ReplyMsg((struct Message *)im);
+        }
+    }
+    if (cancel) {
+        tg_gui_window_copy(ui->state->status, sizeof(ui->state->status),
+                           "Cancelling download...");
+        tg_gui_window_paint(ui->state, ui->backend);
+        return 1;
+    }
+    if (total_bytes == 0UL) {
+        return 0; /* size unknown: no percentage, but stay cancellable */
+    }
+    percent = (done_bytes * 100UL) / total_bytes;
+    if (percent > 100UL) {
+        percent = 100UL; /* size meta can undercount; never show >100 */
+    }
+    /* Throttle: first update, then every +1%, then 100%. `painted` (not
+       last_percent) marks the first one -- on a big file the early chunks all
+       compute 0%, and keying off last_percent==0 made EVERY one of them repaint
+       the whole window instead of just the first. 1% steps stay cheap: a
+       repaint is ~9ms on OS3, ~100 of them across a transfer. */
+    if (ui->painted && percent != 100UL &&
+        percent < ui->last_percent + 1UL) {
+        return 0;
+    }
+    ui->painted = 1;
+    ui->last_percent = percent;
+    sprintf(ui->state->status, "Downloading... %lu%% (close to cancel)",
+            percent);
+    tg_gui_window_paint(ui->state, ui->backend);
+    return 0;
 }
 
 /* "Send file...": ASL file requester -> chunk-5 uploader on the open chat.
@@ -1761,17 +1825,17 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     progress_ui.state = state;
     progress_ui.backend = backend;
     progress_ui.last_percent = 0UL;
+    progress_ui.painted = 0;
     rc = tg_gui_session_send_document(
         path, stdout, tg_gui_window_upload_progress, &progress_ui);
     if (rc == 0) {
         tg_gui_window_copy(state->status, sizeof(state->status), "File sent");
     } else if (rc == 2) {
-        tg_gui_window_copy(state->status, sizeof(state->status),
-#if defined(__m68k__)
-                           "File too big (31 MiB limit on this build)");
-#else
-                           "File too big (250 MiB limit on this build)");
-#endif
+        char lim[80];
+
+        sprintf(lim, "File too big (%lu MiB limit on this build)",
+                tg_gui_session_upload_limit_mib());
+        tg_gui_window_copy(state->status, sizeof(state->status), lim);
     } else if (rc == 3) {
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "Could not read that file");
@@ -2130,6 +2194,17 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     int older_exhausted;   /* load-older confirmed the chat start; re-armed off-top / on open */
     int older_cooldown;    /* wakes to wait before another load-older (slow-link breather) */
     int prev_selected;     /* last selected_chat: a change means a (re)opened chat -> re-arm */
+    /* Double-click reply: a plain click selects/highlights a bubble; a second
+       click on the SAME bubble within the system double-click interval opens
+       the reply. dbl_last_id is the previous click's target MESSAGE ID (not a
+       row index -- indexes are reused when the chat changes) plus its press
+       time; dbl_press_* carries this click's press time from SELECTDOWN to the
+       SELECTUP where the gesture is decided. */
+    unsigned long dbl_last_secs = 0;
+    unsigned long dbl_last_micros = 0;
+    unsigned long dbl_last_id = 0;
+    unsigned long dbl_press_secs = 0;
+    unsigned long dbl_press_micros = 0;
     unsigned long watch_seconds;
     unsigned long watch_boot_seconds;
     unsigned long watch_boot_grace;
@@ -2532,6 +2607,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             UWORD msg_qual;
             WORD mouse_x;
             WORD mouse_y;
+            ULONG msg_secs;   /* IntuiMessage timestamp, for double-click detect */
+            ULONG msg_micros;
+            APTR key_menu_action = 0; /* Amiga+key mapped to a menu action */
 #if defined(__amigaos4__)
             WORD wheel_y = 0;
 #endif
@@ -2541,6 +2619,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             msg_qual = msg->Qualifier;
             mouse_x = msg->MouseX;
             mouse_y = msg->MouseY;
+            msg_secs = msg->Seconds;
+            msg_micros = msg->Micros;
             /* Feed REAL user input (keys, clicks, pointer motion) into the
                platform entropy ring -- the DRBG absorbs it on every generate.
                This is what makes the first-run auth-key DH benefit from the
@@ -2575,6 +2655,33 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                IDCMP_INTUITICKS handler below. */
             if (msg_class == IDCMP_VANILLAKEY || msg_class == IDCMP_RAWKEY) {
                 last_key_time = time(0);
+            }
+            /* Amiga+<key> is a menu shortcut, NEVER text. Intuition only turns
+               it into a MENUPICK for the RIGHT Amiga and only while the menu
+               strip is attached; otherwise it arrives as a plain VANILLAKEY and
+               the composer was inserting it as a letter (OS3 field report:
+               Amiga+C typed "c", Amiga+V typed "v"). Map it to the same action
+               ids the menu uses, accept either Amiga key, and swallow the rest
+               so no qualified key can ever be typed. */
+            if (msg_class == IDCMP_VANILLAKEY &&
+                (msg_qual & (IEQUALIFIER_LCOMMAND |
+                             IEQUALIFIER_RCOMMAND)) != 0) {
+                UWORD k = msg_code;
+
+                if (k >= 'a' && k <= 'z') {
+                    k = (UWORD)(k - 32); /* fold to the menu's upper-case key */
+                }
+                switch (k) {
+                case 'C': key_menu_action = (APTR)TG_MENU_COPY; break;
+                case 'V': key_menu_action = (APTR)TG_MENU_PASTE; break;
+                case 'X': key_menu_action = (APTR)TG_MENU_CUT; break;
+                case 'R': key_menu_action = (APTR)TG_MENU_REMOVE; break;
+                case 'F': key_menu_action = (APTR)TG_MENU_SENDFILE; break;
+                case 'I': key_menu_action = (APTR)TG_MENU_ICONIFY; break;
+                case 'Q': key_menu_action = (APTR)TG_MENU_QUIT; break;
+                default: break; /* unknown shortcut: swallowed, never typed */
+                }
+                msg_class = 0; /* consumed: keep it out of every text field */
             }
 #if defined(__amigaos4__)
             /* QEMU's emulated OS4 mouse delivers the wheel only as
@@ -3009,22 +3116,31 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else if (msg_code == 0x46) { /* Del: remove selected chat (confirm) */
                     tg_gui_window_remove_selected(state, ctx.window, &backend);
                 }
-            } else if (msg_class == IDCMP_MENUPICK) {
+            } else if (msg_class == IDCMP_MENUPICK || key_menu_action != 0) {
                 UWORD mnum;
 
                 tg_gui_log("menu: pick");
                 mnum = msg_code;
-                while (mnum != MENUNULL) {
-                    struct MenuItem *item;
+                for (;;) {
+                    struct MenuItem *item = 0;
 
-                    item = ItemAddress(menu, mnum);
-                    if (item == 0) {
-                        break;
-                    }
                     {
                         APTR ud;
 
-                        ud = GTMENUITEM_USERDATA(item);
+                        if (key_menu_action != 0) {
+                            /* keyboard path: one action, no NextSelect chain */
+                            ud = key_menu_action;
+                            key_menu_action = 0;
+                        } else {
+                            if (mnum == MENUNULL) {
+                                break;
+                            }
+                            item = ItemAddress(menu, mnum);
+                            if (item == 0) {
+                                break;
+                            }
+                            ud = GTMENUITEM_USERDATA(item);
+                        }
                         if (ud == (APTR)TG_MENU_ABOUT) {
                             tg_gui_amiga_easyreq(ctx.window,
                                                  "About Telegram Amiga",
@@ -3263,6 +3379,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             done = 1;
                         }
                     }
+                    if (item == 0) {
+                        break; /* keyboard path: a single action */
+                    }
                     mnum = item->NextSelect;
                 }
             } else if (msg_class == IDCMP_NEWSIZE) {
@@ -3480,15 +3599,20 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         unsigned long dl_id = m->id;
                         char saved[160];
                         int drc;
+                        tg_gui_upload_ui dl_progress;
 
-                        /* Blocking download: tell the user it is working, then
-                           report where it landed (or why not). */
+                        /* Blocking download: show a live percentage (like the
+                           upload), then report where it landed (or why not). */
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Downloading...");
                         tg_gui_window_paint(state, &backend);
-                        drc = tg_gui_session_download_document(dl_id, saved,
-                                                              sizeof(saved),
-                                                              stdout);
+                        dl_progress.state = state;
+                        dl_progress.backend = &backend;
+                        dl_progress.last_percent = 0UL;
+                        dl_progress.painted = 0;
+                        drc = tg_gui_session_download_document(
+                            dl_id, saved, sizeof(saved), stdout,
+                            tg_gui_window_download_progress, &dl_progress);
                         if (drc == 0) {
                             char msg[192];
 
@@ -3503,6 +3627,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status),
                                                "Could not write to downloads/");
+                        } else if (drc == 5) {
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status),
+                                               "Download cancelled");
                         } else if (drc == 4) {
                             char tmsg[192];
 
@@ -3557,64 +3685,74 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         state->sel_press_armed = 0;
                         if (!state->sel_active &&
                             tg_gui_session_is_open() && !state->in_search) {
-                            /* Plain click (never dragged): the classic gesture
-                               -- reply to the bubble, exactly as before. The
-                               press-time ID must still match: a transcript
-                               shift between press and release would otherwise
-                               aim the reply at the wrong message. */
+                            /* Plain click (never dragged). A single click just
+                               SELECTS/highlights the bubble; a second click on
+                               the SAME bubble within the system double-click
+                               interval opens the reply. The press-time ID must
+                               match, so a transcript shift between press and
+                               release cannot aim the gesture at another
+                               message. */
                             int mi = state->sel_press_msg;
 
                             if (mi >= 0 && mi < state->message_count) {
                                 const tg_gui_message *m = &state->messages[mi];
 
                                 if (!m->is_system && m->id != 0UL &&
-                                    m->id == state->sel_press_id &&
-                                    mi == state->selected_msg) {
-                                    /* Click on the ALREADY-highlighted message
-                                       = toggle it off: deselect and cancel a
-                                       pending reply to it. Covers the
-                                       post-copy flow, where a stray click
-                                       must not drag the user into reply
-                                       mode -- and gives the missing deselect
-                                       gesture. */
-                                    state->selected_msg = -1;
-                                    if (state->reply_to_id == m->id) {
-                                        state->reply_to_id = 0UL;
-                                        state->reply_sender[0] = '\0';
-                                        state->reply_snippet[0] = '\0';
-                                    }
-                                    tg_gui_window_copy(state->status,
-                                                       sizeof(state->status),
-                                                       "");
-                                    tg_gui_window_paint(state, &backend);
-                                } else if (!m->is_system && m->id != 0UL &&
                                     m->id == state->sel_press_id) {
-                                    state->in_sel_active = 0;
-                                    state->selected_msg = mi;
-                                    state->reply_to_id = m->id;
-                                    tg_gui_window_copy(
-                                        state->reply_sender,
-                                        sizeof(state->reply_sender),
-                                        m->sender);
-                                    tg_gui_window_copy(
-                                        state->reply_snippet,
-                                        sizeof(state->reply_snippet),
-                                        m->text);
-                                    state->search_active = 0;
-                                    state->composing = 1;
-                                    state->input_caret =
-                                        (int)strlen(state->input);
-                                    state->cursor_on = 1;
-                                    caret_ticks = 0;
-                                    tg_gui_window_copy(
-                                        state->status, sizeof(state->status),
-                                        "Reply - ENTER sends, ESC cancels");
-                                    tg_gui_window_paint(state, &backend);
+                                    int dbl = (dbl_last_id != 0UL &&
+                                               dbl_last_id == m->id &&
+                                               DoubleClick(dbl_last_secs,
+                                                           dbl_last_micros,
+                                                           dbl_press_secs,
+                                                           dbl_press_micros));
+
+                                    if (dbl) {
+                                        /* Double-click = reply to this bubble. */
+                                        dbl_last_id = 0UL; /* consume the pair */
+                                        state->in_sel_active = 0;
+                                        state->selected_msg = mi;
+                                        state->reply_to_id = m->id;
+                                        tg_gui_window_copy(
+                                            state->reply_sender,
+                                            sizeof(state->reply_sender),
+                                            m->sender);
+                                        tg_gui_window_copy(
+                                            state->reply_snippet,
+                                            sizeof(state->reply_snippet),
+                                            m->text);
+                                        state->search_active = 0;
+                                        state->composing = 1;
+                                        state->input_caret =
+                                            (int)strlen(state->input);
+                                        state->cursor_on = 1;
+                                        caret_ticks = 0;
+                                        tg_gui_window_copy(
+                                            state->status,
+                                            sizeof(state->status),
+                                            "Reply - ENTER sends, ESC cancels");
+                                        tg_gui_window_paint(state, &backend);
+                                    } else {
+                                        /* Single click = select/highlight;
+                                           record it so the next click can pair
+                                           into a double-click. */
+                                        dbl_last_secs = dbl_press_secs;
+                                        dbl_last_micros = dbl_press_micros;
+                                        dbl_last_id = m->id;
+                                        state->selected_msg = mi;
+                                        tg_gui_window_copy(
+                                            state->status,
+                                            sizeof(state->status),
+                                            "Selected - double-click to reply, "
+                                            "A+C copies");
+                                        tg_gui_window_paint(state, &backend);
+                                    }
                                 }
                             }
                         } else {
-                            /* Drag finished: keep the selection, tell how to
-                               use it. */
+                            /* Drag finished: keep the text selection, tell how
+                               to use it. Not a click -> break any double-click
+                               pairing. */
+                            dbl_last_id = 0UL;
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status),
                                                "Selected - A+C copies");
@@ -3814,10 +3952,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                        "Type - ENTER sends, ESC cancels");
                         tg_gui_window_paint(state, &backend);
                     } else if (hit == TG_GUI_HIT_INPUT && state->composing) {
-                        /* F8: click places the caret in the composer text. */
+                        /* F8: click places the caret in the composer text.
+                           Clicking the composer also drops any transcript
+                           message highlight (an active reply keeps its own
+                           header). */
                         int cc = tg_gui_input_click_caret(state, &backend, hx,
                                                           hy);
+                        int had_sel = (state->selected_msg >= 0);
 
+                        state->selected_msg = -1;
+                        dbl_last_id = 0UL;
                         if (cc >= 0) {
                             state->in_sel_active = 0;
                             state->in_drag_armed = 1;
@@ -3826,6 +3970,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             state->cursor_on = 1;
                             caret_ticks = 0;
                             tg_gui_window_mention_refresh(state);
+                            tg_gui_window_paint(state, &backend);
+                        } else if (had_sel) {
                             tg_gui_window_paint(state, &backend);
                         }
                     } else if ((hit == TG_GUI_HIT_INPUT ||
@@ -3841,6 +3987,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         }
                         state->composing = 1;
                         state->in_sel_active = 0; /* fresh focus, no ghosts */
+                        state->selected_msg = -1; /* clicking to type deselects */
+                        dbl_last_id = 0UL;
                         state->input_caret = (int)strlen(state->input);
                         if (hit == TG_GUI_HIT_INPUT) { /* F8: caret at click */
                             int cc = tg_gui_input_click_caret(state, &backend,
@@ -3886,6 +4034,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 state->sel_press_gen = state->msg_gen;
                                 state->sel_press_x = hx;
                                 state->sel_press_y = hy;
+                                /* Remember this press's time; SELECTUP compares
+                                   it with the previous click to spot a double-
+                                   click (= reply). */
+                                dbl_press_secs = msg_secs;
+                                dbl_press_micros = msg_micros;
                                 state->sel_press_char =
                                     tg_gui_transcript_char_at(state, &backend,
                                                               ctx.line_h, mi,

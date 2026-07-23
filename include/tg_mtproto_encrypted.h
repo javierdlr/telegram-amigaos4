@@ -14,9 +14,11 @@
    with no compression, so this must hold a whole download chunk (+ the
    upload.file wrapper and message envelope) or the decrypt rejects it and the
    transfer reads as "no reply". PPC/AROS have RAM to spare -> 72 KB (a 64 KB
-   chunk); m68k stays lean at 12 KB and uses an 8 KB chunk. */
+   chunk); m68k uses 40 KB for a 32 KB chunk -- big enough that a 16 MB file is
+   ~512 round-trips instead of ~2000 (an interminable, machine-locking download
+   on a Vampire), still modest static RAM for a stock A1200. */
 #if defined(__m68k__)
-#define TG_MTPROTO_ENCRYPTED_BODY_MAX 12288U
+#define TG_MTPROTO_ENCRYPTED_BODY_MAX 40960U
 #else
 #define TG_MTPROTO_ENCRYPTED_BODY_MAX 73728U
 #endif
