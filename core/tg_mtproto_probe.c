@@ -651,6 +651,12 @@ static tg_net_status tg_mtproto_send_all(tg_net_connection *connection,
     return TG_NET_OK;
 }
 
+/* Bumped by every chunk of bytes the socket actually delivers. The encrypted
+   query loop watches it to tell "slow but progressing" from "wedged": its
+   budget must expire on IDLE time, never on total time, or a big reply on a
+   slow link is killed while it is still streaming in fine. */
+static unsigned long tg_mtproto_rx_progress;
+
 static tg_net_status tg_mtproto_recv_exact(tg_net_connection *connection,
                                            unsigned char *data,
                                            unsigned long length,
@@ -677,6 +683,7 @@ static tg_net_status tg_mtproto_recv_exact(tg_net_connection *connection,
         if (received == 0) {
             return TG_NET_CLOSED;
         }
+        tg_mtproto_rx_progress += received; /* data moved: query is alive */
         offset += received;
     }
 
@@ -1210,6 +1217,7 @@ static int tg_mtproto_send_encrypted_query_limited(
     unsigned long payload_length;
     unsigned long response_length;
     unsigned long query_start_time;
+    unsigned long rx_seen;      /* rx_progress snapshot: detects streaming */
     unsigned int attempt;
     unsigned int receive_attempt;
     int retry_request;
@@ -1233,6 +1241,7 @@ static int tg_mtproto_send_encrypted_query_limited(
         query_budget_seconds = TG_MTPROTO_QUERY_BUDGET_SECONDS;
     }
     query_start_time = (unsigned long)time(0);
+    rx_seen = tg_mtproto_rx_progress;
 
 #ifdef TG_MTPROTO_DIAG
     fprintf(stream, "%s: encrypted query phase enter.\n", label);
@@ -1307,11 +1316,20 @@ static int tg_mtproto_send_encrypted_query_limited(
         }
         for (receive_attempt = 0U; receive_attempt < max_receive_attempts;
              ++receive_attempt) {
+            if (tg_mtproto_rx_progress != rx_seen) {
+                /* Bytes arrived since the last check: the reply is streaming,
+                   just slowly (a 64 KB file chunk over a phone hotspot easily
+                   outlasts a 20s TOTAL budget). Re-arm the deadline so the
+                   budget measures IDLE time -- a genuinely wedged session still
+                   trips it, a progressing transfer no longer dies mid-file. */
+                rx_seen = tg_mtproto_rx_progress;
+                query_start_time = (unsigned long)time(0);
+            }
             if ((unsigned long)time(0) - query_start_time >=
                     query_budget_seconds) {
-                sprintf(tg_mtproto_query_fail, "reply budget %lus expired",
+                sprintf(tg_mtproto_query_fail, "no data for %lus",
                         query_budget_seconds);
-                break;  /* time budget hit: soft-fail, connection still alive */
+                break;  /* IDLE budget hit: soft-fail, connection still alive */
             }
             if (net_status == TG_NET_OK) {
 #ifdef TG_MTPROTO_DIAG
