@@ -69,11 +69,18 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                      tg_gui_download_progress_fn progress,
                                      void *progress_data);
 
+/* Largest file this build can upload, in MiB (chunk size x 4000 parts). Ask
+   instead of hardcoding: the value moves with the per-platform chunk. */
+unsigned long tg_gui_session_upload_limit_mib(void);
+
 /* F9: send the file at `path` to the open chat. Files over 10 MB use
-   upload.saveBigFilePart/inputFileBig. The conservative 4000-part bound gives
-   a per-build ceiling of about 31 MiB on m68k and 250 MiB elsewhere.
+   upload.saveBigFilePart/inputFileBig. Telegram's 4000-part bound sets the
+   ceiling; it follows the per-platform chunk, so ask
+   tg_gui_session_upload_limit_mib() rather than quoting a number here (this
+   comment used to say 31/250 MiB and went stale the moment a chunk changed).
    0 ok, 1 fail, 2 too big for this build, 3 unreadable. Blocking; never from
    the tick. `progress` is optional and runs after each confirmed part. */
+
 int tg_gui_session_send_document(const char *path, FILE *stream,
                                  tg_gui_upload_progress_fn progress,
                                  void *progress_data);

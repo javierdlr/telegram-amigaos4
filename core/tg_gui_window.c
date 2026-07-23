@@ -1827,12 +1827,11 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     if (rc == 0) {
         tg_gui_window_copy(state->status, sizeof(state->status), "File sent");
     } else if (rc == 2) {
-        tg_gui_window_copy(state->status, sizeof(state->status),
-#if defined(__m68k__)
-                           "File too big (31 MiB limit on this build)");
-#else
-                           "File too big (250 MiB limit on this build)");
-#endif
+        char lim[80];
+
+        sprintf(lim, "File too big (%lu MiB limit on this build)",
+                tg_gui_session_upload_limit_mib());
+        tg_gui_window_copy(state->status, sizeof(state->status), lim);
     } else if (rc == 3) {
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "Could not read that file");

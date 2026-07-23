@@ -14088,6 +14088,15 @@ static int tg_mtproto_file_find_document(const tg_mtproto_file_ctx *fc,
 #define TG_GUI_UL_MAX_PARTS 4000UL
 #define TG_GUI_UL_LIMIT (TG_GUI_DL_CHUNK * TG_GUI_UL_MAX_PARTS)
 
+/* The ceiling in MiB, for the "file too big" message. Derived, never spelled
+   out again: the GUI used to hardcode "31 MiB"/"250 MiB", which silently went
+   WRONG the moment the per-platform chunk changed (m68k really became 125 MiB
+   and MorphOS dropped from 250 to 125). */
+unsigned long tg_gui_session_upload_limit_mib(void)
+{
+    return (unsigned long)(TG_GUI_UL_LIMIT / 1048576UL);
+}
+
 static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
                                 tg_gui_upload_progress_fn progress,
