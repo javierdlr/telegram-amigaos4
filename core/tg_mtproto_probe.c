@@ -14123,6 +14123,7 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
     const char *name;
     const char *p;
     int big_file;
+    int up_cancel = 0;
 
     if (fc == 0 || stream == 0 || path == 0 || path[0] == '\0' ||
         fc->peer_index == 0 || fc->peer_index[0] == '\0') {
@@ -14236,15 +14237,28 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
                         part_retry, part + 1UL, parts, tg_mtproto_query_fail);
                 tg_gui_log(rl);
             }
+            /* Stay cancellable even while a stubborn part keeps retrying. */
+            if (progress != 0 &&
+                progress(part, parts, progress_data) != 0) {
+                up_cancel = 1;
+                break;
+            }
         }
-        if (!part_ok) {
+        if (up_cancel || !part_ok) {
             break;
         }
-        if (progress != 0) {
-            progress(part + 1UL, parts, progress_data);
+        if (progress != 0 &&
+            progress(part + 1UL, parts, progress_data) != 0) {
+            up_cancel = 1; /* close gadget / ESC during the transfer */
+            break;
         }
     }
     fclose(f);
+    if (up_cancel) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        return 6; /* cancelled (5 already means empty): no sendMedia sent, the
+                     uploaded parts are left for Telegram to expire */
+    }
     if (part != parts) { /* the loop broke early */
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 1;

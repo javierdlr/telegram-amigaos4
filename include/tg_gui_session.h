@@ -45,11 +45,13 @@ int tg_gui_session_tick(FILE *stream);
    when GUI state changed. Safe to call frequently and with no open session. */
 int tg_gui_session_receive_pending(FILE *stream);
 
-/* Upload progress hook: `completed`/`total` are parts; percentage is
-   completed*100/total. Runs on the calling task after each confirmed part. */
-typedef void (*tg_gui_upload_progress_fn)(unsigned long completed_parts,
-                                          unsigned long total_parts,
-                                          void *user_data);
+/* Upload progress + CANCEL hook: `completed`/`total` are parts; percentage is
+   completed*100/total. Runs on the calling task after each confirmed part.
+   Return non-zero to abort the upload (call returns 5); the parts already sent
+   are left orphaned and Telegram expires them, so no local cleanup is needed. */
+typedef int (*tg_gui_upload_progress_fn)(unsigned long completed_parts,
+                                         unsigned long total_parts,
+                                         void *user_data);
 
 /* Download progress + CANCEL hook: called after each received chunk with
    (bytes so far, total). Return non-zero to abort the transfer -- the partial

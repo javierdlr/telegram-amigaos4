@@ -1671,16 +1671,51 @@ typedef struct tg_gui_upload_ui {
     int painted;              /* download: a first progress paint happened */
 } tg_gui_upload_ui;
 
-static void tg_gui_window_upload_progress(unsigned long completed_parts,
-                                          unsigned long total_parts,
-                                          void *user_data)
+/* Drain the window's input while a transfer blocks the event loop, and report
+   whether the user asked to cancel (close gadget or ESC). Shared by the upload
+   and download progress hooks. Drained events are dropped -- the window is
+   busy until the transfer returns. */
+static int tg_gui_window_transfer_cancel(const tg_gui_upload_ui *ui)
+{
+    tg_gui_amiga_ctx *c;
+    struct IntuiMessage *im;
+    int cancel = 0;
+
+    if (ui == 0 || ui->backend == 0) {
+        return 0;
+    }
+    c = (tg_gui_amiga_ctx *)ui->backend->context;
+    if (c == 0 || c->window == 0) {
+        return 0;
+    }
+    while ((im = (struct IntuiMessage *)GetMsg(c->window->UserPort)) != 0) {
+        if (im->Class == IDCMP_CLOSEWINDOW ||
+            (im->Class == IDCMP_VANILLAKEY && im->Code == 0x1B)) {
+            cancel = 1;
+        }
+        ReplyMsg((struct Message *)im);
+    }
+    return cancel;
+}
+
+/* Non-zero return cancels the upload (return 5, no sendMedia sent -- the parts
+   already uploaded are left orphaned and Telegram expires them). */
+static int tg_gui_window_upload_progress(unsigned long completed_parts,
+                                         unsigned long total_parts,
+                                         void *user_data)
 {
     tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
     unsigned long percent;
 
     if (ui == 0 || ui->state == 0 || ui->backend == 0 ||
         total_parts == 0UL) {
-        return;
+        return 0;
+    }
+    if (tg_gui_window_transfer_cancel(ui)) {
+        tg_gui_window_copy(ui->state->status, sizeof(ui->state->status),
+                           "Cancelling upload...");
+        tg_gui_window_paint(ui->state, ui->backend);
+        return 1;
     }
     percent = (completed_parts * 100UL) / total_parts;
     /* Repaint on every 1% step (not 5%): the status counter moves smoothly.
@@ -1688,11 +1723,12 @@ static void tg_gui_window_upload_progress(unsigned long completed_parts,
        fraction of a second, invisible against the transfer time. */
     if (completed_parts != 1UL && completed_parts != total_parts &&
         percent < ui->last_percent + 1UL) {
-        return;
+        return 0;
     }
     ui->last_percent = percent;
-    sprintf(ui->state->status, "Uploading... %lu%%", percent);
+    sprintf(ui->state->status, "Uploading... %lu%% (close to cancel)", percent);
     tg_gui_window_paint(ui->state, ui->backend);
+    return 0;
 }
 
 /* Download twin of the progress hook above (`done`/`total` are BYTES), plus
@@ -1705,26 +1741,12 @@ static int tg_gui_window_download_progress(unsigned long done_bytes,
                                            void *user_data)
 {
     tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
-    tg_gui_amiga_ctx *c;
     unsigned long percent;
-    int cancel = 0;
 
     if (ui == 0 || ui->state == 0 || ui->backend == 0) {
         return 0;
     }
-    c = (tg_gui_amiga_ctx *)ui->backend->context;
-    if (c != 0 && c->window != 0) {
-        struct IntuiMessage *im;
-
-        while ((im = (struct IntuiMessage *)GetMsg(c->window->UserPort)) != 0) {
-            if (im->Class == IDCMP_CLOSEWINDOW ||
-                (im->Class == IDCMP_VANILLAKEY && im->Code == 0x1B)) {
-                cancel = 1;
-            }
-            ReplyMsg((struct Message *)im);
-        }
-    }
-    if (cancel) {
+    if (tg_gui_window_transfer_cancel(ui)) {
         tg_gui_window_copy(ui->state->status, sizeof(ui->state->status),
                            "Cancelling download...");
         tg_gui_window_paint(ui->state, ui->backend);
@@ -1842,6 +1864,9 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     } else if (rc == 5) {
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "That file is empty (0 bytes)");
+    } else if (rc == 6) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Upload cancelled");
     } else {
         const char *why = tg_gui_session_last_transfer_error();
         char em[96];
