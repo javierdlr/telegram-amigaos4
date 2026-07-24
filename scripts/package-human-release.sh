@@ -146,12 +146,14 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
-New in $VERSION: LARGE FILE UPLOADS -- files over 10 MiB now use Telegram's
-big-file protocol, with progress shown during transfer (limit on this build:
-$upload_limit). The TUI can also send/download files and accepts Workbench
-drag-and-drop. In the GUI you can select transcript or composer text and
-Copy/Cut/Paste it. Messages edited on another Telegram device update live,
-and incoming activity keeps updating while you compose.
+New in $VERSION: ROBUST FILE TRANSFERS -- send and receive big files (up to
+$upload_limit on this build; 152 MB tested on PPC): live percentage, lost
+chunks retried on the fly, and both directions cancellable from the close
+gadget. The TUI sends/downloads files too, with Workbench drag-and-drop.
+Copy/Cut/Paste with mouse or Shift+arrow text selection (own Edit menu, works
+on every keymap), reply on double-click, online search now finds accented
+names (Swedish report), a TUI_MODE icon tooltype, and messages edited on
+another device update live, even while you type.
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
