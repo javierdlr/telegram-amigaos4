@@ -1310,6 +1310,16 @@ static int tg_mtproto_send_encrypted_query_limited(
                so a soft timeout followed by a retry does not resend another
                content message with the same session_id/seq_no pair. */
             context->session.seq_no += 2UL;
+        } else {
+            /* The request never left (send failed or timed out on a wedged
+               socket): there is nothing to wait for -- failing now beats
+               burning the whole receive budget polling for a reply to an
+               unsent query. The caller's retry can reconnect. */
+            sprintf(tg_mtproto_query_fail, "send %.40s",
+                    tg_net_status_name(net_status));
+            fprintf(stream, "%s: send-failed (%s)\n", label,
+                    tg_net_status_name(net_status));
+            return 2;
         }
         memset(&bad_msg, 0, sizeof(bad_msg));
         if (tg_platform_break_pending()) {
@@ -14236,6 +14246,12 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
                 sprintf(rl, "upload: retry %d part %lu/%lu (%.32s)",
                         part_retry, part + 1UL, parts, tg_mtproto_query_fail);
                 tg_gui_log(rl);
+                if (strncmp(tg_mtproto_query_fail, "send", 4) == 0 ||
+                    strncmp(tg_mtproto_query_fail, "transport", 9) == 0) {
+                    /* Same as the download retry: a wedged socket never
+                       recovers by itself -- reconnect before re-sending. */
+                    tg_mtproto_close_auth_context(fc->context);
+                }
             }
             /* Stay cancellable even while a stubborn part keeps retrying. */
             if (progress != 0 &&
@@ -14407,6 +14423,13 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
                 sprintf(rl, "download: retry %d @off %lu (%.40s)",
                         chunk_retry, offset, tg_mtproto_query_fail);
                 tg_gui_log(rl);
+                if (strncmp(tg_mtproto_query_fail, "send", 4) == 0 ||
+                    strncmp(tg_mtproto_query_fail, "transport", 9) == 0) {
+                    /* Dead/wedged socket: retrying on it would just time out
+                       again. Drop the connection so the next query reopens a
+                       fresh one (ensure_saved_auth_context reconnects). */
+                    tg_mtproto_close_auth_context(fc->context);
+                }
                 if (progress != 0 &&
                     progress(offset, doc.size_lo, progress_data) != 0) {
                     rc = 5;

@@ -812,6 +812,35 @@ tg_net_status tg_platform_tcp_send(tg_net_connection *connection, const void *da
         *bytes_sent = 0;
     }
 
+    /* Bound the blocking send() with a writability wait, mirroring the recv
+       timeout: a wedged link (QEMU slirp stalls on sustained uploads) left
+       send() blocked FOREVER -- upload frozen at N%, no error, cancel dead.
+       A stalled socket now surfaces as a timeout, so the per-part retry (on a
+       fresh connection) or a clean abort takes over. */
+    {
+        unsigned long timeout_seconds = tg_net_connect_timeout_seconds();
+        fd_set write_fds;
+        struct timeval timeout;
+        long src;
+
+        if (timeout_seconds == 0UL) {
+            timeout_seconds = 30UL;
+        }
+        FD_ZERO(&write_fds);
+        FD_SET((int)connection->platform_handle, &write_fds);
+        timeout.tv_sec = (long)timeout_seconds;
+        timeout.tv_usec = 0;
+        src = WaitSelect((int)connection->platform_handle + 1, 0, &write_fds,
+                         0, &timeout, 0);
+        if (src <= 0 || !FD_ISSET((int)connection->platform_handle,
+                                  &write_fds)) {
+            tg_platform_set_error(error_buffer, error_buffer_size,
+                                  src == 0 ? "socket send timed out"
+                                           : strerror(errno));
+            return src == 0 ? TG_NET_TIMEOUT : TG_NET_SEND_FAILED;
+        }
+    }
+
     rc = send((int)connection->platform_handle, (const UBYTE *)data,
               (LONG)byte_count, 0);
     if (rc < 0) {
