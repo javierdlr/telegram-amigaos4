@@ -5,7 +5,7 @@
 # Override TOOLCHAIN and AROS_SDK when they live in different locations.
 
 TOOLCHAIN ?= $(HOME)/amiga-dev/toolchains/aros-i386-abiv0
-AROS_SDK ?= /Volumes/AROS One DVD/Development
+AROS_SDK ?= $(HOME)/amiga-dev/toolchains/aros-one-i386-sdk/Development
 SDK_GCC_ROOT ?= $(AROS_SDK)/lib/gcc/i386-aros/6.5.0
 AROS_CC ?= $(TOOLCHAIN)/i386-aros-gcc
 TARGET ?= build/aros-i386-abiv0/TelegramAmiga
