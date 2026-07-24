@@ -14095,6 +14095,13 @@ unsigned long tg_gui_session_upload_limit_mib(void)
     return (unsigned long)(TG_GUI_UL_LIMIT / 1048576UL);
 }
 
+/* Why the last upload/download gave up, for the GUI status line (empty when
+   there was none). Points at the shared query-failure reason. */
+const char *tg_gui_session_last_transfer_error(void)
+{
+    return tg_mtproto_query_fail;
+}
+
 static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
                                 tg_gui_upload_progress_fn progress,
@@ -14121,6 +14128,7 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
         fc->peer_index == 0 || fc->peer_index[0] == '\0') {
         return 1;
     }
+    tg_mtproto_query_fail[0] = '\0'; /* fresh reason for this upload */
     f = fopen(path, "rb");
     if (f == 0) {
         return 3;
@@ -14172,31 +14180,64 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
     for (part = 0UL; part < parts; ++part) {
         unsigned long got = (unsigned long)fread(part_buf, 1, TG_GUI_DL_CHUNK,
                                                  f);
+        int part_retry = 0;
+        int part_ok = 0;
 
         if (got == 0UL) {
+            sprintf(tg_mtproto_query_fail, "disk read failed at part %lu",
+                    part + 1UL);
             break; /* short read = disk trouble: bail (parts check below) */
         }
-        tg_mtproto_tl_writer_init(&writer, part_query, sizeof(part_query));
-        if ((big_file
-                 ? tg_mtproto_build_upload_save_big_file_part(
-                       &writer, file_id_hi, file_id_lo, part, parts,
-                       part_buf, got)
-                 : tg_mtproto_build_upload_save_file_part(
-                       &writer, file_id_hi, file_id_lo, part, part_buf,
-                       got)) != TG_MTPROTO_TL_OK) {
-            break;
+        for (;;) {
+            tg_mtproto_tl_writer_init(&writer, part_query, sizeof(part_query));
+            if ((big_file
+                     ? tg_mtproto_build_upload_save_big_file_part(
+                           &writer, file_id_hi, file_id_lo, part, parts,
+                           part_buf, got)
+                     : tg_mtproto_build_upload_save_file_part(
+                           &writer, file_id_hi, file_id_lo, part, part_buf,
+                           got)) != TG_MTPROTO_TL_OK) {
+                sprintf(tg_mtproto_query_fail, "build failed at part %lu",
+                        part + 1UL);
+                break; /* local build error: not retryable */
+            }
+            memset(&result, 0, sizeof(result));
+            if (tg_mtproto_send_saved_query_on_context(
+                    fc->host, fc->port,
+                    fc->api_id, fc->auth_file,
+                    fc->dc_id_text,
+                    fc->context, part_query, writer.length,
+                    &result, quiet,
+                    big_file ? "mtproto saveBigFilePart"
+                             : "mtproto saveFilePart",
+                    600U) == 0 &&
+                result.result_constructor == 0x997275b5UL /* boolTrue */) {
+                part_ok = 1;
+                break;
+            }
+            /* Part failed (a lost chunk / slow-link timeout / non-boolTrue).
+               Re-send the SAME part: saveFilePart is idempotent for
+               (file_id, part) and part_buf still holds the data, so no re-read.
+               Only give up once a part fails repeatedly -- this is the retry the
+               download already had; without it one flaky chunk threw away a
+               whole 15 MB upload. */
+            if (++part_retry > TG_GUI_DL_CHUNK_RETRIES) {
+                char pf[80];
+
+                sprintf(pf, "part %lu/%lu: %.48s", part + 1UL, parts,
+                        tg_mtproto_query_fail[0] != '\0'
+                            ? tg_mtproto_query_fail : "no reply");
+                strcpy(tg_mtproto_query_fail, pf);
+                break;
+            }
+            {
+                char rl[96];
+                sprintf(rl, "upload: retry %d part %lu/%lu (%.32s)",
+                        part_retry, part + 1UL, parts, tg_mtproto_query_fail);
+                tg_gui_log(rl);
+            }
         }
-        memset(&result, 0, sizeof(result));
-        if (tg_mtproto_send_saved_query_on_context(
-                fc->host, fc->port,
-                fc->api_id, fc->auth_file,
-                fc->dc_id_text,
-                fc->context, part_query, writer.length,
-                &result, quiet,
-                big_file ? "mtproto saveBigFilePart"
-                         : "mtproto saveFilePart",
-                600U) != 0 ||
-            result.result_constructor != 0x997275b5UL /* boolTrue */) {
+        if (!part_ok) {
             break;
         }
         if (progress != 0) {

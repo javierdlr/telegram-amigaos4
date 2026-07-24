@@ -73,6 +73,10 @@ int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
    instead of hardcoding: the value moves with the per-platform chunk. */
 unsigned long tg_gui_session_upload_limit_mib(void);
 
+/* One-line reason the last transfer failed (e.g. "part 42/240: no data for
+   45s"), for the status bar. Empty string when none. Borrowed, do not free. */
+const char *tg_gui_session_last_transfer_error(void);
+
 /* F9: send the file at `path` to the open chat. Files over 10 MB use
    upload.saveBigFilePart/inputFileBig. Telegram's 4000-part bound sets the
    ceiling; it follows the per-platform chunk, so ask

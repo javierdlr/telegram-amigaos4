@@ -1843,8 +1843,15 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
         tg_gui_window_copy(state->status, sizeof(state->status),
                            "That file is empty (0 bytes)");
     } else {
-        tg_gui_window_copy(state->status, sizeof(state->status),
-                           "Upload failed");
+        const char *why = tg_gui_session_last_transfer_error();
+        char em[96];
+
+        if (why != 0 && why[0] != '\0') {
+            sprintf(em, "Upload failed: %.72s", why);
+        } else {
+            strcpy(em, "Upload failed");
+        }
+        tg_gui_window_copy(state->status, sizeof(state->status), em);
     }
     tg_gui_window_paint(state, backend);
 }
