@@ -8,11 +8,11 @@
 #include "tg_mtproto_dc.h"
 
 static const tg_mtproto_dc_option tg_mtproto_dc_options[] = {
-    {1, "pluto", "pluto.web.telegram.org"},
-    {2, "venus", "venus.web.telegram.org"},
-    {3, "aurora", "aurora.web.telegram.org"},
-    {4, "vesta", "vesta.web.telegram.org"},
-    {5, "flora", "flora.web.telegram.org"}
+    {1, "pluto", "pluto.web.telegram.org", "149.154.175.50"},
+    {2, "venus", "venus.web.telegram.org", "149.154.167.50"},
+    {3, "aurora", "aurora.web.telegram.org", "149.154.175.100"},
+    {4, "vesta", "vesta.web.telegram.org", "149.154.167.91"},
+    {5, "flora", "flora.web.telegram.org", "91.108.56.130"}
 };
 
 const tg_mtproto_dc_option *tg_mtproto_dc_by_id(int id)
@@ -37,7 +37,12 @@ int tg_mtproto_dc_self_test(void)
     if (dc == 0 ||
         dc->id != 2 ||
         strcmp(dc->name, "venus") != 0 ||
-        strcmp(dc->web_host, "venus.web.telegram.org") != 0) {
+        strcmp(dc->web_host, "venus.web.telegram.org") != 0 ||
+        strcmp(dc->mt_ip, "149.154.167.50") != 0) {
+        return 2;
+    }
+    dc = tg_mtproto_dc_by_id(5);
+    if (dc == 0 || strcmp(dc->mt_ip, "91.108.56.130") != 0) {
         return 2;
     }
 

@@ -21,6 +21,7 @@
 #endif
 
 #include "tg_mtproto_auth.h"
+#include "tg_mtproto_dc.h"
 #include "tg_mtproto_bigint.h"
 #include "tg_mtproto_encrypted.h"
 #include "tg_mtproto_envelope.h"
@@ -14405,6 +14406,148 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
 
 /* Returns: 0 ok, 1 generic failure, 2 foreign DC (needs multi-DC, deferred),
    3 could not create/write the file. Writes the saved path into out_path. */
+/* --- 0.0.8 punto 1c: multi-DC file channel. --------------------------------
+   A foreign document (doc.dc_id != home, or a FILE_MIGRATE_X reply) downloads
+   from ITS datacenter: the file channel gets a per-DC auth key (full DH on
+   first contact, cached in data/telegram-auth-dc<N>.bin) and the account
+   authority travels once per run with auth.exportAuthorization (home DC) +
+   auth.importAuthorization (target DC). One foreign channel at a time, kept
+   open for the session. TL hashes checked against core.telegram.org/schema
+   on 2026-07-25:
+     auth.exportAuthorization#e5bfffcd dc_id:int = auth.ExportedAuthorization;
+     auth.exportedAuthorization#b434e2b8 id:long bytes:bytes;
+     auth.importAuthorization#a57a7dad id:long bytes:bytes = auth.Authorization; */
+static tg_mtproto_auth_context tg_gui_foreign_context;
+static unsigned long tg_gui_foreign_dc; /* DC the channel points at; 0 none */
+static char tg_gui_foreign_dc_text[8];
+static char tg_gui_foreign_auth_file[40];
+static int tg_gui_foreign_imported; /* account authority imported this run */
+
+static int tg_gui_session_setup_foreign_channel(
+    const tg_mtproto_file_ctx *home, unsigned long dc,
+    tg_mtproto_file_ctx *out, FILE *stream)
+{
+    const tg_mtproto_dc_option *opt;
+
+    opt = tg_mtproto_dc_by_id((int)dc);
+    if (home == 0 || out == 0 || stream == 0 || opt == 0) {
+        return 1;
+    }
+    if (tg_gui_foreign_dc != dc) {
+        if (tg_gui_foreign_context.connection_open) {
+            tg_mtproto_close_auth_context(&tg_gui_foreign_context);
+        }
+        sprintf(tg_gui_foreign_dc_text, "%lu", dc);
+        sprintf(tg_gui_foreign_auth_file, "data/telegram-auth-dc%lu.bin", dc);
+        tg_gui_foreign_dc = dc;
+        tg_gui_foreign_imported = 0;
+    }
+    if (!tg_gui_foreign_context.connection_open) {
+        if (tg_mtproto_load_auth_context(opt->mt_ip, "443",
+                                         tg_gui_foreign_auth_file,
+                                         &tg_gui_foreign_context, stream,
+                                         "mtproto file-dc") != 0) {
+            /* No cached key for this DC yet: full DH handshake, then keep it.
+               The slow part (seconds, stack-heavy on m68k like the login DH)
+               happens once per DC, ever -- the key file is reused after. */
+            tg_gui_log("file-dc: no cached key, DH handshake");
+            if (tg_mtproto_open_auth_context(opt->mt_ip, "443",
+                                             tg_gui_foreign_dc_text,
+                                             &tg_gui_foreign_context, stream,
+                                             "mtproto file-dc") != 0) {
+                return 1;
+            }
+            if (tg_mtproto_session_save_authorization(
+                    tg_gui_foreign_auth_file,
+                    &tg_gui_foreign_context.session,
+                    tg_gui_foreign_context.auth_key, 1) !=
+                TG_MTPROTO_SESSION_OK) {
+                /* Not fatal: the channel works, only the reuse cache is
+                   lost (next run redoes the DH). */
+                tg_gui_log("file-dc: auth cache save failed");
+            }
+            tg_gui_foreign_imported = 0;
+        }
+        tg_gui_log("file-dc: channel open");
+    }
+    if (!tg_gui_foreign_imported) {
+        unsigned char q[640];
+        tg_mtproto_tl_writer writer;
+        tg_mtproto_rpc_result result;
+        unsigned long id_lo;
+        unsigned long id_hi;
+        const unsigned char *abytes;
+        unsigned long abytes_len;
+
+        /* Export the account authority from the HOME DC (on the file
+           channel: same class of bounded RPC as a chunk)... */
+        tg_mtproto_tl_writer_init(&writer, q, sizeof(q));
+        if (tg_mtproto_tl_write_u32(&writer, 0xe5bfffcdUL) !=
+                TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_write_u32(&writer, dc) != TG_MTPROTO_TL_OK) {
+            return 1;
+        }
+        memset(&result, 0, sizeof(result));
+        if (tg_mtproto_send_saved_query_on_context(
+                home->host, home->port, home->api_id, home->auth_file,
+                home->dc_id_text, home->context, q, writer.length, &result,
+                stream, "mtproto exportAuthorization", 600U) != 0 ||
+            tg_mtproto_unpack_gzip_result(&result, stream,
+                                          "mtproto exportAuthorization") !=
+                0 ||
+            result.result_constructor != 0xb434e2b8UL ||
+            result.result_body_length < 9UL) {
+            tg_gui_log("file-dc: export failed");
+            return 1;
+        }
+        id_lo = tg_mtproto_read_u32_le(result.result_body);
+        id_hi = tg_mtproto_read_u32_le(result.result_body + 4U);
+        {
+            tg_mtproto_tl_reader reader;
+
+            tg_mtproto_tl_reader_init(&reader, result.result_body + 8U,
+                                      result.result_body_length - 8UL);
+            if (tg_mtproto_tl_read_bytes(&reader, &abytes, &abytes_len) !=
+                    TG_MTPROTO_TL_OK ||
+                abytes_len == 0UL || abytes_len > 512UL) {
+                tg_gui_log("file-dc: export parse failed");
+                return 1;
+            }
+        }
+        /* ...and import it on the target DC. First query on that channel,
+           so send_saved_query wraps it in initConnection+invokeWithLayer --
+           exactly the shape official clients use for the import. */
+        tg_mtproto_tl_writer_init(&writer, q, sizeof(q));
+        if (tg_mtproto_tl_write_u32(&writer, 0xa57a7dadUL) !=
+                TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_write_u32(&writer, id_lo) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_write_u32(&writer, id_hi) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_write_bytes(&writer, abytes, abytes_len) !=
+                TG_MTPROTO_TL_OK) {
+            return 1;
+        }
+        memset(&result, 0, sizeof(result));
+        if (tg_mtproto_send_saved_query_on_context(
+                opt->mt_ip, "443", home->api_id, tg_gui_foreign_auth_file,
+                tg_gui_foreign_dc_text, &tg_gui_foreign_context, q,
+                writer.length, &result, stream,
+                "mtproto importAuthorization", 600U) != 0 ||
+            result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+            tg_gui_log("file-dc: import failed");
+            return 1;
+        }
+        tg_gui_foreign_imported = 1;
+        tg_gui_log("file-dc: account imported");
+    }
+    *out = *home;
+    out->host = opt->mt_ip;
+    out->port = "443";
+    out->dc_id_text = tg_gui_foreign_dc_text;
+    out->auth_file = tg_gui_foreign_auth_file;
+    out->context = &tg_gui_foreign_context;
+    return 0;
+}
+
 /* --- 0.0.8 punto 1b: the download is a resumable STATE MACHINE. -----------
    begin() arms it, step() moves ONE chunk, end() closes it. The GUI pumps
    step() from the event loop (window stays alive during a transfer); the TUI
@@ -14414,6 +14557,12 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
 typedef struct tg_gui_dl_state {
     int active;
     tg_mtproto_file_ctx fc;   /* peer_index repointed at the copy below */
+    tg_mtproto_file_ctx fc_file; /* where the CHUNKS flow: home, or the
+                                    foreign DC channel (0.0.8 punto 1c);
+                                    find/refetch always stay on fc (home) */
+    unsigned long need_dc;    /* != 0: open the file channel on this DC
+                                 before the next chunk */
+    int migrations;           /* FILE_MIGRATE hops, bounded */
     char peer_index_copy[64]; /* the live one moves when the user changes chat */
     unsigned long msg_id;
     unsigned long resolved_msg_id;
@@ -14488,12 +14637,14 @@ static int tg_mtproto_download_begin(const tg_mtproto_file_ctx *fc,
             ++p;
         }
     }
+    tg_gui_dl.fc_file = tg_gui_dl.fc; /* same-DC default: chunks flow home */
     if (home != 0UL && tg_gui_dl.doc.dc_id != 0UL &&
         tg_gui_dl.doc.dc_id != home) {
-        tg_mtproto_close_quiet_stream(tg_gui_dl.quiet, stream);
-        tg_gui_dl.quiet = 0;
-        tg_gui_log("download: foreign DC, unsupported");
-        return 2; /* foreign DC: caller shows "not supported yet" */
+        /* 0.0.8 punto 1c: the document lives on ANOTHER datacenter. The
+           first step opens the file channel there (cached key or one-off
+           DH + import) instead of failing with "not supported yet". */
+        tg_gui_dl.need_dc = tg_gui_dl.doc.dc_id;
+        tg_gui_log("download: foreign DC, using its file channel");
     }
     tg_gui_dl_sanitize_name(tg_gui_dl.doc.file_name, safe, sizeof(safe));
     (void)mkdir("downloads", 0777);
@@ -14524,6 +14675,19 @@ static int tg_mtproto_download_step(void)
     if (!tg_gui_dl.active || tg_gui_dl.rc == 5) {
         return 0; /* idle, or cancelled: don't overwrite rc with a late finish */
     }
+    if (tg_gui_dl.need_dc != 0UL) {
+        /* Open (or switch) the foreign file channel before the next chunk.
+           Blocking, but the slow path (DH) happens once per DC ever. */
+        if (tg_gui_session_setup_foreign_channel(&tg_gui_dl.fc,
+                                                 tg_gui_dl.need_dc,
+                                                 &tg_gui_dl.fc_file,
+                                                 tg_gui_dl.quiet) != 0) {
+            sprintf(tg_gui_dl.fail, "file DC %lu: channel setup failed",
+                    tg_gui_dl.need_dc);
+            return 0; /* rc 4: the status line says why */
+        }
+        tg_gui_dl.need_dc = 0UL;
+    }
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_upload_get_document(&writer, &tg_gui_dl.doc,
                                              tg_gui_dl.offset,
@@ -14536,10 +14700,10 @@ static int tg_mtproto_download_step(void)
         int gfrc;
         char gl[128];
         gfrc = tg_mtproto_send_saved_query_on_context(
-            tg_gui_dl.fc.host, tg_gui_dl.fc.port,
-            tg_gui_dl.fc.api_id, tg_gui_dl.fc.auth_file,
-            tg_gui_dl.fc.dc_id_text,
-            tg_gui_dl.fc.context, query, writer.length, &result,
+            tg_gui_dl.fc_file.host, tg_gui_dl.fc_file.port,
+            tg_gui_dl.fc_file.api_id, tg_gui_dl.fc_file.auth_file,
+            tg_gui_dl.fc_file.dc_id_text,
+            tg_gui_dl.fc_file.context, query, writer.length, &result,
             tg_gui_dl.quiet, "mtproto getFile(document)", 600U);
         sprintf(gl, "download: getFile off=%lu qlen=%lu rc=%d ctor=0x%08lx",
                 tg_gui_dl.offset, writer.length, gfrc,
@@ -14560,7 +14724,7 @@ static int tg_mtproto_download_step(void)
                 if (strncmp(tg_mtproto_query_fail, "send", 4) == 0 ||
                     strncmp(tg_mtproto_query_fail, "transport", 9) == 0) {
                     /* Dead/wedged socket: reconnect before re-asking. */
-                    tg_mtproto_close_auth_context(tg_gui_dl.fc.context);
+                    tg_mtproto_close_auth_context(tg_gui_dl.fc_file.context);
                 }
                 return 1; /* same offset, fresh getFile next step */
             }
@@ -14587,9 +14751,22 @@ static int tg_mtproto_download_step(void)
         if (emsg[0] != '\0') {
             sprintf(tg_gui_dl.fail, "%.90s", emsg);
         }
-        /* FILE_MIGRATE_X: the bytes live on another DC. Multi-DC is punto
-           1c; until then report it as a foreign-DC file. */
-        if (strncmp(emsg, "FILE_MIGRATE", 12) == 0) {
+        /* FILE_MIGRATE_X mid-transfer: the bytes live on DC X. Hop the
+           file channel there and re-ask the SAME offset (nothing written
+           for it yet). Bounded: a migrate ping-pong means server trouble. */
+        if (strncmp(emsg, "FILE_MIGRATE_", 13) == 0) {
+            unsigned long mdc = 0UL;
+            const char *p = emsg + 13;
+
+            while (*p >= '0' && *p <= '9') {
+                mdc = mdc * 10UL + (unsigned long)(*p - '0');
+                ++p;
+            }
+            if (mdc != 0UL && ++tg_gui_dl.migrations <= 2 &&
+                tg_mtproto_dc_by_id((int)mdc) != 0) {
+                tg_gui_dl.need_dc = mdc;
+                return 1; /* next step opens the channel on that DC */
+            }
             tg_gui_dl.rc = 2;
             return 0;
         }
@@ -15507,6 +15684,15 @@ void tg_gui_session_close(void)
         tg_mtproto_close_auth_context(&tg_gui_file_context);
         tg_gui_log("close: file channel closed");
     }
+    if (tg_gui_foreign_context.connection_open) {
+        /* The foreign-DC file channel (0.0.8 1c): same treatment. The
+           per-DC auth key file stays for reuse; the import is redone on
+           the next run (harmless). */
+        tg_mtproto_close_auth_context(&tg_gui_foreign_context);
+        tg_gui_log("close: foreign file channel closed");
+    }
+    tg_gui_foreign_dc = 0UL;
+    tg_gui_foreign_imported = 0;
     tg_gui_log("close: context closed");
 #if defined(__MORPHOS__) || defined(__MORPHOS)
     /* Let the bsdsocket stack drive the just-closed connection from FIN-WAIT to
