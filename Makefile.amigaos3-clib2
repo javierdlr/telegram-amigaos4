@@ -17,7 +17,15 @@ CSTD ?= c89
 # 68060's missing 64-bit mulu.l) and -O0 (this gcc 6.5 miscompiles the modexp at
 # -O1/-O2). Default link path is used so libgcc supplies __muldi3 -- if that is
 # unavailable we fall back to the in-tree copy via TG_PROVIDE_MULDI3 below.
-CFLAGS ?= -std=$(CSTD) -Wall -Wextra -O0 -m68060 -mcrt=clib2 -Iinclude
+# M68K_CPU=68000 builds the EXPERIMENTAL plain-68000 variant (A500/A2000/
+# CDTV-class): gcc then avoids every 020+ instruction and links the mc68000
+# multilib, and the bigint asm already skips itself at runtime on a bare
+# 68000 (AttnFlags). Release lane stays 68060. Use a separate TARGET/OBJDIR:
+#   make -f Makefile.amigaos3-clib2 M68K_CPU=68000 \
+#     TARGET=build/amigaos3-68000/TelegramAmiga \
+#     OBJDIR=build/amigaos3-68000/obj clean all
+M68K_CPU ?= 68060
+CFLAGS ?= -std=$(CSTD) -Wall -Wextra -O0 -m$(M68K_CPU) -mcrt=clib2 -Iinclude
 CFLAGS += -DTG_MTPROTO_BIGINT_M68K_ASM=1
 # No ixemul: reach bsdsocket.library directly via the SDK inlines.
 CFLAGS += -DTG_AMIGAOS3_NOIXEMUL=1
@@ -78,6 +86,7 @@ $(OBJDIR)/%.o: %.c $(HDRS_ALL) | build/amigaos3-clib2
 	$(CC) $(CFLAGS) $(OPT) -c $< -o $@
 
 $(TARGET): $(OBJS) | build/amigaos3-clib2
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
 build/amigaos3-clib2:
