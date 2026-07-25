@@ -41,6 +41,12 @@
 /* While keys are flowing, drain at most one already-queued MTProto frame each
    second. This path sends no RPC and therefore cannot leave a reply pending. */
 #define TG_GUI_COMPOSE_RECEIVE_SECONDS 1UL
+/* While a file transfer is pumping, the FULL live tick (a blocking
+   getHistory, ~half a second on a 68080) is throttled to this cadence and
+   the light receive_pending drain covers incoming pushes in between --
+   otherwise the 2s tick stole ~25% of the transfer AND froze the UI in
+   half-second bites (the "slow while downloading" Vampire report). */
+#define TG_GUI_TRANSFER_POLL_SECONDS 10UL
 
 #if defined(TG_GUI_AMIGA)
 
@@ -3621,7 +3627,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                        for TG_GUI_COMPOSE_IDLE_POLL_SECONDS; skip it entirely when
                        a close/quit is already queued this drain. */
                     now = time(0);
-                    if (!done && state->composing && now != (time_t)-1 &&
+                    if (!done &&
+                        (state->composing ||
+                         tg_gui_session_transfer_busy()) &&
+                        now != (time_t)-1 &&
                         now >= last_receive_drain &&
                         (unsigned long)(now - last_receive_drain) >=
                             TG_GUI_COMPOSE_RECEIVE_SECONDS) {
@@ -3643,6 +3652,12 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             session_boot != (time_t)-1 && now != (time_t)-1 &&
                             (unsigned long)(now - session_boot) < watch_boot_grace) {
                             eff = watch_boot_seconds;
+                        }
+                        if (tg_gui_session_transfer_busy() &&
+                            eff < TG_GUI_TRANSFER_POLL_SECONDS) {
+                            /* Transfer pumping: the light drain above keeps
+                               pushes flowing; the heavy tick can wait. */
+                            eff = TG_GUI_TRANSFER_POLL_SECONDS;
                         }
                         effective_watch = eff;
                     }
@@ -4443,7 +4458,12 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     (unsigned long)(hb_now - session_boot) < watch_boot_grace) {
                     hb_eff = watch_boot_seconds;
                 }
-                if (state->composing && hb_now != (time_t)-1 &&
+                if (tg_gui_session_transfer_busy() &&
+                    hb_eff < TG_GUI_TRANSFER_POLL_SECONDS) {
+                    hb_eff = TG_GUI_TRANSFER_POLL_SECONDS;
+                }
+                if ((state->composing || tg_gui_session_transfer_busy()) &&
+                    hb_now != (time_t)-1 &&
                     hb_now >= last_receive_drain &&
                     (unsigned long)(hb_now - last_receive_drain) >=
                         TG_GUI_COMPOSE_RECEIVE_SECONDS) {
