@@ -2316,19 +2316,22 @@ static void tg_gui_paint_context_menu(const tg_gui_state *state,
     }
     n = tg_gui_context_items(state, labels, ids);
     tg_gui_context_box(state, n, width, height, lh, &bx, &by, &bw, &bh, &ih);
-    backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+    /* System menu colours (0.0.8): the popup now matches the new-look
+       menubar instead of the dark chat theme -- outline, background, text
+       and the hover highlight all come from the screen's own pens. */
+    backend->fill_rect(backend, TG_GUI_PEN_MENU_FRAME,
                        tg_gui_make_rect(bx - 1, by - 1, bw + 2, bh + 2));
-    backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
+    backend->fill_rect(backend, TG_GUI_PEN_MENU_BACK,
                        tg_gui_make_rect(bx, by, bw, bh));
     for (i = 0; i < n; ++i) {
-        int text_pen = TG_GUI_PEN_TEXT;
+        int text_pen = TG_GUI_PEN_MENU_TEXT;
 
         if (i == state->ctx_hover) {
             /* Highlight the entry under the pointer so the user sees which of
-               Reply/Edit/Delete the click will pick (accent fill + accent text). */
-            backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
+               Reply/Edit/Delete the click will pick (system fill colours). */
+            backend->fill_rect(backend, TG_GUI_PEN_MENU_FILL,
                                tg_gui_make_rect(bx, by + 2 + (i * ih), bw, ih));
-            text_pen = TG_GUI_PEN_ACCENT_TEXT;
+            text_pen = TG_GUI_PEN_MENU_FILLTEXT;
         }
         backend->draw_text(backend, text_pen, bx + 8,
                            by + 2 + (i * ih) + lh, labels[i],

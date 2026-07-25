@@ -28,7 +28,16 @@
 #define TG_GUI_PEN_BADGE 7       /* unread badge fill */
 #define TG_GUI_PEN_BADGE_TEXT 8  /* unread badge number */
 #define TG_GUI_PEN_READ 9        /* read-receipt double check (azure on own bubble) */
-#define TG_GUI_PEN_COUNT 10
+/* Context-popup pens: SYSTEM colours (0.0.8, matches the new-look menubar).
+   The Amiga backend resolves these from the screen's DrawInfo (BACKGROUND/
+   TEXT/FILL/FILLTEXT/SHADOW), so the popup follows the user's own menu
+   theme; the table RGB values are only the no-DrawInfo fallback. */
+#define TG_GUI_PEN_MENU_BACK 10     /* popup surface (system background) */
+#define TG_GUI_PEN_MENU_TEXT 11     /* popup item text (system text) */
+#define TG_GUI_PEN_MENU_FILL 12     /* hovered item fill (system fill) */
+#define TG_GUI_PEN_MENU_FILLTEXT 13 /* hovered item text (system fill text) */
+#define TG_GUI_PEN_MENU_FRAME 14    /* popup outline (system shadow) */
+#define TG_GUI_PEN_COUNT 15
 
 /* Distinct avatar / sender tints, resolved by the backend like the pens. */
 #define TG_GUI_AVATAR_COLORS 6

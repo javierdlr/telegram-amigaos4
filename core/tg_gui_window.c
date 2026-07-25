@@ -252,7 +252,14 @@ static const tg_gui_rgb tg_gui_dark_pens[TG_GUI_PEN_COUNT] = {
     {0x1a, 0x2c, 0x44}, /* SELECT */
     {0x18, 0x5f, 0xa5}, /* BADGE */
     {0xe6, 0xf1, 0xfb}, /* BADGE_TEXT */
-    {0x4d, 0xc2, 0xff}  /* READ - read-receipt double check, pops on the blue bubble */
+    {0x4d, 0xc2, 0xff}, /* READ - read-receipt double check, pops on the blue bubble */
+    /* MENU_*: fallbacks only -- the real values come from the screen's
+       DrawInfo in obtain_pens below (classic WB grey/black/blue here). */
+    {0xaa, 0xaa, 0xaa}, /* MENU_BACK */
+    {0x00, 0x00, 0x00}, /* MENU_TEXT */
+    {0x00, 0x55, 0xaa}, /* MENU_FILL */
+    {0xff, 0xff, 0xff}, /* MENU_FILLTEXT */
+    {0x00, 0x00, 0x00}  /* MENU_FRAME */
 };
 
 static const tg_gui_rgb tg_gui_avatar_rgb[TG_GUI_AVATAR_COLORS] = {
@@ -740,10 +747,30 @@ static ULONG tg_gui_amiga_rgb32(unsigned char component)
 static void tg_gui_amiga_obtain_pens(tg_gui_amiga_ctx *ctx,
                                      struct ColorMap *cmap)
 {
+    struct DrawInfo *dri;
     int i;
 
     ctx->pens_held = 0;
+    /* The MENU_* pens track the SCREEN's own menu colours (same DrawInfo the
+       new-look menubar uses), so the context popup matches the user's theme
+       on every lane -- OS4.1 dark menus stay dark, classic grey stays grey.
+       The pens belong to the system: obtained stays -1, never ReleasePen'd.
+       No DrawInfo (or a missing pen) falls back to the table RGB below. */
+    dri = GetScreenDrawInfo(ctx->window->WScreen);
     for (i = 0; i < TG_GUI_PEN_COUNT; ++i) {
+        if (dri != 0 && i >= TG_GUI_PEN_MENU_BACK &&
+            (int)dri->dri_NumPens > BACKGROUNDPEN) { /* highest index used */
+            UWORD *p = dri->dri_Pens;
+
+            ctx->pens_obtained[i] = -1;
+            ctx->pens[i] =
+                (i == TG_GUI_PEN_MENU_BACK)     ? (LONG)p[BACKGROUNDPEN]
+                : (i == TG_GUI_PEN_MENU_TEXT)   ? (LONG)p[TEXTPEN]
+                : (i == TG_GUI_PEN_MENU_FILL)   ? (LONG)p[FILLPEN]
+                : (i == TG_GUI_PEN_MENU_FILLTEXT) ? (LONG)p[FILLTEXTPEN]
+                                                  : (LONG)p[SHADOWPEN];
+            continue;
+        }
         /* Keep the raw result so release frees ONLY what was really obtained;
            the drawing value falls back to a stock pen when obtain fails, but
            that fallback must never be passed to ReleasePen. */
@@ -754,6 +781,9 @@ static void tg_gui_amiga_obtain_pens(tg_gui_amiga_ctx *ctx,
         ctx->pens[i] = (ctx->pens_obtained[i] == -1)
                            ? ((i == TG_GUI_PEN_WINDOW) ? 0L : 1L)
                            : ctx->pens_obtained[i];
+    }
+    if (dri != 0) {
+        FreeScreenDrawInfo(ctx->window->WScreen, dri); /* pen NUMBERS copied */
     }
     for (i = 0; i < TG_GUI_AVATAR_COLORS; ++i) {
         ctx->avatar_obtained[i] =
