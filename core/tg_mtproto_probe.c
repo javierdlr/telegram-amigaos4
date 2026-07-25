@@ -14547,6 +14547,17 @@ static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
 }
 
 /* Fills the bundle from the GUI session singleton. */
+/* 0.0.8 punto 1a: file transfers get their OWN MTProto context (second
+   socket, same DC and auth key). MTProto explicitly supports multiple
+   sessions per key, and load_auth_context already assigns a fresh random
+   session_id on every open, so the two sessions never collide on seq_no.
+   With this, an upload/download no longer interleaves queries with the live
+   chat session -- the foundation for the non-blocking transfers (1b) and the
+   file-channel multi-DC (1c). Lazily opened on the first transfer; on open
+   failure we fall back to the live context (the pre-1a behaviour), so a
+   transfer still works when the second connection cannot come up. */
+static tg_mtproto_auth_context tg_gui_file_context;
+
 static void tg_gui_session_file_ctx(tg_mtproto_file_ctx *fc)
 {
     fc->host = tg_gui_session_state.host;
@@ -14554,9 +14565,23 @@ static void tg_gui_session_file_ctx(tg_mtproto_file_ctx *fc)
     fc->api_id = tg_gui_session_state.api_id;
     fc->auth_file = tg_gui_session_state.auth_file;
     fc->dc_id_text = tg_gui_session_state.dc_id_text;
-    fc->context = &tg_gui_session_state.context;
     fc->peer_cache_file = tg_gui_session_state.peer_cache_file;
     fc->peer_index = tg_gui_session_state.current_peer_index;
+    if (!tg_gui_file_context.connection_open) {
+        FILE *quiet = tg_mtproto_open_quiet_stream(stdout);
+
+        if (tg_mtproto_load_auth_context(fc->host, fc->port, fc->auth_file,
+                                         &tg_gui_file_context, quiet,
+                                         "mtproto file-channel") != 0) {
+            tg_mtproto_close_quiet_stream(quiet, stdout);
+            tg_gui_log("file-ctx: open failed, falling back to live session");
+            fc->context = &tg_gui_session_state.context;
+            return;
+        }
+        tg_mtproto_close_quiet_stream(quiet, stdout);
+        tg_gui_log("file-ctx: own socket open");
+    }
+    fc->context = &tg_gui_file_context;
 }
 
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
@@ -15205,6 +15230,12 @@ void tg_gui_session_close(void)
     }
     tg_gui_log("close: closing context");
     tg_mtproto_close_auth_context(&tg_gui_session_state.context);
+    if (tg_gui_file_context.connection_open) {
+        /* The dedicated file channel (0.0.8 1a): closed with the session so
+           the MorphOS settle below covers both connections. */
+        tg_mtproto_close_auth_context(&tg_gui_file_context);
+        tg_gui_log("close: file channel closed");
+    }
     tg_gui_log("close: context closed");
 #if defined(__MORPHOS__) || defined(__MORPHOS)
     /* Let the bsdsocket stack drive the just-closed connection from FIN-WAIT to
