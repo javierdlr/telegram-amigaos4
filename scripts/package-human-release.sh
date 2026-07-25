@@ -59,7 +59,11 @@ if [ "$AMINET" = "1" ]; then rm -rf "$AMINET_ROOT"; mkdir -p "$AMINET_ROOT"; fi
 fill_platform_text() {
     case "$1" in
     "AmigaOS 3.x")
-        upload_limit="31 MiB"
+        # = 32 KiB part x 4000 parts. KEEP IN SYNC with TG_GUI_DL_CHUNK
+        # (core/tg_mtproto_probe.c): this said "31 MiB" long after the m68k
+        # chunk grew, so the 0.0.7 OS3 package shipped manuals understating
+        # the real limit (the binary itself computes and reports 125).
+        upload_limit="125 MiB"
         req_en="- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) with a TCP/IP stack (Roadshow, AmiTCP,
   Miami/MiamiDx) providing bsdsocket.library, and an internet connection.
 - A 68020 or better CPU (this build uses the 68020 32x32 multiply and will
