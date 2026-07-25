@@ -1664,132 +1664,89 @@ static void tg_gui_window_track_rmbtrap(tg_gui_state *state,
     tg_gui_amiga_set_rmbtrap(ctx->window, over_msg);
 }
 
-typedef struct tg_gui_upload_ui {
-    tg_gui_state *state;
-    tg_gui_backend *backend;
-    unsigned long last_percent;
-    int painted;              /* download: a first progress paint happened */
-} tg_gui_upload_ui;
-
-/* Drain the window's input while a transfer blocks the event loop, and report
-   whether the user asked to cancel (close gadget or ESC). Shared by the upload
-   and download progress hooks. Drained events are dropped -- the window is
-   busy until the transfer returns. */
-static int tg_gui_window_transfer_cancel(const tg_gui_upload_ui *ui)
+/* Final status line for a finished non-blocking transfer (trc is the rc from
+   tg_gui_session_transfer_end; same codes the blocking calls used). dir: 1 =
+   download (`saved` holds the path on 0, the reason otherwise), 2 = upload.
+   0.0.8 punto 1b: the old blocking progress hooks (and their UserPort drain)
+   are gone -- the event loop itself pumps the transfer now, so input is
+   handled where it always is and cancel is a real event, not a drain. */
+static void tg_gui_window_transfer_finished(tg_gui_state *state,
+                                            tg_gui_backend *backend,
+                                            int dir, int trc,
+                                            const char *saved)
 {
-    tg_gui_amiga_ctx *c;
-    struct IntuiMessage *im;
-    int cancel = 0;
+    char line[192];
 
-    if (ui == 0 || ui->backend == 0) {
-        return 0;
+    if (saved == 0) {
+        saved = "";
     }
-    c = (tg_gui_amiga_ctx *)ui->backend->context;
-    if (c == 0 || c->window == 0) {
-        return 0;
-    }
-    while ((im = (struct IntuiMessage *)GetMsg(c->window->UserPort)) != 0) {
-        if (im->Class == IDCMP_CLOSEWINDOW ||
-            (im->Class == IDCMP_VANILLAKEY && im->Code == 0x1B)) {
-            cancel = 1;
+    if (dir == 2) {
+        if (trc == 0) {
+            strcpy(line, "File sent");
+        } else if (trc == 2) {
+            sprintf(line, "File too big (%lu MiB limit on this build)",
+                    tg_gui_session_upload_limit_mib());
+        } else if (trc == 3) {
+            strcpy(line, "Could not read that file");
+        } else if (trc == 5) {
+            strcpy(line, "That file is empty (0 bytes)");
+        } else if (trc == 6) {
+            strcpy(line, "Upload cancelled");
+        } else {
+            const char *why = tg_gui_session_last_transfer_error();
+
+            if (why != 0 && why[0] != '\0') {
+                sprintf(line, "Upload failed: %.72s", why);
+            } else {
+                strcpy(line, "Upload failed");
+            }
         }
-        ReplyMsg((struct Message *)im);
+    } else {
+        if (trc == 0) {
+            sprintf(line, "Saved to %.160s", saved);
+        } else if (trc == 2) {
+            strcpy(line, "File is on another server - not supported yet");
+        } else if (trc == 3) {
+            strcpy(line, "Could not write to downloads/");
+        } else if (trc == 5) {
+            strcpy(line, "Download cancelled");
+        } else if (trc == 4) {
+            if (saved[0] != '\0') {
+                sprintf(line, "Transfer failed: %.160s", saved);
+            } else {
+                strcpy(line, "Transfer failed (server error)");
+            }
+        } else {
+            if (saved[0] != '\0') {
+                sprintf(line, "Not found: %.170s", saved);
+            } else {
+                strcpy(line, "File not found or reference expired");
+            }
+        }
     }
-    return cancel;
+    tg_gui_window_copy(state->status, sizeof(state->status), line);
+    tg_gui_window_paint(state, backend);
 }
 
-/* Non-zero return cancels the upload (return 5, no sendMedia sent -- the parts
-   already uploaded are left orphaned and Telegram expires them). */
-static int tg_gui_window_upload_progress(unsigned long completed_parts,
-                                         unsigned long total_parts,
-                                         void *user_data)
-{
-    tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
-    unsigned long percent;
-
-    if (ui == 0 || ui->state == 0 || ui->backend == 0 ||
-        total_parts == 0UL) {
-        return 0;
-    }
-    if (tg_gui_window_transfer_cancel(ui)) {
-        tg_gui_window_copy(ui->state->status, sizeof(ui->state->status),
-                           "Cancelling upload...");
-        tg_gui_window_paint(ui->state, ui->backend);
-        return 1;
-    }
-    percent = (completed_parts * 100UL) / total_parts;
-    /* Repaint on every 1% step (not 5%): the status counter moves smoothly.
-       A repaint costs ~9ms on OS3, so at most ~100 over a whole transfer -- a
-       fraction of a second, invisible against the transfer time. */
-    if (completed_parts != 1UL && completed_parts != total_parts &&
-        percent < ui->last_percent + 1UL) {
-        return 0;
-    }
-    ui->last_percent = percent;
-    sprintf(ui->state->status, "Uploading... %lu%% (close to cancel)", percent);
-    tg_gui_window_paint(ui->state, ui->backend);
-    return 0;
-}
-
-/* Download twin of the progress hook above (`done`/`total` are BYTES), plus
-   the cancel path: the transfer blocks the event loop, so we drain the window
-   here and treat a close-gadget click or ESC as "cancel" (return non-zero) --
-   otherwise a slow download can only be escaped by resetting the machine. The
-   drained events are dropped; the window is busy until the transfer returns. */
-static int tg_gui_window_download_progress(unsigned long done_bytes,
-                                           unsigned long total_bytes,
-                                           void *user_data)
-{
-    tg_gui_upload_ui *ui = (tg_gui_upload_ui *)user_data;
-    unsigned long percent;
-
-    if (ui == 0 || ui->state == 0 || ui->backend == 0) {
-        return 0;
-    }
-    if (tg_gui_window_transfer_cancel(ui)) {
-        tg_gui_window_copy(ui->state->status, sizeof(ui->state->status),
-                           "Cancelling download...");
-        tg_gui_window_paint(ui->state, ui->backend);
-        return 1;
-    }
-    if (total_bytes == 0UL) {
-        return 0; /* size unknown: no percentage, but stay cancellable */
-    }
-    percent = (done_bytes * 100UL) / total_bytes;
-    if (percent > 100UL) {
-        percent = 100UL; /* size meta can undercount; never show >100 */
-    }
-    /* Throttle: first update, then every +1%, then 100%. `painted` (not
-       last_percent) marks the first one -- on a big file the early chunks all
-       compute 0%, and keying off last_percent==0 made EVERY one of them repaint
-       the whole window instead of just the first. 1% steps stay cheap: a
-       repaint is ~9ms on OS3, ~100 of them across a transfer. */
-    if (ui->painted && percent != 100UL &&
-        percent < ui->last_percent + 1UL) {
-        return 0;
-    }
-    ui->painted = 1;
-    ui->last_percent = percent;
-    sprintf(ui->state->status, "Downloading... %lu%% (close to cancel)",
-            percent);
-    tg_gui_window_paint(ui->state, ui->backend);
-    return 0;
-}
-
-/* "Send file...": ASL file requester -> chunk-5 uploader on the open chat.
+/* "Send file...": ASL file requester -> non-blocking upload on the open chat.
    The requester is synchronous and system-rendered (safe while we are the
-   caller); the upload itself is the same blocking on-context class as the
-   download, with bounded progress repaints narrating a long transfer. */
+   caller); the upload is only ARMED here -- the event loop pumps it one part
+   per turn, so the window keeps living during the transfer (0.0.8 1b). */
 static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
                                     tg_gui_backend *backend)
 {
     struct FileRequester *req;
-    tg_gui_upload_ui progress_ui;
     char path[256];
     int rc;
 
     if (state->mode != TG_GUI_MODE_CHAT || !tg_gui_session_is_open() ||
         state->chat_count <= 0) {
+        return;
+    }
+    if (tg_gui_session_transfer_busy()) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "A transfer is already running");
+        tg_gui_window_paint(state, backend);
         return;
     }
     AslBase = OpenLibrary((CONST_STRPTR)"asl.library", 38L);
@@ -1842,42 +1799,15 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     if (path[0] == '\0') {
         return; /* cancelled */
     }
-    tg_gui_window_copy(state->status, sizeof(state->status), "Uploading...");
-    tg_gui_window_paint(state, backend);
-    progress_ui.state = state;
-    progress_ui.backend = backend;
-    progress_ui.last_percent = 0UL;
-    progress_ui.painted = 0;
-    rc = tg_gui_session_send_document(
-        path, stdout, tg_gui_window_upload_progress, &progress_ui);
-    if (rc == 0) {
-        tg_gui_window_copy(state->status, sizeof(state->status), "File sent");
-    } else if (rc == 2) {
-        char lim[80];
-
-        sprintf(lim, "File too big (%lu MiB limit on this build)",
-                tg_gui_session_upload_limit_mib());
-        tg_gui_window_copy(state->status, sizeof(state->status), lim);
-    } else if (rc == 3) {
-        tg_gui_window_copy(state->status, sizeof(state->status),
-                           "Could not read that file");
-    } else if (rc == 5) {
-        tg_gui_window_copy(state->status, sizeof(state->status),
-                           "That file is empty (0 bytes)");
-    } else if (rc == 6) {
-        tg_gui_window_copy(state->status, sizeof(state->status),
-                           "Upload cancelled");
-    } else {
-        const char *why = tg_gui_session_last_transfer_error();
-        char em[96];
-
-        if (why != 0 && why[0] != '\0') {
-            sprintf(em, "Upload failed: %.72s", why);
-        } else {
-            strcpy(em, "Upload failed");
-        }
-        tg_gui_window_copy(state->status, sizeof(state->status), em);
+    rc = tg_gui_session_transfer_start_upload(path, stdout);
+    if (rc != 0) {
+        /* Failed before the first part (unreadable, too big, empty...):
+           same final lines as ever. rc 6 cannot happen at start. */
+        tg_gui_window_transfer_finished(state, backend, 2, rc, "");
+        return;
     }
+    tg_gui_window_copy(state->status, sizeof(state->status),
+                       "Uploading... (close or ESC cancels)");
     tg_gui_window_paint(state, backend);
 }
 
@@ -2607,7 +2537,13 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             if (timer_ok) {
                 wait_mask |= 1UL << timer_port->mp_SigBit;
             }
-            (void)Wait(wait_mask);
+            /* 0.0.8 1b: while a transfer is active the loop must not sleep --
+               each turn drains events, then pumps ONE chunk/part below. The
+               network RPC inside the step paces the loop, so this is not a
+               busy spin. */
+            if (!tg_gui_session_transfer_busy()) {
+                (void)Wait(wait_mask);
+            }
         }
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
@@ -2722,10 +2658,27 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     done = 2; /* park on the AppIcon, same as the menu item */
                 } else
 #endif
-                {
+                if (tg_gui_session_transfer_busy()) {
+                    /* First close = cancel the running transfer, not quit;
+                       the pump unwinds it and reports "cancelled". A second
+                       close then quits as usual. */
+                    tg_gui_log("window: close gadget = cancel transfer");
+                    tg_gui_session_transfer_cancel();
+                    tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "Cancelling...");
+                    tg_gui_window_paint(state, &backend);
+                } else {
                     tg_gui_log("window: close gadget");
                     done = 1;
                 }
+            } else if (msg_class == IDCMP_VANILLAKEY && msg_code == 27 &&
+                       tg_gui_session_transfer_busy()) {
+                /* ESC during a transfer = cancel it (everywhere: composer,
+                   search and chat ESC meanings resume once it is idle). */
+                tg_gui_session_transfer_cancel();
+                tg_gui_window_copy(state->status, sizeof(state->status),
+                                   "Cancelling...");
+                tg_gui_window_paint(state, &backend);
             } else if (msg_class == IDCMP_VANILLAKEY &&
                        state->mode != TG_GUI_MODE_CHAT) {
                 /* A login screen owns the keyboard until the session opens. */
@@ -3606,61 +3559,30 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     } else if (it == TG_GUI_CTX_DOWNLOAD && m != 0 &&
                                m->has_document && m->id != 0UL) {
                         unsigned long dl_id = m->id;
-                        char saved[160];
                         int drc;
-                        tg_gui_upload_ui dl_progress;
 
-                        /* Blocking download: show a live percentage (like the
-                           upload), then report where it landed (or why not). */
-                        tg_gui_window_copy(state->status, sizeof(state->status),
-                                           "Downloading...");
-                        tg_gui_window_paint(state, &backend);
-                        dl_progress.state = state;
-                        dl_progress.backend = &backend;
-                        dl_progress.last_percent = 0UL;
-                        dl_progress.painted = 0;
-                        drc = tg_gui_session_download_document(
-                            dl_id, saved, sizeof(saved), stdout,
-                            tg_gui_window_download_progress, &dl_progress);
-                        if (drc == 0) {
-                            char msg[192];
-
-                            sprintf(msg, "Saved to %s", saved);
+                        /* 0.0.8 1b: ARM the download and return to the loop;
+                           the pump below moves one chunk per turn, so the
+                           window keeps living (type, switch chats, receive)
+                           while the file streams in. */
+                        if (tg_gui_session_transfer_busy()) {
                             tg_gui_window_copy(state->status,
-                                               sizeof(state->status), msg);
-                        } else if (drc == 2) {
+                                               sizeof(state->status),
+                                               "A transfer is already running");
+                            tg_gui_window_paint(state, &backend);
+                        } else if ((drc = tg_gui_session_transfer_start_download(
+                                        dl_id, stdout)) == 0) {
                             tg_gui_window_copy(
                                 state->status, sizeof(state->status),
-                                "File is on another server - not supported yet");
-                        } else if (drc == 3) {
-                            tg_gui_window_copy(state->status,
-                                               sizeof(state->status),
-                                               "Could not write to downloads/");
-                        } else if (drc == 5) {
-                            tg_gui_window_copy(state->status,
-                                               sizeof(state->status),
-                                               "Download cancelled");
-                        } else if (drc == 4) {
-                            char tmsg[192];
-
-                            if (saved[0] != '\0') {
-                                sprintf(tmsg, "Transfer failed: %.160s", saved);
-                            } else {
-                                strcpy(tmsg, "Transfer failed (server error)");
-                            }
-                            tg_gui_window_copy(state->status,
-                                               sizeof(state->status), tmsg);
+                                "Downloading... (close or ESC cancels)");
+                            tg_gui_window_paint(state, &backend);
                         } else {
-                            char nmsg[192];
-
-                            if (saved[0] != '\0') {
-                                sprintf(nmsg, "Not found: %.170s", saved);
-                            } else {
-                                strcpy(nmsg,
-                                       "File not found or reference expired");
-                            }
-                            tg_gui_window_copy(state->status,
-                                               sizeof(state->status), nmsg);
+                            /* Failed before the first chunk (not in cache,
+                               foreign DC, downloads/ not writable): the same
+                               final lines as ever, reason via the session. */
+                            tg_gui_window_transfer_finished(
+                                state, &backend, 1, drc,
+                                tg_gui_session_last_transfer_error());
                         }
                     } else if (it == TG_GUI_CTX_COPY && m != 0 &&
                                m->text[0] != '\0') {
@@ -4215,6 +4137,43 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 }
             }
         }
+        /* 0.0.8 punto 1b: transfer pump. One bounded step (a single getFile
+           chunk or saveFilePart) per loop turn; the Wait() above is skipped
+           while a transfer is active, so typing, chat switches and the live
+           tick below all interleave with the chunks. The status line tracks
+           the percentage (repaint only when the line actually changes, which
+           also restores it after a tick overwrote it). */
+        if (tg_gui_session_transfer_busy()) {
+            int tdir = tg_gui_session_transfer_busy();
+            unsigned long tdone = 0UL;
+            unsigned long ttotal = 0UL;
+
+            if (tg_gui_session_transfer_step(&tdone, &ttotal)) {
+                unsigned long percent = (ttotal != 0UL)
+                    ? (tdone * 100UL) / ttotal : 0UL;
+                char tline[96];
+
+                if (percent > 100UL) {
+                    percent = 100UL; /* size meta can undercount */
+                }
+                sprintf(tline, "%s... %lu%% (close or ESC cancels)",
+                        tdir == 2 ? "Uploading" : "Downloading", percent);
+                if (strcmp(state->status, tline) != 0) {
+                    tg_gui_window_copy(state->status, sizeof(state->status),
+                                       tline);
+                    tg_gui_window_paint(state, &backend);
+                }
+            } else {
+                char saved[160];
+                int trc = tg_gui_session_transfer_end(saved, sizeof(saved));
+
+                tg_gui_window_transfer_finished(state, &backend, tdir, trc,
+                                                saved);
+                if (tdir == 2 && trc == 0) {
+                    session_dirty = 1; /* the poll shows the sent file row */
+                }
+            }
+        }
         /* Load-older paging: a scroll-up reached the top of the transcript. "Top"
            INCLUDES the case where the whole backlog FITS the window (sb_tr_max==0,
            no scrollbar drawn): a wheel/cursor up there still means "load older",
@@ -4320,6 +4279,13 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         }
     }
 
+    /* Window going away with a transfer still running (menu Quit, iconify,
+       Amiga+Q): cancel and unwind it -- end() closes the file (removing a
+       partial download) so session_close finds the engine idle. */
+    if (tg_gui_session_transfer_busy()) {
+        tg_gui_session_transfer_cancel();
+        (void)tg_gui_session_transfer_end(0, 0UL);
+    }
     /* Detach + free the menu strip before the window goes away. */
     if (menu != 0) {
         ClearMenuStrip(ctx.window);
