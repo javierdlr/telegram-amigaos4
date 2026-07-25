@@ -587,11 +587,14 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
        so the selected chat is visible -- without snapping back when you scroll the
        list manually on later frames. */
     if (st->chat_scroll_to_sel) {
+        int target = (state->nav_chat >= 0) ? state->nav_chat
+                                            : state->selected_chat;
+
         st->chat_scroll_to_sel = 0;
-        if (state->selected_chat < st->chat_scroll) {
-            st->chat_scroll = state->selected_chat;
-        } else if (state->selected_chat >= st->chat_scroll + view_rows) {
-            st->chat_scroll = state->selected_chat - view_rows + 1;
+        if (target < st->chat_scroll) {
+            st->chat_scroll = target;
+        } else if (target >= st->chat_scroll + view_rows) {
+            st->chat_scroll = target - view_rows + 1;
         }
         if (st->chat_scroll > state->chat_count - view_rows) {
             st->chat_scroll = state->chat_count - view_rows;
@@ -619,6 +622,11 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                                tg_gui_make_rect(0, y, sidebar_w, row_h));
             backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
                                tg_gui_make_rect(0, y, 3, row_h));
+        } else if (i == state->nav_chat) {
+            /* Arrow-key focus: tint only (the OPEN chat keeps its accent
+               bar), so "where ENTER will land" reads at a glance. */
+            backend->fill_rect(backend, TG_GUI_PEN_SELECT,
+                               tg_gui_make_rect(0, y, sidebar_w, row_h));
         }
         /* The row being dragged for reorder gets a tint so it reads as "lifted". */
         if (state->drag_active && i == state->drag_src) {

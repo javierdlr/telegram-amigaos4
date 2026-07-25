@@ -216,6 +216,11 @@ typedef struct tg_gui_state {
     int search_caret;
     char search_query[TG_GUI_SEARCH_MAX];
     int in_search;
+    int in_filter;   /* sidebar shows the LOCAL search filter; the final row
+                        (index 0) is "Search Telegram..." = go online */
+    int nav_chat;    /* arrow-key focus row in the sidebar (-1 = none);
+                        ENTER opens it. Distinct from selected_chat, which
+                        is the chat actually OPEN in the transcript. */
     int search_dirty;     /* query changed since the last online search (debounce) */
     /* The open chat has older history beyond what is loaded (server total > shown).
        When the loaded rows fit the window (no real scrollbar), the painter still
