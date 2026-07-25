@@ -18,8 +18,6 @@ CFLAGS ?= -Wall -Wextra -O2 -Iinclude
 CFLAGS += -mcmodel=large -fno-asynchronous-unwind-tables -fno-unwind-tables \
 	-fno-reorder-blocks-and-partition
 TARGET ?= build/aros-x86_64/TelegramAmiga
-MINCRT_PROBE_TARGET ?= build/aros-x86_64/minwrite-probe
-AROS_X86_64_MINCRT_DIR ?=
 SRC := src/main.c core/tg_app.c core/tg_bot.c core/tg_config.c core/tg_console.c core/tg_console_ui.c core/tg_console_tui.c core/tg_gui.c core/tg_gui_window.c core/tg_chat_engine.c core/tg_gui_driver.c core/tg_client_state.c core/tg_offset_state.c core/tg_text_client.c core/tg_file.c core/tg_http.c core/tg_https.c core/tg_json.c core/tg_telegram.c core/tg_log.c core/tg_mtproto.c core/tg_mtproto_auth.c core/tg_mtproto_bigint.c core/tg_mtproto_dc.c core/tg_mtproto_envelope.c core/tg_mtproto_encrypted.c core/tg_mtproto_login.c core/tg_mtproto_message_id.c core/tg_mtproto_probe.c core/tg_mtproto_rsa.c core/tg_mtproto_crypto.c core/tg_mtproto_session.c core/tg_mtproto_srp.c core/tg_mtproto_tl.c core/tg_mtproto_transport.c core/tg_net.c core/tg_tls.c platforms/aros/tg_platform_aros.c platforms/aros/tg_aros_autoinit.c
 ENABLE_TLS ?= 0
 ENABLE_GZIP ?= 0
@@ -59,7 +57,7 @@ CFLAGS += -DTG_ENABLE_GZIP_PUFF=1 -Ithird_party/puff
 SRC += core/tg_avatar.c third_party/tjpgd/tjpgd.c third_party/puff/puff.c
 endif
 
-.PHONY: all clean probe-mincrt
+.PHONY: all clean
 
 all: $(TARGET)
 
@@ -69,29 +67,5 @@ $(TARGET): $(SRC) include/tg_app.h include/tg_bot.h include/tg_config.h include/
 	$(OBJCOPY) -R .got "$@"
 	printf '\013' | dd of="$@" bs=1 seek=8 conv=notrunc 2>/dev/null
 
-probe-mincrt:
-	@test -n "$(AROS_X86_64_MINCRT_DIR)" || { \
-		echo "Set AROS_X86_64_MINCRT_DIR to a directory containing aros_mincrt.c and aros_startup_flags.c" >&2; \
-		exit 1; \
-	}
-	@test -f "$(AROS_X86_64_MINCRT_DIR)/aros_mincrt.c" || { \
-		echo "Missing $(AROS_X86_64_MINCRT_DIR)/aros_mincrt.c" >&2; \
-		exit 1; \
-	}
-	@test -f "$(AROS_X86_64_MINCRT_DIR)/aros_startup_flags.c" || { \
-		echo "Missing $(AROS_X86_64_MINCRT_DIR)/aros_startup_flags.c" >&2; \
-		exit 1; \
-	}
-	mkdir -p "$(dir $(MINCRT_PROBE_TARGET))"
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DBEBBOSSH_AROS_MINCRT=1 $(LDFLAGS) \
-		$(LDSTART) \
-		-o "$(MINCRT_PROBE_TARGET)" \
-		tools/aros_x86_64_minwrite_probe.c \
-		"$(AROS_X86_64_MINCRT_DIR)/aros_mincrt.c" \
-		"$(AROS_X86_64_MINCRT_DIR)/aros_startup_flags.c" \
-		$(MINCRT_LDLIBS)
-	$(OBJCOPY) -R .got "$(MINCRT_PROBE_TARGET)"
-	printf '\013' | dd of="$(MINCRT_PROBE_TARGET)" bs=1 seek=8 conv=notrunc 2>/dev/null
-
 clean:
-	rm -f "$(TARGET)" "$(MINCRT_PROBE_TARGET)"
+	rm -f "$(TARGET)"
