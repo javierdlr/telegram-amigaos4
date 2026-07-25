@@ -2137,7 +2137,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     int init_own;
     int want_own; /* own-screen preference, toggled live by the menu */
     struct Screen *own_scr;
-    struct TagItem tags[22];
+    struct TagItem tags[24];
     struct ColorMap *cmap;
     struct TextFont *font;
     APTR vi;
@@ -2277,6 +2277,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     tags[i++].ti_Data = FALSE;
     tags[i].ti_Tag = WA_SmartRefresh;
     tags[i++].ti_Data = TRUE;
+    /* New-look menus (white, system pens): without this tag the menubar
+       renders in the 1.x old look, white-on-black (a 0.0.7 field report). */
+    tags[i].ti_Tag = WA_NewLookMenus;
+    tags[i++].ti_Data = TRUE;
     tags[i].ti_Tag = WA_MinWidth;
     tags[i++].ti_Data = 320;
     tags[i].ti_Tag = WA_MinHeight;
@@ -2378,8 +2382,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     if (GadToolsBase != 0) {
         vi = GetVisualInfoA(ctx.window->WScreen, 0);
         if (vi != 0) {
+            /* GTMN_NewLookMenus matches WA_NewLookMenus above: both are
+               needed or the items keep the old black look on OS3. */
+            struct TagItem lmtags[2];
+
+            lmtags[0].ti_Tag = GTMN_NewLookMenus;
+            lmtags[0].ti_Data = TRUE;
+            lmtags[1].ti_Tag = TAG_DONE;
+            lmtags[1].ti_Data = 0;
             menu = CreateMenusA(tg_gui_newmenu, 0);
-            if (menu != 0 && LayoutMenusA(menu, vi, 0)) {
+            if (menu != 0 && LayoutMenusA(menu, vi, lmtags)) {
                 /* Reflect the current own-screen mode in the toggle's tick. */
                 if (want_own && menu->FirstItem != 0) {
                     struct MenuItem *it2 = menu->FirstItem;
