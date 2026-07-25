@@ -591,6 +591,14 @@ package_one() {
     write_manual_en "$dest/Manual-EN.txt" "$platform"
     write_manual_it "$dest/Manuale-IT.txt" "$platform"
     cp "$ROOT_DIR/LICENSE" "$dest/LICENSE"
+    # Full changelog in every package (release rule since 0.0.8): the repo
+    # CHANGELOG.md is the single source; refuse to package a release whose
+    # version is not in it yet (the Unreleased section must be promoted).
+    if ! grep -q "^## \[$VERSION\]" "$ROOT_DIR/CHANGELOG.md"; then
+        echo "ERROR: CHANGELOG.md has no '## [$VERSION]' section - promote Unreleased first" >&2
+        exit 1
+    fi
+    cp "$ROOT_DIR/CHANGELOG.md" "$dest/CHANGELOG.txt"
 
     if command -v zip >/dev/null 2>&1; then
         (cd "$PACKAGE_ROOT" && rm -f "$drawer.zip" && zip -qr "$drawer.zip" "$drawer")

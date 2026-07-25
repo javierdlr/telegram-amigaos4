@@ -57,7 +57,9 @@ per-architecture IT/EN manuals — and **no private files**.
 | AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.7) |
 | AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.7) |
 
-All releases: <https://github.com/kaffeine1/telegram-amiga/releases>
+All releases: <https://github.com/kaffeine1/telegram-amiga/releases> —
+full history in [CHANGELOG.md](CHANGELOG.md) (also bundled in every package
+as `CHANGELOG.txt`).
 
 AmigaOS 3.x is a native clib2 build (no ixemul, no AmiSSL) and needs a 68020 or
 better. AROS x86_64 targets trunk-SDK-matched systems (AROS One v0.38 pairs a
