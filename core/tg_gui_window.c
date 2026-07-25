@@ -3264,22 +3264,19 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_open_selection(state, idx, &backend);
                     }
                 } else if (msg_code == 0x4C || msg_code == 0x4D) {
-                    /* Plain arrows walk the CHAT LIST (ENTER opens the
-                       focused row); SHIFT+arrows keep the old transcript
-                       scroll for the keyboard-only crowd. */
-                    if ((msg_qual &
-                         (IEQUALIFIER_LSHIFT | IEQUALIFIER_RSHIFT)) != 0) {
-                        if (msg_code == 0x4C) { /* up: older messages */
-                            state->transcript_scroll += 3 * ctx.line_h;
-                            want_older = 1;
-                        } else {                /* down: newer messages */
-                            state->transcript_scroll -= 3 * ctx.line_h;
-                            if (state->transcript_scroll < 0) {
-                                state->transcript_scroll = 0;
-                            }
-                        }
-                        scroll_dirty = 1;
-                    } else if (state->chat_count > 0) {
+                    /* Cursor up/down act on the PANEL UNDER THE POINTER --
+                       the same rule the NewMouse wheel already follows.
+                       This matters beyond taste: many setups deliver the
+                       wheel AS these cursor rawkeys, so binding them to the
+                       chat list unconditionally made wheel-scrolling the
+                       transcript drag the sidebar focus along (regression
+                       report). Sidebar side: walk the chat list, ENTER
+                       opens. Transcript side: scroll the messages. */
+                    int over_sidebar =
+                        ((int)mouse_x - ctx.origin_x) <
+                        tg_gui_sidebar_w(ctx.inner_w);
+
+                    if (over_sidebar && state->chat_count > 0) {
                         int nv = (state->nav_chat >= 0)
                                      ? state->nav_chat
                                      : state->selected_chat;
@@ -3294,6 +3291,17 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         state->nav_chat = nv;
                         state->chat_scroll_to_sel = 1;
                         tg_gui_window_paint(state, &backend);
+                    } else {
+                        if (msg_code == 0x4C) { /* up: older messages */
+                            state->transcript_scroll += 3 * ctx.line_h;
+                            want_older = 1;
+                        } else {                /* down: newer messages */
+                            state->transcript_scroll -= 3 * ctx.line_h;
+                            if (state->transcript_scroll < 0) {
+                                state->transcript_scroll = 0;
+                            }
+                        }
+                        scroll_dirty = 1;
                     }
                 } else if (msg_code == 0x46) { /* Del: remove selected chat (confirm) */
                     tg_gui_window_remove_selected(state, ctx.window, &backend);

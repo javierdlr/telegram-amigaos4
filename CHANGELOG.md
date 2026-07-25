@@ -14,8 +14,10 @@ unless noted.
 - Local-first search: typing in the sidebar box filters YOUR chats instantly
   from the local cache; the final "Search Telegram..." row (or ENTER with no
   local match) runs the online search.
-- Arrow-key navigation: up/down walk the chat list (ENTER opens; SHIFT+arrows
-  keep the keyboard transcript scroll) and the search result list.
+- Arrow-key navigation: up/down act on the panel under the pointer, like the
+  wheel: over the sidebar they walk the chat list (ENTER opens), over the
+  transcript they scroll the messages. In the search box they walk the
+  result list.
 - Experimental plain-68000 build option (`M68K_CPU=68000`), not part of the
   released packages yet.
 
