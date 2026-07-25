@@ -91,6 +91,26 @@ int tg_gui_session_send_document(const char *path, FILE *stream,
                                  tg_gui_upload_progress_fn progress,
                                  void *progress_data);
 
+/* --- Non-blocking transfers (0.0.8): the GUI pumps, the window stays alive.
+   start_* arms the transfer on the file channel and returns immediately:
+   0 = armed, else the same final rc codes as the blocking calls (reason via
+   tg_gui_session_last_transfer_error). Then call transfer_step() once per
+   event-loop turn: it moves ONE chunk/part (one bounded RPC) and returns 1
+   while running, 0 once finished -- at that point call transfer_end(), which
+   returns the final rc (download: saved path or reason in out_path).
+   transfer_cancel() marks the transfer aborted; the NEXT step/end unwinds it
+   (download: partial file removed; upload: parts left to expire, rc 6/5).
+   One transfer at a time: busy() tells which direction is active (0 idle,
+   1 download, 2 upload). The TUI keeps using the blocking calls above --
+   both run the same engine underneath. */
+int tg_gui_session_transfer_busy(void);
+int tg_gui_session_transfer_start_download(unsigned long msg_id,
+                                           FILE *stream);
+int tg_gui_session_transfer_start_upload(const char *path, FILE *stream);
+int tg_gui_session_transfer_step(unsigned long *done, unsigned long *total);
+void tg_gui_session_transfer_cancel(void);
+int tg_gui_session_transfer_end(char *out_path, unsigned long out_path_size);
+
 /* F10 Saved Messages: the sidebar row index that opens the self chat (cloud
    archive) is TG_GUI_SAVED_PEER_INDEX, defined in tg_gui.h (the UI layer needs
    it too). Pinned as the LAST row; remove/reorder skip it. */

@@ -14112,53 +14112,83 @@ const char *tg_gui_session_last_transfer_error(void)
     return tg_mtproto_query_fail;
 }
 
-static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
-                                const char *path, FILE *stream,
-                                tg_gui_upload_progress_fn progress,
-                                void *progress_data)
-{
-    static unsigned char part_buf[TG_GUI_DL_CHUNK];
-    static unsigned char part_query[TG_GUI_DL_CHUNK + 64UL];
-    unsigned char query[512];
-    unsigned char rnd[8];
-    tg_mtproto_tl_writer writer;
-    tg_mtproto_rpc_result result;
-    FILE *quiet;
+/* --- 0.0.8 punto 1b: the upload is a state machine too (one engine). ------
+   begin() opens the file and resolves the peer, step() sends ONE part (or,
+   after the last part, the sendMedia), end() closes up. Same design as the
+   download engine above; one transfer at a time overall. */
+typedef struct tg_gui_ul_state {
+    int active;
+    tg_mtproto_file_ctx fc;   /* peer_index repointed at the copy below */
+    char peer_index_copy[64];
+    char name[TG_MTPROTO_DOC_NAME_MAX]; /* bare filename for sendMedia */
     FILE *f;
-    long file_size;
-    unsigned long file_id_hi, file_id_lo, rand_hi, rand_lo;
+    FILE *quiet;
+    FILE *stream;
+    unsigned long file_id_hi, file_id_lo;
     unsigned long pc, ph, pl, ahh, ahl;
     int hah;
     unsigned long parts, part;
+    int big_file;
+    int part_retry;
+    unsigned long got;  /* bytes of the CURRENT part held in part_buf */
+    int part_loaded;    /* part_buf holds the current (unacknowledged) part */
+    int rc;
+} tg_gui_ul_state;
+
+static tg_gui_ul_state tg_gui_ul;
+
+/* Open the file, size/limit checks, peer resolution, file_id. 0 = armed;
+   != 0 = failed fast with the usual rc codes (1 generic, 2 too big, 3 file,
+   5 empty). */
+static int tg_mtproto_upload_begin(const tg_mtproto_file_ctx *fc,
+                                   const char *path, FILE *stream)
+{
+    unsigned char rnd[8];
+    long file_size;
     const char *name;
     const char *p;
-    int big_file;
-    int up_cancel = 0;
+    unsigned long n;
 
     if (fc == 0 || stream == 0 || path == 0 || path[0] == '\0' ||
-        fc->peer_index == 0 || fc->peer_index[0] == '\0') {
+        fc->peer_index == 0 || fc->peer_index[0] == '\0' ||
+        tg_gui_ul.active) {
         return 1;
     }
+    memset(&tg_gui_ul, 0, sizeof(tg_gui_ul));
+    tg_gui_ul.fc = *fc;
+    for (n = 0UL; fc->peer_index[n] != '\0' &&
+                  n + 1UL < sizeof(tg_gui_ul.peer_index_copy); ++n) {
+        tg_gui_ul.peer_index_copy[n] = fc->peer_index[n];
+    }
+    tg_gui_ul.peer_index_copy[n] = '\0';
+    tg_gui_ul.fc.peer_index = tg_gui_ul.peer_index_copy;
+    tg_gui_ul.stream = stream;
     tg_mtproto_query_fail[0] = '\0'; /* fresh reason for this upload */
-    f = fopen(path, "rb");
-    if (f == 0) {
+    tg_gui_ul.f = fopen(path, "rb");
+    if (tg_gui_ul.f == 0) {
         return 3;
     }
-    if (fseek(f, 0L, SEEK_END) == 0 && ftell(f) == 0L) {
-        fclose(f);
+    if (fseek(tg_gui_ul.f, 0L, SEEK_END) == 0 && ftell(tg_gui_ul.f) == 0L) {
+        fclose(tg_gui_ul.f);
+        tg_gui_ul.f = 0;
         return 5; /* empty file: nothing to upload (0-byte markers, etc.) */
     }
-    if (fseek(f, 0L, SEEK_END) != 0 || (file_size = ftell(f)) <= 0L ||
-        fseek(f, 0L, SEEK_SET) != 0) {
-        fclose(f);
+    if (fseek(tg_gui_ul.f, 0L, SEEK_END) != 0 ||
+        (file_size = ftell(tg_gui_ul.f)) <= 0L ||
+        fseek(tg_gui_ul.f, 0L, SEEK_SET) != 0) {
+        fclose(tg_gui_ul.f);
+        tg_gui_ul.f = 0;
         return 3;
     }
     if ((unsigned long)file_size > TG_GUI_UL_LIMIT) {
-        fclose(f);
+        fclose(tg_gui_ul.f);
+        tg_gui_ul.f = 0;
         return 2;
     }
-    big_file = (unsigned long)file_size > TG_GUI_UL_BIG_THRESHOLD;
-    /* Bare filename: whatever follows the last '/' or ':' of the path. */
+    tg_gui_ul.big_file = (unsigned long)file_size > TG_GUI_UL_BIG_THRESHOLD;
+    /* Bare filename: whatever follows the last '/' or ':' of the path.
+       COPIED: the sendMedia goes out long after begin() returns and the
+       caller's path buffer may be reused by then. */
     name = path;
     for (p = path; *p != '\0'; ++p) {
         if (*p == '/' || *p == ':') {
@@ -14166,384 +14196,525 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
         }
     }
     if (*name == '\0') {
-        fclose(f);
+        fclose(tg_gui_ul.f);
+        tg_gui_ul.f = 0;
         return 3;
     }
-    quiet = tg_mtproto_open_quiet_stream(stream);
+    for (n = 0UL; name[n] != '\0' && n + 1UL < sizeof(tg_gui_ul.name); ++n) {
+        tg_gui_ul.name[n] = name[n];
+    }
+    tg_gui_ul.name[n] = '\0';
+    tg_gui_ul.quiet = tg_mtproto_open_quiet_stream(stream);
     if (tg_mtproto_load_peer_cache_peer(
-            fc->peer_cache_file,
-            fc->peer_index, &pc, &ph, &pl, &ahh,
-            &ahl, &hah, quiet, "mtproto sendMedia(document)") != 0) {
-        fclose(f);
-        tg_mtproto_close_quiet_stream(quiet, stream);
+            tg_gui_ul.fc.peer_cache_file,
+            tg_gui_ul.fc.peer_index, &tg_gui_ul.pc, &tg_gui_ul.ph,
+            &tg_gui_ul.pl, &tg_gui_ul.ahh,
+            &tg_gui_ul.ahl, &tg_gui_ul.hah, tg_gui_ul.quiet,
+            "mtproto sendMedia(document)") != 0) {
+        fclose(tg_gui_ul.f);
+        tg_gui_ul.f = 0;
+        tg_mtproto_close_quiet_stream(tg_gui_ul.quiet, stream);
+        tg_gui_ul.quiet = 0;
         return 1;
     }
     tg_mtproto_saved_session_random(rnd, sizeof(rnd));
-    file_id_lo = tg_mtproto_read_u32_le(rnd);
-    file_id_hi = tg_mtproto_read_u32_le(rnd + 4U);
-    parts = ((unsigned long)file_size + TG_GUI_DL_CHUNK - 1UL) /
-            TG_GUI_DL_CHUNK;
-    if (parts == 0UL || parts > TG_GUI_UL_MAX_PARTS) {
-        fclose(f);
-        tg_mtproto_close_quiet_stream(quiet, stream);
+    tg_gui_ul.file_id_lo = tg_mtproto_read_u32_le(rnd);
+    tg_gui_ul.file_id_hi = tg_mtproto_read_u32_le(rnd + 4U);
+    tg_gui_ul.parts = ((unsigned long)file_size + TG_GUI_DL_CHUNK - 1UL) /
+                      TG_GUI_DL_CHUNK;
+    if (tg_gui_ul.parts == 0UL || tg_gui_ul.parts > TG_GUI_UL_MAX_PARTS) {
+        fclose(tg_gui_ul.f);
+        tg_gui_ul.f = 0;
+        tg_mtproto_close_quiet_stream(tg_gui_ul.quiet, stream);
+        tg_gui_ul.quiet = 0;
         return 2;
     }
-    for (part = 0UL; part < parts; ++part) {
-        unsigned long got = (unsigned long)fread(part_buf, 1, TG_GUI_DL_CHUNK,
-                                                 f);
-        int part_retry = 0;
-        int part_ok = 0;
+    tg_gui_ul.rc = 1; /* any early break below is a generic failure */
+    tg_gui_ul.active = 1;
+    return 0;
+}
 
-        if (got == 0UL) {
+/* Send ONE part per call (a failed part retries on the NEXT call, same
+   buffer: saveFilePart is idempotent for (file_id, part)); once every part
+   is in, the same call sends the sendMedia. Returns 1 while running, 0 once
+   finished (rc set); then call tg_mtproto_upload_end(). */
+static int tg_mtproto_upload_step(void)
+{
+    static unsigned char part_buf[TG_GUI_DL_CHUNK];
+    static unsigned char part_query[TG_GUI_DL_CHUNK + 64UL];
+    unsigned char query[512];
+    unsigned char rnd[8];
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_rpc_result result;
+
+    if (!tg_gui_ul.active || tg_gui_ul.rc == 6) {
+        return 0; /* idle, or cancelled: don't send more parts / the media */
+    }
+    if (tg_gui_ul.part >= tg_gui_ul.parts) {
+        /* Every part is up: attach them to the chat with the sendMedia. */
+        unsigned long rand_hi, rand_lo;
+
+        tg_mtproto_saved_session_random(rnd, sizeof(rnd));
+        rand_lo = tg_mtproto_read_u32_le(rnd);
+        rand_hi = tg_mtproto_read_u32_le(rnd + 4U);
+        tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+        if ((tg_gui_ul.big_file
+                 ? tg_mtproto_build_messages_send_media_big_document(
+                       &writer, tg_gui_ul.pc, tg_gui_ul.ph, tg_gui_ul.pl,
+                       tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
+                       tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
+                       tg_gui_ul.parts, tg_gui_ul.name,
+                       "application/octet-stream", rand_hi, rand_lo)
+                 : tg_mtproto_build_messages_send_media_document(
+                       &writer, tg_gui_ul.pc, tg_gui_ul.ph, tg_gui_ul.pl,
+                       tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
+                       tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
+                       tg_gui_ul.parts, tg_gui_ul.name,
+                       "application/octet-stream", rand_hi, rand_lo)) !=
+            TG_MTPROTO_TL_OK) {
+            return 0; /* rc 1 */
+        }
+        memset(&result, 0, sizeof(result));
+        if (tg_mtproto_send_saved_query_on_context(
+                tg_gui_ul.fc.host, tg_gui_ul.fc.port,
+                tg_gui_ul.fc.api_id, tg_gui_ul.fc.auth_file,
+                tg_gui_ul.fc.dc_id_text, tg_gui_ul.fc.context,
+                query, writer.length, &result, tg_gui_ul.quiet,
+                "mtproto sendMedia(document)", 600U) != 0 ||
+            result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+            return 0; /* rc 1 */
+        }
+        tg_gui_ul.rc = 0; /* the tick's history poll shows the sent row */
+        return 0;
+    }
+    if (!tg_gui_ul.part_loaded) {
+        tg_gui_ul.got = (unsigned long)fread(part_buf, 1, TG_GUI_DL_CHUNK,
+                                             tg_gui_ul.f);
+        if (tg_gui_ul.got == 0UL) {
             sprintf(tg_mtproto_query_fail, "disk read failed at part %lu",
-                    part + 1UL);
-            break; /* short read = disk trouble: bail (parts check below) */
+                    tg_gui_ul.part + 1UL);
+            return 0; /* short read = disk trouble (rc 1) */
         }
-        for (;;) {
-            tg_mtproto_tl_writer_init(&writer, part_query, sizeof(part_query));
-            if ((big_file
-                     ? tg_mtproto_build_upload_save_big_file_part(
-                           &writer, file_id_hi, file_id_lo, part, parts,
-                           part_buf, got)
-                     : tg_mtproto_build_upload_save_file_part(
-                           &writer, file_id_hi, file_id_lo, part, part_buf,
-                           got)) != TG_MTPROTO_TL_OK) {
-                sprintf(tg_mtproto_query_fail, "build failed at part %lu",
-                        part + 1UL);
-                break; /* local build error: not retryable */
-            }
-            memset(&result, 0, sizeof(result));
-            if (tg_mtproto_send_saved_query_on_context(
-                    fc->host, fc->port,
-                    fc->api_id, fc->auth_file,
-                    fc->dc_id_text,
-                    fc->context, part_query, writer.length,
-                    &result, quiet,
-                    big_file ? "mtproto saveBigFilePart"
-                             : "mtproto saveFilePart",
-                    600U) == 0 &&
-                result.result_constructor == 0x997275b5UL /* boolTrue */) {
-                part_ok = 1;
-                break;
-            }
-            /* Part failed (a lost chunk / slow-link timeout / non-boolTrue).
-               Re-send the SAME part: saveFilePart is idempotent for
-               (file_id, part) and part_buf still holds the data, so no re-read.
-               Only give up once a part fails repeatedly -- this is the retry the
-               download already had; without it one flaky chunk threw away a
-               whole 15 MB upload. */
-            if (++part_retry > TG_GUI_DL_CHUNK_RETRIES) {
-                char pf[80];
-
-                sprintf(pf, "part %lu/%lu: %.48s", part + 1UL, parts,
-                        tg_mtproto_query_fail[0] != '\0'
-                            ? tg_mtproto_query_fail : "no reply");
-                strcpy(tg_mtproto_query_fail, pf);
-                break;
-            }
-            {
-                char rl[96];
-                sprintf(rl, "upload: retry %d part %lu/%lu (%.32s)",
-                        part_retry, part + 1UL, parts, tg_mtproto_query_fail);
-                tg_gui_log(rl);
-                if (strncmp(tg_mtproto_query_fail, "send", 4) == 0 ||
-                    strncmp(tg_mtproto_query_fail, "transport", 9) == 0) {
-                    /* Same as the download retry: a wedged socket never
-                       recovers by itself -- reconnect before re-sending. */
-                    tg_mtproto_close_auth_context(fc->context);
-                }
-            }
-            /* Stay cancellable even while a stubborn part keeps retrying. */
-            if (progress != 0 &&
-                progress(part, parts, progress_data) != 0) {
-                up_cancel = 1;
-                break;
-            }
-        }
-        if (up_cancel || !part_ok) {
-            break;
-        }
-        if (progress != 0 &&
-            progress(part + 1UL, parts, progress_data) != 0) {
-            up_cancel = 1; /* close gadget / ESC during the transfer */
-            break;
-        }
+        tg_gui_ul.part_loaded = 1;
+        tg_gui_ul.part_retry = 0;
     }
-    fclose(f);
-    if (up_cancel) {
-        tg_mtproto_close_quiet_stream(quiet, stream);
-        return 6; /* cancelled (5 already means empty): no sendMedia sent, the
-                     uploaded parts are left for Telegram to expire */
-    }
-    if (part != parts) { /* the loop broke early */
-        tg_mtproto_close_quiet_stream(quiet, stream);
-        return 1;
-    }
-    tg_mtproto_saved_session_random(rnd, sizeof(rnd));
-    rand_lo = tg_mtproto_read_u32_le(rnd);
-    rand_hi = tg_mtproto_read_u32_le(rnd + 4U);
-    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-    if ((big_file
-             ? tg_mtproto_build_messages_send_media_big_document(
-                   &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi,
-                   file_id_lo, parts, name, "application/octet-stream",
-                   rand_hi, rand_lo)
-             : tg_mtproto_build_messages_send_media_document(
-                   &writer, pc, ph, pl, ahh, ahl, hah, file_id_hi,
-                   file_id_lo, parts, name, "application/octet-stream",
-                   rand_hi, rand_lo)) != TG_MTPROTO_TL_OK) {
-        tg_mtproto_close_quiet_stream(quiet, stream);
-        return 1;
+    tg_mtproto_tl_writer_init(&writer, part_query, sizeof(part_query));
+    if ((tg_gui_ul.big_file
+             ? tg_mtproto_build_upload_save_big_file_part(
+                   &writer, tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
+                   tg_gui_ul.part, tg_gui_ul.parts, part_buf, tg_gui_ul.got)
+             : tg_mtproto_build_upload_save_file_part(
+                   &writer, tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
+                   tg_gui_ul.part, part_buf, tg_gui_ul.got)) !=
+        TG_MTPROTO_TL_OK) {
+        sprintf(tg_mtproto_query_fail, "build failed at part %lu",
+                tg_gui_ul.part + 1UL);
+        return 0; /* local build error: not retryable (rc 1) */
     }
     memset(&result, 0, sizeof(result));
     if (tg_mtproto_send_saved_query_on_context(
-            fc->host, fc->port,
-            fc->api_id, fc->auth_file,
-            fc->dc_id_text, fc->context,
-            query, writer.length, &result, quiet,
-            "mtproto sendMedia(document)", 600U) != 0 ||
-        result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
-        tg_mtproto_close_quiet_stream(quiet, stream);
-        return 1;
+            tg_gui_ul.fc.host, tg_gui_ul.fc.port,
+            tg_gui_ul.fc.api_id, tg_gui_ul.fc.auth_file,
+            tg_gui_ul.fc.dc_id_text,
+            tg_gui_ul.fc.context, part_query, writer.length,
+            &result, tg_gui_ul.quiet,
+            tg_gui_ul.big_file ? "mtproto saveBigFilePart"
+                               : "mtproto saveFilePart",
+            600U) == 0 &&
+        result.result_constructor == 0x997275b5UL /* boolTrue */) {
+        ++tg_gui_ul.part;
+        tg_gui_ul.part_loaded = 0;
+        return 1; /* next call: next part (or the sendMedia) */
     }
-    tg_mtproto_close_quiet_stream(quiet, stream);
-    return 0; /* the tick's history poll shows the sent [File: ...] row */
+    /* Part failed (a lost chunk / slow-link timeout / non-boolTrue).
+       Re-send the SAME part next call: saveFilePart is idempotent for
+       (file_id, part) and part_buf still holds the data, so no re-read. */
+    if (++tg_gui_ul.part_retry > TG_GUI_DL_CHUNK_RETRIES) {
+        char pf[80];
+
+        sprintf(pf, "part %lu/%lu: %.48s", tg_gui_ul.part + 1UL,
+                tg_gui_ul.parts,
+                tg_mtproto_query_fail[0] != '\0'
+                    ? tg_mtproto_query_fail : "no reply");
+        strcpy(tg_mtproto_query_fail, pf);
+        return 0; /* rc 1 */
+    }
+    {
+        char rl[96];
+        sprintf(rl, "upload: retry %d part %lu/%lu (%.32s)",
+                tg_gui_ul.part_retry, tg_gui_ul.part + 1UL, tg_gui_ul.parts,
+                tg_mtproto_query_fail);
+        tg_gui_log(rl);
+        if (strncmp(tg_mtproto_query_fail, "send", 4) == 0 ||
+            strncmp(tg_mtproto_query_fail, "transport", 9) == 0) {
+            /* A wedged socket never recovers by itself: reconnect. */
+            tg_mtproto_close_auth_context(tg_gui_ul.fc.context);
+        }
+    }
+    return 1;
+}
+
+/* Cancel a running upload: no sendMedia is sent, the uploaded parts are
+   left for Telegram to expire. */
+static void tg_mtproto_upload_cancel(void)
+{
+    if (tg_gui_ul.active) {
+        tg_gui_ul.rc = 6; /* cancelled (5 already means empty file) */
+        tg_gui_log("upload: cancelled by user");
+    }
+}
+
+/* Close the engine and return the final rc. */
+static int tg_mtproto_upload_end(void)
+{
+    int rc = tg_gui_ul.rc;
+
+    if (tg_gui_ul.f != 0) {
+        fclose(tg_gui_ul.f);
+        tg_gui_ul.f = 0;
+    }
+    if (tg_gui_ul.quiet != 0) {
+        tg_mtproto_close_quiet_stream(tg_gui_ul.quiet, tg_gui_ul.stream);
+        tg_gui_ul.quiet = 0;
+    }
+    tg_gui_ul.active = 0;
+    return rc;
+}
+
+/* Blocking wrapper over the state machine (TUI and legacy callers). */
+static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
+                                const char *path, FILE *stream,
+                                tg_gui_upload_progress_fn progress,
+                                void *progress_data)
+{
+    int brc;
+
+    brc = tg_mtproto_upload_begin(fc, path, stream);
+    if (brc != 0) {
+        return brc;
+    }
+    while (tg_mtproto_upload_step()) {
+        if (progress != 0 &&
+            progress(tg_gui_ul.part, tg_gui_ul.parts, progress_data) != 0) {
+            tg_mtproto_upload_cancel();
+            break;
+        }
+    }
+    return tg_mtproto_upload_end();
 }
 
 /* Returns: 0 ok, 1 generic failure, 2 foreign DC (needs multi-DC, deferred),
    3 could not create/write the file. Writes the saved path into out_path. */
-static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
-                                    unsigned long msg_id, char *out_path,
-                                    unsigned long out_path_size, FILE *stream,
-                                    tg_gui_download_progress_fn progress,
-                                    void *progress_data)
-{
+/* --- 0.0.8 punto 1b: the download is a resumable STATE MACHINE. -----------
+   begin() arms it, step() moves ONE chunk, end() closes it. The GUI pumps
+   step() from the event loop (window stays alive during a transfer); the TUI
+   and any legacy caller run the same engine to completion through the
+   blocking wrapper below, so there is exactly one download engine. One
+   transfer at a time by design (static state). */
+typedef struct tg_gui_dl_state {
+    int active;
+    tg_mtproto_file_ctx fc;   /* peer_index repointed at the copy below */
+    char peer_index_copy[64]; /* the live one moves when the user changes chat */
+    unsigned long msg_id;
+    unsigned long resolved_msg_id;
     tg_mtproto_document_meta doc;
-    char safe[TG_MTPROTO_DOC_NAME_MAX];
     char path[TG_MTPROTO_DOC_NAME_MAX + 16];
-    unsigned char query[384]; /* holds a getFile with a long file_reference */
-    tg_mtproto_tl_writer writer;
-    tg_mtproto_rpc_result result;
-    FILE *quiet;
     FILE *f;
+    FILE *quiet;
+    FILE *stream;
     unsigned long offset;
-    unsigned long home;
-    const unsigned char *bytes;
-    unsigned long bytes_len;
-    int cdn;
-    unsigned long resolved_msg_id = 0UL;
-    int refetched = 0;
     int chunk_retry;
-    int rc = 1;
+    int refetched;
+    int rc;       /* final outcome, meaningful once a step returned 0 */
+    char fail[96]; /* failure reason for the caller's status line */
+} tg_gui_dl_state;
 
-    if (out_path != 0 && out_path_size > 0UL) {
-        out_path[0] = '\0';
+static tg_gui_dl_state tg_gui_dl;
+
+/* Resolve the document, guard the DC, create the local file: everything up
+   to the first chunk. 0 = armed (active=1); != 0 = failed fast with the same
+   rc codes the blocking call always used (reason in tg_gui_dl.fail). */
+static int tg_mtproto_download_begin(const tg_mtproto_file_ctx *fc,
+                                     unsigned long msg_id, FILE *stream)
+{
+    char safe[TG_MTPROTO_DOC_NAME_MAX];
+    unsigned long home;
+    unsigned long n;
+
+    if (tg_gui_dl.active) {
+        return 1; /* one transfer at a time; fail[] belongs to the running one */
     }
+    memset(&tg_gui_dl, 0, sizeof(tg_gui_dl)); /* fail[] cleared for the caller */
     if (fc == 0 || stream == 0 ||
         fc->peer_index == 0 || fc->peer_index[0] == '\0') {
         return 1;
     }
-    quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_gui_dl.fc = *fc;
+    /* Copy the peer index: the caller's points at the session's CURRENT chat
+       and would silently retarget this transfer on a chat switch. */
+    for (n = 0UL; fc->peer_index[n] != '\0' &&
+                  n + 1UL < sizeof(tg_gui_dl.peer_index_copy); ++n) {
+        tg_gui_dl.peer_index_copy[n] = fc->peer_index[n];
+    }
+    tg_gui_dl.peer_index_copy[n] = '\0';
+    tg_gui_dl.fc.peer_index = tg_gui_dl.peer_index_copy;
+    tg_gui_dl.msg_id = msg_id;
+    tg_gui_dl.stream = stream;
+    tg_gui_dl.quiet = tg_mtproto_open_quiet_stream(stream);
     tg_dl_diag[0] = '\0';
-    if (tg_mtproto_file_find_document(fc, msg_id, quiet, &doc,
-                                      &resolved_msg_id) != 0) {
+    if (tg_mtproto_file_find_document(&tg_gui_dl.fc, msg_id, tg_gui_dl.quiet,
+                                      &tg_gui_dl.doc,
+                                      &tg_gui_dl.resolved_msg_id) != 0) {
         tg_gui_log("download: not found");
-        if (out_path != 0 && out_path_size > 0UL && tg_dl_diag[0] != '\0') {
-            unsigned long e = 0UL;
-            while (tg_dl_diag[e] != '\0' && e + 1UL < out_path_size) {
-                out_path[e] = tg_dl_diag[e]; ++e;
-            }
-            out_path[e] = '\0';
-        }
-        tg_mtproto_close_quiet_stream(quiet, stream);
+        sprintf(tg_gui_dl.fail, "%.90s", tg_dl_diag);
+        tg_mtproto_close_quiet_stream(tg_gui_dl.quiet, stream);
+        tg_gui_dl.quiet = 0;
         return 1;
     }
     {
         char d[128];
         sprintf(d, "download: doc dc=%lu size=%lu:%lu reflen=%lu",
-                doc.dc_id, doc.size_hi, doc.size_lo, doc.file_reference_len);
+                tg_gui_dl.doc.dc_id, tg_gui_dl.doc.size_hi,
+                tg_gui_dl.doc.size_lo, tg_gui_dl.doc.file_reference_len);
         tg_gui_log(d);
     }
     /* Same-DC guard (foreign documents need export/importAuthorization). */
     home = 0UL;
-    if (fc->dc_id_text[0] != '\0') {
-        const char *p = fc->dc_id_text;
+    if (tg_gui_dl.fc.dc_id_text[0] != '\0') {
+        const char *p = tg_gui_dl.fc.dc_id_text;
 
         while (*p >= '0' && *p <= '9') {
             home = home * 10UL + (unsigned long)(*p - '0');
             ++p;
         }
     }
-    if (home != 0UL && doc.dc_id != 0UL && doc.dc_id != home) {
-        tg_mtproto_close_quiet_stream(quiet, stream);
+    if (home != 0UL && tg_gui_dl.doc.dc_id != 0UL &&
+        tg_gui_dl.doc.dc_id != home) {
+        tg_mtproto_close_quiet_stream(tg_gui_dl.quiet, stream);
+        tg_gui_dl.quiet = 0;
         tg_gui_log("download: foreign DC, unsupported");
         return 2; /* foreign DC: caller shows "not supported yet" */
     }
-    tg_gui_dl_sanitize_name(doc.file_name, safe, sizeof(safe));
+    tg_gui_dl_sanitize_name(tg_gui_dl.doc.file_name, safe, sizeof(safe));
     (void)mkdir("downloads", 0777);
     tg_platform_ensure_drawer_icon("downloads"); /* visible on Workbench */
-    sprintf(path, "downloads/%s", safe);
-    f = fopen(path, "wb");
-    if (f == 0) {
-        tg_mtproto_close_quiet_stream(quiet, stream);
+    sprintf(tg_gui_dl.path, "downloads/%s", safe);
+    tg_gui_dl.f = fopen(tg_gui_dl.path, "wb");
+    if (tg_gui_dl.f == 0) {
+        tg_mtproto_close_quiet_stream(tg_gui_dl.quiet, stream);
+        tg_gui_dl.quiet = 0;
         return 3;
     }
-    rc = 4; /* found + file open: any further failure is a transfer error */
-    offset = 0UL;
-    chunk_retry = 0;
-    for (;;) {
-        tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-        if (tg_mtproto_build_upload_get_document(&writer, &doc, offset,
-                                                 TG_GUI_DL_CHUNK) !=
-            TG_MTPROTO_TL_OK) {
-            break;
-        }
-        memset(&result, 0, sizeof(result));
-        {
-            int gfrc;
-            char gl[128];
-            gfrc = tg_mtproto_send_saved_query_on_context(
-                fc->host, fc->port,
-                fc->api_id, fc->auth_file,
-                fc->dc_id_text,
-                fc->context, query, writer.length, &result,
-                quiet, "mtproto getFile(document)", 600U);
-            sprintf(gl, "download: getFile off=%lu qlen=%lu rc=%d ctor=0x%08lx",
-                    offset, writer.length, gfrc, result.result_constructor);
-            tg_gui_log(gl);
-            if (gfrc != 0) {
+    tg_gui_dl.rc = 4; /* file open: any further failure is a transfer error */
+    tg_gui_dl.active = 1;
+    return 0;
+}
+
+/* Move ONE chunk. Returns 1 while the transfer is running, 0 once finished
+   (rc set); the caller must then call tg_mtproto_download_end(). */
+static int tg_mtproto_download_step(void)
+{
+    unsigned char query[384]; /* holds a getFile with a long file_reference */
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_rpc_result result;
+    const unsigned char *bytes;
+    unsigned long bytes_len;
+    int cdn = 0; /* stays 0 when unpack fails before the parse fills it */
+
+    if (!tg_gui_dl.active || tg_gui_dl.rc == 5) {
+        return 0; /* idle, or cancelled: don't overwrite rc with a late finish */
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_upload_get_document(&writer, &tg_gui_dl.doc,
+                                             tg_gui_dl.offset,
+                                             TG_GUI_DL_CHUNK) !=
+        TG_MTPROTO_TL_OK) {
+        return 0; /* rc stays 4 */
+    }
+    memset(&result, 0, sizeof(result));
+    {
+        int gfrc;
+        char gl[128];
+        gfrc = tg_mtproto_send_saved_query_on_context(
+            tg_gui_dl.fc.host, tg_gui_dl.fc.port,
+            tg_gui_dl.fc.api_id, tg_gui_dl.fc.auth_file,
+            tg_gui_dl.fc.dc_id_text,
+            tg_gui_dl.fc.context, query, writer.length, &result,
+            tg_gui_dl.quiet, "mtproto getFile(document)", 600U);
+        sprintf(gl, "download: getFile off=%lu qlen=%lu rc=%d ctor=0x%08lx",
+                tg_gui_dl.offset, writer.length, gfrc,
+                result.result_constructor);
+        tg_gui_log(gl);
+        if (gfrc != 0) {
             /* One flaky chunk must not throw away a transfer that is already
-               megabytes in (a phone hotspot dropped the 24th chunk of a 15 MB
-               file after 1.4 MB had landed fine). Retry the SAME offset a few
-               times -- nothing has been written for it yet, so re-asking is
-               safe -- and only give up once a chunk fails repeatedly. */
-            if (++chunk_retry <= TG_GUI_DL_CHUNK_RETRIES) {
+               megabytes in. Retry the SAME offset a few times -- nothing has
+               been written for it yet -- and only give up once a chunk fails
+               repeatedly. */
+            if (++tg_gui_dl.chunk_retry <= TG_GUI_DL_CHUNK_RETRIES) {
                 char rl[96];
 
                 sprintf(rl, "download: retry %d @off %lu (%.40s)",
-                        chunk_retry, offset, tg_mtproto_query_fail);
+                        tg_gui_dl.chunk_retry, tg_gui_dl.offset,
+                        tg_mtproto_query_fail);
                 tg_gui_log(rl);
                 if (strncmp(tg_mtproto_query_fail, "send", 4) == 0 ||
                     strncmp(tg_mtproto_query_fail, "transport", 9) == 0) {
-                    /* Dead/wedged socket: retrying on it would just time out
-                       again. Drop the connection so the next query reopens a
-                       fresh one (ensure_saved_auth_context reconnects). */
-                    tg_mtproto_close_auth_context(fc->context);
+                    /* Dead/wedged socket: reconnect before re-asking. */
+                    tg_mtproto_close_auth_context(tg_gui_dl.fc.context);
                 }
-                if (progress != 0 &&
-                    progress(offset, doc.size_lo, progress_data) != 0) {
-                    rc = 5;
-                    break;
-                }
-                continue; /* same offset, fresh getFile */
+                return 1; /* same offset, fresh getFile next step */
             }
-            if (out_path != 0 && out_path_size > 0UL) {
-                /* Say WHY: a bare "no reply" hid a slow-link budget expiry
-                   (MorphOS streams big replies slowly) behind the document
-                   metadata, which told us nothing about the failure. */
-                sprintf(out_path, "@off %lu after %d tries: %.48s", offset,
-                        chunk_retry - 1,
-                        tg_mtproto_query_fail[0] != '\0'
-                            ? tg_mtproto_query_fail : "no reply");
-            }
-            break;
-            }
-        }
-        if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
-            long ecode = 0L;
-            char emsg[96];
-
-            emsg[0] = '\0';
-            (void)tg_mtproto_parse_rpc_error(result.result_body - 4U,
-                                             result.result_body_length + 4U,
-                                             &ecode, emsg, sizeof(emsg));
-            {
-                char d[160];
-                sprintf(d, "download: getFile rpc-error %ld %s", ecode, emsg);
-                tg_gui_log(d);
-            }
-            if (out_path != 0 && out_path_size > 0UL && emsg[0] != '\0') {
-                unsigned long e = 0UL;
-                while (emsg[e] != '\0' && e + 1UL < out_path_size) {
-                    out_path[e] = emsg[e]; ++e;
-                }
-                out_path[e] = '\0'; /* GUI shows this on rc 4 */
-            }
-            /* FILE_MIGRATE_X: the bytes live on another DC (a forwarded/saved
-               file keeps its origin DC). We cannot follow the migration yet
-               (multi-DC is deferred), so report it as a foreign-DC file. */
-            if (strncmp(emsg, "FILE_MIGRATE", 12) == 0) {
-                rc = 2;
-                break;
-            }
-            /* FILE_REFERENCE_EXPIRED mid-transfer: re-fetch once, restart. */
-            if (!refetched &&
-                tg_mtproto_file_find_document(
-                    fc, resolved_msg_id != 0UL ? resolved_msg_id : msg_id,
-                    quiet, &doc, 0) == 0) {
-                refetched = 1;
-                offset = 0UL;
-                if (fseek(f, 0L, SEEK_SET) == 0) {
-                    continue;
-                }
-            }
-            break;
-        }
-        if (tg_mtproto_unpack_gzip_result(&result, quiet,
-                                          "mtproto getFile(document)") != 0 ||
-            tg_mtproto_parse_upload_file(result.result_constructor,
-                                         result.result_body,
-                                         result.result_body_length, &bytes,
-                                         &bytes_len, &cdn) !=
-                TG_MTPROTO_TL_OK ||
-            cdn) {
-            tg_gui_log("download: cdn/parse fail (unsupported)");
-            if (out_path != 0 && out_path_size > 12UL) {
-                strcpy(out_path, cdn ? "CDN file" : "bad reply");
-            }
-            break; /* CDN redirect (large public file) not handled yet */
-        }
-        if (bytes_len > 0UL &&
-            fwrite(bytes, 1, bytes_len, f) != bytes_len) {
-            rc = 3;
-            break;
-        }
-        offset += bytes_len;
-        chunk_retry = 0; /* this chunk landed: the budget is per-chunk */
-        /* Progress + cancel: report bytes-so-far / total (size_lo alone is
-           fine, the transfer hard-stops at 512 MB below), and honour a
-           non-zero return as "user cancelled" so a slow download can be
-           aborted from the window instead of resetting the machine. */
-        if (progress != 0 &&
-            progress(offset, doc.size_lo, progress_data) != 0) {
-            rc = 5; /* cancelled: the partial file is removed below (rc != 0) */
-            tg_gui_log("download: cancelled by user");
-            break;
-        }
-        if (bytes_len < TG_GUI_DL_CHUNK) {
-            rc = 0; /* short chunk = last chunk: done */
-            break;
-        }
-        if (offset >= (0x00100000UL * 512UL)) {
-            break; /* 512 MB hard stop: no runaway on a bad size */
+            sprintf(tg_gui_dl.fail, "@off %lu after %d tries: %.48s",
+                    tg_gui_dl.offset, tg_gui_dl.chunk_retry - 1,
+                    tg_mtproto_query_fail[0] != '\0'
+                        ? tg_mtproto_query_fail : "no reply");
+            return 0; /* rc 4 */
         }
     }
-    if (fclose(f) != 0 && rc == 0) {
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        long ecode = 0L;
+        char emsg[96];
+
+        emsg[0] = '\0';
+        (void)tg_mtproto_parse_rpc_error(result.result_body - 4U,
+                                         result.result_body_length + 4U,
+                                         &ecode, emsg, sizeof(emsg));
+        {
+            char d[160];
+            sprintf(d, "download: getFile rpc-error %ld %s", ecode, emsg);
+            tg_gui_log(d);
+        }
+        if (emsg[0] != '\0') {
+            sprintf(tg_gui_dl.fail, "%.90s", emsg);
+        }
+        /* FILE_MIGRATE_X: the bytes live on another DC. Multi-DC is punto
+           1c; until then report it as a foreign-DC file. */
+        if (strncmp(emsg, "FILE_MIGRATE", 12) == 0) {
+            tg_gui_dl.rc = 2;
+            return 0;
+        }
+        /* FILE_REFERENCE_EXPIRED mid-transfer: re-fetch once, restart. */
+        if (!tg_gui_dl.refetched &&
+            tg_mtproto_file_find_document(
+                &tg_gui_dl.fc,
+                tg_gui_dl.resolved_msg_id != 0UL ? tg_gui_dl.resolved_msg_id
+                                                 : tg_gui_dl.msg_id,
+                tg_gui_dl.quiet, &tg_gui_dl.doc, 0) == 0) {
+            tg_gui_dl.refetched = 1;
+            tg_gui_dl.offset = 0UL;
+            if (fseek(tg_gui_dl.f, 0L, SEEK_SET) == 0) {
+                return 1;
+            }
+        }
+        return 0; /* rc 4 */
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, tg_gui_dl.quiet,
+                                      "mtproto getFile(document)") != 0 ||
+        tg_mtproto_parse_upload_file(result.result_constructor,
+                                     result.result_body,
+                                     result.result_body_length, &bytes,
+                                     &bytes_len, &cdn) !=
+            TG_MTPROTO_TL_OK ||
+        cdn) {
+        tg_gui_log("download: cdn/parse fail (unsupported)");
+        strcpy(tg_gui_dl.fail, cdn ? "CDN file" : "bad reply");
+        return 0; /* CDN redirect (large public file) not handled yet */
+    }
+    if (bytes_len > 0UL &&
+        fwrite(bytes, 1, bytes_len, tg_gui_dl.f) != bytes_len) {
+        tg_gui_dl.rc = 3;
+        return 0;
+    }
+    tg_gui_dl.offset += bytes_len;
+    tg_gui_dl.chunk_retry = 0; /* this chunk landed */
+    if (bytes_len < TG_GUI_DL_CHUNK) {
+        tg_gui_dl.rc = 0; /* short chunk = last chunk: done */
+        return 0;
+    }
+    if (tg_gui_dl.offset >= (0x00100000UL * 512UL)) {
+        return 0; /* 512 MB hard stop: no runaway on a bad size (rc 4) */
+    }
+    return 1;
+}
+
+/* Cancel a running transfer (close gadget / ESC): end() removes the partial. */
+static void tg_mtproto_download_cancel(void)
+{
+    if (tg_gui_dl.active) {
+        tg_gui_dl.rc = 5;
+        tg_gui_log("download: cancelled by user");
+    }
+}
+
+/* Close the engine: file (partial removed on failure), quiet stream, state.
+   Returns the final rc; out_path gets the saved path (ok) or the reason. */
+static int tg_mtproto_download_end(char *out_path,
+                                   unsigned long out_path_size)
+{
+    int rc = tg_gui_dl.rc;
+
+    if (out_path != 0 && out_path_size > 0UL) {
+        out_path[0] = '\0';
+    }
+    if (tg_gui_dl.f != 0 && fclose(tg_gui_dl.f) != 0 && rc == 0) {
         rc = 3;
     }
+    tg_gui_dl.f = 0;
     if (rc != 0) {
-        (void)remove(path); /* a half file is worse than none */
-    } else if (out_path != 0 && out_path_size > 0UL) {
+        (void)remove(tg_gui_dl.path); /* a half file is worse than none */
+    }
+    if (out_path != 0 && out_path_size > 0UL) {
+        const char *src = (rc == 0) ? tg_gui_dl.path : tg_gui_dl.fail;
         unsigned long n = 0UL;
-        const char *p;
 
-        for (p = path; *p != '\0' && n + 1UL < out_path_size; ++p) {
-            out_path[n++] = *p;
+        while (src[n] != '\0' && n + 1UL < out_path_size) {
+            out_path[n] = src[n]; ++n;
         }
         out_path[n] = '\0';
     }
-    tg_mtproto_close_quiet_stream(quiet, stream);
+    if (tg_gui_dl.quiet != 0) {
+        tg_mtproto_close_quiet_stream(tg_gui_dl.quiet, tg_gui_dl.stream);
+        tg_gui_dl.quiet = 0;
+    }
+    tg_gui_dl.active = 0;
     return rc;
+}
+
+/* Blocking wrapper over the state machine: the TUI (and any legacy caller)
+   still gets the old single-call download, byte-identical outcomes. */
+static int tg_mtproto_file_download(const tg_mtproto_file_ctx *fc,
+                                    unsigned long msg_id, char *out_path,
+                                    unsigned long out_path_size, FILE *stream,
+                                    tg_gui_download_progress_fn progress,
+                                    void *progress_data)
+{
+    int brc;
+
+    brc = tg_mtproto_download_begin(fc, msg_id, stream);
+    if (brc != 0) {
+        if (out_path != 0 && out_path_size > 0UL) {
+            unsigned long n = 0UL;
+
+            /* When begin() bounced off a RUNNING transfer, fail[] is that
+               transfer's -- report nothing rather than someone else's reason. */
+            if (!tg_gui_dl.active) {
+                while (tg_gui_dl.fail[n] != '\0' && n + 1UL < out_path_size) {
+                    out_path[n] = tg_gui_dl.fail[n]; ++n;
+                }
+            }
+            out_path[n] = '\0';
+        }
+        return brc;
+    }
+    while (tg_mtproto_download_step()) {
+        if (progress != 0 &&
+            progress(tg_gui_dl.offset, tg_gui_dl.doc.size_lo,
+                     progress_data) != 0) {
+            tg_mtproto_download_cancel();
+            break;
+        }
+    }
+    return tg_mtproto_download_end(out_path, out_path_size);
 }
 
 /* Fills the bundle from the GUI session singleton. */
@@ -14613,6 +14784,106 @@ int tg_gui_session_send_document(const char *path, FILE *stream,
     }
     tg_gui_session_file_ctx(&fc);
     return tg_mtproto_file_send(&fc, path, stream, progress, progress_data);
+}
+
+/* --- 0.0.8 punto 1b: non-blocking transfer API for the GUI event loop. ----
+   The window arms a transfer and keeps processing events; each pump call
+   moves ONE chunk/part on the file channel. Direction is remembered here so
+   the window only ever talks to this one four-call API. */
+static int tg_gui_transfer_dir; /* 0 idle, 1 download, 2 upload */
+
+int tg_gui_session_transfer_busy(void)
+{
+    return tg_gui_transfer_dir;
+}
+
+int tg_gui_session_transfer_start_download(unsigned long msg_id, FILE *stream)
+{
+    tg_mtproto_file_ctx fc;
+    int rc;
+
+    if (!tg_gui_session_state.open || msg_id == 0UL ||
+        tg_gui_transfer_dir != 0) {
+        return 1;
+    }
+    tg_gui_session_file_ctx(&fc);
+    rc = tg_mtproto_download_begin(&fc, msg_id, stream);
+    if (rc != 0) {
+        /* Surface the begin() reason (e.g. "document not in cache") where
+           the status bar already looks: tg_gui_session_last_transfer_error. */
+        if (!tg_gui_dl.active && tg_gui_dl.fail[0] != '\0') {
+            sprintf(tg_mtproto_query_fail, "%.60s", tg_gui_dl.fail);
+        }
+        return rc;
+    }
+    tg_gui_transfer_dir = 1;
+    return 0;
+}
+
+int tg_gui_session_transfer_start_upload(const char *path, FILE *stream)
+{
+    tg_mtproto_file_ctx fc;
+    int rc;
+
+    if (!tg_gui_session_state.open || tg_gui_transfer_dir != 0) {
+        return 1;
+    }
+    tg_gui_session_file_ctx(&fc);
+    rc = tg_mtproto_upload_begin(&fc, path, stream);
+    if (rc != 0) {
+        return rc;
+    }
+    tg_gui_transfer_dir = 2;
+    return 0;
+}
+
+int tg_gui_session_transfer_step(unsigned long *done, unsigned long *total)
+{
+    int running = 0;
+
+    if (tg_gui_transfer_dir == 1) {
+        running = tg_mtproto_download_step();
+        if (done != 0) {
+            *done = tg_gui_dl.offset;
+        }
+        if (total != 0) {
+            *total = tg_gui_dl.doc.size_lo;
+        }
+    } else if (tg_gui_transfer_dir == 2) {
+        running = tg_mtproto_upload_step();
+        if (done != 0) {
+            *done = tg_gui_ul.part;
+        }
+        if (total != 0) {
+            *total = tg_gui_ul.parts;
+        }
+    }
+    return running;
+}
+
+void tg_gui_session_transfer_cancel(void)
+{
+    if (tg_gui_transfer_dir == 1) {
+        tg_mtproto_download_cancel();
+    } else if (tg_gui_transfer_dir == 2) {
+        tg_mtproto_upload_cancel();
+    }
+}
+
+int tg_gui_session_transfer_end(char *out_path, unsigned long out_path_size)
+{
+    int rc = 1;
+
+    if (out_path != 0 && out_path_size > 0UL) {
+        out_path[0] = '\0';
+    }
+    if (tg_gui_transfer_dir == 1) {
+        rc = tg_mtproto_download_end(out_path, out_path_size);
+    } else if (tg_gui_transfer_dir == 2) {
+        rc = tg_mtproto_upload_end();
+    }
+    tg_gui_transfer_dir = 0;
+    return rc;
 }
 
 
