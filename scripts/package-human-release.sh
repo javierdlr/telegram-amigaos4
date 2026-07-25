@@ -640,6 +640,22 @@ package_one() {
             rm -rf "$lhatmp"
             echo "ERROR $platform: lha binary != built binary ($binary)" >&2; exit 1
         fi
+        # Architecture guard: the binary INSIDE the lha must be the right
+        # kind for the lane (an OS4 ELF inside the OS3 package shipped in
+        # 0.0.7: LoadSeg fails and Workbench says "unable to open tool").
+        case "$archtag" in
+            m68k-amigaos) arch_want="loadseg" ;;
+            ppc-morphos|ppc-amigaos) arch_want="PowerPC" ;;
+            i386-aros) arch_want="Intel 80386" ;;
+            x86_64-aros) arch_want="x86-64" ;;
+            *) arch_want="" ;;
+        esac
+        if [ -n "$arch_want" ] && \
+           ! file -b "$lhatmp/$AMINET_DRAWER/TelegramAmiga" | grep -q "$arch_want"; then
+            rm -rf "$lhatmp"
+            echo "ERROR $platform: wrong-arch binary inside $lhafile (want $arch_want)" >&2
+            exit 1
+        fi
         rm -rf "$lhatmp"
         write_aminet_readme "$AMINET_ROOT/$lhaname.readme" "$archval" "$requires" "$lhaold"
         echo "$lhafile  +  $lhaname.readme  [Architecture: $archval]"
@@ -670,8 +686,14 @@ fi
 # (their processor keys off the readme). Readme = THEIR header format
 # (name:/description:/.../hend:) + our Aminet body. Queue shows on
 # https://os4depot.net/index.php?function=uploads after ~15 min.
+# In its OWN subdirectory: "telegramamiga.lha" next to "TelegramAmiga.lha"
+# SILENTLY OVERWRITES the Aminet OS3 package on a case-insensitive macOS
+# filesystem -- that shipped an OS4 ELF to every Aminet OS3 downloader in
+# 0.0.7 (field report 2026-07-26, "unable to open tool").
+OS4DEPOT_ROOT=${OS4DEPOT_ROOT:-"$PACKAGE_ROOT/os4depot"}
 if [ "$AMINET" = "1" ] && [ -f "$AMINET_ROOT/TelegramAmiga-OS4.lha" ]; then
-    cp "$AMINET_ROOT/TelegramAmiga-OS4.lha" "$AMINET_ROOT/telegramamiga.lha"
+    mkdir -p "$OS4DEPOT_ROOT"
+    cp "$AMINET_ROOT/TelegramAmiga-OS4.lha" "$OS4DEPOT_ROOT/telegramamiga.lha"
     {
         printf 'name:TelegramAmiga\n'
         printf 'description:Native MTProto Telegram chat client\n'
@@ -689,9 +711,10 @@ if [ "$AMINET" = "1" ] && [ -f "$AMINET_ROOT/TelegramAmiga-OS4.lha" ]; then
         # body: the Aminet OS4 readme minus its header block
         awk 'flip { print } /^$/ && !flip { flip = 1 }' \
             "$AMINET_ROOT/TelegramAmiga-OS4.readme"
-    } > "$AMINET_ROOT/telegramamiga_lha.readme"
+    } > "$OS4DEPOT_ROOT/telegramamiga_lha.readme"
+    rm -f "$AMINET_ROOT/telegramamiga_lha.readme" # pre-0.0.8 location, stale
     echo
-    echo "OS4Depot pair ready: telegramamiga.lha + telegramamiga_lha.readme"
+    echo "OS4Depot pair ready in: $OS4DEPOT_ROOT (telegramamiga.lha + readme)"
     echo "Upload: curl -T telegramamiga.lha ftp://os4depot.net/upload/ --user anonymous:"
     echo "        then the readme (LAST). Queue: os4depot.net ?function=uploads"
 fi
