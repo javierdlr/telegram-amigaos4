@@ -14419,8 +14419,10 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
      auth.importAuthorization#a57a7dad id:long bytes:bytes = auth.Authorization; */
 static tg_mtproto_auth_context tg_gui_foreign_context;
 static unsigned long tg_gui_foreign_dc; /* DC the channel points at; 0 none */
-static char tg_gui_foreign_dc_text[8];
-static char tg_gui_foreign_auth_file[40];
+/* Sized for a full %lu (dc is 1..5 in practice, the DC table validates it
+   first, but gcc's format-overflow check reasons about the whole range). */
+static char tg_gui_foreign_dc_text[24];
+static char tg_gui_foreign_auth_file[56];
 static int tg_gui_foreign_imported; /* account authority imported this run */
 
 static int tg_gui_session_setup_foreign_channel(
