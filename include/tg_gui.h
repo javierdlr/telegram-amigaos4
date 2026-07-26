@@ -37,7 +37,8 @@
 #define TG_GUI_PEN_MENU_FILL 12     /* hovered item fill (system fill) */
 #define TG_GUI_PEN_MENU_FILLTEXT 13 /* hovered item text (system fill text) */
 #define TG_GUI_PEN_MENU_FRAME 14    /* popup outline (system shadow) */
-#define TG_GUI_PEN_COUNT 15
+#define TG_GUI_PEN_LINK 15          /* clickable URL in an incoming bubble */
+#define TG_GUI_PEN_COUNT 16
 
 /* Distinct avatar / sender tints, resolved by the backend like the pens. */
 #define TG_GUI_AVATAR_COLORS 6
@@ -56,6 +57,7 @@ typedef struct tg_gui_rect {
 #define TG_GUI_STYLE_ITALIC 2
 #define TG_GUI_STYLE_CODE   4
 #define TG_GUI_STYLE_STRIKE 8
+#define TG_GUI_STYLE_UNDERLINE 16 /* clickable URLs (0.0.8) */
 
 /* Per-platform drawing shim. The portable renderer owns all layout and only
    calls these. The host build supplies a recording backend for the self-test. */

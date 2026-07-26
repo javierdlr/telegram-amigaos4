@@ -20,9 +20,10 @@ unless noted.
   result list.
 - Experimental plain-68000 build option (`M68K_CPU=68000`), not part of the
   released packages yet.
-- Clickable links: clicking a http(s):// or www. URL inside a message opens
-  the system browser via the OpenURL/URLOpen command; without one the URL is
-  copied to the clipboard instead.
+- Clickable links: a http(s):// or www. URL inside a message is drawn blue
+  and underlined, and clicking it opens the system browser via the
+  OpenURL/URLOpen command; without one the URL is copied to the clipboard
+  instead.
 - Foreign-DC avatars: a profile photo stored on another datacenter now
   downloads through the same multi-DC file channel instead of staying a
   blurred thumbnail forever.

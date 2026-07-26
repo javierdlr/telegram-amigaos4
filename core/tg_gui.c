@@ -796,15 +796,55 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
    via the backend's set_style hook. *style carries across wrapped lines so a
    span that breaks over two lines stays styled. Backends without set_style get
    clean text (markers skipped), just unstyled. */
-static void tg_gui_draw_markup(tg_gui_backend *backend, int pen, int x,
-                               int baseline, const char *text,
+/* Length of the web link starting at text[i], or 0 when there is none.
+   Word-anchored (the caller only asks at word starts) and stops at the
+   first blank; trailing punctuation is left out so a link at the end of a
+   sentence does not swallow the full stop -- the same trimming the click
+   handler does, so what is underlined is what opens. */
+static unsigned long tg_gui_link_span(const char *text, unsigned long i,
+                                      unsigned long length)
+{
+    unsigned long n = length - i;
+    unsigned long end;
+
+    if ((n > 7UL && strncmp(text + i, "http://", 7) == 0) ||
+        (n > 8UL && strncmp(text + i, "https://", 8) == 0) ||
+        (n > 4UL && strncmp(text + i, "www.", 4) == 0)) {
+        end = i;
+        while (end < length && text[end] != ' ' && text[end] != '\t') {
+            ++end;
+        }
+        while (end > i && (text[end - 1UL] == '.' || text[end - 1UL] == ',' ||
+                           text[end - 1UL] == ';' || text[end - 1UL] == ':' ||
+                           text[end - 1UL] == '!' || text[end - 1UL] == '?' ||
+                           text[end - 1UL] == ')' || text[end - 1UL] == ']' ||
+                           text[end - 1UL] == '>' || text[end - 1UL] == '"')) {
+            --end;
+        }
+        return end - i;
+    }
+    return 0UL;
+}
+
+/* Draws one wrapped line of message text, interpreting the inline markup
+   markers (* _ ` ~) as styling: each marker toggles a TG_GUI_STYLE_* bit, is
+   not drawn itself, and the run between markers is drawn in the current style
+   via the backend's set_style hook. *style carries across wrapped lines so a
+   span that breaks over two lines stays styled. Web links are drawn in
+   link_pen and underlined (0.0.8) so a clickable URL looks clickable.
+   Backends without set_style get clean text (markers skipped), just
+   unstyled. */
+static void tg_gui_draw_markup(tg_gui_backend *backend, int pen, int link_pen,
+                               int x, int baseline, const char *text,
                                unsigned long length, int *style)
 {
     unsigned long run_start = 0UL;
+    unsigned long link_left = 0UL; /* chars of the current link still to draw */
     unsigned long i;
 
     for (i = 0UL; i <= length; ++i) {
         int toggle = 0;
+        int boundary = 0;
 
         if (i < length) {
             switch (text[i]) {
@@ -823,20 +863,56 @@ static void tg_gui_draw_markup(tg_gui_backend *backend, int pen, int x,
             default:
                 break;
             }
+            if (link_left == 0UL &&
+                (i == 0UL || text[i - 1UL] == ' ' || text[i - 1UL] == '\t')) {
+                unsigned long span = tg_gui_link_span(text, i, length);
+
+                if (span > 0UL) {
+                    link_left = span;
+                    boundary = 1; /* flush the plain run before the link */
+                }
+            }
         }
-        if (toggle != 0 || i == length) {
+        if (toggle != 0 || boundary || i == length) {
             if (i > run_start) {
                 if (backend->set_style != 0) {
-                    backend->set_style(backend, *style);
+                    backend->set_style(backend, link_left > 0UL && !boundary
+                                                    ? (*style |
+                                                       TG_GUI_STYLE_UNDERLINE)
+                                                    : *style);
                 }
-                backend->draw_text(backend, pen, x, baseline,
-                                   text + run_start, i - run_start);
+                backend->draw_text(backend,
+                                   (link_left > 0UL && !boundary) ? link_pen
+                                                                  : pen,
+                                   x, baseline, text + run_start,
+                                   i - run_start);
                 x += backend->text_width(backend, text + run_start,
                                          i - run_start);
             }
             if (toggle != 0) {
                 *style ^= toggle;
                 run_start = i + 1UL;
+            } else {
+                run_start = i; /* link boundary: the run resumes here */
+            }
+        }
+        if (link_left > 0UL && i < length) {
+            --link_left;
+            if (link_left == 0UL) {
+                /* Link ends AFTER this char: flush it in link style now. */
+                unsigned long end = i + 1UL;
+
+                if (end > run_start) {
+                    if (backend->set_style != 0) {
+                        backend->set_style(backend,
+                                           *style | TG_GUI_STYLE_UNDERLINE);
+                    }
+                    backend->draw_text(backend, link_pen, x, baseline,
+                                       text + run_start, end - run_start);
+                    x += backend->text_width(backend, text + run_start,
+                                             end - run_start);
+                }
+                run_start = end;
             }
         }
     }
@@ -1214,7 +1290,13 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
                     }
                 }
             }
-            tg_gui_draw_markup(backend, text_pen, bubble_x + pad, baseline,
+            /* On an OWN bubble the background is the accent blue, where a
+               blue link would vanish: use the azure that the read-receipt
+               ticks already prove readable there. */
+            tg_gui_draw_markup(backend, text_pen,
+                               message->is_own ? TG_GUI_PEN_READ
+                                               : TG_GUI_PEN_LINK,
+                               bubble_x + pad, baseline,
                                message->text + starts[k], lengths[k], &style);
         }
     }

@@ -266,7 +266,8 @@ static const tg_gui_rgb tg_gui_dark_pens[TG_GUI_PEN_COUNT] = {
     {0x00, 0x00, 0x00}, /* MENU_TEXT */
     {0x00, 0x55, 0xaa}, /* MENU_FILL */
     {0xff, 0xff, 0xff}, /* MENU_FILLTEXT */
-    {0x00, 0x00, 0x00}  /* MENU_FRAME */
+    {0x00, 0x00, 0x00}, /* MENU_FRAME */
+    {0x6f, 0xb8, 0xff}  /* LINK - light blue, readable on the dark surface */
 };
 
 static const tg_gui_rgb tg_gui_avatar_rgb[TG_GUI_AVATAR_COLORS] = {
@@ -737,7 +738,8 @@ static void tg_gui_amiga_set_style(tg_gui_backend *backend, int style)
     if ((style & TG_GUI_STYLE_ITALIC) != 0) {
         soft |= FSF_ITALIC;
     }
-    if ((style & (TG_GUI_STYLE_CODE | TG_GUI_STYLE_STRIKE)) != 0) {
+    if ((style & (TG_GUI_STYLE_CODE | TG_GUI_STYLE_STRIKE |
+                  TG_GUI_STYLE_UNDERLINE)) != 0) {
         soft |= FSF_UNDERLINED;
     }
     SetSoftStyle(ctx->rport, soft, FSF_BOLD | FSF_ITALIC | FSF_UNDERLINED);
