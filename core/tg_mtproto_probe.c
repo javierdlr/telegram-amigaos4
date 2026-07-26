@@ -1195,6 +1195,23 @@ static void tg_mtproto_ack_encrypted_message(
                                    label);
 }
 
+/* Shared query-loop buffers (one query in flight per task, callers are
+   strictly serial): the classic loop below and the 1d pipelined pair reuse
+   the SAME storage, so the split adds no BSS. payload/packet carry the
+   outgoing frame; response/decrypted the incoming one. */
+static unsigned char tg_mtproto_q_payload[TG_MTPROTO_QUERY_SEND_MAX];
+static unsigned char tg_mtproto_q_packet[TG_MTPROTO_QUERY_SEND_MAX + 64U];
+/* getHistory of a busy group can return several messages plus the referenced
+   users/chats; a too-small buffer makes recv_abridged_packet reject the
+   frame (payload > capacity) and the read hard-fails. Sized by
+   TG_MTPROTO_REPLY_RECV_MAX for the deep-backlog page. */
+static unsigned char tg_mtproto_q_response[TG_MTPROTO_REPLY_RECV_MAX];
+static tg_mtproto_encrypted_message tg_mtproto_q_decrypted;
+#define payload tg_mtproto_q_payload
+#define packet tg_mtproto_q_packet
+#define response tg_mtproto_q_response
+#define decrypted tg_mtproto_q_decrypted
+
 static int tg_mtproto_send_encrypted_query_limited(
     tg_mtproto_auth_context *context,
     const unsigned char *body,
@@ -1206,14 +1223,6 @@ static int tg_mtproto_send_encrypted_query_limited(
     unsigned long query_budget_seconds)
 {
     unsigned char encrypted_padding[64];
-    static unsigned char payload[TG_MTPROTO_QUERY_SEND_MAX];
-    static unsigned char packet[TG_MTPROTO_QUERY_SEND_MAX + 64U];
-    /* getHistory of a busy group can return several messages plus the referenced
-       users/chats; a too-small buffer makes recv_abridged_packet reject the
-       frame (payload > capacity) and the read hard-fails with "Could not read
-       messages now." Sized by TG_MTPROTO_REPLY_RECV_MAX for the deep-backlog page
-       we now request (60 non-m68k / 30 m68k), not the old 5-message page. */
-    static unsigned char response[TG_MTPROTO_REPLY_RECV_MAX];
     unsigned long encrypted_padding_length;
     unsigned long payload_length;
     unsigned long response_length;
@@ -1224,7 +1233,6 @@ static int tg_mtproto_send_encrypted_query_limited(
     int retry_request;
     unsigned long response_constructor;
     tg_mtproto_bad_msg_notification bad_msg;
-    static tg_mtproto_encrypted_message decrypted;
     tg_mtproto_message_id request_msg_id;
     tg_mtproto_tl_writer writer;
     tg_net_status net_status;
@@ -1512,6 +1520,181 @@ static int tg_mtproto_send_encrypted_query_limited(
     fprintf(stream, "%s: bad-msg-retry-failed\n", label);
     return TG_MTPROTO_QUERY_SOFT_FAIL;
 }
+
+#undef payload
+#undef packet
+#undef response
+#undef decrypted
+
+/* --- 0.0.8 punto 1d: the pipelined query pair (file channel only). --------
+   send_query_noreply fires a query and returns; recv_rpc_result waits for
+   ONE specific msg_id.
+   Any anomaly (bad_msg, budget, transport, a reply for anything else)
+   makes the caller close the connection -- that drains everything in
+   flight and the proven 0.0.7 per-chunk retry takes over synchronously.
+   Exactly ONE query is in flight at a time (the next chunk, prefetched
+   while the current one lands), so there is nothing to queue or park. */
+
+static int tg_mtproto_send_query_noreply(tg_mtproto_auth_context *context,
+                                         const unsigned char *body,
+                                         unsigned long body_length,
+                                         tg_mtproto_message_id *out_msg_id,
+                                         FILE *stream, const char *label)
+{
+    unsigned char encrypted_padding[64];
+    unsigned long encrypted_padding_length;
+    unsigned long payload_length;
+    tg_mtproto_tl_writer writer;
+    tg_net_status net_status;
+    char error_buffer[160];
+
+    if (context == 0 || !context->connection_open || body == 0 ||
+        body_length == 0UL || out_msg_id == 0 || stream == 0 || label == 0) {
+        return 2;
+    }
+    tg_mtproto_query_fail[0] = '\0';
+    encrypted_padding_length = 12UL;
+    while (((32UL + body_length + encrypted_padding_length) % 16UL) != 0UL) {
+        ++encrypted_padding_length;
+    }
+    tg_mtproto_saved_session_random(encrypted_padding,
+                                    encrypted_padding_length);
+    tg_mtproto_client_message_id(tg_mtproto_context_time(context), 16UL,
+                                 &context->last_msg_id, out_msg_id);
+    context->last_msg_id = *out_msg_id;
+    context->session.last_msg_id_hi = out_msg_id->hi;
+    context->session.last_msg_id_lo = out_msg_id->lo;
+    tg_mtproto_tl_writer_init(&writer, tg_mtproto_q_payload,
+                              sizeof(tg_mtproto_q_payload));
+    if (tg_mtproto_write_encrypted_message(
+            &writer, context->auth_key, context->session.server_salt_hi,
+            context->session.server_salt_lo, context->session.session_id,
+            out_msg_id->hi, out_msg_id->lo, context->session.seq_no, body,
+            body_length, encrypted_padding,
+            encrypted_padding_length) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: pipe-build-failed\n", label);
+        return 2;
+    }
+    payload_length = writer.length;
+    tg_mtproto_tl_writer_init(&writer, tg_mtproto_q_packet,
+                              sizeof(tg_mtproto_q_packet));
+    if (tg_mtproto_write_abridged_packet(&writer, tg_mtproto_q_payload,
+                                         payload_length) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: pipe-transport-build-failed\n", label);
+        return 2;
+    }
+    error_buffer[0] = '\0';
+    net_status = tg_mtproto_send_all(&context->connection,
+                                     tg_mtproto_q_packet, writer.length,
+                                     error_buffer, sizeof(error_buffer));
+    if (net_status != TG_NET_OK) {
+        sprintf(tg_mtproto_query_fail, "send %.40s",
+                tg_net_status_name(net_status));
+        fprintf(stream, "%s: pipe-send-failed (%s)\n", label,
+                tg_net_status_name(net_status));
+        return 2;
+    }
+    context->session.seq_no += 2UL; /* consumed by SENDING, as ever */
+    return 0;
+}
+
+/* 0 = wanted delivered; 1 = idle budget hit (reason set); 2 = transport or
+   decrypt trouble; 3 = pipe-broken (a bad_msg needs a RESEND, which the
+   split model cannot do -- the caller reconnects and retries). */
+static int tg_mtproto_recv_rpc_result(tg_mtproto_auth_context *context,
+                                      const tg_mtproto_message_id *wanted,
+                                      tg_mtproto_rpc_result *rpc_result,
+                                      FILE *stream, const char *label,
+                                      unsigned long query_budget_seconds)
+{
+    unsigned long response_length;
+    unsigned long query_start_time;
+    unsigned long rx_seen;
+    unsigned long response_constructor;
+    tg_mtproto_bad_msg_notification bad_msg;
+    tg_net_status net_status;
+    char error_buffer[160];
+
+    if (context == 0 || !context->connection_open || wanted == 0 ||
+        rpc_result == 0 || stream == 0 || label == 0) {
+        return 2;
+    }
+    if (query_budget_seconds == 0UL) {
+        query_budget_seconds = TG_MTPROTO_QUERY_BUDGET_SECONDS;
+    }
+    query_start_time = (unsigned long)time(0);
+    rx_seen = tg_mtproto_rx_progress;
+    for (;;) {
+        if (tg_mtproto_rx_progress != rx_seen) {
+            rx_seen = tg_mtproto_rx_progress;
+            query_start_time = (unsigned long)time(0); /* idle budget */
+        }
+        if ((unsigned long)time(0) - query_start_time >=
+                query_budget_seconds) {
+            sprintf(tg_mtproto_query_fail, "no data for %lus",
+                    query_budget_seconds);
+            return 1;
+        }
+        net_status = tg_mtproto_recv_abridged_packet(
+            &context->connection, tg_mtproto_q_response,
+            sizeof(tg_mtproto_q_response), &response_length, error_buffer,
+            sizeof(error_buffer));
+        if (net_status == TG_NET_TIMEOUT) {
+            continue; /* quiet interval: budget above decides */
+        }
+        if (net_status != TG_NET_OK) {
+            sprintf(tg_mtproto_query_fail, "transport %.40s",
+                    tg_net_status_name(net_status));
+            fprintf(stream, "%s: pipe-transport-failed (%s)\n", label,
+                    tg_net_status_name(net_status));
+            return 2;
+        }
+        if (tg_mtproto_decrypt_encrypted_message(
+                tg_mtproto_q_response, response_length, context->auth_key,
+                &tg_mtproto_q_decrypted) != TG_MTPROTO_TL_OK) {
+            fprintf(stream, "%s: pipe-decrypt-failed\n", label);
+            return 2;
+        }
+        tg_mtproto_sync_time_from_server(context, &tg_mtproto_q_decrypted);
+        if (tg_mtproto_find_bad_msg(tg_mtproto_q_decrypted.body,
+                                    tg_mtproto_q_decrypted.body_length,
+                                    wanted->hi, wanted->lo, &bad_msg)) {
+            /* Salt/seq/time fixes need a RESEND, which the split model
+               cannot do: apply what is applicable and report pipe-broken. */
+            if (bad_msg.has_new_server_salt && bad_msg.error_code == 48UL) {
+                context->session.server_salt_hi = bad_msg.new_server_salt_hi;
+                context->session.server_salt_lo = bad_msg.new_server_salt_lo;
+            }
+            sprintf(tg_mtproto_query_fail, "pipe bad-msg %lu",
+                    bad_msg.error_code);
+            return 3;
+        }
+        tg_mtproto_ack_encrypted_message(context, &tg_mtproto_q_decrypted,
+                                         stream, label);
+        tg_chat_notify_collect(tg_mtproto_q_decrypted.body,
+                               tg_mtproto_q_decrypted.body_length);
+        if (tg_mtproto_find_rpc_result(tg_mtproto_q_decrypted.body,
+                                       tg_mtproto_q_decrypted.body_length,
+                                       wanted->hi, wanted->lo, rpc_result)) {
+            return 0;
+        }
+        response_constructor = tg_mtproto_q_decrypted.body_length >= 4UL ?
+            tg_mtproto_read_u32_le(tg_mtproto_q_decrypted.body) : 0UL;
+        if (response_constructor == TG_MTPROTO_RPC_RESULT_CONSTRUCTOR ||
+            tg_mtproto_is_async_update_constructor(response_constructor) ||
+            response_constructor ==
+                TG_MTPROTO_BAD_MSG_NOTIFICATION_CONSTRUCTOR ||
+            response_constructor == TG_MTPROTO_BAD_SERVER_SALT_CONSTRUCTOR ||
+            response_constructor == TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR ||
+            response_constructor == 0x9ec20908UL) {
+            continue; /* push/ack/other traffic: same tolerance as classic */
+        }
+        fprintf(stream, "%s: pipe-unexpected constructor 0x%08lx\n", label,
+                response_constructor);
+        return 2;
+    }
+}
+
 
 static int tg_mtproto_send_encrypted_query(
     tg_mtproto_auth_context *context,
@@ -14747,6 +14930,15 @@ typedef struct tg_gui_dl_state {
                                     find/refetch always stay on fc (home) */
     unsigned long need_dc;    /* != 0: open the file channel on this DC
                                  before the next chunk */
+    /* 0.0.8 punto 1d: ONE prefetched chunk in flight. When armed, the
+       getFile for `pre_offset` is already on the wire and its reply is
+       matched by `pre_id`; the RTT of that request hides behind the
+       current chunk's own wait. Any anomaly drops the pipeline (the
+       connection is closed, which drains it) and the proven synchronous
+       retry takes the chunk. */
+    int pre_armed;
+    tg_mtproto_message_id pre_id;
+    unsigned long pre_offset;
     int migrations;           /* FILE_MIGRATE hops, bounded */
     char peer_index_copy[64]; /* the live one moves when the user changes chat */
     unsigned long msg_id;
@@ -14848,6 +15040,44 @@ static int tg_mtproto_download_begin(const tg_mtproto_file_ctx *fc,
 
 /* Move ONE chunk. Returns 1 while the transfer is running, 0 once finished
    (rc set); the caller must then call tg_mtproto_download_end(). */
+/* Fire a getFile WITHOUT waiting (0.0.8 punto 1d): same initConnection +
+   invokeWithLayer wrapper the synchronous path uses, then the raw send.
+   Returns 0 with the msg_id to match the reply against. Only used for the
+   PREFETCH of the next chunk: the current chunk always goes through the
+   proven synchronous call, so any failure here just means "no prefetch". */
+static int tg_mtproto_pipe_send_getfile(const tg_mtproto_file_ctx *fc,
+                                        const unsigned char *query,
+                                        unsigned long query_length,
+                                        tg_mtproto_message_id *out_id,
+                                        FILE *stream)
+{
+    static unsigned char wrapped[768]; /* a getFile is small; not a part */
+    unsigned long api_id;
+    tg_mtproto_tl_writer writer;
+
+    if (fc == 0 || fc->context == 0 || !fc->context->connection_open ||
+        tg_mtproto_parse_ulong_arg(fc->api_id, &api_id) != 0) {
+        return 1;
+    }
+    if (tg_mtproto_build_initialized_query(&writer, wrapped, sizeof(wrapped),
+                                           api_id, query, query_length) != 0) {
+        return 1;
+    }
+    return tg_mtproto_send_query_noreply(fc->context, wrapped, writer.length,
+                                         out_id, stream,
+                                         "mtproto getFile(prefetch)");
+}
+
+/* Drop any in-flight prefetch: the connection is closed (which is what
+   actually drains the wire) and the parking slot is emptied. */
+static void tg_mtproto_download_pipe_reset(void)
+{
+    if (tg_gui_dl.pre_armed) {
+        tg_mtproto_close_auth_context(tg_gui_dl.fc_file.context);
+        tg_gui_dl.pre_armed = 0;
+    }
+}
+
 static int tg_mtproto_download_step(void)
 {
     unsigned char query[384]; /* holds a getFile with a long file_reference */
@@ -14884,12 +15114,39 @@ static int tg_mtproto_download_step(void)
     {
         int gfrc;
         char gl[128];
-        gfrc = tg_mtproto_send_saved_query_on_context(
-            tg_gui_dl.fc_file.host, tg_gui_dl.fc_file.port,
-            tg_gui_dl.fc_file.api_id, tg_gui_dl.fc_file.auth_file,
-            tg_gui_dl.fc_file.dc_id_text,
-            tg_gui_dl.fc_file.context, query, writer.length, &result,
-            tg_gui_dl.quiet, "mtproto getFile(document)", 600U);
+
+        if (tg_gui_dl.pre_armed &&
+            tg_gui_dl.pre_offset == tg_gui_dl.offset) {
+            /* 1d: this chunk was asked for one step ago -- its round trip
+               already happened while the previous chunk was landing. Just
+               collect the reply. Anything unusual drops the pipeline and
+               falls through to the synchronous request below. */
+            gfrc = tg_mtproto_recv_rpc_result(
+                tg_gui_dl.fc_file.context, &tg_gui_dl.pre_id, &result,
+                tg_gui_dl.quiet, "mtproto getFile(pipelined)", 600U);
+            tg_gui_dl.pre_armed = 0;
+            if (gfrc != 0) {
+                sprintf(gl, "download: pipe off=%lu rc=%d, falling back",
+                        tg_gui_dl.offset, gfrc);
+                tg_gui_log(gl);
+                tg_mtproto_download_pipe_reset(); /* closes: drains the wire */
+                memset(&result, 0, sizeof(result));
+                gfrc = tg_mtproto_send_saved_query_on_context(
+                    tg_gui_dl.fc_file.host, tg_gui_dl.fc_file.port,
+                    tg_gui_dl.fc_file.api_id, tg_gui_dl.fc_file.auth_file,
+                    tg_gui_dl.fc_file.dc_id_text,
+                    tg_gui_dl.fc_file.context, query, writer.length, &result,
+                    tg_gui_dl.quiet, "mtproto getFile(document)", 600U);
+            }
+        } else {
+            tg_mtproto_download_pipe_reset(); /* stale prefetch, if any */
+            gfrc = tg_mtproto_send_saved_query_on_context(
+                tg_gui_dl.fc_file.host, tg_gui_dl.fc_file.port,
+                tg_gui_dl.fc_file.api_id, tg_gui_dl.fc_file.auth_file,
+                tg_gui_dl.fc_file.dc_id_text,
+                tg_gui_dl.fc_file.context, query, writer.length, &result,
+                tg_gui_dl.quiet, "mtproto getFile(document)", 600U);
+        }
         sprintf(gl, "download: getFile off=%lu qlen=%lu rc=%d ctor=0x%08lx",
                 tg_gui_dl.offset, writer.length, gfrc,
                 result.result_constructor);
@@ -14906,6 +15163,7 @@ static int tg_mtproto_download_step(void)
                         tg_gui_dl.chunk_retry, tg_gui_dl.offset,
                         tg_mtproto_query_fail);
                 tg_gui_log(rl);
+                tg_mtproto_download_pipe_reset(); /* nothing may be in flight */
                 if (strncmp(tg_mtproto_query_fail, "send", 4) == 0 ||
                     strncmp(tg_mtproto_query_fail, "transport", 9) == 0) {
                     /* Dead/wedged socket: reconnect before re-asking. */
@@ -14924,6 +15182,7 @@ static int tg_mtproto_download_step(void)
         long ecode = 0L;
         char emsg[96];
 
+        tg_mtproto_download_pipe_reset(); /* the prefetch is void now */
         emsg[0] = '\0';
         (void)tg_mtproto_parse_rpc_error(result.result_body - 4U,
                                          result.result_body_length + 4U,
@@ -14990,11 +15249,30 @@ static int tg_mtproto_download_step(void)
     tg_gui_dl.offset += bytes_len;
     tg_gui_dl.chunk_retry = 0; /* this chunk landed */
     if (bytes_len < TG_GUI_DL_CHUNK) {
-        tg_gui_dl.rc = 0; /* short chunk = last chunk: done */
+        tg_mtproto_download_pipe_reset(); /* short chunk = last: drop any prefetch */
+        tg_gui_dl.rc = 0;
         return 0;
     }
     if (tg_gui_dl.offset >= (0x00100000UL * 512UL)) {
+        tg_mtproto_download_pipe_reset();
         return 0; /* 512 MB hard stop: no runaway on a bad size (rc 4) */
+    }
+    /* 1d: ask for the NEXT chunk now, so its round trip overlaps this
+       step's write and the caller's paint. Only when the file is known to
+       have more bytes; a failure just means the next step goes synchronous. */
+    if (!tg_gui_dl.pre_armed &&
+        tg_gui_dl.offset + TG_GUI_DL_CHUNK <= tg_gui_dl.doc.size_lo) {
+        tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+        if (tg_mtproto_build_upload_get_document(&writer, &tg_gui_dl.doc,
+                                                 tg_gui_dl.offset,
+                                                 TG_GUI_DL_CHUNK) ==
+                TG_MTPROTO_TL_OK &&
+            tg_mtproto_pipe_send_getfile(&tg_gui_dl.fc_file, query,
+                                         writer.length, &tg_gui_dl.pre_id,
+                                         tg_gui_dl.quiet) == 0) {
+            tg_gui_dl.pre_armed = 1;
+            tg_gui_dl.pre_offset = tg_gui_dl.offset;
+        }
     }
     return 1;
 }
@@ -15003,6 +15281,7 @@ static int tg_mtproto_download_step(void)
 static void tg_mtproto_download_cancel(void)
 {
     if (tg_gui_dl.active) {
+        tg_mtproto_download_pipe_reset();
         tg_gui_dl.rc = 5;
         tg_gui_log("download: cancelled by user");
     }
@@ -15015,6 +15294,7 @@ static int tg_mtproto_download_end(char *out_path,
 {
     int rc = tg_gui_dl.rc;
 
+    tg_mtproto_download_pipe_reset(); /* never leave a request in flight */
     if (out_path != 0 && out_path_size > 0UL) {
         out_path[0] = '\0';
     }

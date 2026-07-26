@@ -39,6 +39,10 @@ unless noted.
   archive management is on the roadmap.
 
 ### Changed
+- Downloads pipeline their chunks: the request for the next chunk goes out
+  while the current one is still arriving, so its round trip stops costing
+  wall-clock. Worth the most on slow or distant routes. Any hiccup drops the
+  pipeline and the proven synchronous retry takes the chunk.
 - File transfers no longer freeze the window: one chunk moves per event-loop
   turn, so you can keep chatting, switch chats and receive messages while a
   file uploads or downloads. Close gadget or ESC cancels the transfer (a
