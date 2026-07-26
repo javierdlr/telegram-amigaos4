@@ -59,6 +59,13 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- Pasting a text file kept its layout here but arrived as one paragraph on
+  other clients: line breaks are now preserved (CR and CRLF normalised),
+  instead of being flattened into spaces. The sidebar search box still takes
+  one line.
+- Long pasted text with accented characters reached other clients as
+  replacement characters (the UTF-8 conversion buffer had stayed at 1 KB
+  while the composer grew).
 - Transfer percentage on files over ~41 MB: it wrapped back to 0 mid-file
   and climbed again (a 32-bit overflow in the percentage itself; the
   transfer was always fine).

@@ -3484,9 +3484,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_PASTE) {
                             /* Paste the clipboard's FTXT at the caret: into
                                the search box when it is active, else into the
-                               composer. Newlines/tabs become spaces (the
-                               input row is one visual line); other control
-                               bytes are dropped. */
+                               composer. LINE BREAKS ARE KEPT (a pasted text
+                               file used to arrive as one paragraph, which
+                               only looked right here because our renderer
+                               re-wraps it -- other clients showed the
+                               original line structure gone): CR / CRLF are
+                               normalised to LF, which the composer wraps on
+                               and Telegram carries as a real newline. Tabs
+                               become spaces, other control bytes are
+                               dropped, and the single-line search box
+                               flattens what is left below. */
                             static char clip[TG_GUI_MSG_TEXT_MAX];
                             unsigned long got =
                                 tg_gui_clip_read_text(clip, sizeof(clip));
@@ -3495,11 +3502,29 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             for (src = 0UL; src < got; ++src) {
                                 unsigned char cch = (unsigned char)clip[src];
 
-                                if (cch == '\n' || cch == '\r' ||
-                                    cch == '\t') {
+                                if (cch == '\r') {
+                                    /* CRLF counts once. */
+                                    if (src + 1UL < got &&
+                                        clip[src + 1UL] == '\n') {
+                                        continue;
+                                    }
+                                    clip[dst++] = '\n';
+                                } else if (cch == '\n') {
+                                    clip[dst++] = '\n';
+                                } else if (cch == '\t') {
                                     clip[dst++] = ' ';
                                 } else if (cch >= 32) {
                                     clip[dst++] = (char)cch;
+                                }
+                            }
+                            if (state->search_active) {
+                                /* One-line field: no breaks in there. */
+                                unsigned long f;
+
+                                for (f = 0UL; f < dst; ++f) {
+                                    if (clip[f] == '\n') {
+                                        clip[f] = ' ';
+                                    }
                                 }
                             }
                             got = dst;

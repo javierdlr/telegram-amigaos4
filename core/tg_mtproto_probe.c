@@ -14065,7 +14065,13 @@ int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
     int rc;
     const char *send_text;
 #if TG_MTPROTO_DISPLAY_LATIN1
-    char send_line[1024];
+    /* Worst case 2x the composer buffer (every byte a high Latin-1 char),
+       and static so a 4 KB composer does not land on the stack. It used to
+       be 1024 with a comment claiming "the composer is at most 256 bytes":
+       that went stale when the composer grew, so a long PASTED text quietly
+       fell back to raw Latin-1 and its accents reached other clients as
+       replacement characters. */
+    static char send_line[(TG_GUI_MSG_TEXT_MAX * 2) + 1];
 #endif
 
     if (!tg_gui_session_state.open || stream == 0 || text == 0 ||
@@ -14082,9 +14088,8 @@ int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
     /* The composer text is ISO-8859-1 (Amiga keymap); convert to UTF-8 so
        accented characters (a-grave = 0xE0, etc.) reach Telegram intact instead
        of being sent as a lone high byte (invalid UTF-8 -> U+FFFD). Mirrors the
-       TUI send path. The composer is at most TG_GUI_TEXT_MAX bytes, so the
-       worst-case 2x expansion still fits send_line[1024]; on overflow fall back
-       to the raw text (best effort). */
+       TUI send path. Newlines pass through untouched, so a pasted text file
+       keeps its line breaks on every client. */
     if (tg_mtproto_latin1_to_utf8(text, send_line, sizeof(send_line))) {
         send_text = send_line;
     }
