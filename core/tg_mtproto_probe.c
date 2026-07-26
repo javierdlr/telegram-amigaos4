@@ -15479,6 +15479,19 @@ int tg_gui_session_transfer_start_upload(const char *path, FILE *stream)
     return 0;
 }
 
+unsigned long tg_gui_session_transfer_bytes(void)
+{
+    if (tg_gui_transfer_dir == 1) {
+        return tg_gui_dl.offset;
+    }
+    if (tg_gui_transfer_dir == 2) {
+        /* Parts confirmed so far; the last one may be short, which only
+           makes the rate a hair conservative at the very end. */
+        return tg_gui_ul.part * TG_GUI_DL_CHUNK;
+    }
+    return 0UL;
+}
+
 int tg_gui_session_transfer_step(unsigned long *done, unsigned long *total)
 {
     int running = 0;

@@ -2310,6 +2310,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     int timer_ok = 0;
     int timer_pending = 0;
     int caret_ticks;
+    time_t xfer_mark;          /* rate window start (transfer progress) */
+    unsigned long xfer_bytes;  /* bytes at xfer_mark */
+    unsigned long xfer_kbs;    /* last computed KB/s, 0 = not yet known */
     int older_exhausted;   /* load-older confirmed the chat start; re-armed off-top / on open */
     int older_cooldown;    /* wakes to wait before another load-older (slow-link breather) */
     int prev_selected;     /* last selected_chat: a change means a (re)opened chat -> re-arm */
@@ -2664,6 +2667,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     /* A login screen shows its caret from the first frame. */
     state->cursor_on = (state->mode != TG_GUI_MODE_CHAT) ? 1 : 0;
     caret_ticks = 0;
+    xfer_mark = (time_t)0;
+    xfer_bytes = 0UL;
+    xfer_kbs = 0UL;
     older_exhausted = 0;
     older_cooldown = 0;
     prev_selected = state->selected_chat;
@@ -4496,12 +4502,40 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 unsigned long percent = (ttotal != 0UL)
                     ? (tdone * 100UL) / ttotal : 0UL;
                 char tline[96];
+                time_t xnow = time(0);
 
                 if (percent > 100UL) {
                     percent = 100UL; /* size meta can undercount */
                 }
-                sprintf(tline, "%s... %lu%% (close or ESC cancels)",
-                        tdir == 2 ? "Uploading" : "Downloading", percent);
+                /* Transfer rate over a rolling window: start the window on
+                   the first pumped step, then recompute every 3s so the
+                   figure is steady instead of jittering per chunk. */
+                if (xfer_mark == (time_t)0 && xnow != (time_t)-1) {
+                    xfer_mark = xnow;
+                    xfer_bytes = tg_gui_session_transfer_bytes();
+                } else if (xnow != (time_t)-1 && xnow > xfer_mark &&
+                           (unsigned long)(xnow - xfer_mark) >= 3UL) {
+                    unsigned long now_bytes =
+                        tg_gui_session_transfer_bytes();
+
+                    if (now_bytes > xfer_bytes) {
+                        xfer_kbs = (now_bytes - xfer_bytes) /
+                                   ((unsigned long)(xnow - xfer_mark) *
+                                    1024UL);
+                    }
+                    xfer_mark = xnow;
+                    xfer_bytes = now_bytes;
+                }
+                /* status is 48 bytes: keep the line short enough that the
+                   rate always fits (the hint loses its "close or"). */
+                if (xfer_kbs > 0UL) {
+                    sprintf(tline, "%s %lu%% %lu KB/s (ESC cancels)",
+                            tdir == 2 ? "Uploading" : "Downloading", percent,
+                            xfer_kbs);
+                } else {
+                    sprintf(tline, "%s %lu%% (close or ESC cancels)",
+                            tdir == 2 ? "Uploading" : "Downloading", percent);
+                }
                 if (strcmp(state->status, tline) != 0) {
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        tline);
@@ -4510,6 +4544,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             } else {
                 char saved[160];
                 int trc = tg_gui_session_transfer_end(saved, sizeof(saved));
+
+                xfer_mark = (time_t)0; /* next transfer starts a new window */
+                xfer_kbs = 0UL;
 
                 tg_gui_window_transfer_finished(state, &backend, tdir, trc,
                                                 saved);

@@ -108,6 +108,9 @@ int tg_gui_session_transfer_start_download(unsigned long msg_id,
                                            FILE *stream);
 int tg_gui_session_transfer_start_upload(const char *path, FILE *stream);
 int tg_gui_session_transfer_step(unsigned long *done, unsigned long *total);
+/* Bytes moved so far by the running transfer (0 when idle), for a rate
+   display: downloads count real bytes, uploads count confirmed parts. */
+unsigned long tg_gui_session_transfer_bytes(void);
 void tg_gui_session_transfer_cancel(void);
 int tg_gui_session_transfer_end(char *out_path, unsigned long out_path_size);
 

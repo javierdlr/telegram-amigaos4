@@ -39,6 +39,8 @@ unless noted.
   archive management is on the roadmap.
 
 ### Changed
+- The transfer status line shows the rate next to the percentage
+  (e.g. "Downloading 42% 38 KB/s"), averaged over a rolling window.
 - Downloads pipeline their chunks: the request for the next chunk goes out
   while the current one is still arriving, so its round trip stops costing
   wall-clock. Worth the most on slow or distant routes. Any hiccup drops the
