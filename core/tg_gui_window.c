@@ -768,6 +768,10 @@ static void tg_gui_amiga_obtain_pens(tg_gui_amiga_ctx *ctx,
     dri = GetScreenDrawInfo(ctx->window->WScreen);
     for (i = 0; i < TG_GUI_PEN_COUNT; ++i) {
         if (dri != 0 && i >= TG_GUI_PEN_MENU_BACK &&
+            i <= TG_GUI_PEN_MENU_FRAME && /* MENU pens only: PEN_LINK sits
+                                             above them and must keep its
+                                             own blue, not the system
+                                             shadow the fallback picked */
             (int)dri->dri_NumPens > BACKGROUNDPEN) { /* highest index used */
             UWORD *p = dri->dri_Pens;
 
@@ -4497,13 +4501,27 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                        "A transfer is already running");
                     tg_gui_window_paint(state, &backend);
                 } else {
-                    int urc = tg_gui_session_transfer_start_upload(dropped,
-                                                                   stdout);
+                    int urc;
+                    const char *dname = dropped;
+                    const char *dp;
 
+                    /* Name the dropped file the moment it lands: a drop on
+                       Workbench gives no feedback of its own, so without
+                       this the upload started silently and the gesture
+                       looked ignored. */
+                    for (dp = dropped; *dp != '\0'; ++dp) {
+                        if (*dp == '/' || *dp == ':') {
+                            dname = dp + 1;
+                        }
+                    }
+                    urc = tg_gui_session_transfer_start_upload(dropped,
+                                                               stdout);
                     if (urc == 0) {
-                        tg_gui_window_copy(
-                            state->status, sizeof(state->status),
-                            "Uploading... (close or ESC cancels)");
+                        char dl[64];
+
+                        sprintf(dl, "Sending %.40s...", dname);
+                        tg_gui_window_copy(state->status,
+                                           sizeof(state->status), dl);
                         tg_gui_window_paint(state, &backend);
                     } else {
                         /* Same final lines the picker path shows on a

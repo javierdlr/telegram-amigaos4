@@ -28,8 +28,9 @@ unless noted.
   downloads through the same multi-DC file channel instead of staying a
   blurred thumbnail forever.
 - Drag-and-drop upload: drop a file icon from the Workbench onto the chat
-  window and it uploads to the open chat, with the same non-blocking pump,
-  progress and cancel as Send file...
+  window and it uploads to the open chat (the status names the file as soon
+  as the drop lands), with the same non-blocking pump, progress and cancel
+  as Send file...
 - Reload chat list menu item: re-page the dialog list from the server on
   demand. Start-up no longer refetches the list on every run (a busy account
   felt heavy); the full fetch happens on the first login only.
