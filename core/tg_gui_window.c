@@ -1710,6 +1710,24 @@ static void tg_gui_window_track_rmbtrap(tg_gui_state *state,
     tg_gui_amiga_set_rmbtrap(ctx->window, over_msg);
 }
 
+/* Name of the file being uploaded, shown inside the progress line so the
+   feedback lasts the whole transfer. Set by both upload entry points (the
+   ASL picker and a Workbench drop); cleared when the transfer ends. */
+static char tg_gui_xfer_name[24];
+
+static void tg_gui_window_set_transfer_name(const char *name)
+{
+    unsigned long n = 0UL;
+
+    if (name != 0) {
+        while (name[n] != '\0' && n + 1UL < sizeof(tg_gui_xfer_name)) {
+            tg_gui_xfer_name[n] = name[n];
+            ++n;
+        }
+    }
+    tg_gui_xfer_name[n] = '\0';
+}
+
 /* Final status line for a finished non-blocking transfer (trc is the rc from
    tg_gui_session_transfer_end; same codes the blocking calls used). dir: 1 =
    download (`saved` holds the path on 0, the reason otherwise), 2 = upload.
@@ -1846,6 +1864,17 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
         return; /* cancelled */
     }
     rc = tg_gui_session_transfer_start_upload(path, stdout);
+    if (rc == 0) {
+        const char *pn = path;
+        const char *pp;
+
+        for (pp = path; *pp != '\0'; ++pp) {
+            if (*pp == '/' || *pp == ':') {
+                pn = pp + 1;
+            }
+        }
+        tg_gui_window_set_transfer_name(pn); /* shown in the progress line */
+    }
     if (rc != 0) {
         /* Failed before the first part (unreadable, too big, empty...):
            same final lines as ever. rc 6 cannot happen at start. */
@@ -2542,7 +2571,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     tg_gui_amiga_buffer_alloc(&ctx); /* off-screen double-buffer (flicker-free) */
     /* 0.0.8 punto 1e: an icon dropped on the window uploads the file to the
        open chat. Best-effort: a failed arm just means no drag-and-drop. */
-    (void)tg_platform_gui_drop_arm(ctx.window);
+    tg_gui_log(tg_platform_gui_drop_arm(ctx.window) == 0
+                   ? "window: drag-and-drop armed"
+                   : "window: drag-and-drop NOT armed");
 
     /* Right-button menu via GadTools (optional: a missing gadtools.library or a
        layout failure just leaves the window menu-less). */
@@ -4517,11 +4548,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     urc = tg_gui_session_transfer_start_upload(dropped,
                                                                stdout);
                     if (urc == 0) {
-                        char dl[64];
-
-                        sprintf(dl, "Sending %.40s...", dname);
-                        tg_gui_window_copy(state->status,
-                                           sizeof(state->status), dl);
+                        /* The progress line below carries the name for the
+                           whole transfer -- a one-off "Sending X..." here
+                           was overwritten by the first pumped step a
+                           millisecond later, so the drop still looked
+                           ignored (field report). */
+                        tg_gui_window_set_transfer_name(dname);
+                        tg_gui_window_copy(
+                            state->status, sizeof(state->status),
+                            "Sending... (close or ESC cancels)");
                         tg_gui_window_paint(state, &backend);
                     } else {
                         /* Same final lines the picker path shows on a
@@ -4580,7 +4615,17 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 }
                 /* status is 48 bytes: keep the line short enough that the
                    rate always fits (the hint loses its "close or"). */
-                if (xfer_kbs > 0UL) {
+                if (tdir == 2 && tg_gui_xfer_name[0] != '\0') {
+                    /* Uploads name the file: that IS the drop feedback, and
+                       it stays up for the whole transfer. */
+                    if (xfer_kbs > 0UL) {
+                        sprintf(tline, "Sending %.20s %lu%% %lu KB/s",
+                                tg_gui_xfer_name, percent, xfer_kbs);
+                    } else {
+                        sprintf(tline, "Sending %.20s %lu%% (ESC cancels)",
+                                tg_gui_xfer_name, percent);
+                    }
+                } else if (xfer_kbs > 0UL) {
                     sprintf(tline, "%s %lu%% %lu KB/s (ESC cancels)",
                             tdir == 2 ? "Uploading" : "Downloading", percent,
                             xfer_kbs);
@@ -4599,6 +4644,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 
                 xfer_mark = (time_t)0; /* next transfer starts a new window */
                 xfer_kbs = 0UL;
+                tg_gui_xfer_name[0] = '\0';
 
                 tg_gui_window_transfer_finished(state, &backend, tdir, trc,
                                                 saved);
