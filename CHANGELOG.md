@@ -59,6 +59,9 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- Transfer percentage on files over ~41 MB: it wrapped back to 0 mid-file
+  and climbed again (a 32-bit overflow in the percentage itself; the
+  transfer was always fine).
 - Accounts whose first login predates the paged dialog bootstrap were stuck
   with a handful of chats in the sidebar: the Reload chat list menu item
   fetches the full (paged) list on demand. MorphOS still skips getDialogs

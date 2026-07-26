@@ -4501,8 +4501,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             unsigned long ttotal = 0UL;
 
             if (tg_gui_session_transfer_step(&tdone, &ttotal)) {
-                unsigned long percent = (ttotal != 0UL)
-                    ? (tdone * 100UL) / ttotal : 0UL;
+                /* Percentage WITHOUT overflowing 32 bits: bytes*100 wraps
+                   past 42.9 MB on every 32-bit lane, which sent the figure
+                   back to 0 mid-file and climbing again (seen on an 82 MB
+                   download). Below that the exact form keeps full
+                   precision; above it, divide first. */
+                unsigned long percent =
+                    (ttotal == 0UL) ? 0UL
+                    : (tdone <= 42949672UL) ? (tdone * 100UL) / ttotal
+                                            : tdone / (ttotal / 100UL);
                 char tline[96];
                 time_t xnow = time(0);
 
