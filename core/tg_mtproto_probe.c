@@ -12868,6 +12868,28 @@ void tg_gui_log(const char *msg)
     }
 }
 
+/* Shared 16K scratch for peer-cache probes (off the stack: m68k). */
+static tg_mtproto_peer_cache tg_gui_probe_cache;
+
+/* The paged dialog bootstrap below should run not only on a FRESH login
+   (no cache file) but also when the cache exists yet is tiny -- accounts
+   whose first login predates the paged bootstrap got a 5-entry cache and
+   the old "cache present -> skip" check froze them there forever (the
+   "not all my chats" reports). The paging is additive (it appends dialogs
+   the cache does not know, starting below its oldest entry), so a small
+   curated cache is topped up, never clobbered; past `min` entries the
+   user's curation is respected untouched. */
+static int tg_gui_peer_cache_wants_topup(const char *path, unsigned long min)
+{
+    if (!tg_mtproto_peer_cache_available(path)) {
+        return 1; /* fresh login: full bootstrap */
+    }
+    if (tg_mtproto_load_peer_cache_file(path, &tg_gui_probe_cache) != 0) {
+        return 0; /* unreadable: leave it alone */
+    }
+    return tg_gui_probe_cache.count < min;
+}
+
 int tg_gui_session_open(const char *api_file, const char *auth_file,
                         const char *peer_cache_file, tg_gui_state *state,
                         FILE *stream)
@@ -12989,9 +13011,8 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
        order + the removals), so we never refetch and never clobber that curation.
        MorphOS SKIPS getDialogs (the documented bsdsocket freeze on the reply) --
        there the list starts empty and Search adds chats. */
-    if (!tg_mtproto_peer_cache_available(peer_cache_file)) {
+    if (tg_gui_peer_cache_wants_topup(peer_cache_file, 30UL)) {
 #if !(defined(__MORPHOS__) || defined(__MORPHOS))
-        static tg_mtproto_peer_cache probe_cache; /* 16K -- off the stack */
         FILE *q;
         int iter;
         unsigned long prev;
@@ -13005,12 +13026,12 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
                 break; /* a page failed -> keep whatever pages already landed */
             }
             if (tg_mtproto_load_peer_cache_file(peer_cache_file,
-                                                &probe_cache) != 0 ||
-                probe_cache.count <= prev ||
-                probe_cache.count >= TG_MTPROTO_PEER_CACHE_MAX) {
+                                                &tg_gui_probe_cache) != 0 ||
+                tg_gui_probe_cache.count <= prev ||
+                tg_gui_probe_cache.count >= TG_MTPROTO_PEER_CACHE_MAX) {
                 break; /* no new dialogs this page, or the cache is full */
             }
-            prev = probe_cache.count;
+            prev = tg_gui_probe_cache.count;
         }
         tg_mtproto_close_quiet_stream(q, stream);
 #endif
@@ -15089,6 +15110,7 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
     const unsigned char *bytes;
     unsigned long bytes_len;
     int cdn;
+    int av_foreign = 0; /* photo lives on another DC: use the 1c channel */
     FILE *quiet;
     static const char label[] = "mtproto upload.getFile(avatar)";
 
@@ -15127,7 +15149,11 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
     if (photo_hi == 0UL && photo_lo == 0UL) {
         return; /* no profile photo */
     }
-    if (tg_gui_session_state.dc_id_text[0] != '\0') {
+    /* 0.0.8 1c-bis: a foreign-DC avatar now downloads through the same
+       foreign file channel the document downloads use (the old guard just
+       kept the blurred thumb forever). Only yield when a running transfer
+       holds that channel pointed at a DIFFERENT datacenter. */
+    {
         unsigned long home = 0UL;
         const char *p = tg_gui_session_state.dc_id_text;
 
@@ -15135,8 +15161,11 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
             home = home * 10UL + (unsigned long)(*p - '0');
             ++p;
         }
-        if (home != 0UL && dc != 0UL && dc != home) {
-            return; /* foreign DC: keep the thumb (v3 territory) */
+        av_foreign = (home != 0UL && dc != 0UL && dc != home);
+        if (av_foreign && tg_gui_session_transfer_busy() &&
+            tg_gui_foreign_dc != dc) {
+            return; /* do not retarget the channel under a live transfer;
+                       unmarked, so a later chat open retries */
         }
     }
     /* Mark BEFORE the attempt: any failure must not retry this session. */
@@ -15162,7 +15191,23 @@ static void tg_gui_session_fetch_open_avatar(FILE *stream)
     }
     quiet = tg_mtproto_open_quiet_stream(stream);
     memset(&result, 0, sizeof(result));
-    if (tg_mtproto_send_saved_query_on_context(
+    if (av_foreign) {
+        /* Foreign avatar: open (or reuse) the 1c channel on ITS datacenter
+           and fetch the bytes there. First contact costs the one-off DH. */
+        tg_mtproto_file_ctx home_fc;
+        tg_mtproto_file_ctx av_fc;
+
+        tg_gui_session_file_ctx(&home_fc);
+        if (tg_gui_session_setup_foreign_channel(&home_fc, dc, &av_fc,
+                                                 quiet) != 0 ||
+            tg_mtproto_send_saved_query_on_context(
+                av_fc.host, av_fc.port, av_fc.api_id, av_fc.auth_file,
+                av_fc.dc_id_text, av_fc.context, query, writer.length,
+                &result, quiet, label, 600U) != 0) {
+            tg_mtproto_close_quiet_stream(quiet, stream);
+            return; /* channel or query failed: the thumb stays */
+        }
+    } else if (tg_mtproto_send_saved_query_on_context(
             tg_gui_session_state.host, tg_gui_session_state.port,
             tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
             tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,

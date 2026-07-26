@@ -23,6 +23,9 @@ unless noted.
 - Clickable links: clicking a http(s):// or www. URL inside a message opens
   the system browser via the OpenURL/URLOpen command; without one the URL is
   copied to the clipboard instead.
+- Foreign-DC avatars: a profile photo stored on another datacenter now
+  downloads through the same multi-DC file channel instead of staying a
+  blurred thumbnail forever.
 
 ### Changed
 - File transfers no longer freeze the window: one chunk moves per event-loop
@@ -38,6 +41,10 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- Accounts whose first login predates the paged dialog bootstrap were stuck
+  with a handful of chats in the sidebar: a small cache is now topped up
+  additively from the server (order and removals stay untouched past the
+  top-up threshold). MorphOS still skips getDialogs (documented freeze).
 - Aminet only: the 0.0.7 AmigaOS 3.x archive shipped the wrong (AmigaOS 4)
   binary due to a case-insensitive filename collision in the packaging and
   was republished as 0.0.7a (same program, correct 68k binary). The GitHub
