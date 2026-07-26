@@ -20,6 +20,9 @@ unless noted.
   result list.
 - Experimental plain-68000 build option (`M68K_CPU=68000`), not part of the
   released packages yet.
+- Clickable links: clicking a http(s):// or www. URL inside a message opens
+  the system browser via the OpenURL/URLOpen command; without one the URL is
+  copied to the clipboard instead.
 
 ### Changed
 - File transfers no longer freeze the window: one chunk moves per event-loop

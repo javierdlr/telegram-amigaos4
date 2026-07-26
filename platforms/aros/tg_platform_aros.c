@@ -1707,3 +1707,60 @@ const char *tg_platform_console_drop_diag(void)
     return "unsupported on this platform";
 }
 #endif
+
+#if defined(__AROS__)
+
+/* Clickable links (0.0.8): hand the URL to the system's OpenURL/URLOpen
+   shell command, synchronously with NIL: I/O (System() does not close the
+   handles for us on the sync path). A missing command fails fast and the
+   GUI falls back to copying the URL to the clipboard. */
+int tg_platform_open_url(const char *url)
+{
+    char cmd[320];
+    BPTR nil_in;
+    BPTR nil_out;
+    int rc = -1;
+    const char *p;
+
+    if (url == 0 || url[0] == '\0' || strlen(url) > 280) {
+        return -1;
+    }
+    for (p = url; *p != '\0'; ++p) {
+        if (*p == '"' || *p == '\n' || *p == '\r' || *p == '*') {
+            return -1; /* would break AmigaDOS quoting */
+        }
+    }
+    nil_in = Open((CONST_STRPTR)"NIL:", MODE_OLDFILE);
+    nil_out = Open((CONST_STRPTR)"NIL:", MODE_NEWFILE);
+    if (nil_in == 0 || nil_out == 0) {
+        if (nil_in != 0) {
+            Close(nil_in);
+        }
+        if (nil_out != 0) {
+            Close(nil_out);
+        }
+        return -1;
+    }
+    if (rc != 0) {
+        sprintf(cmd, "OpenURL \"%s\"", url);
+        rc = (int)SystemTags((STRPTR)cmd, SYS_Input, (IPTR)nil_in,
+                             SYS_Output, (IPTR)nil_out, TAG_DONE);
+    }
+    if (rc != 0) {
+        sprintf(cmd, "URLOpen \"%s\"", url);
+        rc = (int)SystemTags((STRPTR)cmd, SYS_Input, (IPTR)nil_in,
+                             SYS_Output, (IPTR)nil_out, TAG_DONE);
+    }
+    Close(nil_in);
+    Close(nil_out);
+    return rc;
+}
+#else
+/* Hosted test build: no system browser hook; the GUI falls back to the
+   clipboard copy path. */
+int tg_platform_open_url(const char *url)
+{
+    (void)url;
+    return -1;
+}
+#endif

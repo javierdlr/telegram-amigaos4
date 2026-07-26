@@ -392,6 +392,8 @@ long tg_gui_transcript_char_at(const tg_gui_state *state,
 
 /* Copies the selected substring into out (NUL-terminated). 1 = a non-empty
    selection was copied, 0 = no live selection. */
+int tg_gui_url_at(const tg_gui_message *m, long ch, char *out,
+                  unsigned long out_size);
 int tg_gui_selection_get(const tg_gui_state *state, char *out,
                          unsigned long out_size);
 

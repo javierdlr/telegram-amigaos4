@@ -3857,6 +3857,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 
                                 if (!m->is_system && m->id != 0UL &&
                                     m->id == state->sel_press_id) {
+                                    char clicked_url[256];
                                     int dbl = (dbl_last_id != 0UL &&
                                                dbl_last_id == m->id &&
                                                DoubleClick(dbl_last_secs,
@@ -3864,6 +3865,37 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                            dbl_press_secs,
                                                            dbl_press_micros));
 
+                                    /* A click ON A LINK beats select/reply:
+                                       open it in the browser, or copy it to
+                                       the clipboard when no OpenURL/URLOpen
+                                       command is around (0.0.8). */
+                                    if (state->sel_press_char >= 0 &&
+                                        tg_gui_url_at(m,
+                                                      state->sel_press_char,
+                                                      clicked_url,
+                                                      sizeof(clicked_url))) {
+                                        dbl_last_id = 0UL; /* never a reply */
+                                        if (tg_platform_open_url(
+                                                clicked_url) == 0) {
+                                            tg_gui_window_copy(
+                                                state->status,
+                                                sizeof(state->status),
+                                                "Opening URL in the browser...");
+                                        } else if (tg_gui_clip_write_text(
+                                                       clicked_url)) {
+                                            tg_gui_window_copy(
+                                                state->status,
+                                                sizeof(state->status),
+                                                "URL copied (no OpenURL command)");
+                                        } else {
+                                            tg_gui_window_copy(
+                                                state->status,
+                                                sizeof(state->status),
+                                                "Could not open the URL");
+                                        }
+                                        tg_gui_window_paint(state, &backend);
+                                        continue;
+                                    }
                                     if (dbl) {
                                         /* Double-click = reply to this bubble. */
                                         dbl_last_id = 0UL; /* consume the pair */

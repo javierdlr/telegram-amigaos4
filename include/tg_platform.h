@@ -152,6 +152,12 @@ int tg_platform_workbench_tui_console(void);
    when the console was never opened. */
 void tg_platform_workbench_tui_console_close(void);
 
+/* Open `url` in the system browser (0.0.8 clickable links). Amiga lanes run
+   the OpenURL/URLOpen shell command synchronously (NIL: I/O) and report its
+   rc; hosts without one return non-zero so the caller can fall back to
+   copying the URL to the clipboard. */
+int tg_platform_open_url(const char *url);
+
 /* Reads the TUI_MODE tooltype of the icon that launched us (WBStartup arg 0)
    so a packager can pick the front-end explicitly (issue #9). Returns 1 when
    TUI_MODE is present and true, 0 when present and NO/FALSE/OFF, and -1 when

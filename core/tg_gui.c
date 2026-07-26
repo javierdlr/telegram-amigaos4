@@ -1942,6 +1942,90 @@ long tg_gui_transcript_char_at(const tg_gui_state *state,
     return ls + ll;
 }
 
+/* If the character at offset `ch` of message `m` sits inside a web link,
+   copy the link into out (prefixing bare www. with http://) and return 1.
+   A "link" is the whitespace-delimited word around ch, stripped of the
+   style markers and wrapping punctuation, starting with http(s):// or www.
+   Pure text scan: entities already put the URL text in the message body. */
+int tg_gui_url_at(const tg_gui_message *m, long ch, char *out,
+                  unsigned long out_size)
+{
+    long len;
+    long a;
+    long b;
+    unsigned long n;
+    unsigned long need;
+    const char *w;
+    long wl;
+    int www;
+
+    if (m == 0 || out == 0 || out_size < 12UL || m->is_system ||
+        m->text[0] == '\0' || ch < 0) {
+        return 0;
+    }
+    len = (long)strlen(m->text);
+    if (ch >= len) {
+        ch = len - 1;
+    }
+    if (m->text[ch] == ' ' || m->text[ch] == '\n' || m->text[ch] == '\t') {
+        return 0; /* clicked the gap between words */
+    }
+    a = ch;
+    while (a > 0 && m->text[a - 1] != ' ' && m->text[a - 1] != '\n' &&
+           m->text[a - 1] != '\t') {
+        --a;
+    }
+    b = ch;
+    while (b + 1 < len && m->text[b + 1] != ' ' && m->text[b + 1] != '\n' &&
+           m->text[b + 1] != '\t') {
+        ++b;
+    }
+    /* Strip style markers and wrapping punctuation from both ends. */
+    while (a <= b && (m->text[a] == '*' || m->text[a] == '_' ||
+                      m->text[a] == '`' || m->text[a] == '~' ||
+                      m->text[a] == '(' || m->text[a] == '<' ||
+                      m->text[a] == '[' || m->text[a] == '"' ||
+                      m->text[a] == '\'')) {
+        ++a;
+    }
+    while (b >= a && (m->text[b] == '*' || m->text[b] == '_' ||
+                      m->text[b] == '`' || m->text[b] == '~' ||
+                      m->text[b] == ')' || m->text[b] == '>' ||
+                      m->text[b] == ']' || m->text[b] == '"' ||
+                      m->text[b] == '\'' || m->text[b] == '.' ||
+                      m->text[b] == ',' || m->text[b] == ';' ||
+                      m->text[b] == ':' || m->text[b] == '!' ||
+                      m->text[b] == '?')) {
+        --b;
+    }
+    if (b < a) {
+        return 0;
+    }
+    w = m->text + a;
+    wl = b - a + 1;
+    www = 0;
+    if (wl > 8 &&
+        (strncmp(w, "http://", 7) == 0 || strncmp(w, "https://", 8) == 0)) {
+        ;
+    } else if (wl > 8 && strncmp(w, "www.", 4) == 0) {
+        www = 1; /* bare www.: prefix a scheme for the opener */
+    } else {
+        return 0;
+    }
+    need = (unsigned long)wl + (www ? 7UL : 0UL);
+    if (need + 1UL > out_size) {
+        return 0; /* longer than the caller can take: not clickable */
+    }
+    n = 0UL;
+    if (www) {
+        strcpy(out, "http://");
+        n = 7UL;
+    }
+    memcpy(out + n, w, (unsigned long)wl);
+    out[n + (unsigned long)wl] = '\0';
+    return 1;
+}
+
 int tg_gui_selection_get(const tg_gui_state *state, char *out,
                          unsigned long out_size)
 {
