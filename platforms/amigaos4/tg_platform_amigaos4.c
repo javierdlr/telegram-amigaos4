@@ -1883,13 +1883,13 @@ int tg_platform_open_url(const char *url)
     }
     if (rc != 0) {
         sprintf(cmd, "URLOpen \"%s\"", url);
-        rc = (int)SystemTags((STRPTR)cmd, SYS_Input, (IPTR)nil_in,
-                             SYS_Output, (IPTR)nil_out, TAG_DONE);
+        rc = (int)SystemTags((STRPTR)cmd, SYS_Input, (ULONG)nil_in,
+                             SYS_Output, (ULONG)nil_out, TAG_DONE);
     }
     if (rc != 0) {
         sprintf(cmd, "OpenURL \"%s\"", url);
-        rc = (int)SystemTags((STRPTR)cmd, SYS_Input, (IPTR)nil_in,
-                             SYS_Output, (IPTR)nil_out, TAG_DONE);
+        rc = (int)SystemTags((STRPTR)cmd, SYS_Input, (ULONG)nil_in,
+                             SYS_Output, (ULONG)nil_out, TAG_DONE);
     }
     Close(nil_in);
     Close(nil_out);
