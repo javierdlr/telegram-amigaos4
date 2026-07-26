@@ -180,6 +180,11 @@ void tg_gui_session_refresh_chats(void);
    Returns 0 on success, non-zero otherwise. */
 int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream);
 
+/* Menu "Reload chat list": re-page the dialog list from the server (additive,
+   honours hidden chats, reprojects the sidebar). 0 ok, 2 no session,
+   3 unsupported on this platform (MorphOS: getDialogs freeze). */
+int tg_gui_session_reload_chat_list(FILE *stream);
+
 /* Move the chat at sidebar row src_index to dst_index (both 1-based, == row + 1),
    persist the new order, reproject the sidebar, and keep the open chat selected.
    No network fetch. Returns 0 on success, non-zero otherwise. */

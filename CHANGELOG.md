@@ -29,6 +29,14 @@ unless noted.
 - Drag-and-drop upload: drop a file icon from the Workbench onto the chat
   window and it uploads to the open chat, with the same non-blocking pump,
   progress and cancel as Send file...
+- Reload chat list menu item: re-page the dialog list from the server on
+  demand. Start-up no longer refetches the list on every run (a busy account
+  felt heavy); the full fetch happens on the first login only.
+- Hidden chats memory: a chat removed from the list now STAYS removed across
+  reloads and restarts; reopening it from the online search makes it visible
+  again.
+- Archived chats are filtered out of the dialog list (main folder only);
+  archive management is on the roadmap.
 
 ### Changed
 - File transfers no longer freeze the window: one chunk moves per event-loop

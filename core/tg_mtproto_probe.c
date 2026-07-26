@@ -12774,6 +12774,7 @@ static struct {
     const char *port;
     const char *dc_id_text;
     const char *auth_file;
+    const char *api_file;      /* for the on-demand dialog reload */
     const char *peer_cache_file;
     char api_id[32];
     char own_label[128];
@@ -12868,26 +12869,117 @@ void tg_gui_log(const char *msg)
     }
 }
 
+/* --- Hidden chats (0.0.8): a REMOVED chat must stay removed. -------------
+   The dialog bootstrap/reload would resurrect every removed chat straight
+   from the server, so removals are remembered here (data/telegram-hidden.txt,
+   one "hi lo" hex peer id per line). The bootstrap purges hidden peers from
+   the cache after paging; opening a hidden chat from the ONLINE search adds
+   it back and forgets the hidden mark. Plain linear scans: the file is tiny. */
+#define TG_GUI_HIDDEN_FILE "data/telegram-hidden.txt"
+
+static int tg_gui_hidden_contains(unsigned long id_hi, unsigned long id_lo)
+{
+    FILE *f;
+    unsigned long hi;
+    unsigned long lo;
+    int found = 0;
+
+    f = fopen(TG_GUI_HIDDEN_FILE, "r");
+    if (f == 0) {
+        return 0;
+    }
+    while (fscanf(f, "%lx %lx", &hi, &lo) == 2) {
+        if (hi == id_hi && lo == id_lo) {
+            found = 1;
+            break;
+        }
+    }
+    fclose(f);
+    return found;
+}
+
+static void tg_gui_hidden_add(unsigned long id_hi, unsigned long id_lo)
+{
+    FILE *f;
+
+    if ((id_hi == 0UL && id_lo == 0UL) ||
+        tg_gui_hidden_contains(id_hi, id_lo)) {
+        return;
+    }
+    (void)mkdir("data", 0777);
+    f = fopen(TG_GUI_HIDDEN_FILE, "a");
+    if (f != 0) {
+        fprintf(f, "%08lx %08lx\n", id_hi, id_lo);
+        fclose(f);
+    }
+}
+
+static void tg_gui_hidden_forget(unsigned long id_hi, unsigned long id_lo)
+{
+    /* Rewrite without the entry; tiny file, simplest correct thing. */
+    FILE *f;
+    unsigned long hi[128];
+    unsigned long lo[128];
+    unsigned long n = 0UL;
+    unsigned long i;
+    int changed = 0;
+
+    f = fopen(TG_GUI_HIDDEN_FILE, "r");
+    if (f == 0) {
+        return;
+    }
+    while (n < 128UL && fscanf(f, "%lx %lx", &hi[n], &lo[n]) == 2) {
+        if (hi[n] == id_hi && lo[n] == id_lo) {
+            changed = 1;
+            continue; /* drop it */
+        }
+        ++n;
+    }
+    fclose(f);
+    if (!changed) {
+        return;
+    }
+    f = fopen(TG_GUI_HIDDEN_FILE, "w");
+    if (f == 0) {
+        return;
+    }
+    for (i = 0UL; i < n; ++i) {
+        fprintf(f, "%08lx %08lx\n", hi[i], lo[i]);
+    }
+    fclose(f);
+}
+
 /* Shared 16K scratch for peer-cache probes (off the stack: m68k). */
 static tg_mtproto_peer_cache tg_gui_probe_cache;
 
-/* The paged dialog bootstrap below should run not only on a FRESH login
-   (no cache file) but also when the cache exists yet is tiny -- accounts
-   whose first login predates the paged bootstrap got a 5-entry cache and
-   the old "cache present -> skip" check froze them there forever (the
-   "not all my chats" reports). The paging is additive (it appends dialogs
-   the cache does not know, starting below its oldest entry), so a small
-   curated cache is topped up, never clobbered; past `min` entries the
-   user's curation is respected untouched. */
-static int tg_gui_peer_cache_wants_topup(const char *path, unsigned long min)
+/* Purge every hidden peer the dialog paging just resurrected. Removing an
+   entry renumbers the cache, so rescan from the top after each hit; both
+   lists are small. */
+static void tg_gui_peer_cache_purge_hidden(const char *path, FILE *stream)
 {
-    if (!tg_mtproto_peer_cache_available(path)) {
-        return 1; /* fresh login: full bootstrap */
+    int again = 1;
+
+    while (again) {
+        unsigned long i;
+
+        again = 0;
+        if (tg_mtproto_load_peer_cache_file(path, &tg_gui_probe_cache) != 0) {
+            return;
+        }
+        for (i = 0UL; i < tg_gui_probe_cache.count; ++i) {
+            if (tg_gui_hidden_contains(tg_gui_probe_cache.entries[i].id_hi,
+                                       tg_gui_probe_cache.entries[i].id_lo)) {
+                char it[24];
+
+                sprintf(it, "%lu", i + 1UL);
+                if (tg_mtproto_peer_cache_remove_public_index(
+                        path, it, 0, 0UL, stream) == 0) {
+                    again = 1;
+                }
+                break;
+            }
+        }
     }
-    if (tg_mtproto_load_peer_cache_file(path, &tg_gui_probe_cache) != 0) {
-        return 0; /* unreadable: leave it alone */
-    }
-    return tg_gui_probe_cache.count < min;
 }
 
 int tg_gui_session_open(const char *api_file, const char *auth_file,
@@ -12921,6 +13013,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
     tg_gui_session_state.port = "443";
     tg_gui_session_state.dc_id_text = dc_id_text;
     tg_gui_session_state.auth_file = auth_file;
+    tg_gui_session_state.api_file = api_file;
     tg_gui_session_state.peer_cache_file = peer_cache_file;
 
     /* Engine + notify queue + GUI driver, mirroring the console prelude: bind
@@ -13011,7 +13104,10 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
        order + the removals), so we never refetch and never clobber that curation.
        MorphOS SKIPS getDialogs (the documented bsdsocket freeze on the reply) --
        there the list starts empty and Search adds chats. */
-    if (tg_gui_peer_cache_wants_topup(peer_cache_file, 30UL)) {
+    /* FRESH login only (field decision 2026-07-26): a start-up refetch on
+       every run made a busy account feel heavy, and resurrected removals.
+       Existing installs enrich the list on demand via the Reload menu. */
+    if (!tg_mtproto_peer_cache_available(peer_cache_file)) {
 #if !(defined(__MORPHOS__) || defined(__MORPHOS))
         FILE *q;
         int iter;
@@ -13033,6 +13129,7 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
             }
             prev = tg_gui_probe_cache.count;
         }
+        tg_gui_peer_cache_purge_hidden(peer_cache_file, q);
         tg_mtproto_close_quiet_stream(q, stream);
 #endif
     }
@@ -13358,6 +13455,23 @@ int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
     }
     sprintf(index_text, "%lu", peer_index);
     quiet = tg_mtproto_open_quiet_stream(stream);
+    /* Remember the removal (0.0.8): the dialog reload would otherwise bring
+       the chat straight back from the server. Opening it again from the
+       ONLINE search forgets the mark. */
+    {
+        unsigned long pc;
+        unsigned long ph;
+        unsigned long pl;
+        unsigned long ahh;
+        unsigned long ahl;
+        int hah;
+
+        if (tg_mtproto_load_peer_cache_peer(
+                tg_gui_session_state.peer_cache_file, index_text, &pc, &ph,
+                &pl, &ahh, &ahl, &hah, quiet, "hide chat") == 0) {
+            tg_gui_hidden_add(ph, pl);
+        }
+    }
     rc = tg_mtproto_peer_cache_remove_public_index(
         tg_gui_session_state.peer_cache_file, index_text, 0, 0UL, quiet);
     tg_mtproto_close_quiet_stream(quiet, stream);
@@ -13365,6 +13479,52 @@ int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_reload_chats(); /* reproject the sidebar from the saved file */
     }
     return rc;
+}
+
+/* Menu "Reload chat list" (0.0.8): re-page the dialog list from the server
+   on demand -- start-up no longer refetches (a busy account felt heavy and
+   removals resurrected). Additive like the first-login bootstrap, honours
+   the hidden list, then reprojects the sidebar. MorphOS: getDialogs still
+   hard-freezes there, so the reload reports unsupported (rc 3). */
+int tg_gui_session_reload_chat_list(FILE *stream)
+{
+    if (!tg_gui_session_state.open || stream == 0) {
+        return 2;
+    }
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+    return 3;
+#else
+    {
+        FILE *q;
+        int iter;
+        unsigned long prev = 0UL;
+
+        q = tg_mtproto_open_quiet_stream(stream);
+        for (iter = 0; iter < 8; ++iter) {
+            if (tg_mtproto_auth_list_peers_file(
+                    tg_gui_session_state.host, "443",
+                    tg_gui_session_state.api_file,
+                    tg_gui_session_state.auth_file,
+                    tg_gui_session_state.dc_id_text, "30",
+                    tg_gui_session_state.peer_cache_file, q) != 0) {
+                break; /* keep whatever pages landed */
+            }
+            if (tg_mtproto_load_peer_cache_file(
+                    tg_gui_session_state.peer_cache_file,
+                    &tg_gui_probe_cache) != 0 ||
+                tg_gui_probe_cache.count <= prev ||
+                tg_gui_probe_cache.count >= TG_MTPROTO_PEER_CACHE_MAX) {
+                break;
+            }
+            prev = tg_gui_probe_cache.count;
+        }
+        tg_gui_peer_cache_purge_hidden(tg_gui_session_state.peer_cache_file,
+                                       q);
+        tg_mtproto_close_quiet_stream(q, stream);
+        tg_gui_session_reload_chats();
+        return 0;
+    }
+#endif
 }
 
 /* Public: move the chat at sidebar row src_index to dst_index (both 1-based,
@@ -13494,6 +13654,8 @@ static int tg_gui_search_open_entry(const tg_mtproto_peer_cache_entry *selected,
     if (rc != 0 || new_index[0] == '\0') {
         return 1;
     }
+    /* Deliberately reopened from the search: no longer hidden (0.0.8). */
+    tg_gui_hidden_forget(selected->id_hi, selected->id_lo);
 
     tg_gui_session_reload_chats();
     {

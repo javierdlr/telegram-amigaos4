@@ -238,6 +238,7 @@ static int tg_gui_amiga_open_core_libs(void)
 #define TG_MENU_COPY 8
 #define TG_MENU_PASTE 9
 #define TG_MENU_CUT 10
+#define TG_MENU_RELOAD 11
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -1510,6 +1511,8 @@ static struct NewMenu tg_gui_newmenu[] = {
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Remove chat from list", (STRPTR)"R", 0, 0,
       (APTR)TG_MENU_REMOVE },
+    { NM_ITEM,  (STRPTR)"Reload chat list", 0, 0, 0,
+      (APTR)TG_MENU_RELOAD },
     { NM_ITEM,  (STRPTR)"Send file...", (STRPTR)"F", 0, 0,
       (APTR)TG_MENU_SENDFILE },
     { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
@@ -3557,6 +3560,34 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             /* Tear down window (and own screen) via the normal
                                path; the outer loop parks on an AppIcon. */
                             done = 2;
+                        } else if (ud == (APTR)TG_MENU_RELOAD) {
+                            /* Re-page the dialog list on demand (start-up
+                               no longer refetches). Blocking but bounded:
+                               a few 30-dialog pages. */
+                            int rrc;
+
+                            tg_gui_window_copy(state->status,
+                                               sizeof(state->status),
+                                               "Reloading chat list...");
+                            tg_gui_window_paint(state, &backend);
+                            rrc = tg_gui_session_reload_chat_list(stdout);
+                            if (rrc == 0) {
+                                char rl[64];
+
+                                sprintf(rl, "Chat list reloaded (%d chats)",
+                                        state->chat_count);
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status), rl);
+                            } else if (rrc == 3) {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Reload not available on MorphOS");
+                            } else {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Reload failed");
+                            }
+                            tg_gui_window_paint(state, &backend);
                         } else if (ud == (APTR)TG_MENU_OWNSCREEN) {
                             /* Flip own-screen mode and reopen: persist the new
                                flag now so the reopen (which reloads geometry)

@@ -724,10 +724,17 @@ tg_mtproto_tl_status tg_mtproto_build_messages_get_dialogs_page(
     status = tg_mtproto_tl_write_u32(writer,
                                      TG_MESSAGES_GET_DIALOGS_CONSTRUCTOR);
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_mtproto_tl_write_u32(writer, 0UL);
+        /* flags bit1: folder_id present. folder_id 0 = the MAIN folder only,
+           so archived chats stay out of the sidebar (0.0.8; archive
+           management itself is a future release). Without the flag the
+           server returns archived dialogs mixed in. */
+        status = tg_mtproto_tl_write_u32(writer, 2UL);
     }
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_mtproto_tl_write_u32(writer, 0UL);
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* folder_id: main */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* offset_date */
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u32(writer, offset_id);
@@ -5382,12 +5389,14 @@ int tg_mtproto_login_self_test(void)
     tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
     if (tg_mtproto_build_messages_get_dialogs(&writer, 20UL) !=
             TG_MTPROTO_TL_OK ||
-        writer.length != 32UL ||
+        writer.length != 36UL || /* +4: flags bit1 + folder_id 0 (main) */
         query[0] != 0x4fU || query[1] != 0xcbU ||
         query[2] != 0xf4U || query[3] != 0xa0U ||
-        query[16] != 0xeaU || query[17] != 0x18U ||
-        query[18] != 0x3bU || query[19] != 0x7fU ||
-        query[20] != 20U) {
+        query[4] != 0x02U || query[5] != 0x00U || /* flags: folder_id set */
+        query[8] != 0x00U ||                      /* folder_id: main */
+        query[20] != 0xeaU || query[21] != 0x18U ||
+        query[22] != 0x3bU || query[23] != 0x7fU ||
+        query[24] != 20U) {
         return 2;
     }
     /* messages.getPeerDialogs builder: one user InputDialogPeer, read back to
