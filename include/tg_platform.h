@@ -181,6 +181,18 @@ int tg_platform_console_drop_poll(char *out, unsigned long out_size);
    WHY drops are inactive without a debug build. */
 const char *tg_platform_console_drop_diag(void);
 
+/* GUI drag-and-drop (0.0.8 punto 1e): arm the SAME drop machinery on the
+   GUI's own Intuition window (an icon dropped on it uploads the file to the
+   open chat). arm returns 0 when the AppWindow is registered; disarm is
+   idempotent and must run before the window closes; sigmask returns the
+   drop port's wait mask (0 when unarmed) for the event loop's Wait(); the
+   dropped paths come out of the same tg_platform_console_drop_poll. One
+   owner at a time process-wide: the TUI console drop or the GUI, never
+   both. Hosts without Workbench are no-ops. */
+int tg_platform_gui_drop_arm(void *window);
+void tg_platform_gui_drop_disarm(void);
+unsigned long tg_platform_gui_drop_sigmask(void);
+
 /*
  * Returns non-zero when the user asked to abort (Amiga family: the shell
  * break signal SIGBREAKF_CTRL_C, left pending so the caller's main loop can

@@ -26,6 +26,9 @@ unless noted.
 - Foreign-DC avatars: a profile photo stored on another datacenter now
   downloads through the same multi-DC file channel instead of staying a
   blurred thumbnail forever.
+- Drag-and-drop upload: drop a file icon from the Workbench onto the chat
+  window and it uploads to the open chat, with the same non-blocking pump,
+  progress and cancel as Send file...
 
 ### Changed
 - File transfers no longer freeze the window: one chunk moves per event-loop

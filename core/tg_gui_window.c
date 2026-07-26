@@ -2528,6 +2528,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     }
     tg_gui_amiga_measure_geometry(&ctx);
     tg_gui_amiga_buffer_alloc(&ctx); /* off-screen double-buffer (flicker-free) */
+    /* 0.0.8 punto 1e: an icon dropped on the window uploads the file to the
+       open chat. Best-effort: a failed arm just means no drag-and-drop. */
+    (void)tg_platform_gui_drop_arm(ctx.window);
 
     /* Right-button menu via GadTools (optional: a missing gadtools.library or a
        layout failure just leaves the window menu-less). */
@@ -2704,6 +2707,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             if (timer_ok) {
                 wait_mask |= 1UL << timer_port->mp_SigBit;
             }
+            wait_mask |= (ULONG)tg_platform_gui_drop_sigmask();
             /* 0.0.8 1b: while a transfer is active the loop must not sleep --
                each turn drains events, then pumps ONE chunk/part below. The
                network RPC inside the step paces the loop, so this is not a
@@ -4411,6 +4415,41 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 }
             }
         }
+        /* 0.0.8 punto 1e: Workbench drops. An icon dropped on the window
+           arms an upload to the open chat, exactly like Send file... did;
+           the pump below then moves it one part per turn. */
+        {
+            char dropped[256];
+
+            if (tg_platform_console_drop_poll(dropped, sizeof(dropped)) &&
+                dropped[0] != '\0') {
+                if (state->mode != TG_GUI_MODE_CHAT ||
+                    !tg_gui_session_is_open() || state->chat_count <= 0) {
+                    tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "Open a chat first, then drop the file");
+                    tg_gui_window_paint(state, &backend);
+                } else if (tg_gui_session_transfer_busy()) {
+                    tg_gui_window_copy(state->status, sizeof(state->status),
+                                       "A transfer is already running");
+                    tg_gui_window_paint(state, &backend);
+                } else {
+                    int urc = tg_gui_session_transfer_start_upload(dropped,
+                                                                   stdout);
+
+                    if (urc == 0) {
+                        tg_gui_window_copy(
+                            state->status, sizeof(state->status),
+                            "Uploading... (close or ESC cancels)");
+                        tg_gui_window_paint(state, &backend);
+                    } else {
+                        /* Same final lines the picker path shows on a
+                           failed start (unreadable, too big, empty...). */
+                        tg_gui_window_transfer_finished(state, &backend, 2,
+                                                        urc, "");
+                    }
+                }
+            }
+        }
         /* 0.0.8 punto 1b: transfer pump. One bounded step (a single getFile
            chunk or saveFilePart) per loop turn; the Wait() above is skipped
            while a transfer is active, so typing, chat switches and the live
@@ -4558,6 +4597,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         }
     }
 
+    tg_platform_gui_drop_disarm(); /* before the window goes away */
     /* Window going away with a transfer still running (menu Quit, iconify,
        Amiga+Q): cancel and unwind it -- end() closes the file (removing a
        partial download) so session_close finds the engine idle. */

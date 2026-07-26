@@ -1830,3 +1830,50 @@ int tg_platform_open_url(const char *url)
     Close(nil_out);
     return rc;
 }
+
+
+/* --- GUI drag-and-drop (0.0.8 punto 1e): same machinery, our own window ---
+   The console arm above has to HUNT for the CON: window; the GUI hands us
+   its Intuition window directly, so this is just port + AddAppWindow on the
+   shared statics (single owner process-wide: TUI console drop or GUI). */
+int tg_platform_gui_drop_arm(void *window)
+{
+    if (window == 0) {
+        return -1;
+    }
+    if (tg_wb_app_port != 0 || tg_wb_app_win != 0) {
+        return 0; /* already armed */
+    }
+    if (WorkbenchBase == 0) {
+        WorkbenchBase = OpenLibrary((CONST_STRPTR)"workbench.library", 36L);
+        if (WorkbenchBase == 0) {
+            tg_wb_drop_diag = "workbench.library open failed";
+            return -1;
+        }
+        tg_wb_drop_opened_wb = 1;
+    }
+    tg_wb_app_port = CreateMsgPort();
+    if (tg_wb_app_port == 0) {
+        tg_wb_drop_diag = "message port failed";
+        return -1;
+    }
+    tg_wb_app_win = AddAppWindowA(0UL, 0UL, (struct Window *)window,
+                                  tg_wb_app_port, 0);
+    if (tg_wb_app_win == 0) {
+        tg_wb_drop_diag = "AddAppWindow failed";
+        tg_wb_drop_disarm();
+        return -1;
+    }
+    tg_wb_drop_diag = "ready (GUI window)";
+    return 0;
+}
+
+void tg_platform_gui_drop_disarm(void)
+{
+    tg_wb_drop_disarm();
+}
+
+unsigned long tg_platform_gui_drop_sigmask(void)
+{
+    return (tg_wb_app_port != 0) ? (1UL << tg_wb_app_port->mp_SigBit) : 0UL;
+}

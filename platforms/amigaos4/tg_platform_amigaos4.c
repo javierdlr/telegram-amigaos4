@@ -1895,3 +1895,62 @@ int tg_platform_open_url(const char *url)
     Close(nil_out);
     return rc;
 }
+
+
+/* --- GUI drag-and-drop (0.0.8 punto 1e): our own Intuition window --------
+   Unlike the console (whose CON: window belongs to the system, hence the
+   AppIcon detour above), the GUI window is OURS: a plain AppWindow on it
+   receives drops fine. Same port and poll as the console lane; single
+   owner process-wide. */
+int tg_platform_gui_drop_arm(void *window)
+{
+    if (window == 0) {
+        return -1;
+    }
+    if (tg_os4_app_port != 0 || tg_os4_app_win != 0) {
+        return 0; /* already armed */
+    }
+    if (tg_os4_wb_base == 0) {
+        tg_os4_wb_base = OpenLibrary((CONST_STRPTR)"workbench.library", 44);
+        if (tg_os4_wb_base == 0) {
+            tg_os4_drop_diag = "workbench.library open failed";
+            return -1;
+        }
+    }
+    if (tg_os4_iwb == 0) {
+        tg_os4_iwb = (struct WorkbenchIFace *)GetInterface(tg_os4_wb_base,
+                                                           "main", 1L, 0);
+        if (tg_os4_iwb == 0) {
+            tg_os4_drop_diag = "workbench interface failed";
+            tg_os4_drop_disarm();
+            return -1;
+        }
+    }
+    tg_os4_app_port = CreateMsgPort();
+    if (tg_os4_app_port == 0) {
+        tg_os4_drop_diag = "message port failed";
+        tg_os4_drop_disarm();
+        return -1;
+    }
+    tg_os4_app_win = tg_os4_iwb->AddAppWindowA(0UL, 0UL,
+                                               (struct Window *)window,
+                                               tg_os4_app_port, 0);
+    if (tg_os4_app_win == 0) {
+        tg_os4_drop_diag = "AddAppWindow failed";
+        tg_os4_drop_disarm();
+        return -1;
+    }
+    tg_os4_drop_diag = "ready (GUI window)";
+    return 0;
+}
+
+void tg_platform_gui_drop_disarm(void)
+{
+    tg_os4_drop_disarm();
+}
+
+unsigned long tg_platform_gui_drop_sigmask(void)
+{
+    return (tg_os4_app_port != 0)
+               ? (1UL << tg_os4_app_port->mp_SigBit) : 0UL;
+}
