@@ -53,9 +53,9 @@ unless noted.
 
 ### Fixed
 - Accounts whose first login predates the paged dialog bootstrap were stuck
-  with a handful of chats in the sidebar: a small cache is now topped up
-  additively from the server (order and removals stay untouched past the
-  top-up threshold). MorphOS still skips getDialogs (documented freeze).
+  with a handful of chats in the sidebar: the Reload chat list menu item
+  fetches the full (paged) list on demand. MorphOS still skips getDialogs
+  (documented freeze).
 - Aminet only: the 0.0.7 AmigaOS 3.x archive shipped the wrong (AmigaOS 4)
   binary due to a case-insensitive filename collision in the packaging and
   was republished as 0.0.7a (same program, correct 68k binary). The GitHub
