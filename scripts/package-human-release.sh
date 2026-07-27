@@ -99,7 +99,7 @@ fill_platform_text() {
         notes_en="Notes for MorphOS
 -----------------
 - The chat list is not fetched automatically at first login here: use
-  "Reload chat list" in the Telegram menu to pull it in, or type a name in
+  \"Reload chat list\" in the Telegram menu to pull it in, or type a name in
   the search box to find/add a single chat. Removed/reordered chats and
   unread badges persist as everywhere else.
 - In groups the typing line shows \"someone is typing\" (the per-member name
@@ -112,7 +112,7 @@ fill_platform_text() {
         notes_it="Note per MorphOS
 ----------------
 - Qui la lista chat non viene scaricata in automatico al primo accesso: usa
-  "Reload chat list" nel menu Telegram per caricarla, oppure digita un nome
+  \"Reload chat list\" nel menu Telegram per caricarla, oppure digita un nome
   nella casella di ricerca per aggiungere una singola chat. Rimozioni,
   riordino e badge non letti restano persistenti come altrove.
 - Nei gruppi la riga di scrittura mostra \"someone is typing\" (il recupero del
