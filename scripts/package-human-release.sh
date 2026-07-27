@@ -99,9 +99,10 @@ fill_platform_text() {
 - A few MB of free RAM."
         notes_en="Notes for MorphOS
 -----------------
-- The chat list is built with Search: getDialogs is not auto-loaded here (it
-  stalls MorphOS' TCP stack), so type a name in the search box to find/add a
-  chat. Removed/reordered chats and unread badges still persist.
+- The chat list is not fetched automatically at first login here: use
+  "Reload chat list" in the Telegram menu to pull it in, or type a name in
+  the search box to find/add a single chat. Removed/reordered chats and
+  unread badges persist as everywhere else.
 - In groups the typing line shows \"someone is typing\" (the per-member name
   fetch is skipped on MorphOS on purpose, to avoid a freeze).
 - Auto-read runs at a gentle pace; emoji are text emoticons.
@@ -111,10 +112,10 @@ fill_platform_text() {
 - Qualche MB di RAM libera."
         notes_it="Note per MorphOS
 ----------------
-- La lista chat si costruisce con la Ricerca: qui getDialogs non viene caricato
-  in automatico (blocca lo stack TCP di MorphOS), quindi digita un nome nella
-  casella di ricerca per trovare/aggiungere una chat. Rimozioni/riordino e
-  badge non letti restano comunque persistenti.
+- Qui la lista chat non viene scaricata in automatico al primo accesso: usa
+  "Reload chat list" nel menu Telegram per caricarla, oppure digita un nome
+  nella casella di ricerca per aggiungere una singola chat. Rimozioni,
+  riordino e badge non letti restano persistenti come altrove.
 - Nei gruppi la riga di scrittura mostra \"someone is typing\" (il recupero del
   nome del membro e' disattivato su MorphOS apposta, per evitare un freeze).
 - L'autocompletamento @ dei membri e' spento su MorphOS (guardia anti-freeze).
@@ -236,7 +237,13 @@ Using the GUI
   it and pick Download -- the file lands in the downloads/ drawer. To send
   one, open the chat and use the Telegram menu's "Send file..." (Amiga+F):
   a standard file requester picks it, up to $upload_limit on this build.
-  Large transfers show percentage progress in the status line.
+  You can also DROP a file icon on the window to send it. Transfers show
+  the percentage and speed in the status line and ESC cancels them, while
+  the client stays usable -- keep chatting while a file moves.
+  To download somewhere else (a RAM: drawer is much quicker on a floppy
+  or slow disk), put that path on a single line in
+  data/telegram-downloads.txt, e.g. RAM:TGdl -- remember RAM: is emptied
+  by a reboot.
 - SAVED MESSAGES: the last chat in the list is you. Send files or notes to
   it from your phone or PC and pick them up on the Amiga (or the other way
   round) -- Telegram's cloud as your transfer drawer. It cannot be removed.
@@ -362,7 +369,13 @@ Usare la GUI
   Click destro -> Download e il file finisce nel cassetto downloads/. Per
   inviarne uno: apri la chat e usa "Send file..." nel menu Telegram
   (Amiga+F): lo scegli dal requester di sistema, fino a $upload_limit su
-  questa build. Durante i trasferimenti grandi compare la percentuale.
+  questa build. Puoi anche TRASCINARE l'icona di un file sulla finestra.
+  Durante i trasferimenti vedi percentuale e velocita' nella riga di stato,
+  ESC annulla, e il client resta usabile: puoi continuare a chattare.
+  Per scaricare altrove (un cassetto in RAM: e' molto piu' rapido su
+  floppy o dischi lenti) scrivi il percorso su una riga sola in
+  data/telegram-downloads.txt, per esempio RAM:TGdl -- ricorda che RAM:
+  si svuota al riavvio.
 - MESSAGGI SALVATI: l'ultima chat della lista sei tu. Mandaci file o appunti
   dal telefono o dal PC e riprendili sull'Amiga (o viceversa) -- il cloud di
   Telegram come cassetto di scambio. Non si puo' rimuovere.

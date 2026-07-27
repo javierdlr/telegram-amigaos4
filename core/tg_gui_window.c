@@ -1771,7 +1771,8 @@ static void tg_gui_window_transfer_finished(tg_gui_state *state,
         } else if (trc == 2) {
             strcpy(line, "File is on another server - not supported yet");
         } else if (trc == 3) {
-            strcpy(line, "Could not write to downloads/");
+            sprintf(line, "Could not write to %.28s",
+                    tg_gui_session_download_dir());
         } else if (trc == 5) {
             strcpy(line, "Download cancelled");
         } else if (trc == 4) {

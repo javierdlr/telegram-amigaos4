@@ -40,6 +40,9 @@ unless noted.
   again.
 - Archived chats are filtered out of the dialog list (main folder only);
   archive management is on the roadmap.
+- Configurable download drawer: one line in `data/telegram-downloads.txt`
+  (e.g. `RAM:TGdl`) sends downloads somewhere else, which is much quicker on
+  a floppy or a slow disk. Defaults to `downloads` as before.
 
 ### Changed
 - The transfer status line shows the rate next to the percentage

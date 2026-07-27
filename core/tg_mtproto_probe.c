@@ -14356,6 +14356,43 @@ static int tg_gui_avfetch_n = 0;
 #define TG_GUI_DL_WBUF (128UL * 1024UL)
 #endif
 
+/* Where downloads land (0.0.8, tester request: an 030 owner wanted them in
+   RAM: for speed). Default "downloads" next to the program, as always;
+   data/telegram-downloads.txt overrides it with one line, e.g. "RAM:TGdl"
+   or "Work:Incoming". Read once per run -- a transfer must not change
+   destination halfway. Trailing separator optional, we add one if needed. */
+static char tg_gui_dl_dir[96];
+
+const char *tg_gui_session_download_dir(void)
+{
+    if (tg_gui_dl_dir[0] == '\0') {
+        FILE *f = fopen("data/telegram-downloads.txt", "r");
+
+        if (f != 0) {
+            if (fgets(tg_gui_dl_dir, (int)sizeof(tg_gui_dl_dir), f) != 0) {
+                unsigned long n = (unsigned long)strlen(tg_gui_dl_dir);
+
+                while (n > 0UL && (tg_gui_dl_dir[n - 1UL] == '\n' ||
+                                   tg_gui_dl_dir[n - 1UL] == '\r' ||
+                                   tg_gui_dl_dir[n - 1UL] == ' ' ||
+                                   tg_gui_dl_dir[n - 1UL] == '\t')) {
+                    tg_gui_dl_dir[--n] = '\0';
+                }
+                /* A trailing '/' would double up when we join the name;
+                   a trailing ':' is a volume root and must stay. */
+                if (n > 0UL && tg_gui_dl_dir[n - 1UL] == '/') {
+                    tg_gui_dl_dir[n - 1UL] = '\0';
+                }
+            }
+            fclose(f);
+        }
+        if (tg_gui_dl_dir[0] == '\0') {
+            strcpy(tg_gui_dl_dir, "downloads");
+        }
+    }
+    return tg_gui_dl_dir;
+}
+
 static void tg_gui_dl_sanitize_name(const char *in, char *out,
                                     unsigned long out_size)
 {
@@ -15047,9 +15084,16 @@ static int tg_mtproto_download_begin(const tg_mtproto_file_ctx *fc,
         tg_gui_log("download: foreign DC, using its file channel");
     }
     tg_gui_dl_sanitize_name(tg_gui_dl.doc.file_name, safe, sizeof(safe));
-    (void)mkdir("downloads", 0777);
-    tg_platform_ensure_drawer_icon("downloads"); /* visible on Workbench */
-    sprintf(tg_gui_dl.path, "downloads/%s", safe);
+    {
+        const char *dir = tg_gui_session_download_dir();
+        unsigned long dn = (unsigned long)strlen(dir);
+
+        (void)mkdir(dir, 0777); /* EEXIST is the norm; volume roots fail
+                                   harmlessly and are used as they are */
+        tg_platform_ensure_drawer_icon(dir); /* visible on Workbench */
+        sprintf(tg_gui_dl.path, "%s%s%s", dir,
+                (dn > 0UL && dir[dn - 1UL] == ':') ? "" : "/", safe);
+    }
     tg_gui_dl.f = fopen(tg_gui_dl.path, "wb");
     if (tg_gui_dl.f != 0) {
         /* One big write buffer instead of the runtime's default: a tester on

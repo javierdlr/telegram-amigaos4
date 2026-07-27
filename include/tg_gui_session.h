@@ -111,6 +111,11 @@ int tg_gui_session_transfer_step(unsigned long *done, unsigned long *total);
 /* Bytes moved so far by the running transfer (0 when idle), for a rate
    display: downloads count real bytes, uploads count confirmed parts. */
 unsigned long tg_gui_session_transfer_bytes(void);
+
+/* Directory downloads are written to: "downloads" unless
+   data/telegram-downloads.txt says otherwise (one line, e.g. "RAM:TGdl").
+   Borrowed, do not free; stable for the whole run. */
+const char *tg_gui_session_download_dir(void);
 void tg_gui_session_transfer_cancel(void);
 int tg_gui_session_transfer_end(char *out_path, unsigned long out_path_size);
 
