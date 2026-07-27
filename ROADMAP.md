@@ -46,9 +46,14 @@ client:
   Copy/Cut/Paste in an Edit menu, reply on double-click, TUI file
   transfer/drop support, live remote edits and receive-only updates while
   composing, accented-name search, and a TUI_MODE icon tooltype.
-- Next (0.0.8 candidates): non-blocking transfers (use the client while a
-  file moves) with pipelined downloads, local-first search, per-chat file
-  browser, clickable URLs, menu/theme review, multi-DC.
+- In development (0.0.8): non-blocking transfers (use the client while a
+  file moves) with pipelined downloads and drag-and-drop upload, multi-DC
+  downloads and avatars, local-first search with keyboard navigation,
+  clickable URLs, system-coloured menus, chat list reload with a memory of
+  the chats you removed.
+- Next (0.0.9): forwarding messages, files and media to another chat -- the
+  destination picker reuses the local-first search. Then: per-chat file
+  browser, multi-message selection, inline photos, archive management.
 - A Bot-API text path stays available as a fallback for tokens/bots.
 - TLS certificate validation has passed a live CA-bundle smoke test on all four
   platforms (see `docs/TLS_CERTIFICATES.md`).
