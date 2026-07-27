@@ -73,9 +73,8 @@ fill_platform_text() {
 ---------------------
 - Photos/files are shown as [Photo] / [File] labels (no image decoding on 68k).
 - The cloud-password (2FA) step is heavy on a 68k (PBKDF2) and can take a while.
-- First login: on some 68k setups the in-GUI fresh login is still rough. The
-  reliable path is to log in ONCE with TelegramAmiga-TUI (the text/console client), then
-  use TelegramAmiga from then on (it reuses the saved login).
+- First login: the DH key exchange is heavy on a 68k, so the first start
+  takes a while (it happens once -- the session is saved afterwards).
 - Emoji are drawn as text emoticons (:) :D <3); the console has no emoji font."
         req_it="- AmigaOS 3.x (3.1 / 3.1.4 / 3.2) con uno stack TCP/IP (Roadshow, AmiTCP,
   Miami/MiamiDx) che fornisca bsdsocket.library, e una connessione internet.
@@ -89,9 +88,9 @@ fill_platform_text() {
   sul 68k).
 - Il passo della password cloud (2FA) e' pesante su 68k (PBKDF2) e puo' metterci
   un po'.
-- Primo accesso: su alcune configurazioni 68k il login fresco dentro la GUI e'
-  ancora instabile. La via affidabile e' accedere UNA volta con TelegramAmiga-TUI (il
-  client console), poi usare TelegramAmiga (riusa il login salvato)."
+- Primo accesso: lo scambio di chiavi DH e' pesante su 68k, quindi il primo
+  avvio richiede un po' di pazienza (succede una volta sola: la sessione
+  viene poi salvata)."
         ;;
     "MorphOS")
         upload_limit="250 MiB"
