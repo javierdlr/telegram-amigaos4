@@ -54,8 +54,14 @@ client:
 - Next (0.0.9): forwarding messages, files and media to another chat -- the
   destination picker reuses the local-first search, and a one-click
   "Forward to Saved Messages" archives anything into your own cloud without
-  re-uploading it. Then: per-chat file
-  browser, multi-message selection, inline photos, archive management.
+  re-uploading it -- plus INLINE PHOTOS in the conversation (today a photo
+  is a [Photo] label; the JPEG decoder already in use for avatars grows into
+  the bubbles, degrading per platform).
+- Then 0.1.0, the first BETA: same program, a different promise. It ships
+  once forwarding and inline photos are in, no known freeze remains on any
+  of the five platforms, an adversarial review pass has run, and a full
+  cycle has gone by without field regressions.
+- Later: per-chat file browser, multi-message selection, archive management.
 - A Bot-API text path stays available as a fallback for tokens/bots.
 - TLS certificate validation has passed a live CA-bundle smoke test on all four
   platforms (see `docs/TLS_CERTIFICATES.md`).
