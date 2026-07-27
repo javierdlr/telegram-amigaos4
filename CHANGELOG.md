@@ -57,10 +57,18 @@ unless noted.
 - Menus follow the system colours: new-look menubar and the context popup now
   drawn with the screen's own pens (dark stays dark on OS4.1, classic grey
   stays grey elsewhere).
+- Downloads write through a large buffer, so the drive is touched in big
+  blocks instead of many small ones (a tester could hear the difference on
+  an 030).
+- The transfer status says "ESC cancels" instead of "close or ESC cancels":
+  the close gadget still works, but the hint now names the obvious key.
 - While a transfer is running the heavy live poll is throttled (the light
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- Double-clicking a search result opened the chat BELOW it: the first click
+  already opens the result and replaces the sidebar, so the second landed on
+  a different list. The second half of the double click is now ignored.
 - Pasting a text file kept its layout here but arrived as one paragraph on
   other clients: line breaks are now preserved (CR and CRLF normalised),
   instead of being flattened into spaces. The sidebar search box still takes

@@ -1882,7 +1882,7 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
         return;
     }
     tg_gui_window_copy(state->status, sizeof(state->status),
-                       "Uploading... (close or ESC cancels)");
+                       "Uploading... (ESC cancels)");
     tg_gui_window_paint(state, backend);
 }
 
@@ -2362,6 +2362,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     unsigned long dbl_last_id = 0;
     unsigned long dbl_press_secs = 0;
     unsigned long dbl_press_micros = 0;
+    /* When a click on a SEARCH RESULT opens a chat, the sidebar is replaced
+       by the real list underneath: the second click of a natural double
+       click then lands on a different row and opens the chat below it (a
+       tester hit this every time on OS4). These carry the opening click's
+       time so the very next click on the sidebar can be ignored if it falls
+       within the system double-click interval. */
+    unsigned long picked_secs = 0;
+    unsigned long picked_micros = 0;
     unsigned long watch_seconds;
     unsigned long watch_boot_seconds;
     unsigned long watch_boot_grace;
@@ -3900,7 +3908,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                         dl_id, stdout)) == 0) {
                             tg_gui_window_copy(
                                 state->status, sizeof(state->status),
-                                "Downloading... (close or ESC cancels)");
+                                "Downloading... (ESC cancels)");
                             tg_gui_window_paint(state, &backend);
                         } else {
                             /* Failed before the first chunk (not in cache,
@@ -4167,6 +4175,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else if (msg_code == SELECTDOWN) {
                     int hit;
 
+                    if (picked_secs != 0UL &&
+                        DoubleClick(picked_secs, picked_micros, msg_secs,
+                                    msg_micros)) {
+                        /* Second half of a double click on a search result:
+                           the list under the pointer is a different one now,
+                           so acting on it would open the wrong chat. */
+                        picked_secs = 0UL;
+                        continue;
+                    }
+                    picked_secs = 0UL;
                     hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
                                           ctx.line_h, hx, hy);
                     if (hit >= 0 && state->in_search) {
@@ -4176,6 +4194,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         state->search_active = 0;
                         state->search_query[0] = '\0';
                         (void)tg_gui_session_search_open_result(hit, stdout);
+                        picked_secs = msg_secs;   /* swallow the second click */
+                        picked_micros = msg_micros;
                         tg_gui_window_copy(state->status, sizeof(state->status),
                                            "Live - F1-F10 chats, Q quits");
                         tg_gui_window_paint(state, &backend);
@@ -4189,6 +4209,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         } else {
                             tg_gui_window_open_by_index(
                                 state, &backend, state->chats[hit].index);
+                            picked_secs = msg_secs; /* swallow the second click */
+                            picked_micros = msg_micros;
                             tg_gui_window_copy(state->status,
                                                sizeof(state->status),
                                                "Live - F1-F10 chats, Q quits");
@@ -4552,7 +4574,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_set_transfer_name(dname);
                         tg_gui_window_copy(
                             state->status, sizeof(state->status),
-                            "Sending... (close or ESC cancels)");
+                            "Sending... (ESC cancels)");
                         tg_gui_window_paint(state, &backend);
                     } else {
                         /* Same final lines the picker path shows on a
@@ -4626,7 +4648,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tdir == 2 ? "Uploading" : "Downloading", percent,
                             xfer_kbs);
                 } else {
-                    sprintf(tline, "%s %lu%% (close or ESC cancels)",
+                    sprintf(tline, "%s %lu%% (ESC cancels)",
                             tdir == 2 ? "Uploading" : "Downloading", percent);
                 }
                 if (strcmp(state->status, tline) != 0) {

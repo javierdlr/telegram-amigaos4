@@ -14347,6 +14347,14 @@ static int tg_gui_avfetch_n = 0;
    link (phone hotspot, PLIP, a busy DC) loses the odd chunk; re-asking for the
    same offset costs one round-trip and saves the whole file. */
 #define TG_GUI_DL_CHUNK_RETRIES 4
+/* Write buffer for the file being downloaded: a few chunks' worth, so the
+   drive is touched in big blocks. m68k keeps it modest (its whole BSS is
+   the tight budget), the others can afford more. */
+#if defined(__m68k__)
+#define TG_GUI_DL_WBUF (64UL * 1024UL)
+#else
+#define TG_GUI_DL_WBUF (128UL * 1024UL)
+#endif
 
 static void tg_gui_dl_sanitize_name(const char *in, char *out,
                                     unsigned long out_size)
@@ -15043,6 +15051,16 @@ static int tg_mtproto_download_begin(const tg_mtproto_file_ctx *fc,
     tg_platform_ensure_drawer_icon("downloads"); /* visible on Workbench */
     sprintf(tg_gui_dl.path, "downloads/%s", safe);
     tg_gui_dl.f = fopen(tg_gui_dl.path, "wb");
+    if (tg_gui_dl.f != 0) {
+        /* One big write buffer instead of the runtime's default: a tester on
+           an 030 could HEAR the drive working through a download, which is
+           what many small writes sound like (we write the real file as it
+           arrives -- there is no temporary to move elsewhere). Best effort:
+           if the buffer cannot be set the transfer just runs as before. */
+        static char dl_wbuf[TG_GUI_DL_WBUF];
+
+        (void)setvbuf(tg_gui_dl.f, dl_wbuf, _IOFBF, sizeof(dl_wbuf));
+    }
     if (tg_gui_dl.f == 0) {
         tg_mtproto_close_quiet_stream(tg_gui_dl.quiet, stream);
         tg_gui_dl.quiet = 0;
