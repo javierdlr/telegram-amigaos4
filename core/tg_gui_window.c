@@ -239,6 +239,7 @@ static int tg_gui_amiga_open_core_libs(void)
 #define TG_MENU_PASTE 9
 #define TG_MENU_CUT 10
 #define TG_MENU_RELOAD 11
+#define TG_MENU_DLDIR 12
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -1521,6 +1522,8 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_RELOAD },
     { NM_ITEM,  (STRPTR)"Send file...", (STRPTR)"F", 0, 0,
       (APTR)TG_MENU_SENDFILE },
+    { NM_ITEM,  (STRPTR)"Download drawer...", 0, 0, 0,
+      (APTR)TG_MENU_DLDIR },
     { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
       (APTR)TG_MENU_ICONIFY },
     { NM_ITEM,  (STRPTR)"Own screen", 0, CHECKIT | MENUTOGGLE, 0,
@@ -1697,6 +1700,15 @@ static void tg_gui_window_track_rmbtrap(tg_gui_state *state,
     }
     hx = mouse_x - ctx->origin_x;
     hy = mouse_y - ctx->origin_y;
+    if (hx < 0 || hy < 0 || hx >= ctx->inner_w || hy >= ctx->inner_h) {
+        /* Pointer OUTSIDE our content: release the trap so a right-click
+           out there gets Intuition's classic menu bar for this (still
+           active) window. The hit test does not bound-check, so without
+           this a pointer just past the edge could still map onto a bubble
+           and keep the trap armed -- the menu bar then never appeared. */
+        tg_gui_amiga_set_rmbtrap(ctx->window, 0);
+        return;
+    }
     hit = tg_gui_hit_test(state, ctx->inner_w, ctx->inner_h, ctx->line_h,
                           hx, hy);
     over_msg = 0;
@@ -1791,6 +1803,77 @@ static void tg_gui_window_transfer_finished(tg_gui_state *state,
     }
     tg_gui_window_copy(state->status, sizeof(state->status), line);
     tg_gui_window_paint(state, backend);
+}
+
+/* "Download drawer...": ASL drawer requester -> where downloads land from
+   now on (0.0.8; a tester on a slow disk wanted them in RAM:). The choice is
+   written to data/telegram-downloads.txt, so it survives the next run. */
+static void tg_gui_window_pick_download_dir(tg_gui_state *state,
+                                            struct Window *win,
+                                            tg_gui_backend *backend)
+{
+    struct FileRequester *req;
+    char dir[128];
+
+    AslBase = OpenLibrary((CONST_STRPTR)"asl.library", 38L);
+    if (AslBase == 0) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "asl.library V38 not found");
+        tg_gui_window_paint(state, backend);
+        return;
+    }
+#if defined(__amigaos4__)
+    IAsl = (struct AslIFace *)GetInterface(AslBase, "main", 1L, 0);
+    if (IAsl == 0) {
+        CloseLibrary(AslBase);
+        AslBase = 0;
+        return;
+    }
+#endif
+    req = (struct FileRequester *)AllocAslRequestTags(
+        ASL_FileRequest, ASLFR_Window, (unsigned long)win, ASLFR_TitleText,
+        (unsigned long)"Where should downloads go?", ASLFR_DrawersOnly, TRUE,
+        ASLFR_InitialDrawer,
+        (unsigned long)tg_gui_session_download_dir(), TAG_DONE);
+    dir[0] = '\0';
+    if (req != 0 && AslRequestTags(req, TAG_DONE)) {
+        unsigned long n = 0UL;
+        const char *p;
+
+        for (p = (const char *)req->fr_Drawer; p != 0 && *p != '\0' &&
+             n + 1UL < sizeof(dir); ++p) {
+            dir[n++] = *p;
+        }
+        dir[n] = '\0';
+    }
+    if (req != 0) {
+        FreeAslRequest(req);
+    }
+#if defined(__amigaos4__)
+    DropInterface((struct Interface *)IAsl);
+    IAsl = 0;
+#endif
+    CloseLibrary(AslBase);
+    AslBase = 0;
+    if (dir[0] == '\0') {
+        return; /* cancelled */
+    }
+    {
+        int src = tg_gui_session_set_download_dir(dir);
+        char line[80];
+
+        if (src == 0) {
+            sprintf(line, "Downloads go to %.30s",
+                    tg_gui_session_download_dir());
+        } else if (src == 2) {
+            sprintf(line, "Downloads: %.24s (this run only)",
+                    tg_gui_session_download_dir());
+        } else {
+            strcpy(line, "That drawer name is not usable");
+        }
+        tg_gui_window_copy(state->status, sizeof(state->status), line);
+        tg_gui_window_paint(state, backend);
+    }
 }
 
 /* "Send file...": ASL file requester -> non-blocking upload on the open chat.
@@ -3637,6 +3720,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             /* Tear down window (and own screen) via the normal
                                path; the outer loop parks on an AppIcon. */
                             done = 2;
+                        } else if (ud == (APTR)TG_MENU_DLDIR) {
+                            tg_gui_window_pick_download_dir(state, ctx.window,
+                                                            &backend);
                         } else if (ud == (APTR)TG_MENU_RELOAD) {
                             /* Re-page the dialog list on demand (start-up
                                no longer refetches). Blocking but bounded:
@@ -3938,6 +4024,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                ? "Copied to clipboard"
                                                : "Copy failed");
                         tg_gui_window_paint(state, &backend);
+                    } else if (it == TG_GUI_CTX_DLDIR) {
+                        /* Chat-level too: same picker as the menubar item. */
+                        tg_gui_window_pick_download_dir(state, ctx.window,
+                                                       &backend);
                     } else if (it == TG_GUI_CTX_SENDFILE) {
                         /* Chat-level action (not tied to the clicked message):
                            send a file to the open chat, same as the menubar

@@ -40,9 +40,12 @@ unless noted.
   again.
 - Archived chats are filtered out of the dialog list (main folder only);
   archive management is on the roadmap.
-- Configurable download drawer: one line in `data/telegram-downloads.txt`
-  (e.g. `RAM:TGdl`) sends downloads somewhere else, which is much quicker on
-  a floppy or a slow disk. Defaults to `downloads` as before.
+- Configurable download drawer, picked from the menu ("Download drawer..."
+  in the Telegram menu and in the right-click popup): a standard drawer
+  requester, remembered for the next run. Downloading to a RAM: drawer is
+  much quicker on a floppy or a slow disk. Defaults to `downloads` as
+  before, and the file it writes (`data/telegram-downloads.txt`) can still
+  be edited by hand.
 
 ### Changed
 - The transfer status line shows the rate next to the percentage
@@ -69,6 +72,10 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- Right-clicking OUTSIDE the window while it still had focus could leave you
+  with no menu at all: the pointer tracking never checked whether the pointer
+  had left the window, so the right-button trap stayed armed and suppressed
+  the classic menu bar.
 - Double-clicking a search result opened the chat BELOW it: the first click
   already opens the result and replaces the sidebar, so the second landed on
   a different list. The second half of the double click is now ignored.

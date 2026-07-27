@@ -14393,6 +14393,41 @@ const char *tg_gui_session_download_dir(void)
     return tg_gui_dl_dir;
 }
 
+/* Point downloads at `dir` from now on and remember it for the next run.
+   A transfer already running keeps the path it built at start, so this is
+   safe at any time. 0 = stored (and persisted); non-zero = rejected. */
+int tg_gui_session_set_download_dir(const char *dir)
+{
+    FILE *f;
+    unsigned long n;
+
+    if (dir == 0 || dir[0] == '\0' ||
+        strlen(dir) + 1UL > sizeof(tg_gui_dl_dir)) {
+        return 1;
+    }
+    strcpy(tg_gui_dl_dir, dir);
+    n = (unsigned long)strlen(tg_gui_dl_dir);
+    while (n > 0UL && (tg_gui_dl_dir[n - 1UL] == ' ' ||
+                       tg_gui_dl_dir[n - 1UL] == '\t')) {
+        tg_gui_dl_dir[--n] = '\0';
+    }
+    if (n > 0UL && tg_gui_dl_dir[n - 1UL] == '/') {
+        tg_gui_dl_dir[n - 1UL] = '\0'; /* the join adds it back */
+    }
+    if (tg_gui_dl_dir[0] == '\0') {
+        strcpy(tg_gui_dl_dir, "downloads");
+        return 1;
+    }
+    (void)mkdir("data", 0777);
+    f = fopen("data/telegram-downloads.txt", "w");
+    if (f == 0) {
+        return 2; /* in force for this run, but not remembered */
+    }
+    fprintf(f, "%s\n", tg_gui_dl_dir);
+    fclose(f);
+    return 0;
+}
+
 static void tg_gui_dl_sanitize_name(const char *in, char *out,
                                     unsigned long out_size)
 {

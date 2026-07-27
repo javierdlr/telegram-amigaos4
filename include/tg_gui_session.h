@@ -116,6 +116,11 @@ unsigned long tg_gui_session_transfer_bytes(void);
    data/telegram-downloads.txt says otherwise (one line, e.g. "RAM:TGdl").
    Borrowed, do not free; stable for the whole run. */
 const char *tg_gui_session_download_dir(void);
+
+/* Change it (menu "Download drawer..."): applies at once and is written to
+   data/telegram-downloads.txt for the next run. 0 ok, 1 rejected (empty or
+   too long), 2 in force but could not be saved. */
+int tg_gui_session_set_download_dir(const char *dir);
 void tg_gui_session_transfer_cancel(void);
 int tg_gui_session_transfer_end(char *out_path, unsigned long out_path_size);
 
