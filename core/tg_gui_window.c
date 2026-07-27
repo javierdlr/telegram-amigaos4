@@ -3646,10 +3646,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                         state->chat_count);
                                 tg_gui_window_copy(state->status,
                                                    sizeof(state->status), rl);
-                            } else if (rrc == 3) {
-                                tg_gui_window_copy(
-                                    state->status, sizeof(state->status),
-                                    "Reload not available on MorphOS");
                             } else {
                                 tg_gui_window_copy(state->status,
                                                    sizeof(state->status),

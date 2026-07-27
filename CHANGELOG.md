@@ -32,8 +32,9 @@ unless noted.
   as the drop lands), with the same non-blocking pump, progress and cancel
   as Send file...
 - Reload chat list menu item: re-page the dialog list from the server on
-  demand. Start-up no longer refetches the list on every run (a busy account
-  felt heavy); the full fetch happens on the first login only.
+  demand, on every platform including MorphOS. Start-up no longer refetches
+  the list on every run (a busy account felt heavy); the full fetch happens
+  on the first login only.
 - Hidden chats memory: a chat removed from the list now STAYS removed across
   reloads and restarts; reopening it from the online search makes it visible
   again.
@@ -72,8 +73,7 @@ unless noted.
   transfer was always fine).
 - Accounts whose first login predates the paged dialog bootstrap were stuck
   with a handful of chats in the sidebar: the Reload chat list menu item
-  fetches the full (paged) list on demand. MorphOS still skips getDialogs
-  (documented freeze).
+  fetches the full (paged) list on demand.
 - Aminet only: the 0.0.7 AmigaOS 3.x archive shipped the wrong (AmigaOS 4)
   binary due to a case-insensitive filename collision in the packaging and
   was republished as 0.0.7a (same program, correct 68k binary). The GitHub

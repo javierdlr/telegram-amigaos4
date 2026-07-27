@@ -13667,28 +13667,39 @@ int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
 /* Menu "Reload chat list" (0.0.8): re-page the dialog list from the server
    on demand -- start-up no longer refetches (a busy account felt heavy and
    removals resurrected). Additive like the first-login bootstrap, honours
-   the hidden list, then reprojects the sidebar. MorphOS: getDialogs still
-   hard-freezes there, so the reload reports unsupported (rc 3). */
+   the hidden list, then reprojects the sidebar.
+
+   MorphOS: this used to report "not available". The getDialogs guard dates
+   from 2026-06-18, three days BEFORE the real cause of the MorphOS freezes
+   was found and fixed -- a 32 KB PPC task stack (__stack, 62df870), which
+   the deep dialogs parse overflowed. Small getHistory replies always worked
+   there, which fits that reading exactly. So the reload runs on MorphOS
+   too, with the smallest pages of any lane to keep each reply modest. */
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+#define TG_GUI_RELOAD_PAGE "10"
+#define TG_GUI_RELOAD_PAGES 12
+#else
+#define TG_GUI_RELOAD_PAGE "30"
+#define TG_GUI_RELOAD_PAGES 8
+#endif
+
 int tg_gui_session_reload_chat_list(FILE *stream)
 {
     if (!tg_gui_session_state.open || stream == 0) {
         return 2;
     }
-#if defined(__MORPHOS__) || defined(__MORPHOS)
-    return 3;
-#else
     {
         FILE *q;
         int iter;
         unsigned long prev = 0UL;
 
         q = tg_mtproto_open_quiet_stream(stream);
-        for (iter = 0; iter < 8; ++iter) {
+        for (iter = 0; iter < TG_GUI_RELOAD_PAGES; ++iter) {
             if (tg_mtproto_auth_list_peers_file(
                     tg_gui_session_state.host, "443",
                     tg_gui_session_state.api_file,
                     tg_gui_session_state.auth_file,
-                    tg_gui_session_state.dc_id_text, "30",
+                    tg_gui_session_state.dc_id_text, TG_GUI_RELOAD_PAGE,
                     tg_gui_session_state.peer_cache_file, q) != 0) {
                 break; /* keep whatever pages landed */
             }
@@ -13707,7 +13718,6 @@ int tg_gui_session_reload_chat_list(FILE *stream)
         tg_gui_session_reload_chats();
         return 0;
     }
-#endif
 }
 
 /* Public: move the chat at sidebar row src_index to dst_index (both 1-based,
