@@ -52,7 +52,9 @@ client:
   clickable URLs, system-coloured menus, chat list reload with a memory of
   the chats you removed.
 - Next (0.0.9): forwarding messages, files and media to another chat -- the
-  destination picker reuses the local-first search. Then: per-chat file
+  destination picker reuses the local-first search, and a one-click
+  "Forward to Saved Messages" archives anything into your own cloud without
+  re-uploading it. Then: per-chat file
   browser, multi-message selection, inline photos, archive management.
 - A Bot-API text path stays available as a fallback for tokens/bots.
 - TLS certificate validation has passed a live CA-bundle smoke test on all four
