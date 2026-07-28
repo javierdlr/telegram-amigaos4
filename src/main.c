@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include "tg_app.h"
+#include "tg_gui_session.h" /* tg_gui_log: diagnostic trace */
 #include "tg_version.h"
 
 /* Amiga $VER version tag (GitHub issue #3): lets the shell "Version" command
@@ -83,16 +84,41 @@ int main(int argc, char **argv)
         /* Prefer an explicit TUI_MODE tooltype on the launched icon (issue #9,
            javierdlr); fall back to the filename heuristic so the default
            byte-identical icons still work with no tooltype at all. */
-        int tt = tg_platform_wb_tui_mode(argv);
-        int want_tui = (tt >= 0) ? tt : tg_main_wb_wants_tui(argv);
+        int tt;
+        int want_tui;
+
+#ifdef TG_DIAG_TRACE
+        /* Diagnostic build (experimental 68000 lane): the trail starts at the
+           very first instruction of main, so a field report can tell "never
+           reached main" from "died at step N". */
+        tg_gui_log_enable();
+        tg_gui_log("diag: main, workbench launch");
+#endif
+        tt = tg_platform_wb_tui_mode(argv);
+        want_tui = (tt >= 0) ? tt : tg_main_wb_wants_tui(argv);
+#ifdef TG_DIAG_TRACE
+        tg_gui_log(want_tui ? "diag: launching TUI" : "diag: launching GUI");
+#endif
 
         if (want_tui) {
             static char *tui_argv[6];
 
+#ifdef TG_DIAG_TRACE
+            tg_gui_log("diag: workbench_init");
+#endif
             tg_platform_workbench_init();
+#ifdef TG_DIAG_TRACE
+            tg_gui_log("diag: opening TUI console");
+#endif
             if (!tg_platform_workbench_tui_console()) {
+#ifdef TG_DIAG_TRACE
+                tg_gui_log("diag: NO CONSOLE, giving up");
+#endif
                 return tg_main_finish(0); /* no console possible */
             }
+#ifdef TG_DIAG_TRACE
+            tg_gui_log("diag: console ready, stdio rebound");
+#endif
             /* One line of drop status in the console scrollback: when a field
                report says "drag-and-drop does nothing", this says WHY. */
             printf("[file drag-and-drop: %s]\n",
@@ -104,7 +130,15 @@ int main(int argc, char **argv)
             tui_argv[4] = "data/phone-code-hash.txt";
             tui_argv[5] = "data/telegram-peers.txt";
             {
-                int rc = tg_app_run(6, tui_argv);
+                int rc;
+
+#ifdef TG_DIAG_TRACE
+                tg_gui_log("diag: entering tg_app_run (TUI)");
+#endif
+                rc = tg_app_run(6, tui_argv);
+#ifdef TG_DIAG_TRACE
+                tg_gui_log("diag: tg_app_run returned");
+#endif
 
                 /* Farewell hint on the WAIT console: the window stays so the
                    last output remains readable, and (when quit came from the

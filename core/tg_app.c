@@ -215,9 +215,18 @@ static int tg_run_mtproto_start_file(const char *api_file,
         tg_net_set_connect_timeout_seconds(30UL);
     }
 
+#ifdef TG_DIAG_TRACE
+    tg_gui_log("diag: tui start, checking api file");
+#endif
     if (tg_run_mtproto_ensure_api_file(api_file) != 0) {
+#ifdef TG_DIAG_TRACE
+        tg_gui_log("diag: api file MISSING/unusable");
+#endif
         return 2;
     }
+#ifdef TG_DIAG_TRACE
+    tg_gui_log("diag: loading saved session");
+#endif
 
     session_status = tg_mtproto_session_load_authorization(auth_file,
                                                            &session,
@@ -230,9 +239,16 @@ static int tg_run_mtproto_start_file(const char *api_file,
         } else {
             puts("Saved login is not usable. Starting login wizard.");
         }
+#ifdef TG_DIAG_TRACE
+        tg_gui_log("diag: entering login wizard (network + DH)");
+#endif
         rc = tg_mtproto_auth_login_wizard_file(
             "149.154.167.91", "443", "4", api_file, auth_file,
             code_hash_file, stdout);
+#ifdef TG_DIAG_TRACE
+        tg_gui_log(rc == 0 ? "diag: login wizard OK"
+                           : "diag: login wizard FAILED");
+#endif
         if (rc != 0) {
             return rc;
         }
@@ -3843,6 +3859,10 @@ int tg_app_run(int argc, char **argv)
      * Force unbuffered stdout/stderr so every prompt appears immediately on
      * every platform.
      */
+#ifdef TG_DIAG_TRACE
+    tg_gui_log_enable();
+    tg_gui_log("diag: tg_app_run entered");
+#endif
     setvbuf(stdout, (char *)0, _IONBF, 0);
     /* In-place upgrade: drop the pre-0.0.6 leftovers (old binary name, IconX
        launcher scripts + icons) from the program's drawer before anything
@@ -4510,6 +4530,9 @@ int tg_app_run(int argc, char **argv)
     }
 
     if (config.run_mtproto_start_file) {
+#ifdef TG_DIAG_TRACE
+        tg_gui_log("diag: dispatch -> mtproto start-file (TUI)");
+#endif
         return tg_run_mtproto_start_file(config.mtproto_auth_api_file,
                                          config.mtproto_auth_file,
                                          config.mtproto_auth_code_hash_file,

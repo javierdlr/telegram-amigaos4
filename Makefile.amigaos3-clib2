@@ -79,6 +79,12 @@ O2_OBJS := $(OBJDIR)/core/tg_mtproto_rsa.o $(OBJDIR)/core/tg_mtproto_crypto.o \
            $(OBJDIR)/core/tg_mtproto_srp.o $(OBJDIR)/core/tg_mtproto_encrypted.o
 $(O2_OBJS): OPT := -O2
 
+# Extra defines for one-off builds (diagnostics, experiments) WITHOUT
+# overriding CFLAGS from the command line -- doing that drops every
+# "CFLAGS +=" above (gzip/puff, clib2, the m68k asm switch) and produces a
+# silently crippled binary. Use: make ... EXTRA_CFLAGS=-DTG_DIAG_TRACE=1
+CFLAGS += $(EXTRA_CFLAGS)
+
 HDRS_ALL := $(wildcard include/*.h) $(wildcard third_party/*/*.h)
 
 $(OBJDIR)/%.o: %.c $(HDRS_ALL) | build/amigaos3-clib2
