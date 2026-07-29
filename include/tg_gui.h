@@ -87,10 +87,13 @@ struct tg_gui_backend {
 /* Sidebar capacity. Raised from 32 so a congested account shows far more of its
    chats at once; m68k stays lower for its tighter RAM box. Must stay <=
    TG_CHAT_LIST_MAX and TG_MTPROTO_PEER_CACHE_MAX (the display is their min). */
+#ifndef TG_GUI_MAX_CHATS /* overridable: host ASan runs can force the m68k
+                            profile (see TG_MTPROTO_MESSAGE_TEXT_LIST_MAX) */
 #if defined(__m68k__)
 #define TG_GUI_MAX_CHATS 64
 #else
 #define TG_GUI_MAX_CHATS 128
+#endif
 #endif
 #define TG_GUI_MAX_MESSAGES 100 /* deeper backlog at open (was 64); the open
                                    getHistory loads ~90, leaving room for live ones */
@@ -105,10 +108,13 @@ struct tg_gui_backend {
    up to TG_MTPROTO_MESSAGE_TEXT_MAX = 4096, so PPC/AROS use the full 4096 to show
    ANY message in full; m68k is capped lower for its 2 MB box. 64 of these live in
    tg_gui_state, which the gui-live path keeps STATIC (off the stack). */
+#ifndef TG_GUI_MSG_TEXT_MAX /* overridable: host ASan runs can force the m68k
+                               profile (see TG_MTPROTO_MESSAGE_TEXT_LIST_MAX) */
 #if defined(__m68k__)
 #define TG_GUI_MSG_TEXT_MAX 2048
 #else
 #define TG_GUI_MSG_TEXT_MAX 4096
+#endif
 #endif
 #define TG_GUI_HISTORY_MAX 16
 #define TG_GUI_TIME_MAX 8

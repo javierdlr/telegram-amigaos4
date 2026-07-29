@@ -9806,6 +9806,10 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                                         &peer_id_lo, &access_hash_hi,
                                         &access_hash_lo, &has_access_hash,
                                         quiet, label) != 0) {
+        /* These fail lines otherwise die inside this function's own quiet
+           stream: name them in the crash-safe log so a field report says WHY
+           a chat opened empty (--gui-live-debug only, like every probe). */
+        tg_gui_log("hist: peer load fail");
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
@@ -9828,11 +9832,26 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
         host, port, api_id, auth_file, dc_id_text, context, query,
         writer.length, &result, quiet, label, 600U);
     if (query_rc != 0) {
+        char qline[40];
+
+        sprintf(qline, "hist: query fail rc=%d", query_rc);
+        tg_gui_log(qline);
         tg_mtproto_close_quiet_stream(quiet, stream);
         return query_rc;
     }
     if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        long ecode;
+        char emsg[48];
+        char eline[96];
+
         (void)tg_mtproto_print_rpc_error(label, &result, quiet);
+        ecode = 0L;
+        emsg[0] = '\0';
+        (void)tg_mtproto_parse_rpc_error(result.result_body - 4U,
+                                         result.result_body_length + 4U,
+                                         &ecode, emsg, sizeof(emsg));
+        sprintf(eline, "hist: rpc error %ld %.48s", ecode, emsg);
+        tg_gui_log(eline);
         tg_mtproto_close_quiet_stream(quiet, stream);
         return 2;
     }
@@ -13356,14 +13375,19 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
     /* Opening getHistory limit -- must be <= TG_MTPROTO_MESSAGE_TEXT_LIST_MAX (the
        parser only keeps that many per read, the real backlog cap). MorphOS stays
        tiny (a large reply is its documented bsdsocket freeze trigger); m68k a bit
-       smaller for the 8MB budget; PPC/AROS get the deep backlog. */
+       smaller for the 8MB budget; PPC/AROS get the deep backlog. Overridable so
+       a diagnostic build can shrink the reply (the TUI pages by 5 and survives
+       setups where the GUI's bigger read dies -- AmiKit/PiStorm hunt). */
+#ifndef TG_GUI_OPEN_HISTORY_LIMIT
 #if defined(__MORPHOS__) || defined(__MORPHOS)
-    history_limit = "12";
+#define TG_GUI_OPEN_HISTORY_LIMIT "12"
 #elif defined(__m68k__)
-    history_limit = "30";
+#define TG_GUI_OPEN_HISTORY_LIMIT "30"
 #else
-    history_limit = "60";
+#define TG_GUI_OPEN_HISTORY_LIMIT "60"
 #endif
+#endif
+    history_limit = TG_GUI_OPEN_HISTORY_LIMIT;
     if (peer_index == TG_GUI_SAVED_PEER_INDEX) {
         strcpy(tg_gui_session_state.current_peer_index, "self");
     } else {
@@ -13445,6 +13469,14 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         tg_gui_session_state.current_peer_label,
         tg_gui_session_state.own_label);
     tg_chat_message_driver_override = 0;
+    if (printed == 0UL) {
+        /* Zero rows means the history call failed or filtered everything --
+           and its reason is buried in the quiet stream. Surface it: one line
+           in the crash-safe log, the full protocol chatter on the console
+           stream (visible when launched from a Shell / on the host build). */
+        tg_gui_log("open_chat: EMPTY transcript, replaying quiet stream");
+        tg_mtproto_replay_quiet_stream(quiet, stream);
+    }
     /* Older history exists beyond the loaded rows when the server's total for this
        peer exceeds what we show -- arm the forced "pull older" scrollbar so the
        user can fetch more even when the loaded page fits the window. The subtitle

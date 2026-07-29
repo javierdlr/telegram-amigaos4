@@ -300,10 +300,14 @@ typedef struct tg_mtproto_messages_summary {
    instances). This caps the GUI open-backlog -- it was 8, far too few. Each entry
    is ~4KB, so the list is sized per-platform to respect the 8MB OS3 budget while
    giving the PPC/AROS lanes a deeper backlog. */
+#ifndef TG_MTPROTO_MESSAGE_TEXT_LIST_MAX /* overridable: the host build can
+                                            force the m68k profile so ASan
+                                            hunts with the small-box bounds */
 #if defined(__m68k__)
 #define TG_MTPROTO_MESSAGE_TEXT_LIST_MAX 32U
 #else
 #define TG_MTPROTO_MESSAGE_TEXT_LIST_MAX 64U
+#endif
 #endif
 /* A reply's quoted-snippet preview: one short line, capped well below the body
    so the 8-message list stays cheap on the 8MB OS3 budget. */
