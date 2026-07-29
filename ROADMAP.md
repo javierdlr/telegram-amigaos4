@@ -56,7 +56,10 @@ client:
   "Forward to Saved Messages" archives anything into your own cloud without
   re-uploading it -- plus INLINE PHOTOS in the conversation (today a photo
   is a [Photo] label; the JPEG decoder already in use for avatars grows into
-  the bubbles, degrading per platform).
+  the bubbles, degrading per platform; system datatypes were suggested and
+  stay on the radar as an OS4-side option, but the zero-install rule keeps
+  the in-binary decoder as the base path -- a stock OS3 has no JPEG
+  datatype).
 - Then 0.1.0, the first BETA: same program, a different promise. It ships
   once forwarding and inline photos are in, no known freeze remains on any
   of the five platforms, an adversarial review pass has run, and a full
