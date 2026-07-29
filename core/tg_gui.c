@@ -10,6 +10,7 @@
  */
 
 #include "tg_gui.h"
+#include "tg_gui_session.h" /* tg_gui_log: crash-safe first-paint trail */
 
 #include <stdio.h>
 #include <string.h>
@@ -2322,6 +2323,21 @@ static void tg_gui_paint_login_input(const tg_gui_state *state,
 /* The first-login screen: a centered panel with the title, the current prompt
    (state->status), the input field (masked for the 2FA password) with caret,
    and a key hint. Shown while state->mode is a TG_GUI_MODE_LOGIN_* value. */
+/* One-shot trail for the very first paint (--gui-live-debug): a field crash
+   inside the initial render leaves the LAST primitive named in the log (an
+   AmiKit 12/13 setup dies exactly there, both on PiStorm and under WinUAE,
+   while the TUI works). Later repaints skip the trail. */
+static int tg_gui_first_paint_logged;
+
+/* The DIRECT render path runs the whole painter under LockLayerRom, where the
+   trail's DOS I/O must never happen (a filesystem requester under a layer lock
+   deadlocks Intuition): the window backend calls this before locking, so the
+   trail stays exclusive to the off-screen (unlocked) render. */
+void tg_gui_paint_trail_off(void)
+{
+    tg_gui_first_paint_logged = 1;
+}
+
 static void tg_gui_paint_login(const tg_gui_state *state,
                                tg_gui_backend *backend)
 {
@@ -2336,21 +2352,37 @@ static void tg_gui_paint_login(const tg_gui_state *state,
     if (width <= 0 || height <= 0 || lh <= 0) {
         return;
     }
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("login paint: clear");
+    }
     if (tg_gui_clear_background) {
         backend->fill_rect(backend, TG_GUI_PEN_WINDOW,
                            tg_gui_make_rect(0, 0, width, height));
     }
     mid = height / 2;
 
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("login paint: title+status");
+    }
     tg_gui_draw_centered(backend, TG_GUI_PEN_ACCENT, width, mid - (3 * lh),
                          "Telegram Amiga");
     tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT, width, mid - lh,
                          state->status);
 
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("login paint: input box");
+    }
     tg_gui_paint_login_input(state, backend);
 
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("login paint: footer");
+    }
     tg_gui_draw_centered(backend, TG_GUI_PEN_TEXT_DIM, width, mid + (3 * lh),
                          "ENTER confirms   ESC quits");
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("login paint: done");
+        tg_gui_first_paint_logged = 1;
+    }
 }
 
 static void tg_gui_paint_context_menu(const tg_gui_state *state,
@@ -2629,9 +2661,18 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
        the status bar below each fill their own region, so they tile the whole
        window. This avoids the full-window flash that was visible as a constant
        refresh on slow OS3 planar displays. */
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("chat paint: sidebar");
+    }
     tg_gui_paint_sidebar(state, backend, sidebar_w, content_h, lh);
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("chat paint: main");
+    }
     tg_gui_paint_main(state, backend, sidebar_w, width, content_h, lh);
 
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("chat paint: status");
+    }
     backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                        tg_gui_make_rect(0, content_h, width, status_h));
     backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, 10, content_h + lh,
@@ -2640,6 +2681,10 @@ void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend)
        render, so the double-buffer blit carries it and a repaint with
        ctx_visible==0 cleanly removes it. */
     tg_gui_paint_context_menu(state, backend);
+    if (!tg_gui_first_paint_logged) {
+        tg_gui_log("chat paint: done");
+        tg_gui_first_paint_logged = 1;
+    }
 }
 
 /* --- Recording backend for the self-test ------------------------------- */

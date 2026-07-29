@@ -909,6 +909,7 @@ static void tg_gui_amiga_buffer_alloc(tg_gui_amiga_ctx *ctx)
     struct BitMap *bm;
     int w;
     int h;
+    unsigned long depth;
 
     tg_gui_amiga_buffer_free(ctx);
     if (ctx->window == 0 || ctx->rport == 0 || ctx->rport->BitMap == 0) {
@@ -920,11 +921,19 @@ static void tg_gui_amiga_buffer_alloc(tg_gui_amiga_ctx *ctx)
     if (w < 8 || h < 8) {
         return; /* below the window minimum: skip buffering */
     }
-    bm = AllocBitMap((ULONG)w, (ULONG)h,
-                     (ULONG)GetBitMapAttr(src, BMA_DEPTH), 0UL, src);
+    depth = (unsigned long)GetBitMapAttr(src, BMA_DEPTH);
+    bm = AllocBitMap((ULONG)w, (ULONG)h, (ULONG)depth, 0UL, src);
     if (bm == 0) {
         tg_gui_log("window: double-buffer alloc failed, direct render");
         return;
+    }
+    {
+        /* Sized + depth line for the field log: an RTG setup that dies in the
+           first paint tells us here what pixel format it was running. */
+        char line[64];
+
+        sprintf(line, "window: double-buffer %dx%d depth %lu", w, h, depth);
+        tg_gui_log(line);
     }
     InitRastPort(&ctx->buf_rp);
     ctx->buf_rp.BitMap = bm;
@@ -953,6 +962,11 @@ static void tg_gui_window_paint(const tg_gui_state *state,
 {
     tg_gui_amiga_ctx *c = (tg_gui_amiga_ctx *)backend->context;
     struct Layer *layer;
+    /* One-shot trail (--gui-live-debug) around the FIRST full paint: an AmiKit
+       12/13 field setup dies between "setup done" and "opened", and this names
+       the killer half -- the off-screen render (no lock held) or the blit.
+       tg_gui_log does DOS I/O, so the blit probes stay OUTSIDE LockLayerRom. */
+    static int first_logged;
 
     if (c == 0 || c->rport == 0) {
         return;
@@ -963,6 +977,9 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         int saved_ox = c->origin_x;
         int saved_oy = c->origin_y;
 
+        if (!first_logged) {
+            tg_gui_log("paint1: off-screen render start");
+        }
         c->rport = &c->buf_rp;
         c->origin_x = 0;
         c->origin_y = 0;
@@ -971,6 +988,9 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         c->origin_x = saved_ox;
         c->origin_y = saved_oy;
 
+        if (!first_logged) {
+            tg_gui_log("paint1: blit start");
+        }
         if (layer != 0) {
             LockLayerRom(layer);
         }
@@ -979,13 +999,26 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
+        if (!first_logged) {
+            tg_gui_log("paint1: blit done");
+            first_logged = 1;
+        }
     } else {
+        if (!first_logged) {
+            tg_gui_log("paint1: direct render start (no buffer)");
+        }
+        /* The renderer's own trail would write to disk INSIDE the lock: off. */
+        tg_gui_paint_trail_off();
         if (layer != 0) {
             LockLayerRom(layer);
         }
         tg_gui_paint(state, backend);
         if (layer != 0) {
             UnlockLayerRom(layer);
+        }
+        if (!first_logged) {
+            tg_gui_log("paint1: direct render done");
+            first_logged = 1;
         }
     }
 }
@@ -2734,12 +2767,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
        are IDCMP-driven and the IDCMP_REFRESHWINDOW path is bracketed by
        BeginRefresh/EndRefresh, which carries its own layer lock. */
     tg_gui_window_paint(state, &backend);
+    tg_gui_log("window: first paint done");
     if (own_scr != 0) {
         /* The screen opened BEHIND (SA_Behind) so nobody saw the pre-paint
            window; surface it only now that the first locked paint settled --
            and never while a layer lock is held. */
         ScreenToFront(own_scr);
     }
+    tg_gui_log("window: activating");
     ActivateWindow(ctx.window);
     printf("gui window: open %dx%d, font %dpx, %lu pens; window footprint "
            "~%lu KB\n",

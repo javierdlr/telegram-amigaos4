@@ -324,6 +324,12 @@ void tg_gui_demo_state(tg_gui_state *state);
    host backend records the calls for the self-test. */
 void tg_gui_paint(const tg_gui_state *state, tg_gui_backend *backend);
 
+/* Disables the renderer's one-shot first-paint log trail (--gui-live-debug).
+   The window backend MUST call this before running the painter under
+   LockLayerRom (the direct, non-buffered path): the trail writes to disk, and
+   DOS I/O under a layer lock can deadlock Intuition. */
+void tg_gui_paint_trail_off(void);
+
 /* Repaints ONLY the active caret region (composer input row in chat mode, login
    input box otherwise). Lets the ~2 Hz caret blink avoid a full-window repaint,
    which was visible as a constant refresh on slow OS3 planar displays. */
