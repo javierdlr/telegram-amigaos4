@@ -291,11 +291,16 @@ typedef struct tg_gui_state {
        message index captured when the menu opened; ctx_x/ctx_y is the pointer
        (window-inner coords) the box anchors to (clamped into the window).
        ctx_hover is the 0-based item index under the pointer (-1 = none), so the
-       popup highlights the entry the click will pick. */
+       popup highlights the entry the click will pick. ctx_w is the box width
+       MEASURED from the item labels when the menu opened (issue #11: the old
+       fixed width truncated "Download drawer..." on wider fonts); 0 falls back
+       to the TG_GUI_CTX_W minimum, so the paint and the backend-free hit-test
+       agree without re-measuring. */
     int ctx_visible;
     int ctx_msg;
     int ctx_x, ctx_y;
     int ctx_hover;
+    int ctx_w;
     int selected_msg; /* transcript row highlighted by a click (-1 = none) */
 
     /* '@' mention autocomplete over the composer: while the caret sits in an
@@ -349,10 +354,18 @@ void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend);
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
 
-/* Right-click context-menu geometry/items. Fixed width keeps the hit-test
-   backend-free (no text measuring). One item for now; the list is laid out so
-   more (Copy/Edit/Delete) can follow the roadmap. */
+/* Right-click context-menu geometry/items. MINIMUM box width: the real width
+   is measured from the item labels when the menu opens (state->ctx_w, see
+   tg_gui_context_menu_measure) because label pixels depend on each platform's
+   font -- the old fixed 108 truncated "Download drawer..." (issue #11). The
+   hit-test stays backend-free by reading the stored width. */
 #define TG_GUI_CTX_W 108
+
+/* Measures the popup width for the CURRENT target message's items with the
+   backend's font: widest label + margins, never below TG_GUI_CTX_W. Call when
+   opening the menu (backend at hand) and store into state->ctx_w. */
+int tg_gui_context_menu_measure(const tg_gui_state *state,
+                                tg_gui_backend *backend);
 /* Item ids returned by tg_gui_context_menu_hit. Which items the popup shows
    depends on the target message: Reply always; Edit + Delete only on an own
    message that has a server id (you can only edit/delete your own). Send file is

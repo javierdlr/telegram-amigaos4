@@ -2471,14 +2471,45 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
     return n;
 }
 
+/* Measures the popup width from the labels the CURRENT state would show: the
+   widest label plus the 8px text inset on each side, never below the
+   TG_GUI_CTX_W minimum. The result is stored in state->ctx_w by the opener, so
+   the paint and the backend-free hit-test share one width (issue #11: the
+   fixed width truncated "Send file..." / "Download drawer..." on wider
+   fonts). */
+int tg_gui_context_menu_measure(const tg_gui_state *state,
+                                tg_gui_backend *backend)
+{
+    const char *labels[TG_GUI_CTX_ITEMS_MAX];
+    int ids[TG_GUI_CTX_ITEMS_MAX];
+    int n;
+    int i;
+    int w = TG_GUI_CTX_W;
+
+    if (state == 0 || backend == 0 || backend->text_width == 0) {
+        return w;
+    }
+    n = tg_gui_context_items(state, labels, ids);
+    for (i = 0; i < n; ++i) {
+        int tw = backend->text_width(backend, labels[i],
+                                     (unsigned long)strlen(labels[i])) + 16;
+
+        if (tw > w) {
+            w = tw;
+        }
+    }
+    return w;
+}
+
 /* Shared geometry for the popup: box rect + per-item height for `count` items,
-   clamped so the box stays fully inside the window. Backend-free. */
+   clamped so the box stays fully inside the window. Backend-free: the width
+   was measured (and stored) when the menu opened; 0 = the fixed minimum. */
 static void tg_gui_context_box(const tg_gui_state *state, int count, int width,
                                int height, int lh, int *bx, int *by, int *bw,
                                int *bh, int *item_h)
 {
     int ih = lh + 4;
-    int w = TG_GUI_CTX_W;
+    int w = (state->ctx_w > 0) ? state->ctx_w : TG_GUI_CTX_W;
     int h = (count * ih) + 4;
     int x = state->ctx_x;
     int y = state->ctx_y;

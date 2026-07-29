@@ -3935,6 +3935,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             state->ctx_x = hx;
                             state->ctx_y = hy;
                             state->ctx_hover = -1;
+                            /* AFTER ctx_msg: the item list (and so the widest
+                               label) depends on the clicked message. */
+                            state->ctx_w =
+                                tg_gui_context_menu_measure(state, &backend);
                             tg_gui_window_paint(state, &backend);
                         }
                     }
