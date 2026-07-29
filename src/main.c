@@ -57,7 +57,16 @@ static int tg_main_wb_wants_tui(char **argv)
 
 static int tg_main_finish(int result)
 {
+#ifdef TG_DIAG_TRACE
+    tg_gui_log("diag: platform shutdown");
+#endif
     tg_platform_shutdown();
+#ifdef TG_DIAG_TRACE
+    /* Last probe we control: whatever happens after this line happens in
+       the C runtime's own exit path (stdio close, library close, WBStartup
+       reply, UnLoadSeg). */
+    tg_gui_log("diag: shutdown done, returning to runtime exit");
+#endif
     return result;
 }
 
@@ -147,9 +156,15 @@ int main(int argc, char **argv)
                 printf("\n--- Telegram Amiga closed. "
                        "Click the window's close gadget to dismiss. ---\n");
                 fflush(stdout);
+#ifdef TG_DIAG_TRACE
+                tg_gui_log("diag: farewell printed");
+#endif
                 /* Give the CON: handle back, or the window can never die:
                    the close gadget only works once every handle is gone. */
                 tg_platform_workbench_tui_console_close();
+#ifdef TG_DIAG_TRACE
+                tg_gui_log("diag: console closed");
+#endif
                 return tg_main_finish(rc);
             }
         } else {
