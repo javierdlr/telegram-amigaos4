@@ -348,6 +348,27 @@ static LONG tg_gui_amiga_resolve_pen(tg_gui_amiga_ctx *ctx, int pen)
     return ctx->pens[pen];
 }
 
+/* Primitive-level trail (--gui-live-debug) for the FIRST off-screen paint
+   only: one line BEFORE each backend call, so a crash inside a graphics
+   primitive leaves its name and geometry as the log's last line (the AmiKit /
+   PiStorm depth-24 hunt). Armed around the first buffered render -- never on
+   the direct path, whose painter runs under LockLayerRom where this DOS I/O
+   is forbidden. Text probes log position and LENGTH only, never content. */
+static int tg_gui_prim_trail;
+static int tg_gui_prim_n;
+
+static void tg_gui_prim_log(const char *kind, int x, int y, int w, int h)
+{
+    char line[80];
+
+    if (!tg_gui_prim_trail) {
+        return;
+    }
+    ++tg_gui_prim_n;
+    sprintf(line, "prim %d: %s %d,%d %dx%d", tg_gui_prim_n, kind, x, y, w, h);
+    tg_gui_log(line);
+}
+
 static void tg_gui_amiga_fill_rect(tg_gui_backend *backend, int pen,
                                    tg_gui_rect rect)
 {
@@ -365,6 +386,7 @@ static void tg_gui_amiga_fill_rect(tg_gui_backend *backend, int pen,
     y0 = ctx->origin_y + rect.y;
     x1 = x0 + rect.w - 1;
     y1 = y0 + rect.h - 1;
+    tg_gui_prim_log("fill", x0, y0, rect.w, rect.h);
     SetAPen(ctx->rport, tg_gui_amiga_resolve_pen(ctx, pen));
     RectFill(ctx->rport, x0, y0, x1, y1);
 }
@@ -385,6 +407,7 @@ static void tg_gui_amiga_avatar_fill(tg_gui_backend *backend, int color_index,
     }
     x0 = ctx->origin_x + rect.x;
     y0 = ctx->origin_y + rect.y;
+    tg_gui_prim_log("afill", x0, y0, rect.w, rect.h);
     SetAPen(ctx->rport, ctx->avatar_pens[color_index]);
     RectFill(ctx->rport, x0, y0, x0 + rect.w - 1, y0 + rect.h - 1);
 }
@@ -591,6 +614,7 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
         tg_gui_av_cmap == 0) {
         return 0;
     }
+    tg_gui_prim_log("aimg", rect.x, rect.y, rect.w, rect.h);
     slot = 0;
     for (i = 0; i < TG_GUI_AV_SLOTS; ++i) {
         if (tg_gui_av_slots[i].state != 0 &&
@@ -717,6 +741,8 @@ static void tg_gui_amiga_draw_text(tg_gui_backend *backend, int pen, int x,
     if (length > 0x7fffUL) {
         length = 0x7fffUL; /* Text count is 16-bit; clamp defensively */
     }
+    /* Trail: position and LENGTH only -- chat content never reaches the log. */
+    tg_gui_prim_log("text", x, baseline, (int)length, 0);
     SetAPen(ctx->rport, tg_gui_amiga_resolve_pen(ctx, pen));
     SetDrMd(ctx->rport, JAM1);
     Move(ctx->rport, ctx->origin_x + x, ctx->origin_y + baseline);
@@ -979,11 +1005,15 @@ static void tg_gui_window_paint(const tg_gui_state *state,
 
         if (!first_logged) {
             tg_gui_log("paint1: off-screen render start");
+            /* First buffered render only: one line per primitive, so a crash
+               inside a graphics call names it. No lock is held here. */
+            tg_gui_prim_trail = 1;
         }
         c->rport = &c->buf_rp;
         c->origin_x = 0;
         c->origin_y = 0;
         tg_gui_paint(state, backend);
+        tg_gui_prim_trail = 0;
         c->rport = saved_rport;
         c->origin_x = saved_ox;
         c->origin_y = saved_oy;
