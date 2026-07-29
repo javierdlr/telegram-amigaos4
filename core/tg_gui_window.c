@@ -4063,10 +4063,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                ? "Copied to clipboard"
                                                : "Copy failed");
                         tg_gui_window_paint(state, &backend);
-                    } else if (it == TG_GUI_CTX_DLDIR) {
-                        /* Chat-level too: same picker as the menubar item. */
-                        tg_gui_window_pick_download_dir(state, ctx.window,
-                                                       &backend);
                     } else if (it == TG_GUI_CTX_SENDFILE) {
                         /* Chat-level action (not tied to the clicked message):
                            send a file to the open chat, same as the menubar

@@ -240,9 +240,9 @@ Using the GUI
   the percentage and speed in the status line and ESC cancels them, while
   the client stays usable -- keep chatting while a file moves.
   To download somewhere else (a RAM: drawer is much quicker on a floppy
-  or slow disk), put that path on a single line in
-  data/telegram-downloads.txt, e.g. RAM:TGdl -- remember RAM: is emptied
-  by a reboot.
+  or slow disk), pick it with the "Download drawer..." menu item -- or put
+  that path on a single line in data/telegram-downloads.txt, e.g. RAM:TGdl
+  -- remember RAM: is emptied by a reboot.
 - SAVED MESSAGES: the last chat in the list is you. Send files or notes to
   it from your phone or PC and pick them up on the Amiga (or the other way
   round) -- Telegram's cloud as your transfer drawer. It cannot be removed.
@@ -372,7 +372,8 @@ Usare la GUI
   Durante i trasferimenti vedi percentuale e velocita' nella riga di stato,
   ESC annulla, e il client resta usabile: puoi continuare a chattare.
   Per scaricare altrove (un cassetto in RAM: e' molto piu' rapido su
-  floppy o dischi lenti) scrivi il percorso su una riga sola in
+  floppy o dischi lenti) scegli il cassetto dalla voce di menu "Download
+  drawer...", oppure scrivi il percorso su una riga sola in
   data/telegram-downloads.txt, per esempio RAM:TGdl -- ricorda che RAM:
   si svuota al riavvio.
 - MESSAGGI SALVATI: l'ultima chat della lista sei tu. Mandaci file o appunti

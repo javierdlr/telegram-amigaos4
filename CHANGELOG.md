@@ -41,7 +41,7 @@ unless noted.
 - Archived chats are filtered out of the dialog list (main folder only);
   archive management is on the roadmap.
 - Configurable download drawer, picked from the menu ("Download drawer..."
-  in the Telegram menu and in the right-click popup): a standard drawer
+  in the Telegram menu): a standard drawer
   requester, remembered for the next run. Downloading to a RAM: drawer is
   much quicker on a floppy or a slow disk. Defaults to `downloads` as
   before, and the file it writes (`data/telegram-downloads.txt`) can still
@@ -72,9 +72,10 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
-- The right-click popup was too narrow for "Send file..." and "Download
-  drawer...": its width is now measured from the actual labels with the
-  platform's own font (issue #11).
+- The right-click popup was too narrow for its widest labels: the width is
+  now measured from the actual items with the platform's own font (issue
+  #11). Same report, same conclusion: "Download drawer..." moved out of the
+  popup into the menu bar only -- it is a preference, not a message action.
 - Right-clicking OUTSIDE the window while it still had focus could leave you
   with no menu at all: the pointer tracking never checked whether the pointer
   had left the window, so the right-button trap stayed armed and suppressed
