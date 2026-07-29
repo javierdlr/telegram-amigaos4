@@ -72,6 +72,9 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- The right-click popup was too narrow for "Send file..." and "Download
+  drawer...": its width is now measured from the actual labels with the
+  platform's own font (issue #11).
 - Right-clicking OUTSIDE the window while it still had focus could leave you
   with no menu at all: the pointer tracking never checked whether the pointer
   had left the window, so the right-button trap stayed armed and suppressed
