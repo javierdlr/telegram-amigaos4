@@ -268,6 +268,11 @@ static unsigned long tg_gui_amiga_icon_build(void)
         if (base->lib_Version == 51 && base->lib_IdString != 0) {
             const char *s = (const char *)base->lib_IdString;
 
+            /* The broken 533's runtime IdString is the author's "DEAD CAT"
+               signature -- the "51.4.533" text lives only in the file's $VER,
+               unreachable through the API (the fixed 602 carries a version
+               IdString instead). Field log 2026-07-30: the version parse
+               alone missed it on the real machine. */
             while (*s != '\0') {
                 if (s[0] == '5' && s[1] == '1' && s[2] == '.' && s[3] == '4' &&
                     s[4] == '.') {
@@ -277,6 +282,11 @@ static unsigned long tg_gui_amiga_icon_build(void)
                         build = (build * 10UL) + (unsigned long)(*p - '0');
                         ++p;
                     }
+                    break;
+                }
+                if (s[0] == 'D' && s[1] == 'E' && s[2] == 'A' && s[3] == 'D' &&
+                    s[4] == ' ' && s[5] == 'C' && s[6] == 'A' && s[7] == 'T') {
+                    build = 533UL;
                     break;
                 }
                 ++s;
