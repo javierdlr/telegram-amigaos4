@@ -17,6 +17,8 @@ telegram-auth*.bin
 telegram-session*.bin
 phone-code-hash*.txt
 telegram-peers*.txt
+/avatars/
+/data/telegram-thumbs.bin
 *.api
 *.token
 *.token.txt

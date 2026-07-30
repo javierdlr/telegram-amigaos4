@@ -77,8 +77,8 @@ unless noted.
   off-screen RastPort (our flicker-free double buffer). When AfA is loaded
   the client now draws bitmap text into the buffer itself via BltTemplate;
   every other system keeps the native Text() path. (While hunting this, an
-  AmiKit system-killer NOT caused by the client was isolated and reported
-  upstream: its bundled icon.library 51.4.533 can corrupt SysBase under
+  AmiKit system-killer NOT caused by the client was also isolated: its bundled
+  icon.library 51.4.533 can corrupt SysBase under
   Directory Opus; updating that library fixes crashes that happen with or
   without Telegram running.)
 - A wall clock stepped BACKWARDS while a query waited (AmiKit syncs time
