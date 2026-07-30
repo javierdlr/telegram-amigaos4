@@ -72,6 +72,21 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- AmiKit setups: the GUI froze the machine inside its very first paint on
+  systems running AfA_OS 4.8, whose Text() cannot render into a layerless
+  off-screen RastPort (our flicker-free double buffer). When AfA is loaded
+  the client now draws bitmap text into the buffer itself via BltTemplate;
+  every other system keeps the native Text() path. (While hunting this, an
+  AmiKit system-killer NOT caused by the client was isolated and reported
+  upstream: its bundled icon.library 51.4.533 can corrupt SysBase under
+  Directory Opus; updating that library fixes crashes that happen with or
+  without Telegram running.)
+- A wall clock stepped BACKWARDS while a query waited (AmiKit syncs time
+  right after networking comes up) made the reply budget expire instantly:
+  the budget now re-origins instead.
+- A stale rpc result left on the stream by an aborted query now surfaces as
+  a clean soft-fail and reconnect, instead of ambiguous stream state on
+  slow bsdsocket stacks.
 - The right-click popup was too narrow for its widest labels: the width is
   now measured from the actual items with the platform's own font (issue
   #11). Same report, same conclusion: "Download drawer..." moved out of the
