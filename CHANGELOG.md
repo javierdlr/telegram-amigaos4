@@ -71,13 +71,6 @@ unless noted.
 - While a transfer is running the heavy live poll is throttled (the light
   push drain keeps messages flowing), which also speeds the transfer up.
 
-### Added
-- AmiKit advisory: on systems running the icon.library 51.4 TC020 builds
-  older than 545 (AmiKit 12/13 ship 51.4.533), the GUI shows a one-time
-  requester explaining the known system-freeze bug in that library (it
-  strikes with or without Telegram running) and how to update it. Detected
-  from the library's own version string; every other system sees nothing.
-
 ### Fixed
 - AmiKit setups: the GUI froze the machine inside its very first paint on
   systems running AfA_OS 4.8, whose Text() cannot render into a layerless

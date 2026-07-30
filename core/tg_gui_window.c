@@ -248,48 +248,6 @@ static int tg_gui_amiga_afa_text_compat(void)
 #endif
 }
 
-/* AmiKit ships icon.library 51.4.533 (TC020), which can hand exec an invalid
-   node under Directory Opus on OS 3.2 and corrupt SysBase: the whole machine
-   freezes, Telegram running or not (isolated 2026-07-30 by A/B-swapping the
-   library, reported upstream). The first TC020 build adapted to OS 3.2 is
-   51.4.545, so anything older gets a one-time explanation requester: a system
-   freeze must not get blamed on the messenger, and the user learns the cure.
-   Returns the TC020 build number parsed from the IdString ("51.4.NNN"), or 0
-   when this is not the 51.4 line at all (stock 47.x, newer, other systems --
-   lib_Version alone cannot tell 533 from 602, both say 51). */
-static unsigned long tg_gui_amiga_icon_build(void)
-{
-#if defined(__amigaos3__)
-    struct Library *base;
-    unsigned long build = 0UL;
-
-    base = OpenLibrary((CONST_STRPTR)"icon.library", 0UL);
-    if (base != 0) {
-        if (base->lib_Version == 51 && base->lib_IdString != 0) {
-            const char *s = (const char *)base->lib_IdString;
-
-            while (*s != '\0') {
-                if (s[0] == '5' && s[1] == '1' && s[2] == '.' && s[3] == '4' &&
-                    s[4] == '.') {
-                    const char *p = s + 5;
-
-                    while (*p >= '0' && *p <= '9') {
-                        build = (build * 10UL) + (unsigned long)(*p - '0');
-                        ++p;
-                    }
-                    break;
-                }
-                ++s;
-            }
-        }
-        CloseLibrary(base);
-    }
-    return build;
-#else
-    return 0UL;
-#endif
-}
-
 /* Menu item ids (GadTools NM_USERDATA), decoded on IDCMP_MENUPICK. */
 #define TG_MENU_ABOUT  1
 #define TG_MENU_HELP   2
@@ -2981,36 +2939,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     puts("gui window: close gadget or Q to quit.");
     fflush(stdout);
     tg_gui_log("window: opened");
-
-    /* One-time AmiKit advisory (see tg_gui_amiga_icon_build): shown AFTER the
-       window is up so the client is visibly alive behind the requester. */
-    {
-        static int icon_warned;
-
-        if (!icon_warned) {
-            unsigned long ibuild = tg_gui_amiga_icon_build();
-
-            icon_warned = 1;
-            if (ibuild != 0UL && ibuild < 545UL) {
-                struct EasyStruct es;
-
-                es.es_StructSize = sizeof(struct EasyStruct);
-                es.es_Flags = 0;
-                es.es_Title = (UBYTE *)"Telegram Amiga - system note";
-                es.es_TextFormat = (UBYTE *)
-                    "This system's icon.library 51.4.%lu (AmiKit)\n"
-                    "has a known bug that can freeze the whole\n"
-                    "machine - with or without Telegram running.\n"
-                    "\n"
-                    "The cure: update icon.library to 51.4.602 or\n"
-                    "newer (Aminet: util/libs/IconLib_46.4.lha) or\n"
-                    "install the next AmiKit update.";
-                es.es_GadgetFormat = (UBYTE *)"Continue";
-                tg_gui_log("window: icon.library 51.4 pre-545 flagged");
-                EasyRequest(ctx.window, &es, 0, ibuild);
-            }
-        }
-    }
 
     /* When a live session is attached (--gui-live), IDCMP_INTUITICKS (~10/s
        while the window is active) drives the network poll: throttle the actual
