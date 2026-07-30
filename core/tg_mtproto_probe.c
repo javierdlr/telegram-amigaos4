@@ -1227,6 +1227,7 @@ static int tg_mtproto_send_encrypted_query_limited(
     unsigned long payload_length;
     unsigned long response_length;
     unsigned long query_start_time;
+    unsigned long query_now;
     unsigned long rx_seen;      /* rx_progress snapshot: detects streaming */
     unsigned int attempt;
     unsigned int receive_attempt;
@@ -1346,8 +1347,15 @@ static int tg_mtproto_send_encrypted_query_limited(
                 rx_seen = tg_mtproto_rx_progress;
                 query_start_time = (unsigned long)time(0);
             }
-            if ((unsigned long)time(0) - query_start_time >=
-                    query_budget_seconds) {
+            query_now = (unsigned long)time(0);
+            if (query_now < query_start_time) {
+                /* AmiKit may correct its wall clock backwards shortly after
+                   networking comes up. Treat that as a fresh budget origin;
+                   unsigned subtraction would otherwise look like an instant
+                   multi-year timeout. */
+                query_start_time = query_now;
+            } else if (query_now - query_start_time >=
+                           query_budget_seconds) {
                 sprintf(tg_mtproto_query_fail, "no data for %lus",
                         query_budget_seconds);
                 break;  /* IDLE budget hit: soft-fail, connection still alive */
@@ -1488,7 +1496,14 @@ static int tg_mtproto_send_encrypted_query_limited(
             response_constructor = decrypted.body_length >= 4UL ?
                 tg_mtproto_read_u32_le(decrypted.body) : 0UL;
             if (response_constructor == TG_MTPROTO_RPC_RESULT_CONSTRUCTOR) {
-                continue;
+                /* This is a late result for an older request. Continuing on the
+                   same persistent stream can block forever on fragile/slow
+                   bsdsocket stacks while the current result sits behind stale
+                   traffic. Surface a soft failure: the context caller already
+                   closes the socket, discarding both the stale result and the
+                   in-flight query before retrying cleanly. */
+                sprintf(tg_mtproto_query_fail, "stale rpc result");
+                return TG_MTPROTO_QUERY_SOFT_FAIL;
             }
             if (tg_mtproto_is_async_update_constructor(response_constructor)) {
                 continue;
