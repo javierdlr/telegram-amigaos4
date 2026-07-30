@@ -59,6 +59,7 @@
 
 #include <exec/types.h>
 #include <exec/memory.h>
+#include <exec/execbase.h>
 #include <intuition/intuition.h>
 #include <devices/timer.h>
 #include <devices/clipboard.h>
@@ -227,6 +228,26 @@ static int tg_gui_amiga_open_core_libs(void)
     return 1;
 }
 
+/* AfA_OS 4.8 replaces both graphics and diskfont internals. Their combined
+   Text() path can freeze when a font is rendered into a layerless off-screen
+   RastPort, although the same font strike and BltTemplate() remain sound.
+   Inspect the loaded library list only: OpenLibrary() would create a false
+   positive on systems where AfA is installed but not active. */
+static int tg_gui_amiga_afa_text_compat(void)
+{
+#if defined(__amigaos3__)
+    struct Node *node;
+
+    Forbid();
+    node = FindName(&SysBase->LibList,
+                    (CONST_STRPTR)"afa_system.library");
+    Permit();
+    return node != 0;
+#else
+    return 0;
+#endif
+}
+
 /* Menu item ids (GadTools NM_USERDATA), decoded on IDCMP_MENUPICK. */
 #define TG_MENU_ABOUT  1
 #define TG_MENU_HELP   2
@@ -299,6 +320,7 @@ typedef struct tg_gui_amiga_ctx {
     int buf_w;               /* allocated buffer width  (== inner_w when valid) */
     int buf_h;               /* allocated buffer height (== inner_h when valid) */
     int buf_ok;              /* 1 iff buf_bm and buf_rp.Font are valid */
+    int bitmap_text_compat;  /* AfA_OS Text() cannot target this off-screen RP */
 } tg_gui_amiga_ctx;
 
 static int tg_gui_amiga_width(tg_gui_backend *backend)
@@ -728,6 +750,98 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
     return 1;
 }
 
+/* Render a bitmap font without graphics.library Text(). This is kept narrowly
+   behind bitmap_text_compat: normal systems retain their native Text() path,
+   including colour-font support. */
+static void tg_gui_amiga_blt_text(struct RastPort *rp, int x, int baseline,
+                                  const char *text, unsigned long length)
+{
+    struct TextFont *font;
+    unsigned long i;
+    int cursor;
+
+    if (rp == 0 || text == 0 || length == 0UL) {
+        return;
+    }
+    font = rp->Font;
+    if (font == 0 || font->tf_CharData == 0 || font->tf_CharLoc == 0) {
+        return;
+    }
+    cursor = x;
+    for (i = 0UL; i < length; ++i) {
+        unsigned int c;
+        unsigned long index;
+        ULONG charloc;
+        UWORD glyph_pos;
+        UWORD glyph_width;
+        int glyph_x;
+        int bold_pass;
+        int bold_passes;
+
+        c = (unsigned int)(unsigned char)text[i];
+        if (c < (unsigned int)font->tf_LoChar ||
+            c > (unsigned int)font->tf_HiChar) {
+            index = (unsigned long)font->tf_HiChar -
+                    (unsigned long)font->tf_LoChar + 1UL;
+        } else {
+            index = (unsigned long)c - (unsigned long)font->tf_LoChar;
+        }
+        charloc = ((ULONG *)font->tf_CharLoc)[index];
+        glyph_pos = (UWORD)(charloc >> 16);
+        glyph_width = (UWORD)(charloc & 0xffffUL);
+        glyph_x = cursor;
+        if (font->tf_CharKern != 0) {
+            glyph_x += (int)((WORD *)font->tf_CharKern)[index];
+        }
+        bold_passes = ((rp->AlgoStyle & FSF_BOLD) != 0) ? 2 : 1;
+        for (bold_pass = 0; bold_pass < bold_passes; ++bold_pass) {
+            int bold_x;
+
+            bold_x = bold_pass ? (int)font->tf_BoldSmear : 0;
+            if ((rp->AlgoStyle & FSF_ITALIC) != 0) {
+                int row;
+                int italic_check;
+                int italic_shift;
+
+                italic_check = (int)font->tf_Baseline;
+                italic_shift = italic_check / 2;
+                for (row = 0; row < (int)font->tf_YSize; ++row) {
+                    BltTemplate(
+                        (PLANEPTR)((UBYTE *)font->tf_CharData +
+                                   ((unsigned long)row * font->tf_Modulo) +
+                                   (glyph_pos >> 3)),
+                        (LONG)(glyph_pos & 7U), (LONG)font->tf_Modulo, rp,
+                        (LONG)(glyph_x + bold_x + italic_shift),
+                        (LONG)(baseline - (int)font->tf_Baseline + row),
+                        (LONG)glyph_width, 1L);
+                    --italic_check;
+                    if ((italic_check & 1) != 0) {
+                        --italic_shift;
+                    }
+                }
+            } else {
+                BltTemplate((PLANEPTR)((UBYTE *)font->tf_CharData +
+                                       (glyph_pos >> 3)),
+                            (LONG)(glyph_pos & 7U), (LONG)font->tf_Modulo, rp,
+                            (LONG)(glyph_x + bold_x),
+                            (LONG)(baseline - (int)font->tf_Baseline),
+                            (LONG)glyph_width, (LONG)font->tf_YSize);
+            }
+        }
+        if (font->tf_CharSpace != 0) {
+            cursor += (int)((WORD *)font->tf_CharSpace)[index];
+        } else {
+            cursor += (int)font->tf_XSize;
+        }
+        cursor += (int)rp->TxSpacing;
+    }
+    if ((rp->AlgoStyle & FSF_UNDERLINED) != 0 && cursor > x) {
+        RectFill(rp, (LONG)x, (LONG)(baseline + 1), (LONG)(cursor - 1),
+                 (LONG)(baseline + 1));
+    }
+    Move(rp, (LONG)cursor, (LONG)baseline);
+}
+
 static void tg_gui_amiga_draw_text(tg_gui_backend *backend, int pen, int x,
                                    int baseline, const char *text,
                                    unsigned long length)
@@ -746,7 +860,12 @@ static void tg_gui_amiga_draw_text(tg_gui_backend *backend, int pen, int x,
     SetAPen(ctx->rport, tg_gui_amiga_resolve_pen(ctx, pen));
     SetDrMd(ctx->rport, JAM1);
     Move(ctx->rport, ctx->origin_x + x, ctx->origin_y + baseline);
-    Text(ctx->rport, (STRPTR)text, (UWORD)length);
+    if (ctx->bitmap_text_compat && ctx->rport == &ctx->buf_rp) {
+        tg_gui_amiga_blt_text(ctx->rport, ctx->origin_x + x,
+                              ctx->origin_y + baseline, text, length);
+    } else {
+        Text(ctx->rport, (STRPTR)text, (UWORD)length);
+    }
 }
 
 /* Map the renderer's style bitmask to graphics.library soft styles. Bold and
@@ -2708,6 +2827,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     }
     font = ctx.rport->Font;
     ctx.line_h = (font != 0 ? (int)font->tf_YSize : 8) + 2;
+    ctx.bitmap_text_compat = tg_gui_amiga_afa_text_compat();
+    if (ctx.bitmap_text_compat) {
+        tg_gui_log("window: AfA bitmap-text compatibility active");
+    }
     cmap = ctx.window->WScreen->ViewPort.ColorMap;
     tg_gui_amiga_obtain_pens(&ctx, cmap);
     tg_gui_av_reset();          /* pens are per-screen: drop stale avatar pens */
