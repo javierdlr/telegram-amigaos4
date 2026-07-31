@@ -79,6 +79,16 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- An adversarial review pass before the release found five defects, now
+  fixed: a download into a deep drawer with a long attachment name could
+  write past the end of the path buffer (the file name is now shortened,
+  extension kept, and the drawer is never touched); an underscore or
+  backtick inside a URL was swallowed from the drawn address and left the
+  rest of the message in italic; the shortest addresses were underlined
+  but not clickable; Cut/Paste in the sidebar search box did not refresh
+  the filtered list; and unhiding a chat rewrote the hidden-chats file
+  through a 128-entry buffer, resurfacing older hidden chats on accounts
+  past that many.
 - Repeated GUI resize events could free, rebuild and repaint the double buffer
   for every intermediate size, freezing some AmiKit/RTG systems. Resize events
   are now coalesced before one rebuild, buffer release waits for the blitter,
