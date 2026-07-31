@@ -338,6 +338,52 @@ static int tg_gui_amiga_line_height(tg_gui_backend *backend)
     return ((tg_gui_amiga_ctx *)backend->context)->line_h;
 }
 
+static unsigned long tg_gui_amiga_font_char_index(const struct TextFont *font,
+                                                   unsigned int c)
+{
+    if (c < (unsigned int)font->tf_LoChar ||
+        c > (unsigned int)font->tf_HiChar) {
+        return (unsigned long)font->tf_HiChar -
+               (unsigned long)font->tf_LoChar + 1UL;
+    }
+    return (unsigned long)c - (unsigned long)font->tf_LoChar;
+}
+
+/* Pixel advance used by tg_gui_amiga_blt_text(). AfA's TextLength() reports
+   the native text engine's metrics, which can differ from the font-strike
+   spacing used by our layerless-buffer fallback. Layout, click hit-testing and
+   caret placement must use the exact same advance as the visible glyphs. */
+static int tg_gui_amiga_bitmap_text_width(const tg_gui_amiga_ctx *ctx,
+                                          const char *text,
+                                          unsigned long length)
+{
+    const struct TextFont *font;
+    unsigned long i;
+    int width;
+    int spacing;
+
+    font = ctx->buf_rp.Font != 0 ? ctx->buf_rp.Font : ctx->rport->Font;
+    if (font == 0) {
+        return 0;
+    }
+    spacing = ctx->buf_rp.Font != 0 ? (int)ctx->buf_rp.TxSpacing
+                                    : (int)ctx->rport->TxSpacing;
+    width = 0;
+    for (i = 0UL; i < length; ++i) {
+        unsigned long index;
+
+        index = tg_gui_amiga_font_char_index(
+            font, (unsigned int)(unsigned char)text[i]);
+        if (font->tf_CharSpace != 0) {
+            width += (int)((WORD *)font->tf_CharSpace)[index];
+        } else {
+            width += (int)font->tf_XSize;
+        }
+        width += spacing;
+    }
+    return width;
+}
+
 static int tg_gui_amiga_text_width(tg_gui_backend *backend, const char *text,
                                    unsigned long length)
 {
@@ -349,6 +395,9 @@ static int tg_gui_amiga_text_width(tg_gui_backend *backend, const char *text,
     }
     if (length > 0x7fffUL) {
         length = 0x7fffUL; /* TextLength count is 16-bit; clamp defensively */
+    }
+    if (ctx->bitmap_text_compat) {
+        return tg_gui_amiga_bitmap_text_width(ctx, text, length);
     }
     return (int)TextLength(ctx->rport, (STRPTR)text, (UWORD)length);
 }
@@ -779,13 +828,7 @@ static void tg_gui_amiga_blt_text(struct RastPort *rp, int x, int baseline,
         int bold_passes;
 
         c = (unsigned int)(unsigned char)text[i];
-        if (c < (unsigned int)font->tf_LoChar ||
-            c > (unsigned int)font->tf_HiChar) {
-            index = (unsigned long)font->tf_HiChar -
-                    (unsigned long)font->tf_LoChar + 1UL;
-        } else {
-            index = (unsigned long)c - (unsigned long)font->tf_LoChar;
-        }
+        index = tg_gui_amiga_font_char_index(font, c);
         charloc = ((ULONG *)font->tf_CharLoc)[index];
         glyph_pos = (UWORD)(charloc >> 16);
         glyph_width = (UWORD)(charloc & 0xffffUL);
@@ -1035,6 +1078,10 @@ static void tg_gui_window_apply_selection(tg_gui_state *state)
 static void tg_gui_amiga_buffer_free(tg_gui_amiga_ctx *ctx)
 {
     if (ctx->buf_bm != 0) {
+        /* BltBitMapRastPort() may return while the source bitmap is still in
+           use. NEWSIZE reaches here soon after the last frame; freeing that
+           source early corrupts RTG/blitter state and can freeze the machine. */
+        WaitBlit();
         FreeBitMap(ctx->buf_bm);
         ctx->buf_bm = 0;
     }
@@ -1117,11 +1164,15 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         return;
     }
     layer = c->rport->Layer;
-    if (c->buf_ok && c->buf_bm != 0) {
+    if (c->buf_ok && c->buf_bm != 0 &&
+        c->buf_w == c->inner_w && c->buf_h == c->inner_h) {
         struct RastPort *saved_rport = c->rport;
         int saved_ox = c->origin_x;
         int saved_oy = c->origin_y;
 
+        /* The previous frame copy may still be reading this bitmap. Do not
+           modify its pixels until the blitter has finished with the source. */
+        WaitBlit();
         if (!first_logged) {
             tg_gui_log("paint1: off-screen render start");
             /* First buffered render only: one line per primitive, so a crash
@@ -1186,11 +1237,17 @@ static void tg_gui_window_paint_caret(const tg_gui_state *state,
         return;
     }
     layer = c->rport->Layer;
-    if (c->buf_ok && c->buf_bm != 0) {
+    if (c->buf_ok && c->buf_bm != 0 &&
+        c->buf_w == c->inner_w && c->buf_h == c->inner_h) {
         struct RastPort *saved_rport = c->rport;
         int saved_ox = c->origin_x;
         int saved_oy = c->origin_y;
+        int blit_x = 0;
+        int blit_y = 0;
+        int blit_w = c->inner_w;
+        int blit_h = c->inner_h;
 
+        WaitBlit();
         c->rport = &c->buf_rp;
         c->origin_x = 0;
         c->origin_y = 0;
@@ -1199,11 +1256,39 @@ static void tg_gui_window_paint_caret(const tg_gui_state *state,
         c->origin_x = saved_ox;
         c->origin_y = saved_oy;
 
+        /* AfA needs the bitmap-font fallback, but an ordinary composer edit
+           touches only the bottom input strip. Copying the complete RTG bitmap
+           for every key made a PiStorm feel like a slow 030. Keep the full
+           copy for popups and other modes whose dirty geometry is wider. */
+        if (c->bitmap_text_compat &&
+            state->mode == TG_GUI_MODE_CHAT && !state->search_active &&
+            !state->mention_active && !state->ctx_visible) {
+            int input_h;
+            int sidebar_w;
+            int content_h;
+
+            input_h = tg_gui_input_layout_height(state, backend);
+            sidebar_w = tg_gui_sidebar_w(c->inner_w);
+            content_h = c->inner_h - (c->line_h + 6);
+            blit_x = sidebar_w + 8;
+            blit_y = content_h - input_h;
+            blit_w = c->inner_w - blit_x - 8;
+            blit_h = input_h;
+            if (blit_x < 0 || blit_y < 0 || blit_w <= 0 || blit_h <= 0 ||
+                blit_x + blit_w > c->inner_w ||
+                blit_y + blit_h > c->inner_h) {
+                blit_x = 0;
+                blit_y = 0;
+                blit_w = c->inner_w;
+                blit_h = c->inner_h;
+            }
+        }
         if (layer != 0) {
             LockLayerRom(layer);
         }
-        BltBitMapRastPort(c->buf_bm, 0, 0, c->rport, saved_ox, saved_oy,
-                          c->inner_w, c->inner_h, 0xC0);
+        BltBitMapRastPort(c->buf_bm, blit_x, blit_y, c->rport,
+                          saved_ox + blit_x, saved_oy + blit_y,
+                          blit_w, blit_h, 0xC0);
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
@@ -1215,6 +1300,30 @@ static void tg_gui_window_paint_caret(const tg_gui_state *state,
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
+    }
+}
+
+/* AfA's glyph fallback is intentionally conservative but expensive: a full
+   frame redraw emits one BltTemplate per visible character. During ordinary
+   composer edits, redraw only the input strip when its height and popup
+   footprint did not change. Other systems retain the established full-paint
+   behaviour; their native buffered Text() path is already fast. */
+static void tg_gui_window_paint_composer_edit(tg_gui_state *state,
+                                               tg_gui_backend *backend,
+                                               int old_input_h,
+                                               int old_mention_active)
+{
+    tg_gui_amiga_ctx *ctx;
+    int new_input_h;
+
+    ctx = (tg_gui_amiga_ctx *)backend->context;
+    new_input_h = tg_gui_input_layout_height(state, backend);
+    if (ctx != 0 && ctx->bitmap_text_compat &&
+        !old_mention_active && !state->mention_active &&
+        old_input_h > 0 && old_input_h == new_input_h) {
+        tg_gui_window_paint_caret(state, backend);
+    } else {
+        tg_gui_window_paint(state, backend);
     }
 }
 
@@ -2644,6 +2753,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     time_t last_session_poll;
     time_t last_receive_drain;
     time_t last_key_time;
+    int resize_pending;
 
     if (state == 0) {
         return 2;
@@ -2990,6 +3100,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     older_exhausted = 0;
     older_cooldown = 0;
     prev_selected = state->selected_chat;
+    resize_pending = 0;
     /* Live-reception heartbeat. INTUITICKS are delivered ONLY to the ACTIVE
        window, so with the window deactivated the loop slept in Wait() and the
        network poll never ran -- incoming messages stalled until the user came
@@ -3268,6 +3379,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                 }
             } else if (msg_class == IDCMP_VANILLAKEY && state->composing) {
+                int old_input_h;
+                int old_mention_active;
+
+                old_input_h = tg_gui_input_layout_height(state, &backend);
+                old_mention_active = state->mention_active;
                 /* Composing: keys edit the input line; RETURN sends, ESC
                    cancels, BACKSPACE deletes. While the '@' mention popup is
                    up, RETURN/TAB insert the highlighted username instead (the
@@ -3334,7 +3450,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     if (tg_gui_window_input_delete_sel(state)) {
                         /* a selection consumes the keypress whole */
                         tg_gui_window_mention_refresh(state);
-                        tg_gui_window_paint(state, &backend);
+                        tg_gui_window_paint_composer_edit(
+                            state, &backend, old_input_h, old_mention_active);
                     } else {
                     n = (unsigned long)strlen(state->input);
                     c = (unsigned long)state->input_caret;
@@ -3347,7 +3464,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 n - c + 1UL);
                         state->input_caret = (int)(c - 1UL);
                         tg_gui_window_mention_refresh(state);
-                        tg_gui_window_paint(state, &backend);
+                        tg_gui_window_paint_composer_edit(
+                            state, &backend, old_input_h, old_mention_active);
                     }
                     }
                 } else if (msg_code == 127) { /* Canc/Del: delete AT the caret */
@@ -3356,7 +3474,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 
                     if (tg_gui_window_input_delete_sel(state)) {
                         tg_gui_window_mention_refresh(state);
-                        tg_gui_window_paint(state, &backend);
+                        tg_gui_window_paint_composer_edit(
+                            state, &backend, old_input_h, old_mention_active);
                     } else {
                     n = (unsigned long)strlen(state->input);
                     c = (unsigned long)state->input_caret;
@@ -3367,7 +3486,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         memmove(&state->input[c], &state->input[c + 1UL],
                                 n - c);
                         tg_gui_window_mention_refresh(state);
-                        tg_gui_window_paint(state, &backend);
+                        tg_gui_window_paint_composer_edit(
+                            state, &backend, old_input_h, old_mention_active);
                     }
                     }
                 } else if (msg_code >= 32 && msg_code < 256) {
@@ -3388,7 +3508,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         state->input[c] = (char)msg_code;
                         state->input_caret = (int)(c + 1UL);
                         tg_gui_window_mention_refresh(state);
-                        tg_gui_window_paint(state, &backend);
+                        tg_gui_window_paint_composer_edit(
+                            state, &backend, old_input_h, old_mention_active);
                     }
                 }
             } else if (msg_class == IDCMP_VANILLAKEY) {
@@ -3477,9 +3598,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 state->search_caret = sc;
                 state->cursor_on = 1;
                 caret_ticks = 0;
-                tg_gui_window_paint(state, &backend);
+                tg_gui_window_paint_caret(state, &backend);
             } else if (msg_class == IDCMP_RAWKEY && state->composing &&
                        state->mode == TG_GUI_MODE_CHAT) {
+                int old_input_h;
+                int old_mention_active;
+
+                old_input_h = tg_gui_input_layout_height(state, &backend);
+                old_mention_active = state->mention_active;
                 /* While composing, LEFT/RIGHT move the caret within the input.
                    The key-up event arrives as code|0x80, so the strict == tests
                    fire exactly once per press. With the '@' mention popup up,
@@ -3496,7 +3622,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 ? state->mention_sel + 1
                                 : 0;
                     }
-                    tg_gui_window_paint(state, &backend);
+                    tg_gui_window_paint_caret(state, &backend);
                 } else if (msg_code == 0x4F || msg_code == 0x4E) {
                     /* cursor left/right; with SHIFT they grow/shrink the
                        composer selection anchored where Shift was first
@@ -3528,7 +3654,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                     if (changed) {
                         tg_gui_window_mention_refresh(state);
-                        tg_gui_window_paint(state, &backend);
+                        tg_gui_window_paint_composer_edit(
+                            state, &backend, old_input_h, old_mention_active);
                     }
                 } else if (msg_code == 0x4C) { /* cursor up: older sent line */
                     if (state->history_count > 0) {
@@ -3550,7 +3677,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                            state->history[hidx]);
                         state->input_caret = (int)strlen(state->input);
                         state->in_sel_active = 0;
-                        tg_gui_window_paint(state, &backend);
+                        tg_gui_window_paint_composer_edit(
+                            state, &backend, old_input_h, old_mention_active);
                     }
                 } else if (msg_code == 0x4D) { /* cursor down: newer sent line */
                     state->in_sel_active = 0; /* input is about to be rebuilt */
@@ -3571,7 +3699,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                state->history[hidx]);
                         }
                         state->input_caret = (int)strlen(state->input);
-                        tg_gui_window_paint(state, &backend);
+                        tg_gui_window_paint_composer_edit(
+                            state, &backend, old_input_h, old_mention_active);
                     }
                 }
             } else if (msg_class == IDCMP_RAWKEY && !state->composing &&
@@ -3956,22 +4085,26 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 }
             } else if (msg_class == IDCMP_NEWSIZE) {
                 tg_gui_amiga_measure_geometry(&ctx);
-                tg_gui_amiga_buffer_alloc(&ctx); /* realloc buffer to new size */
-                tg_gui_window_paint(state, &backend);
+                /* A live size drag can queue many NEWSIZE/REFRESH pairs. Do not
+                   free, allocate and repaint for every intermediate geometry:
+                   drain the queue first, then rebuild once for the newest size
+                   below, outside every BeginRefresh bracket. */
+                resize_pending = 1;
             } else if (msg_class == IDCMP_REFRESHWINDOW) {
                 /* BeginRefresh() already holds this window's layer locked for the
                    whole bracket, so no LockLayerRom here. With the buffer -- and
                    only while it still matches the current size -- copy it into the
                    exposed clip region (BltBitMapRastPort honours the ClipRects, so
-                   just the damaged area is touched). Otherwise re-render raw. */
+                   just the damaged area is touched). Otherwise re-render raw,
+                   except while the deferred resize rebuild below is pending. */
                 BeginRefresh(ctx.window);
                 tg_gui_amiga_measure_geometry(&ctx);
-                if (ctx.buf_ok && ctx.buf_bm != 0 &&
+                if (!resize_pending && ctx.buf_ok && ctx.buf_bm != 0 &&
                     ctx.buf_w == ctx.inner_w && ctx.buf_h == ctx.inner_h) {
                     BltBitMapRastPort(ctx.buf_bm, 0, 0, ctx.rport,
                                       ctx.origin_x, ctx.origin_y,
                                       ctx.inner_w, ctx.inner_h, 0xC0);
-                } else {
+                } else if (!resize_pending) {
                     tg_gui_paint(state, &backend);
                 }
                 EndRefresh(ctx.window, TRUE);
@@ -4810,6 +4943,17 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                 }
             }
+        }
+        if (resize_pending && !done) {
+            tg_gui_amiga_measure_geometry(&ctx);
+            tg_gui_amiga_buffer_alloc(&ctx);
+            tg_gui_window_paint(state, &backend);
+            WaitBlit();
+            /* NEWSIZE/REFRESH bursts can leave themed AfA/RTG borders with an
+               exposed strip even though the client area is current. Ask
+               Intuition to redraw its frame once, after the final geometry. */
+            RefreshWindowFrame(ctx.window);
+            resize_pending = 0;
         }
         /* 0.0.8 punto 1e: Workbench drops. An icon dropped on the window
            arms an upload to the open chat, exactly like Send file... did;

@@ -346,6 +346,12 @@ void tg_gui_paint_trail_off(void);
    which was visible as a constant refresh on slow OS3 planar displays. */
 void tg_gui_paint_caret(const tg_gui_state *state, tg_gui_backend *backend);
 
+/* Current composer footprint for this state/backend geometry. The native
+   event loop compares it before/after a text edit so it can repaint only the
+   input strip when wrapping did not change the transcript layout. */
+int tg_gui_input_layout_height(const tg_gui_state *state,
+                               tg_gui_backend *backend);
+
 /* Maps a click at renderer-space (x, y) to an actionable region, so a mouse
    can drive the same things the keyboard does. Returns a chat-row index
    (0..chat_count-1) to open that chat, or one of the negative codes below. */

@@ -72,11 +72,17 @@ unless noted.
   push drain keeps messages flowing), which also speeds the transfer up.
 
 ### Fixed
+- Repeated GUI resize events could free, rebuild and repaint the double buffer
+  for every intermediate size, freezing some AmiKit/RTG systems. Resize events
+  are now coalesced before one rebuild, buffer release waits for the blitter,
+  and Intuition redraws the final window frame.
 - AmiKit setups: the GUI froze the machine inside its very first paint on
   systems running AfA_OS 4.8, whose Text() cannot render into a layerless
   off-screen RastPort (our flicker-free double buffer). When AfA is loaded
   the client now draws bitmap text into the buffer itself via BltTemplate;
-  every other system keeps the native Text() path. (While hunting this, an
+  layout and caret placement use those same bitmap-font metrics, and ordinary
+  typing copies only the input strip instead of the complete window. Every
+  other system keeps the native Text() path. (While hunting this, an
   AmiKit system-killer NOT caused by the client was also isolated: its bundled
   icon.library 51.4.533 can corrupt SysBase under
   Directory Opus; updating that library fixes crashes that happen with or

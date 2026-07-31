@@ -146,7 +146,7 @@ validation; it is no longer the product direction.
 
 ## Notes
 
-Developed with the help of AI agents used as engineering tools (analysis,
+Developed with the help of LLM agents used as engineering tools (analysis,
 implementation, packaging, docs, test prep). Local diaries, transcripts and
 secrets stay out of Git.
 

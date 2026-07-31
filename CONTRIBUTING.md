@@ -17,13 +17,13 @@ cross-platform spirit of the repository.
 - Avoid dependencies that are difficult to obtain on Amiga-like systems.
 - Document the tests you ran, including platform, toolchain and command.
 
-## AI Agent Usage
+## LLM Agent Usage
 
-The project accepts contributions prepared with AI tools or AI agents, provided
-they are reviewed by a person and accompanied by real or reproducible tests. AI
-agents are treated as support tools: the value of a contribution remains in the
-quality of the code, the clarity of the patch and the verification on
-Amiga-like targets.
+The project accepts contributions prepared with LLM tools or LLM agents,
+provided they are reviewed by a person and accompanied by real or reproducible
+tests. LLM agents are treated as support tools: the value of a contribution
+remains in the quality of the code, the clarity of the patch and the
+verification on Amiga-like targets.
 
 When possible, state whether a change was tested through SSH on real hardware,
 on an emulator, or only through local compilation.

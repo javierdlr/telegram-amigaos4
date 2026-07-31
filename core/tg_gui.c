@@ -1434,6 +1434,26 @@ static int tg_gui_input_h(const tg_gui_state *state, tg_gui_backend *backend,
     return h;
 }
 
+int tg_gui_input_layout_height(const tg_gui_state *state,
+                               tg_gui_backend *backend)
+{
+    int width;
+    int lh;
+    int sidebar_w;
+
+    if (state == 0 || backend == 0 || backend->width == 0 ||
+        backend->line_height == 0) {
+        return 0;
+    }
+    width = backend->width(backend);
+    lh = backend->line_height(backend);
+    if (width <= 0 || lh <= 0) {
+        return 0;
+    }
+    sidebar_w = tg_gui_sidebar_w(width);
+    return tg_gui_input_h(state, backend, width, sidebar_w, lh);
+}
+
 /* Draws just the bottom composer row: the input box (now wrapped to multiple
    lines for a long message, with the caret on the right line), the placeholder /
    idle text, and the Send button. Factored out so the caret blink can repaint
