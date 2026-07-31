@@ -112,11 +112,10 @@ Full IT/EN instructions are inside each package.
 
 ## Not yet
 
-Inline photo rendering, reactions, contact management, files hosted on
-another data centre or on Telegram's CDN (big public-channel files), and
-using the client while a transfer runs (transfers block the window for now).
-The aim is a dependable text-and-files client first; rich media comes later
-only where the platform makes it realistic.
+Inline photo rendering, reactions, contact management, forwarding messages
+to another chat, and files served by Telegram's CDN (some big
+public-channel downloads). The aim is a dependable text-and-files client
+first; rich media comes later only where the platform makes it realistic.
 
 ## Privacy & security
 
