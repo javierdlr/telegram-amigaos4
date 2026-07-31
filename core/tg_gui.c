@@ -848,7 +848,11 @@ static void tg_gui_draw_markup(tg_gui_backend *backend, int pen, int link_pen,
         int boundary = 0;
 
         if (i < length) {
-            switch (text[i]) {
+            /* Markup markers are text INSIDE a link: an underscore in
+               en.wikipedia.org/wiki/Amiga_500 is part of the address, not an
+               italic switch. Reading it as markup dropped the byte from the
+               drawn URL and left the rest of the message italic. */
+            switch (link_left > 0UL ? '\0' : text[i]) {
             case '*':
                 toggle = TG_GUI_STYLE_BOLD;
                 break;
@@ -2107,10 +2111,13 @@ int tg_gui_url_at(const tg_gui_message *m, long ch, char *out,
     w = m->text + a;
     wl = b - a + 1;
     www = 0;
-    if (wl > 8 &&
-        (strncmp(w, "http://", 7) == 0 || strncmp(w, "https://", 8) == 0)) {
+    /* The minimum lengths MUST match tg_gui_link_span's, or the renderer
+       underlines addresses this refuses to open: scheme plus at least one
+       character of host (http://x, https://x, www.a). */
+    if ((wl > 7 && strncmp(w, "http://", 7) == 0) ||
+        (wl > 8 && strncmp(w, "https://", 8) == 0)) {
         ;
-    } else if (wl > 8 && strncmp(w, "www.", 4) == 0) {
+    } else if (wl > 4 && strncmp(w, "www.", 4) == 0) {
         www = 1; /* bare www.: prefix a scheme for the opener */
     } else {
         return 0;

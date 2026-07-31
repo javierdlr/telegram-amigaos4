@@ -2574,7 +2574,6 @@ static void tg_gui_window_filter_chats(tg_gui_state *state,
     int i;
     int k;
 
-    state->search_dirty = 0;
     if (state->search_query[0] == '\0') {
         if (state->in_filter || state->in_search) {
             state->in_filter = 0;
@@ -2680,7 +2679,6 @@ static void tg_gui_window_run_search(tg_gui_state *state, tg_gui_backend *backen
 {
     int cnt;
 
-    state->search_dirty = 0;
     state->in_filter = 0; /* the sidebar is about to show ONLINE results */
     /* An empty query is no longer a no-op: it is the browse mode (list ALL
        my dialogs from the server, hidden ones included). */
@@ -3935,7 +3933,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 field[0] = '\0';
                                 if (state->search_active) {
                                     state->search_caret = 0;
-                                    state->search_dirty = 1;
+                                    /* Refilter like every typing path does:
+                                       the sidebar kept the old matches until
+                                       the next keystroke. */
+                                    tg_gui_window_filter_chats(state, &backend);
                                 } else {
                                     state->input_caret = 0;
                                     tg_gui_window_mention_refresh(state);
@@ -4018,11 +4019,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                         &state->search_query[c], n - c + 1UL);
                                 memcpy(&state->search_query[c], clip, p);
                                 state->search_caret = (int)(c + p);
-                                state->search_dirty = 1;
-                                tg_gui_window_copy(
-                                    state->status, sizeof(state->status),
-                                    "Searching when you pause...");
-                                tg_gui_window_paint(state, &backend);
+                                /* Filter now (and let it write the status):
+                                   nothing runs a search on a pause any more,
+                                   so the pasted text used to sit over a
+                                   sidebar that had not moved. */
+                                tg_gui_window_filter_chats(state, &backend);
                             } else if (tg_gui_session_is_open() &&
                                        state->mode == TG_GUI_MODE_CHAT) {
                                 unsigned long n;
@@ -4669,7 +4670,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 
                         state->composing = 0;
                         state->search_active = 1;
-                        state->search_dirty = 0; /* no pending debounce on focus */
                         last_key_time = time(0);
                         state->cursor_on = 1;
                         caret_ticks = 0;

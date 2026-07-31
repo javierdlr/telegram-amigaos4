@@ -13093,6 +13093,7 @@ void tg_gui_log(const char *msg)
    the cache after paging; opening a hidden chat from the ONLINE search adds
    it back and forgets the hidden mark. Plain linear scans: the file is tiny. */
 #define TG_GUI_HIDDEN_FILE "data/telegram-hidden.txt"
+#define TG_GUI_HIDDEN_TMP "data/telegram-hidden.tmp"
 
 static int tg_gui_hidden_contains(unsigned long id_hi, unsigned long id_lo)
 {
@@ -13133,37 +13134,42 @@ static void tg_gui_hidden_add(unsigned long id_hi, unsigned long id_lo)
 
 static void tg_gui_hidden_forget(unsigned long id_hi, unsigned long id_lo)
 {
-    /* Rewrite without the entry; tiny file, simplest correct thing. */
-    FILE *f;
-    unsigned long hi[128];
-    unsigned long lo[128];
-    unsigned long n = 0UL;
-    unsigned long i;
+    /* Copy every OTHER entry to a temp file and swap it in. Streaming, not
+       buffered: the list is appended to without a cap, so an earlier
+       fixed-array rewrite silently dropped everything past its 128th entry
+       and those chats came back on the next reload. */
+    FILE *src;
+    FILE *dst;
+    unsigned long hi;
+    unsigned long lo;
     int changed = 0;
 
-    f = fopen(TG_GUI_HIDDEN_FILE, "r");
-    if (f == 0) {
+    src = fopen(TG_GUI_HIDDEN_FILE, "r");
+    if (src == 0) {
         return;
     }
-    while (n < 128UL && fscanf(f, "%lx %lx", &hi[n], &lo[n]) == 2) {
-        if (hi[n] == id_hi && lo[n] == id_lo) {
+    dst = fopen(TG_GUI_HIDDEN_TMP, "w");
+    if (dst == 0) {
+        fclose(src);
+        return;
+    }
+    while (fscanf(src, "%lx %lx", &hi, &lo) == 2) {
+        if (hi == id_hi && lo == id_lo) {
             changed = 1;
             continue; /* drop it */
         }
-        ++n;
+        fprintf(dst, "%08lx %08lx\n", hi, lo);
     }
-    fclose(f);
+    fclose(src);
+    fclose(dst);
     if (!changed) {
+        remove(TG_GUI_HIDDEN_TMP);
         return;
     }
-    f = fopen(TG_GUI_HIDDEN_FILE, "w");
-    if (f == 0) {
-        return;
+    remove(TG_GUI_HIDDEN_FILE); /* AmigaDOS rename does not overwrite */
+    if (rename(TG_GUI_HIDDEN_TMP, TG_GUI_HIDDEN_FILE) != 0) {
+        remove(TG_GUI_HIDDEN_TMP);
     }
-    for (i = 0UL; i < n; ++i) {
-        fprintf(f, "%08lx %08lx\n", hi[i], lo[i]);
-    }
-    fclose(f);
 }
 
 /* Shared 16K scratch for peer-cache probes (off the stack: m68k). */
@@ -14624,6 +14630,78 @@ static void tg_gui_dl_sanitize_name(const char *in, char *out,
     out[n] = '\0';
 }
 
+/* Join the download drawer and the file name into dst WITHOUT overflowing it.
+   Both inputs are bounded but their sum is not: the drawer holds up to 95
+   chars (the menu's ASL requester writes it) and a Telegram file_name up to
+   127, against a 144-byte destination -- a deep enough drawer plus a long
+   attachment name used to write past the end of tg_gui_dl.path and into the
+   FILE pointers right behind it. The name is shortened, never the drawer (the
+   user picked that), and the extension survives the cut: a shortened name is
+   still openable, one that lost its ".lha" is not. */
+static void tg_gui_dl_join_path(char *dst, unsigned long dst_size,
+                                const char *dir, const char *name)
+{
+    const char *sep;
+    unsigned long dn;
+    unsigned long nn;
+    unsigned long room;
+    unsigned long ext;   /* index of the last '.' in name, nn = none */
+    unsigned long o;
+    unsigned long i;
+
+    if (dst == 0 || dst_size == 0UL) {
+        return;
+    }
+    dst[0] = '\0';
+    if (dir == 0) {
+        dir = "";
+    }
+    if (name == 0) {
+        name = "";
+    }
+    dn = (unsigned long)strlen(dir);
+    sep = (dn > 0UL && dir[dn - 1UL] == ':') ? "" : "/";
+    o = 0UL;
+    for (i = 0UL; i < dn && o + 1UL < dst_size; ++i) {
+        dst[o++] = dir[i];
+    }
+    for (i = 0UL; sep[i] != '\0' && o + 1UL < dst_size; ++i) {
+        dst[o++] = sep[i];
+    }
+    room = (o + 1UL < dst_size) ? (dst_size - 1UL - o) : 0UL;
+    nn = (unsigned long)strlen(name);
+    if (nn <= room) {
+        for (i = 0UL; i < nn; ++i) {
+            dst[o++] = name[i];
+        }
+        dst[o] = '\0';
+        return;
+    }
+    ext = nn;
+    for (i = nn; i > 0UL; --i) {
+        if (name[i - 1UL] == '.') {
+            ext = i - 1UL;
+            break;
+        }
+    }
+    /* Keep the extension only when it is short enough to be worth the room. */
+    if (ext < nn && (nn - ext) < 8UL && (nn - ext) < room) {
+        unsigned long head = room - (nn - ext);
+
+        for (i = 0UL; i < head; ++i) {
+            dst[o++] = name[i];
+        }
+        for (i = ext; i < nn; ++i) {
+            dst[o++] = name[i];
+        }
+    } else {
+        for (i = 0UL; i < room; ++i) {
+            dst[o++] = name[i];
+        }
+    }
+    dst[o] = '\0';
+}
+
 /* Re-fetch the open chat's newest history and copy the document meta of the
    message with id == msg_id (fresh file_reference). 0 = found + has document. */
 static char tg_dl_diag[96]; /* find_open_document -> download status */
@@ -15286,13 +15364,11 @@ static int tg_mtproto_download_begin(const tg_mtproto_file_ctx *fc,
     tg_gui_dl_sanitize_name(tg_gui_dl.doc.file_name, safe, sizeof(safe));
     {
         const char *dir = tg_gui_session_download_dir();
-        unsigned long dn = (unsigned long)strlen(dir);
 
         (void)mkdir(dir, 0777); /* EEXIST is the norm; volume roots fail
                                    harmlessly and are used as they are */
         tg_platform_ensure_drawer_icon(dir); /* visible on Workbench */
-        sprintf(tg_gui_dl.path, "%s%s%s", dir,
-                (dn > 0UL && dir[dn - 1UL] == ':') ? "" : "/", safe);
+        tg_gui_dl_join_path(tg_gui_dl.path, sizeof(tg_gui_dl.path), dir, safe);
     }
     tg_gui_dl.f = fopen(tg_gui_dl.path, "wb");
     if (tg_gui_dl.f != 0) {

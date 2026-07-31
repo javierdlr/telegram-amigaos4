@@ -229,7 +229,6 @@ typedef struct tg_gui_state {
     int nav_chat;    /* arrow-key focus row in the sidebar (-1 = none);
                         ENTER opens it. Distinct from selected_chat, which
                         is the chat actually OPEN in the transcript. */
-    int search_dirty;     /* query changed since the last online search (debounce) */
     /* The open chat has older history beyond what is loaded (server total > shown).
        When the loaded rows fit the window (no real scrollbar), the painter still
        draws a short scrollbar so the user has a handle to drag up / wheel up and
