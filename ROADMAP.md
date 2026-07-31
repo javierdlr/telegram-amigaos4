@@ -51,7 +51,9 @@ client:
   downloads and avatars, local-first search with keyboard navigation,
   clickable URLs, system-coloured menus, chat list reload with a memory of
   the chats you removed.
-- Next (0.0.9): forwarding messages, files and media to another chat -- the
+- Next (0.0.9): hidden chats surfacing directly in the local search filter
+  (marked as hidden while you type, no network) -- plus forwarding
+  messages, files and media to another chat -- the
   destination picker reuses the local-first search, and a one-click
   "Forward to Saved Messages" archives anything into your own cloud without
   re-uploading it -- plus INLINE PHOTOS in the conversation (today a photo

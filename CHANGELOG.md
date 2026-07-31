@@ -17,7 +17,10 @@ unless noted.
   stages: it first looks through YOUR OWN dialogs on the server (which finds
   hidden chats and private groups that have no public username -- the way
   back after removing a chat from the list), and only when nothing matches
-  does it ask the global Telegram search.
+  does it ask the global Telegram search. With an EMPTY search box, the top
+  row becomes "Browse all chats...": ENTER lists every dialog of the account
+  from the server, hidden chats included -- the way back when the exact name
+  escapes you.
 - Arrow-key navigation: up/down act on the panel under the pointer, like the
   wheel: over the sidebar they walk the chat list (ENTER opens), over the
   transcript they scroll the messages. In the search box they walk the

@@ -14006,9 +14006,10 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
     }
     tg_mtproto_copy_plain_cache_text(trimmed, sizeof(trimmed), query);
     tg_mtproto_trim_line(trimmed);
-    if (trimmed[0] == '\0') {
-        return -1;
-    }
+    /* An EMPTY query is the browse mode ("Browse all chats...", 0.0.8): stage
+       1 keeps every dialog instead of the name matches -- the way to find a
+       removed chat when the exact name escapes you -- and stage 2 never runs
+       (a global search needs a term). */
     /* Kept for the dialog-name match BEFORE the UTF-8 conversion below: cached
        titles are matched byte-wise ASCII-folded, same semantics as the sidebar
        filter. */
@@ -14057,15 +14058,20 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
         }
         if (tg_mtproto_load_peer_cache_file(TG_GUI_SEARCH_TMP_CACHE,
                                             &tg_gui_probe_cache) == 0) {
+            unsigned long cap = (match_query[0] != '\0')
+                                    ? 10UL
+                                    : (unsigned long)TG_GUI_MAX_CHATS;
+
             for (i = 0UL; i < tg_gui_probe_cache.count &&
-                          tg_gui_search_results.count < 10UL; ++i) {
+                          tg_gui_search_results.count < cap; ++i) {
                 const tg_mtproto_peer_cache_entry *e =
                     &tg_gui_probe_cache.entries[i];
 
                 if (e->is_self) {
                     continue;
                 }
-                if (tg_gui_search_name_matches(e->title, match_query) ||
+                if (match_query[0] == '\0' ||
+                    tg_gui_search_name_matches(e->title, match_query) ||
                     tg_gui_search_name_matches(e->username, match_query)) {
                     tg_gui_search_results
                         .entries[tg_gui_search_results.count] = *e;
@@ -14079,7 +14085,9 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
         (void)tg_mtproto_load_peer_cache_file(
             tg_gui_session_state.peer_cache_file, &tg_gui_probe_cache);
     }
-    if (tg_gui_search_results.count > 0UL) {
+    if (tg_gui_search_results.count > 0UL || match_query[0] == '\0') {
+        /* Matches found -- or browse mode, where the global search would be
+           meaningless without a term (an empty browse just reports 0). */
         tg_mtproto_close_quiet_stream(quiet, stream);
         tg_net_set_connect_timeout_seconds(prev_timeout);
         goto openable;

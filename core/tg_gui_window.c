@@ -2581,6 +2581,32 @@ static void tg_gui_window_filter_chats(tg_gui_state *state,
             state->in_search = 0;
             tg_gui_session_refresh_chats();
         }
+        /* Empty box: full local list, plus a "Browse all chats..." row ON TOP
+           (0.0.8) -- ENTER right away lists every dialog from the server,
+           hidden chats included: the way back when the exact name escapes
+           you. With a query the online row sits at the BOTTOM as before. */
+        if (state->search_active && state->chat_count < TG_GUI_MAX_CHATS) {
+            tg_gui_chat *row;
+            int m;
+
+            for (m = state->chat_count; m > 0; --m) {
+                state->chats[m] = state->chats[m - 1];
+            }
+            row = &state->chats[0];
+            memset(row, 0, sizeof(*row));
+            tg_gui_window_copy(row->name, sizeof(row->name),
+                               "Browse all chats...");
+            row->initials[0] = '>';
+            row->initials[1] = '\0';
+            row->index = 0UL; /* the marker: not a chat, go online */
+            state->chat_count += 1;
+            state->selected_chat = 0;
+            state->nav_chat = -1;
+            state->chat_scroll = 0;
+            state->in_filter = 1;
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "ENTER lists ALL your chats - or type a name");
+        }
         tg_gui_window_paint(state, backend);
         return;
     }
@@ -2656,16 +2682,12 @@ static void tg_gui_window_run_search(tg_gui_state *state, tg_gui_backend *backen
 
     state->search_dirty = 0;
     state->in_filter = 0; /* the sidebar is about to show ONLINE results */
-    if (state->search_query[0] == '\0') {
-        if (state->in_search) {
-            state->in_search = 0;
-            tg_gui_session_refresh_chats();
-            tg_gui_window_paint(state, backend);
-        }
-        return;
-    }
+    /* An empty query is no longer a no-op: it is the browse mode (list ALL
+       my dialogs from the server, hidden ones included). */
     tg_gui_window_copy(state->status, sizeof(state->status),
-                       "Searching Telegram...");
+                       state->search_query[0] == '\0'
+                           ? "Listing your chats..."
+                           : "Searching Telegram...");
     tg_gui_window_paint(state, backend);
     cnt = tg_gui_session_search_run(state->search_query, stdout);
     if (cnt == 1 && auto_open_single) {
@@ -2689,7 +2711,9 @@ static void tg_gui_window_run_search(tg_gui_state *state, tg_gui_backend *backen
         }
         tg_gui_window_copy(state->status, sizeof(state->status),
                            cnt < 0 ? "Search failed (network?)"
-                                   : "No match - try a name or @username");
+                                   : (state->search_query[0] == '\0'
+                                          ? "No chats found"
+                                          : "No match - try a name or @username"));
     }
     tg_gui_window_paint(state, backend);
 }
@@ -4656,7 +4680,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_copy(
                             state->status, sizeof(state->status),
                             "Search: type to filter your chats (arrows+ENTER)");
-                        tg_gui_window_paint(state, &backend);
+                        /* Surfaces the "Browse all chats..." top row right away
+                           when the box opens empty (it paints either way). */
+                        tg_gui_window_filter_chats(state, &backend);
                     } else if (hit == TG_GUI_HIT_SEND && state->composing) {
                         state->in_sel_active = 0; /* input is consumed below */
                         if (state->input[0] != '\0') {
