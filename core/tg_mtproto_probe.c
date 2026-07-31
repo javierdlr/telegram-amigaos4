@@ -13933,14 +13933,64 @@ static int tg_gui_search_open_entry(const tg_mtproto_peer_cache_entry *selected,
     return 0;
 }
 
-/* Run contacts.search for `query` online and keep the openable results (limit 10,
-   so the reply stays MorphOS-safe where getDialogs is not). Does NOT touch the
-   peer cache or open anything -- the window then either opens the only match or
-   shows a picker. Returns the openable-result count (>= 0), -1 on failure. */
+/* Case-insensitive substring match, ASCII folding only -- the twin of the
+   sidebar's tg_gui_window_name_matches (kept separate: that one lives in the
+   window backend, this one must link on every build of the probe). */
+static int tg_gui_search_name_matches(const char *name, const char *q)
+{
+    unsigned long nl = (unsigned long)strlen(name);
+    unsigned long ql = (unsigned long)strlen(q);
+    unsigned long i;
+    unsigned long j;
+
+    if (ql == 0UL || ql > nl) {
+        return 0;
+    }
+    for (i = 0UL; i + ql <= nl; ++i) {
+        for (j = 0UL; j < ql; ++j) {
+            char a = name[i + j];
+            char b = q[j];
+
+            if (a >= 'A' && a <= 'Z') {
+                a = (char)(a + 32);
+            }
+            if (b >= 'A' && b <= 'Z') {
+                b = (char)(b + 32);
+            }
+            if (a != b) {
+                break;
+            }
+        }
+        if (j == ql) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Throwaway cache file for the own-dialogs search stage: T: (RAM) on Amiga
+   systems, data/ on the host build. Never the real peer cache. */
+#if defined(__m68k__) || defined(__MORPHOS__) || defined(__amigaos4__) || \
+    defined(__AROS__)
+#define TG_GUI_SEARCH_TMP_CACHE "T:tg-search-dialogs.tmp"
+#else
+#define TG_GUI_SEARCH_TMP_CACHE "data/tg-search-dialogs.tmp"
+#endif
+
+/* Online search for `query`, two stages (0.0.8). Stage 1 pages the account's
+   OWN dialogs (same paging as Reload chat list) into a throwaway cache file
+   and keeps the name/username matches -- a hidden chat or a private group has
+   no public username, so the global search can never find it, yet it IS in
+   the dialog list. Only when stage 1 matches nothing does stage 2 run the
+   classic contacts.search (limit 10, MorphOS-safe reply). Neither stage
+   touches the real peer cache or opens anything -- the window then either
+   opens the only match or shows a picker. Returns the openable-result count
+   (>= 0), -1 on failure. */
 int tg_gui_session_search_run(const char *query, FILE *stream)
 {
     unsigned char qbuf[256];
     char trimmed[128];
+    char match_query[128];
     tg_mtproto_rpc_result result;
     tg_mtproto_tl_writer writer;
     FILE *quiet;
@@ -13959,6 +14009,10 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
     if (trimmed[0] == '\0') {
         return -1;
     }
+    /* Kept for the dialog-name match BEFORE the UTF-8 conversion below: cached
+       titles are matched byte-wise ASCII-folded, same semantics as the sidebar
+       filter. */
+    tg_mtproto_copy_plain_cache_text(match_query, sizeof(match_query), trimmed);
 #if TG_MTPROTO_DISPLAY_LATIN1
     /* The query is Latin-1 (Amiga keymap); Telegram wants UTF-8. Without this
        a name with a-ring/a-uml/o-uml went out as invalid UTF-8 and the server
@@ -13977,6 +14031,61 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
     quiet = tg_mtproto_open_quiet_stream(stream);
     prev_timeout = tg_net_connect_timeout_seconds();
     tg_net_set_connect_timeout_seconds(12UL);
+
+    /* --- Stage 1: the account's own dialogs (hidden chats included) ------- */
+    remove(TG_GUI_SEARCH_TMP_CACHE);
+    {
+        int iter;
+        unsigned long prev = 0UL;
+
+        for (iter = 0; iter < TG_GUI_RELOAD_PAGES; ++iter) {
+            if (tg_mtproto_auth_list_peers_file(
+                    tg_gui_session_state.host, "443",
+                    tg_gui_session_state.api_file,
+                    tg_gui_session_state.auth_file,
+                    tg_gui_session_state.dc_id_text, TG_GUI_RELOAD_PAGE,
+                    TG_GUI_SEARCH_TMP_CACHE, quiet) != 0) {
+                break; /* match against whatever pages landed */
+            }
+            if (tg_mtproto_load_peer_cache_file(TG_GUI_SEARCH_TMP_CACHE,
+                                                &tg_gui_probe_cache) != 0 ||
+                tg_gui_probe_cache.count <= prev ||
+                tg_gui_probe_cache.count >= TG_MTPROTO_PEER_CACHE_MAX) {
+                break;
+            }
+            prev = tg_gui_probe_cache.count;
+        }
+        if (tg_mtproto_load_peer_cache_file(TG_GUI_SEARCH_TMP_CACHE,
+                                            &tg_gui_probe_cache) == 0) {
+            for (i = 0UL; i < tg_gui_probe_cache.count &&
+                          tg_gui_search_results.count < 10UL; ++i) {
+                const tg_mtproto_peer_cache_entry *e =
+                    &tg_gui_probe_cache.entries[i];
+
+                if (e->is_self) {
+                    continue;
+                }
+                if (tg_gui_search_name_matches(e->title, match_query) ||
+                    tg_gui_search_name_matches(e->username, match_query)) {
+                    tg_gui_search_results
+                        .entries[tg_gui_search_results.count] = *e;
+                    tg_gui_search_results.count += 1UL;
+                }
+            }
+        }
+        remove(TG_GUI_SEARCH_TMP_CACHE);
+        /* The probe cache was scratch space: reload it from the REAL file so
+           later cache users see the true sidebar list again. */
+        (void)tg_mtproto_load_peer_cache_file(
+            tg_gui_session_state.peer_cache_file, &tg_gui_probe_cache);
+    }
+    if (tg_gui_search_results.count > 0UL) {
+        tg_mtproto_close_quiet_stream(quiet, stream);
+        tg_net_set_connect_timeout_seconds(prev_timeout);
+        goto openable;
+    }
+
+    /* --- Stage 2: the classic global contacts.search ----------------------- */
     tg_mtproto_tl_writer_init(&writer, qbuf, sizeof(qbuf));
     if (tg_mtproto_build_contacts_search(&writer, trimmed, 10UL) !=
         TG_MTPROTO_TL_OK) {
@@ -14004,6 +14113,7 @@ int tg_gui_session_search_run(const char *query, FILE *stream)
     tg_mtproto_close_quiet_stream(quiet, stream);
     tg_net_set_connect_timeout_seconds(prev_timeout);
 
+openable:
     for (i = 0UL; i < tg_gui_search_results.count &&
                   tg_gui_search_openable_n <
                       (int)(sizeof(tg_gui_search_openable_idx) /

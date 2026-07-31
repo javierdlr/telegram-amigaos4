@@ -174,9 +174,12 @@ int tg_gui_session_mention_candidates(const char *prefix, char *items,
    opened, 1 = no result / network issue, 2 = bad args. */
 int tg_gui_session_search_open(const char *query, FILE *stream);
 
-/* Run contacts.search for `query` and KEEP the openable results (does not open
-   or touch the cache) so the window can show a picker. Returns the openable
-   count (>= 0), -1 on failure. */
+/* Online search, two stages: first the account's OWN dialogs (paged like
+   Reload into a throwaway cache; finds hidden chats and private groups that
+   have no public username), then -- only on zero matches -- the global
+   contacts.search. KEEPS the openable results (does not open or touch the
+   real cache) so the window can show a picker. Returns the openable count
+   (>= 0), -1 on failure. */
 int tg_gui_session_search_run(const char *query, FILE *stream);
 /* Count / display name of the last search's openable results (0-based). */
 int tg_gui_session_search_count(void);

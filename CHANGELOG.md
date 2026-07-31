@@ -13,7 +13,11 @@ unless noted.
   `data/telegram-auth-dc<N>.bin`; `FILE_MIGRATE` mid-transfer hops too).
 - Local-first search: typing in the sidebar box filters YOUR chats instantly
   from the local cache; the final "Search Telegram..." row (or ENTER with no
-  local match) runs the online search.
+  local match) runs the online search. The online search itself has two
+  stages: it first looks through YOUR OWN dialogs on the server (which finds
+  hidden chats and private groups that have no public username -- the way
+  back after removing a chat from the list), and only when nothing matches
+  does it ask the global Telegram search.
 - Arrow-key navigation: up/down act on the panel under the pointer, like the
   wheel: over the sidebar they walk the chat list (ENTER opens), over the
   transcript they scroll the messages. In the search box they walk the
