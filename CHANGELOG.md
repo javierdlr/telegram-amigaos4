@@ -55,6 +55,9 @@ unless noted.
   be edited by hand.
 
 ### Changed
+- AmigaOS 4: message ports and IO requests are now allocated through the
+  OS4-native AllocSysObject/FreeSysObject family instead of the classic
+  CreateMsgPort/CreateIORequest calls (community contribution, PR #10).
 - The transfer status line shows the rate next to the percentage
   (e.g. "Downloading 42% 38 KB/s"), averaged over a rolling window.
 - Downloads pipeline their chunks: the request for the next chunk goes out

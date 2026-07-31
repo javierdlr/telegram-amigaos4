@@ -33,6 +33,7 @@
                                  explicit iface->ReadEClock() call */
 #include <dos/dosextens.h>
 #include <dos/dostags.h> /* SYS_Input/SYS_Output for the URL opener */
+#include <exec/exectags.h> /* ASOT_*/ASOIOR_* for AllocSysObject (PR #10) */
 #include <proto/dos.h>
 #include <proto/exec.h>
 #include <dos/dos.h>
@@ -408,11 +409,11 @@ static void tg_os4_timebase_close(void)
     }
     tg_os4_tb_base = 0;
     if (tg_os4_tb_req != 0) {
-        DeleteIORequest((struct IORequest *)tg_os4_tb_req);
+        FreeSysObject(ASOT_IOREQUEST, tg_os4_tb_req);
         tg_os4_tb_req = 0;
     }
     if (tg_os4_tb_port != 0) {
-        DeleteMsgPort(tg_os4_tb_port);
+        FreeSysObject(ASOT_PORT, tg_os4_tb_port);
         tg_os4_tb_port = 0;
     }
     tg_os4_tb_state = 0;
@@ -430,10 +431,15 @@ static unsigned long tg_os4_timebase(void)
 {
     if (tg_os4_tb_state == 0) {
         tg_os4_tb_state = -1;
-        tg_os4_tb_port = CreateMsgPort();
+        /* AllocSysObject family: the OS4-native replacement for
+           CreateMsgPort/CreateIORequest (community PR #10). ASOIOR_ReplyPort
+           keeps the request bound to the port exactly as CreateIORequest
+           did. */
+        tg_os4_tb_port = (struct MsgPort *)AllocSysObject(ASOT_PORT, NULL);
         if (tg_os4_tb_port != 0) {
-            tg_os4_tb_req = (struct TimeRequest *)CreateIORequest(
-                tg_os4_tb_port, sizeof(struct TimeRequest));
+            tg_os4_tb_req = (struct TimeRequest *)AllocSysObjectTags(
+                ASOT_IOREQUEST, ASOIOR_Size, sizeof(struct TimeRequest),
+                ASOIOR_ReplyPort, tg_os4_tb_port, TAG_DONE);
         }
         if (tg_os4_tb_req != 0 &&
             OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
@@ -1624,7 +1630,7 @@ static void tg_os4_drop_disarm(void)
         while ((m = GetMsg(tg_os4_app_port)) != 0) {
             ReplyMsg(m); /* drain and reply un-handled drops */
         }
-        DeleteMsgPort(tg_os4_app_port);
+        FreeSysObject(ASOT_PORT, tg_os4_app_port);
         tg_os4_app_port = 0;
     }
     if (tg_os4_drop_dobj != 0 && tg_os4_iicon != 0) {
@@ -1756,7 +1762,7 @@ static void tg_os4_drop_arm(void)
         tg_os4_drop_disarm();
         return;
     }
-    tg_os4_app_port = CreateMsgPort();
+    tg_os4_app_port = (struct MsgPort *)AllocSysObject(ASOT_PORT, NULL);
     if (tg_os4_app_port == 0) {
         tg_os4_drop_diag = "message port failed";
         tg_os4_drop_disarm();
@@ -1926,7 +1932,7 @@ int tg_platform_gui_drop_arm(void *window)
             return -1;
         }
     }
-    tg_os4_app_port = CreateMsgPort();
+    tg_os4_app_port = (struct MsgPort *)AllocSysObject(ASOT_PORT, NULL);
     if (tg_os4_app_port == 0) {
         tg_os4_drop_diag = "message port failed";
         tg_os4_drop_disarm();
