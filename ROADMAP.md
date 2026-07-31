@@ -46,11 +46,13 @@ client:
   Copy/Cut/Paste in an Edit menu, reply on double-click, TUI file
   transfer/drop support, live remote edits and receive-only updates while
   composing, accented-name search, and a TUI_MODE icon tooltype.
-- In development (0.0.8): non-blocking transfers (use the client while a
-  file moves) with pipelined downloads and drag-and-drop upload, multi-DC
-  downloads and avatars, local-first search with keyboard navigation,
-  clickable URLs, system-coloured menus, chat list reload with a memory of
-  the chats you removed.
+- Release 0.0.8 (transfers 2.0): non-blocking transfers (use the client
+  while a file moves) with pipelined downloads and drag-and-drop upload,
+  multi-DC downloads and avatars, local-first search with a two-stage
+  online search and a browse of the full dialog list, clickable URLs,
+  system-coloured menus, chat list reload with a memory of the chats you
+  removed, a configurable download drawer, and AfA_OS (AmiKit)
+  compatibility. First release cycle with an adversarial review pass.
 - Next (0.0.9): hidden chats surfacing directly in the local search filter
   (marked as hidden while you type, no network) -- plus forwarding
   messages, files and media to another chat -- the

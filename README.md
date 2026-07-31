@@ -25,15 +25,20 @@ Two front-ends share one engine:
 
 ![Telegram Amiga GUI on AmigaOS 4](assets/screenshots/telegram-amiga-gui-os4.png)
 
-Status: **alpha 0.0.7** — everyday direct-message and group chat works on all
-five platforms below. 0.0.7 makes file transfers grown-up: big uploads and
-downloads (152 MB tested) with a live percentage, automatic retry of lost
-chunks, and cancel from the close gadget — plus clipboard Copy/Cut/Paste with
-mouse or Shift+arrow text selection in its own Edit menu, reply on
-double-click, live updates for messages edited on another device (even while
-you type), file send/download and Workbench drag-and-drop in the TUI, a
-TUI_MODE icon tooltype for packagers, and online search that finds accented
-names. All that on top of 0.0.6's file sharing, pinned Saved Messages cloud
+Status: **alpha 0.0.8** — everyday direct-message and group chat works on all
+five platforms below. 0.0.8 is transfers 2.0: the client stays fully usable
+while a file moves — keep chatting, switch chats, receive messages — with
+pipelined download chunks, the speed next to the percentage, documents and
+profile photos fetched from any Telegram datacenter, drag-and-drop upload
+onto the chat window, and a download drawer picked from the menu. The
+sidebar search filters your chats as you type, searches your own dialogs
+first (it finds back a chat you removed, even a private group with no
+public username) and browses your complete dialog list from an empty box;
+URLs in messages are blue and clickable, menus follow the system colours,
+the chat list reloads on demand and remembers the chats you removed, and
+AmiKit/AfA_OS systems render text correctly. All that on top of 0.0.7's
+robust big transfers, Copy/Cut/Paste and Edit menu, reply on double-click
+and live remote edits, 0.0.6's file sharing, pinned Saved Messages cloud
 drawer, script-free launch icons, and 0.0.5's real avatars,
 @username autocomplete, remembered window position and optional own screen,
 0.0.4's edit & delete, live read receipts, multi-device sync and system-clock times,
@@ -51,11 +56,11 @@ per-architecture IT/EN manuals — and **no private files**.
 
 | Platform | CPU | Release |
 |---|---|---|
-| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.7) |
-| AmigaOS 4.x | PPC | [os4-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.7) |
-| MorphOS | PPC | [morphos-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.7) |
-| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.7) |
-| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.7](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.7) |
+| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.8) |
+| AmigaOS 4.x | PPC | [os4-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.8) |
+| MorphOS | PPC | [morphos-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.8) |
+| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.8) |
+| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.8) |
 
 All releases: <https://github.com/kaffeine1/telegram-amiga/releases> —
 full history in [CHANGELOG.md](CHANGELOG.md) (also bundled in every package

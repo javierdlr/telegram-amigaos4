@@ -5,7 +5,7 @@ AmigaOS 3.x, AmigaOS 4.x, MorphOS and AROS (i386/x86_64).
 Dates use YYYY-MM-DD. Each release ships on all five platform lanes
 unless noted.
 
-## [Unreleased] - 0.0.8 development
+## [0.0.8] - 2026-07-31
 
 ### Added
 - Multi-DC downloads: a document stored on another Telegram datacenter now
