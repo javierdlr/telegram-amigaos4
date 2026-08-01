@@ -55,9 +55,11 @@ client:
   compatibility. First release cycle with an adversarial review pass.
 - In development (0.0.9): hidden chats now surface directly in the local
   search filter; forwarding to Saved Messages and to a picker-selected chat
-  is implemented; and bounded photo thumbnails render inline through the
-  in-tree JPEG decoder and a disk cache. All three are on `main` and still
-  require the complete five-lane real-system validation before release.
+  is implemented; bounded photo thumbnails render inline through the in-tree
+  JPEG decoder and a geometry-independent cache; and JPEGs can be uploaded as
+  native Telegram photos from the GUI, drop requester or TUI. All changes are
+  on `main` and still require the complete five-lane real-system validation
+  before release.
   System datatypes remain an optional OS4-side optimization, while the
   zero-install in-binary decoder stays the portable base path.
 - Then 0.1.0, the first BETA: same program, a different promise. It ships

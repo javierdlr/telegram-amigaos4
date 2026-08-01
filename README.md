@@ -47,9 +47,9 @@ paging, search, badges and chat management.
 
 Development on `main` is now preparing 0.0.9: hidden chats stay available in
 the local search, messages can be forwarded to Saved Messages or another chat,
-and bounded photo thumbnails render inline. These changes are not part of the
-0.0.8 downloads below until all five platform lanes complete real-system
-validation.
+photo thumbnails render inline from a geometry-independent cache, and JPEGs can
+be sent as native Telegram photos. These changes are not part of the 0.0.8
+downloads below until all five platform lanes complete real-system validation.
 
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:

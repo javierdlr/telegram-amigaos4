@@ -151,12 +151,13 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
-Highlights in this build: inline message photos; one-click forwarding to Saved
-Messages and a destination picker for other chats; hidden chats available in
-local search; and non-blocking file transfers up to $upload_limit. Downloads
-pipeline their chunks and work across Telegram datacenters. Drop a file icon
-on the window to send it, or pick the download drawer from the menu. URLs are
-clickable, menus follow the system colours, and AmiKit/AfA_OS text is handled.
+Highlights in this build: inline message photos and native JPEG photo uploads;
+one-click forwarding to Saved Messages and a destination picker for other
+chats; hidden chats available in local search; and non-blocking file transfers
+up to $upload_limit. Downloads pipeline their chunks and work across Telegram
+datacenters. Drop a file icon on the window to send it, or pick the download
+drawer from the menu. URLs are clickable, menus follow the system colours, and
+AmiKit/AfA_OS text is handled.
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
@@ -195,10 +196,11 @@ Two launchers
   To quit it: /quit, Ctrl+C, or the window's close gadget. The window then
   stays so you can read the last lines: one more click on the close gadget
   dismisses it.
-  Sending a file by drag-and-drop: type "/sendfile " in the chat, then drop
-  the file's icon straight onto the console window (AmigaOS 3.x, MorphOS,
-  AROS) or onto the "TG drop" Workbench icon (AmigaOS 4.x, where the system
-  reserves window drops); the path appears in the input line, Enter sends.
+  Sending by drag-and-drop: type "/sendfile " for a document or "/photo "
+  for a JPEG photo, then drop the icon straight onto the console window
+  (AmigaOS 3.x, MorphOS, AROS) or onto the "TG drop" Workbench icon (AmigaOS
+  4.x, where the system reserves window drops); the path appears in the input
+  line, Enter sends.
 
 First start (logging in)
 ------------------------
@@ -231,6 +233,9 @@ Using the GUI
 - Photos sent in a conversation appear inside their message bubble. A small
   per-platform thumbnail is cached in the photos/ drawer; [Photo] remains as a
   safe fallback while it loads or when Telegram cannot supply it.
+- To send a JPEG as a Telegram photo, use "Send photo..." in the Telegram menu
+  (Amiga+P). Dropping a .jpg/.jpeg on the GUI asks Photo or File; Photo is the
+  default. A photo over 10 MiB is preserved and sent as a document instead.
 - Right-click a message and choose "Forward to Saved Messages" for a one-click
   cloud copy, or "Forward to..." to select another chat with the normal search.
 - In groups, type @ in the composer to autocomplete a member: a small list
@@ -333,11 +338,11 @@ I due launcher
   Per uscire: /quit, Ctrl+C o il gadget di chiusura della finestra. La
   finestra poi resta aperta per farti leggere le ultime righe: un altro
   click sul gadget la congeda.
-  Inviare un file col drag-and-drop: scrivi "/sendfile " in chat, poi
-  trascina l'icona del file direttamente sulla finestra console (AmigaOS
-  3.x, MorphOS, AROS) o sull'icona Workbench "TG drop" (AmigaOS 4.x, dove i
-  drop sulla finestra sono riservati al sistema); il percorso compare nella
-  riga di input, Invio lo spedisce.
+  Per il drag-and-drop scrivi "/sendfile " per un documento oppure "/photo "
+  per una foto JPEG, poi trascina l'icona direttamente sulla finestra console
+  (AmigaOS 3.x, MorphOS, AROS) o sull'icona Workbench "TG drop" (AmigaOS 4.x,
+  dove i drop sulla finestra sono riservati al sistema); il percorso compare
+  nella riga di input, Invio lo spedisce.
 
 Primo avvio (accesso)
 ---------------------
@@ -369,6 +374,9 @@ Usare la GUI
 - Le foto inviate in conversazione appaiono dentro la loro bolla. Una piccola
   anteprima adatta alla piattaforma viene salvata in photos/; [Photo] resta come
   ripiego durante il caricamento o se Telegram non la rende disponibile.
+- Per inviare un JPEG come vera foto Telegram usa "Send photo..." nel menu
+  Telegram (Amiga+P). Trascinando un .jpg/.jpeg sulla GUI puoi scegliere Photo
+  o File; Photo e' la scelta predefinita. Oltre 10 MiB viene inviato come file.
 - Click destro su un messaggio: "Forward to Saved Messages" lo copia con un
   click nel proprio cloud; "Forward to..." permette di scegliere un'altra chat
   usando la ricerca normale.
