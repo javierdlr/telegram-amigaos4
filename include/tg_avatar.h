@@ -32,6 +32,19 @@ int tg_image_decode_jpeg_scaled(const unsigned char *jpeg,
                                 int dw, int dh,
                                 int source_edge_cap);
 
+/* Fit source dimensions inside a square canonical edge without changing the
+   aspect ratio or enlarging a smaller image. 0 = valid dimensions returned. */
+int tg_image_canonical_size(unsigned long source_w,
+                            unsigned long source_h,
+                            int edge_cap,
+                            int *out_w,
+                            int *out_h);
+
+/* Apply the 4x4 ordered-dither offset used before palette matching. */
+void tg_image_ordered_dither_rgb(const unsigned char *rgb,
+                                 int x, int y,
+                                 unsigned char *out_rgb);
+
 /* Expand + decode + nearest-neighbour scale into dst_rgb (dw*dh*3, RGB888).
    0 = ok; any failure leaves the caller free to fall back to initials. */
 int tg_avatar_decode_stripped(const unsigned char *stripped,

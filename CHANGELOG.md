@@ -21,6 +21,11 @@ unless noted.
   later paints and runs. Text-only and failed-download fallbacks remain usable.
 
 ### Changed
+- Inline photos now decode once into a platform-sized canonical cache and
+  repaint from that cache at every bubble size. Resize paints never trigger a
+  JPEG decode, modern RTG targets use optional RGB888 output, paletted screens
+  use ordered dithering, and larger bounded thumbnails improve detail without
+  making repaints depend on image size.
 - Hidden chats now remain in the local peer cache. They stay out of the normal
   sidebar, appear immediately in local search with a `(hidden)` marker, and
   return to the sidebar when opened, without an online search or cache reload.

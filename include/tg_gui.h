@@ -85,8 +85,9 @@ struct tg_gui_backend {
     /* OPTIONAL: replay a cached message photo into rect, clipped to the
        transcript viewport. Returns 1 when drawn, 0 for the text fallback. */
     int (*photo_image)(tg_gui_backend *backend, unsigned long photo_id_hi,
-                       unsigned long photo_id_lo, tg_gui_rect rect,
-                       tg_gui_rect clip);
+                       unsigned long photo_id_lo,
+                       unsigned long source_w, unsigned long source_h,
+                       tg_gui_rect rect, tg_gui_rect clip);
 };
 
 /* Sidebar capacity. Raised from 32 so a congested account shows far more of its

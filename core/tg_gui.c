@@ -1051,11 +1051,11 @@ typedef struct tg_gui_bubble_geom {
 } tg_gui_bubble_geom;
 
 #if defined(__m68k__)
-#define TG_GUI_INLINE_PHOTO_MAX_W 144
-#define TG_GUI_INLINE_PHOTO_MAX_H 180
+#define TG_GUI_INLINE_PHOTO_MAX_W 256
+#define TG_GUI_INLINE_PHOTO_MAX_H 256
 #else
-#define TG_GUI_INLINE_PHOTO_MAX_W 240
-#define TG_GUI_INLINE_PHOTO_MAX_H 300
+#define TG_GUI_INLINE_PHOTO_MAX_W 448
+#define TG_GUI_INLINE_PHOTO_MAX_H 448
 #endif
 
 static void tg_gui_photo_geometry(const tg_gui_message *message,
@@ -1072,7 +1072,16 @@ static void tg_gui_photo_geometry(const tg_gui_message *message,
         content_w <= 0) {
         return;
     }
-    max_w = TG_GUI_INLINE_PHOTO_MAX_W;
+    /* Photos use roughly 60% of the transcript column. This leaves visible
+       chat context around them while allowing a substantially larger source
+       than the first 0.0.9 candidate. */
+    max_w = (content_w * 3) / 4;
+    if (max_w > TG_GUI_INLINE_PHOTO_MAX_W) {
+        max_w = TG_GUI_INLINE_PHOTO_MAX_W;
+    }
+    if (max_w < 1) {
+        max_w = 1;
+    }
     if (max_w > content_w) {
         max_w = content_w;
     }
@@ -1336,13 +1345,24 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     if (photo_h > 0 && backend->photo_image != 0) {
         tg_gui_rect photo_rect;
         tg_gui_rect clip;
+        int drawn;
 
         photo_rect = tg_gui_make_rect(bubble_x + pad,
                                       y + header_h + reply_h + 2,
                                       photo_w, photo_h);
         clip = tg_gui_make_rect(area_x, top, area_w, bottom - top);
-        (void)backend->photo_image(backend, message->photo_id_hi,
-                                   message->photo_id_lo, photo_rect, clip);
+        drawn = backend->photo_image(backend, message->photo_id_hi,
+                                     message->photo_id_lo,
+                                     message->photo_width,
+                                     message->photo_height,
+                                     photo_rect, clip);
+        if (!drawn && photo_rect.y + lh >= top && photo_rect.y < bottom) {
+            /* A deferred first decode (notably during NEWSIZE) must not leave
+               an unexplained empty bubble. The next stable paint replaces
+               this marker with the cached canonical image. */
+            backend->draw_text(backend, time_pen, photo_rect.x,
+                               photo_rect.y + lh, "[Photo]", 7UL);
+        }
     }
     style = 0;
     for (k = 0; k < line_count; ++k) {
@@ -2833,6 +2853,12 @@ typedef struct tg_gui_record {
     int fills;
     int avatars;
     int photos;
+    int photo_decodes;
+    int photo_size_changed;
+    unsigned long photo_cache_hi;
+    unsigned long photo_cache_lo;
+    int photo_last_w;
+    int photo_last_h;
     int texts;
     int min_x;
     int min_y;
@@ -2914,6 +2940,8 @@ static void tg_gui_rec_avatar(tg_gui_backend *backend, int color_index,
 static int tg_gui_rec_photo(tg_gui_backend *backend,
                             unsigned long photo_id_hi,
                             unsigned long photo_id_lo,
+                            unsigned long source_w,
+                            unsigned long source_h,
                             tg_gui_rect rect,
                             tg_gui_rect clip)
 {
@@ -2921,9 +2949,23 @@ static int tg_gui_rec_photo(tg_gui_backend *backend,
 
     (void)photo_id_hi;
     (void)photo_id_lo;
+    (void)source_w;
+    (void)source_h;
     (void)clip;
     record = (tg_gui_record *)backend->context;
     record->photos += 1;
+    if (record->photo_decodes == 0 ||
+        record->photo_cache_hi != photo_id_hi ||
+        record->photo_cache_lo != photo_id_lo) {
+        record->photo_decodes += 1;
+        record->photo_cache_hi = photo_id_hi;
+        record->photo_cache_lo = photo_id_lo;
+    } else if (record->photo_last_w != rect.w ||
+               record->photo_last_h != rect.h) {
+        record->photo_size_changed = 1;
+    }
+    record->photo_last_w = rect.w;
+    record->photo_last_h = rect.h;
     tg_gui_rec_track(record, rect.x, rect.y);
     tg_gui_rec_track(record, rect.x + rect.w, rect.y + rect.h);
     return 1;
@@ -3102,6 +3144,17 @@ int tg_gui_self_test(void)
                record.height);
         return 2;
     }
+
+    /* Repaint at another window width: the bubble geometry changes, but the
+       backend's photo identity remains the same canonical cache entry. */
+    record.width = 390;
+    tg_gui_paint(&state, &backend);
+    if (record.photos != 2 || record.photo_decodes != 1 ||
+        !record.photo_size_changed) {
+        puts("gui self-test: photo cache followed bubble geometry");
+        return 2;
+    }
+    record.width = 480;
 
     /* The "is typing" header line is a transient overlay (live-only, not in the
        demo); paint it once into a fresh recorder to keep that branch in bounds. */

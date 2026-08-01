@@ -1589,16 +1589,16 @@ static tg_mtproto_tl_status tg_skip_video_size(tg_mtproto_tl_reader *reader);
 
 #ifndef TG_MTPROTO_PHOTO_TARGET_EDGE
 #if defined(__m68k__)
-#define TG_MTPROTO_PHOTO_TARGET_EDGE 160UL
+#define TG_MTPROTO_PHOTO_TARGET_EDGE 256UL
 #else
-#define TG_MTPROTO_PHOTO_TARGET_EDGE 320UL
+#define TG_MTPROTO_PHOTO_TARGET_EDGE 448UL
 #endif
 #endif
 #ifndef TG_MTPROTO_PHOTO_BYTES_MAX
 #if defined(__m68k__)
-#define TG_MTPROTO_PHOTO_BYTES_MAX (96UL * 1024UL)
+#define TG_MTPROTO_PHOTO_BYTES_MAX (160UL * 1024UL)
 #else
-#define TG_MTPROTO_PHOTO_BYTES_MAX (256UL * 1024UL)
+#define TG_MTPROTO_PHOTO_BYTES_MAX (384UL * 1024UL)
 #endif
 #endif
 
@@ -5406,7 +5406,7 @@ int tg_mtproto_login_self_test(void)
     }
 
     /* 0.0.9 photo metadata: parse a full layer-214 Photo, select the nearest
-       bounded server thumb, consume a progressive oversize sibling, then pin
+       bounded server thumb (including a progressive size), then pin the
        inputPhotoFileLocation byte layout. */
     {
         unsigned char photo_wire[256];
@@ -5453,7 +5453,7 @@ int tg_mtproto_login_self_test(void)
             &pw, TG_VECTOR_CONSTRUCTOR);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 2UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 120000UL);
-        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 300000UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 150000UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 4UL);
         if (ps != TG_MTPROTO_TL_OK) {
             puts("photo self-test: fixture build failed");
@@ -5462,8 +5462,8 @@ int tg_mtproto_login_self_test(void)
         tg_mtproto_tl_reader_init(&pr, photo_wire, pw.length);
         if (tg_mtproto_read_photo(&pr, &photo) != TG_MTPROTO_TL_OK ||
             pr.offset != pw.length || !photo.has_photo ||
-            strcmp(photo.thumb_type, "m") != 0 || photo.width != 160UL ||
-            photo.height != 100UL || photo.size != 50000UL ||
+            strcmp(photo.thumb_type, "x") != 0 || photo.width != 320UL ||
+            photo.height != 200UL || photo.size != 150000UL ||
             photo.dc_id != 4UL || photo.file_reference_len != 1UL ||
             photo.file_reference[0] != 0xfeU) {
             puts("photo self-test: Photo parse/selection mismatch");
@@ -5476,7 +5476,7 @@ int tg_mtproto_login_self_test(void)
             query[8] != 0xfeU || query[9] != 0x1fU ||
             query[10] != 0x18U || query[11] != 0x40U ||
             query[28] != 0x01U || query[29] != 0xfeU ||
-            query[32] != 0x01U || query[33] != (unsigned char)'m' ||
+            query[32] != 0x01U || query[33] != (unsigned char)'x' ||
             query[44] != 0x00U || query[46] != 0x01U) {
             puts("photo self-test: getFile(photo) layout mismatch");
             return 2;

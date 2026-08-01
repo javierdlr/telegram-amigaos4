@@ -115,6 +115,17 @@ typedef struct timerequest tg_gui_timereq;
 #include <proto/gadtools.h>
 #include <proto/dos.h>
 
+/* The modern lanes ship cybergraphics.library headers as part of their SDK.
+   Use it opportunistically for RGB888 photo rows on RTG screens. The classic
+   OS3 toolchain deliberately remains header/dependency-free and keeps the
+   canonical pen-grid fallback. */
+#if defined(__amigaos4__) || defined(__MORPHOS__) || defined(__MORPHOS) || \
+    defined(__AROS__)
+#include <cybergraphx/cybergraphics.h>
+#include <proto/cybergraphics.h>
+#define TG_GUI_HAVE_CYBERGRAPHICS 1
+#endif
+
 /* TagItem ti_Data is pointer-sized. Only AROS needs IPTR (64-bit on AROS
    x86_64, where a ULONG cast would truncate the pointer); the 32-bit targets
    (OS3, MorphOS, OS4 PPC) hold a pointer in a ULONG and do not all expose
@@ -137,6 +148,55 @@ struct GadToolsIFace *IGadTools = 0;
 #else
 struct GfxBase *GfxBase = 0;
 struct Library *GadToolsBase = 0;
+#endif
+
+#if defined(TG_GUI_HAVE_CYBERGRAPHICS)
+struct Library *CyberGfxBase = 0;
+#if defined(__amigaos4__)
+struct CyberGfxIFace *ICyberGfx = 0;
+#endif
+
+static int tg_gui_amiga_open_cybergraphics(void)
+{
+    if (CyberGfxBase != 0) {
+        return 1;
+    }
+    CyberGfxBase = OpenLibrary((CONST_STRPTR)CYBERGFXNAME, 40);
+#if defined(__amigaos4__)
+    if (CyberGfxBase != 0) {
+        ICyberGfx = (struct CyberGfxIFace *)GetInterface(
+            CyberGfxBase, (CONST_STRPTR)"main", 1, 0);
+        if (ICyberGfx == 0) {
+            CloseLibrary(CyberGfxBase);
+            CyberGfxBase = 0;
+        }
+    }
+#endif
+    return CyberGfxBase != 0;
+}
+
+static void tg_gui_amiga_close_cybergraphics(void)
+{
+#if defined(__amigaos4__)
+    if (ICyberGfx != 0) {
+        DropInterface((struct Interface *)ICyberGfx);
+        ICyberGfx = 0;
+    }
+#endif
+    if (CyberGfxBase != 0) {
+        CloseLibrary(CyberGfxBase);
+        CyberGfxBase = 0;
+    }
+}
+#else
+static int tg_gui_amiga_open_cybergraphics(void)
+{
+    return 0;
+}
+
+static void tg_gui_amiga_close_cybergraphics(void)
+{
+}
 #endif
 
 /* Core GUI libraries share the window lifetime. Keep the required
@@ -322,6 +382,8 @@ typedef struct tg_gui_amiga_ctx {
     int buf_h;               /* allocated buffer height (== inner_h when valid) */
     int buf_ok;              /* 1 iff buf_bm and buf_rp.Font are valid */
     int bitmap_text_compat;  /* AfA_OS Text() cannot target this off-screen RP */
+    int photo_decode_allowed; /* false during coalesced resize paints */
+    int photo_truecolor;      /* optional cybergraphics RGB888 row replay */
 } tg_gui_amiga_ctx;
 
 static int tg_gui_amiga_width(tg_gui_backend *backend)
@@ -509,7 +571,7 @@ static ULONG tg_gui_amiga_rgb32(unsigned char component);
    kept avatars needlessly dull on truecolor RTG under OS3 (e.g. a Vampire):
    the machine is m68k but its screen affords the fine profile. Arrays are
    sized for the rich cap; the lean profile just uses less of them. */
-#define TG_GUI_AV_POOL_MAX 96
+#define TG_GUI_AV_POOL_MAX 160
 
 typedef struct tg_gui_av_slot {
     unsigned long id_hi;
@@ -526,21 +588,23 @@ static unsigned char tg_gui_av_pool_rgb[TG_GUI_AV_POOL_MAX][3];
 static int tg_gui_av_pool_n = 0;
 /* Runtime profile (set where the cmap is armed; lean defaults are the safe
    fallback if the depth probe ever fails). */
-static int tg_gui_av_pool_cap = 48;   /* 48 paletted / 96 truecolor */
+static int tg_gui_av_pool_cap = 48;   /* 48 paletted / 160 truecolor */
 static long tg_gui_av_share_d = 192L; /* 192 paletted / 48 truecolor */
 static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 
-/* Message photos share the avatar pen pool but keep only a few dynamically
-   sized pen grids. This bounds persistent RAM while making repaint and expose
-   events disk-free. A resize may rebuild a grid at the new bubble size. */
+/* Message photos share the avatar pen pool but keep only a few CANONICAL pen
+   grids. A slot is keyed only by Telegram photo id: bubble geometry never
+   invalidates it, and every later paint is disk/decode/remap-free. */
 #if defined(__m68k__)
 #define TG_GUI_PHOTO_SLOTS 2
-#define TG_GUI_PHOTO_JPEG_MAX (112UL * 1024UL)
-#define TG_GUI_PHOTO_SOURCE_CAP 192
+#define TG_GUI_PHOTO_JPEG_MAX (192UL * 1024UL)
+#define TG_GUI_PHOTO_CANONICAL_CAP 256
+#define TG_GUI_PHOTO_DECODE_CAP 512
 #else
 #define TG_GUI_PHOTO_SLOTS 4
-#define TG_GUI_PHOTO_JPEG_MAX (288UL * 1024UL)
-#define TG_GUI_PHOTO_SOURCE_CAP 384
+#define TG_GUI_PHOTO_JPEG_MAX (512UL * 1024UL)
+#define TG_GUI_PHOTO_CANONICAL_CAP 448
+#define TG_GUI_PHOTO_DECODE_CAP 768
 #endif
 
 typedef struct tg_gui_photo_slot {
@@ -548,8 +612,9 @@ typedef struct tg_gui_photo_slot {
     unsigned long id_lo;
     int w;
     int h;
-    int state; /* 0 free, 1 pen grid ready, -1 decode failed */
+    int state; /* 0 free, 1 canonical pixels ready, -1 decode failed */
     unsigned char *pen;
+    unsigned char *rgb; /* retained only for the optional truecolor path */
 } tg_gui_photo_slot;
 
 static tg_gui_photo_slot tg_gui_photo_slots[TG_GUI_PHOTO_SLOTS];
@@ -562,6 +627,9 @@ static void tg_gui_photo_slots_reset(void)
     for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
         if (tg_gui_photo_slots[i].pen != 0) {
             free(tg_gui_photo_slots[i].pen);
+        }
+        if (tg_gui_photo_slots[i].rgb != 0) {
+            free(tg_gui_photo_slots[i].rgb);
         }
         memset(&tg_gui_photo_slots[i], 0, sizeof(tg_gui_photo_slots[i]));
     }
@@ -647,7 +715,7 @@ static void tg_gui_av_seed_pool(void)
     int b;
     int i;
 
-    if (tg_gui_av_rich) { /* truecolor: full cube + grey ramp (76 of 96) */
+    if (tg_gui_av_rich) { /* truecolor: cube + greys, then dynamic colours */
         for (r = 0; r < 4; ++r) {
             for (g = 0; g < 4; ++g) {
                 for (b = 0; b < 4; ++b) {
@@ -709,6 +777,20 @@ static LONG tg_gui_av_pen_for(const unsigned char *rgb)
         }
     }
     return (best >= 0) ? tg_gui_av_pool_pen[best] : -1;
+}
+
+/* Bayer 4x4 ordered dither for paletted screens. The richer RTG profile keeps
+   the exact RGB so its larger pen pool is not needlessly perturbed. This runs
+   only while a canonical slot is built, never during repaint. */
+static LONG tg_gui_photo_pen_for(const unsigned char *rgb, int x, int y)
+{
+    unsigned char adjusted[3];
+
+    if (tg_gui_av_rich) {
+        return tg_gui_av_pen_for(rgb);
+    }
+    tg_image_ordered_dither_rgb(rgb, x, y, adjusted);
+    return tg_gui_av_pen_for(adjusted);
 }
 
 static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
@@ -839,9 +921,134 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
     return 1;
 }
 
+static tg_gui_photo_slot *tg_gui_photo_slot_claim(unsigned long id_hi,
+                                                  unsigned long id_lo)
+{
+    tg_gui_photo_slot *slot;
+    int i;
+
+    slot = 0;
+    for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+        if (tg_gui_photo_slots[i].state != 0 &&
+            tg_gui_photo_slots[i].id_hi == id_hi &&
+            tg_gui_photo_slots[i].id_lo == id_lo) {
+            return &tg_gui_photo_slots[i];
+        }
+    }
+    for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+        if (tg_gui_photo_slots[i].state == 0) {
+            slot = &tg_gui_photo_slots[i];
+            break;
+        }
+    }
+    if (slot == 0) {
+        slot = &tg_gui_photo_slots[tg_gui_photo_evict % TG_GUI_PHOTO_SLOTS];
+        ++tg_gui_photo_evict;
+    }
+    free(slot->pen);
+    free(slot->rgb);
+    memset(slot, 0, sizeof(*slot));
+    slot->id_hi = id_hi;
+    slot->id_lo = id_lo;
+    return slot;
+}
+
+static int tg_gui_photo_build_pens(tg_gui_photo_slot *slot)
+{
+    unsigned long pixels;
+    unsigned long px;
+    unsigned char *pens;
+
+    if (slot == 0 || slot->rgb == 0 || slot->w <= 0 || slot->h <= 0) {
+        return 0;
+    }
+    if (slot->pen != 0) {
+        return 1;
+    }
+    pixels = (unsigned long)slot->w * (unsigned long)slot->h;
+    pens = (unsigned char *)malloc((size_t)pixels);
+    if (pens == 0) {
+        return 0;
+    }
+    for (px = 0UL; px < pixels; ++px) {
+        LONG p;
+
+        p = tg_gui_photo_pen_for(
+            slot->rgb + px * 3UL,
+            (int)(px % (unsigned long)slot->w),
+            (int)(px / (unsigned long)slot->w));
+        if (p == -1) {
+            free(pens);
+            return 0;
+        }
+        pens[px] = (unsigned char)p;
+    }
+    slot->pen = pens;
+    return 1;
+}
+
+/* Replay canonical RGB888 through cybergraphics one scaled row at a time.
+   Horizontal/vertical nearest scaling is CPU-cheap and never touches JPEG or
+   the pen allocator. A zero return lets the caller use the pen-grid fallback. */
+static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
+                                       const tg_gui_photo_slot *slot,
+                                       tg_gui_rect rect,
+                                       int x0, int y0, int x1, int y1)
+{
+#if defined(TG_GUI_HAVE_CYBERGRAPHICS)
+    static unsigned char row[TG_GUI_PHOTO_CANONICAL_CAP * 3];
+    int width;
+    int y;
+
+    if (!ctx->photo_truecolor || slot->rgb == 0 || CyberGfxBase == 0) {
+        return 0;
+    }
+    width = x1 - x0;
+    if (width <= 0 || width > TG_GUI_PHOTO_CANONICAL_CAP) {
+        return 0;
+    }
+    for (y = y0; y < y1; ++y) {
+        int sy;
+        int x;
+
+        sy = ((y - rect.y) * slot->h) / rect.h;
+        for (x = 0; x < width; ++x) {
+            int sx;
+            const unsigned char *src;
+
+            sx = (((x0 + x) - rect.x) * slot->w) / rect.w;
+            src = slot->rgb +
+                  (((unsigned long)sy * (unsigned long)slot->w +
+                    (unsigned long)sx) * 3UL);
+            row[x * 3] = src[0];
+            row[x * 3 + 1] = src[1];
+            row[x * 3 + 2] = src[2];
+        }
+        if (WritePixelArray(row, 0, 0, (UWORD)(width * 3), ctx->rport,
+                            (UWORD)(ctx->origin_x + x0),
+                            (UWORD)(ctx->origin_y + y),
+                            (UWORD)width, 1, RECTFMT_RGB) == 0UL) {
+            return 0;
+        }
+    }
+    return 1;
+#else
+    (void)ctx;
+    (void)slot;
+    (void)rect;
+    (void)x0;
+    (void)y0;
+    (void)x1;
+    (void)y1;
+    return 0;
+#endif
+}
+
 static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
                                     unsigned long id_hi,
                                     unsigned long id_lo,
+                                    unsigned long source_w,
+                                    unsigned long source_h,
                                     tg_gui_rect rect,
                                     tg_gui_rect clip)
 {
@@ -863,9 +1070,7 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
     for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
         if (tg_gui_photo_slots[i].state != 0 &&
             tg_gui_photo_slots[i].id_hi == id_hi &&
-            tg_gui_photo_slots[i].id_lo == id_lo &&
-            tg_gui_photo_slots[i].w == rect.w &&
-            tg_gui_photo_slots[i].h == rect.h) {
+            tg_gui_photo_slots[i].id_lo == id_lo) {
             slot = &tg_gui_photo_slots[i];
             break;
         }
@@ -876,11 +1081,25 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
         long flen;
         unsigned char *jpeg;
         unsigned char *rgb;
-        unsigned char *pens;
         unsigned long pixels;
         unsigned long got;
-        unsigned long px;
+        int canonical_w;
+        int canonical_h;
         int ok;
+
+        /* A coalesced NEWSIZE paint may replay an existing slot, but never
+           opens or decodes a new JPEG. The portable renderer shows [Photo]
+           until the next stable event-loop turn. */
+        if (!ctx->photo_decode_allowed) {
+            return 0;
+        }
+        canonical_w = 0;
+        canonical_h = 0;
+        if (tg_image_canonical_size(source_w, source_h,
+                                    TG_GUI_PHOTO_CANONICAL_CAP,
+                                    &canonical_w, &canonical_h) != 0) {
+            return 0;
+        }
 
         sprintf(path, "photos/tgph%08lx%08lx.jpg", id_hi, id_lo);
         f = fopen(path, "rb");
@@ -896,72 +1115,48 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
             fclose(f);
             return 0;
         }
-        pixels = (unsigned long)rect.w * (unsigned long)rect.h;
+        pixels = (unsigned long)canonical_w * (unsigned long)canonical_h;
         jpeg = (unsigned char *)malloc((size_t)flen);
         rgb = (unsigned char *)malloc((size_t)(pixels * 3UL));
-        pens = (unsigned char *)malloc((size_t)pixels);
-        if (jpeg == 0 || rgb == 0 || pens == 0) {
+        if (jpeg == 0 || rgb == 0) {
             free(jpeg);
             free(rgb);
-            free(pens);
             fclose(f);
             return 0;
         }
         got = (unsigned long)fread(jpeg, 1, (size_t)flen, f);
         fclose(f);
         ok = got == (unsigned long)flen &&
-             tg_image_decode_jpeg_scaled(jpeg, got, rgb, rect.w, rect.h,
-                                         TG_GUI_PHOTO_SOURCE_CAP) == 0;
+             tg_image_decode_jpeg_scaled(jpeg, got, rgb,
+                                         canonical_w, canonical_h,
+                                         TG_GUI_PHOTO_DECODE_CAP) == 0;
         free(jpeg);
-        if (ok) {
-            for (px = 0UL; px < pixels; ++px) {
-                LONG p;
-
-                p = tg_gui_av_pen_for(rgb + px * 3UL);
-                if (p == -1) {
-                    ok = 0;
-                    break;
-                }
-                pens[px] = (unsigned char)p;
-            }
-        }
-        free(rgb);
         if (!ok) {
-            free(pens);
+            free(rgb);
+            slot = tg_gui_photo_slot_claim(id_hi, id_lo);
+            slot->state = -1; /* no repeated disk/decode work on repaint */
             return 0;
         }
-        /* Reuse another-size slot for this photo first, then a free slot,
-           finally evict round-robin. */
-        for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
-            if (tg_gui_photo_slots[i].state != 0 &&
-                tg_gui_photo_slots[i].id_hi == id_hi &&
-                tg_gui_photo_slots[i].id_lo == id_lo) {
-                slot = &tg_gui_photo_slots[i];
-                break;
-            }
-        }
-        if (slot == 0) {
-            for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
-                if (tg_gui_photo_slots[i].state == 0) {
-                    slot = &tg_gui_photo_slots[i];
-                    break;
-                }
-            }
-        }
-        if (slot == 0) {
-            slot = &tg_gui_photo_slots[
-                tg_gui_photo_evict % TG_GUI_PHOTO_SLOTS];
-            ++tg_gui_photo_evict;
-        }
-        free(slot->pen);
-        slot->pen = pens;
-        slot->id_hi = id_hi;
-        slot->id_lo = id_lo;
-        slot->w = rect.w;
-        slot->h = rect.h;
+        slot = tg_gui_photo_slot_claim(id_hi, id_lo);
+        slot->rgb = rgb;
+        slot->w = canonical_w;
+        slot->h = canonical_h;
         slot->state = 1;
+        /* Truecolor must not pay the palette quantization cost at all. The
+           RGB frame is already the canonical cache. Paletted screens build
+           their dithered pen grid once here. */
+        if (!ctx->photo_truecolor && !tg_gui_photo_build_pens(slot)) {
+            free(slot->rgb);
+            slot->rgb = 0;
+            slot->state = -1;
+            return 0;
+        }
+        if (!ctx->photo_truecolor) {
+            free(slot->rgb);
+            slot->rgb = 0;
+        }
     }
-    if (slot->state != 1 || slot->pen == 0) {
+    if (slot->state != 1 || (slot->rgb == 0 && slot->pen == 0)) {
         return 0;
     }
     x0 = rect.x > clip.x ? rect.x : clip.x;
@@ -978,22 +1173,37 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
         return 1; /* decoded and ready, merely outside this paint clip */
     }
     tg_gui_prim_log("pimg", x0, y0, x1 - x0, y1 - y0);
+    if (tg_gui_photo_draw_truecolor(ctx, slot, rect, x0, y0, x1, y1)) {
+        return 1;
+    }
+    if (slot->pen == 0) {
+        /* A target may expose cybergraphics.library but reject RGB rows for
+           this friend bitmap. Disable that route and build the fallback only
+           on a stable paint, never while processing NEWSIZE. */
+        ctx->photo_truecolor = 0;
+        if (!ctx->photo_decode_allowed || !tg_gui_photo_build_pens(slot)) {
+            return 0;
+        }
+        free(slot->rgb);
+        slot->rgb = 0;
+    }
     for (y = y0; y < y1; ++y) {
         int sy;
         int x;
 
-        sy = y - rect.y;
+        sy = ((y - rect.y) * slot->h) / rect.h;
         x = x0;
         while (x < x1) {
             int sx;
             unsigned char p;
             int run;
 
-            sx = x - rect.x;
+            sx = ((x - rect.x) * slot->w) / rect.w;
             p = slot->pen[sy * slot->w + sx];
             run = x + 1;
             while (run < x1 &&
-                   slot->pen[sy * slot->w + (run - rect.x)] == p) {
+                   slot->pen[sy * slot->w +
+                             (((run - rect.x) * slot->w) / rect.w)] == p) {
                 ++run;
             }
             SetAPen(ctx->rport, (LONG)p);
@@ -3113,6 +3323,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     time_t last_receive_drain;
     time_t last_key_time;
     int resize_pending;
+    int photo_decode_deferred;
 
     if (state == 0) {
         return 2;
@@ -3124,6 +3335,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     }
 
     memset(&ctx, 0, sizeof(ctx));
+    ctx.photo_decode_allowed = 1;
     own_scr = 0;
     tg_gui_window_load_geom(&init_w, &init_h, &init_x, &init_y, &init_own);
     want_own = init_own;
@@ -3313,6 +3525,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         tg_gui_av_rich = av_depth > 8UL;
         tg_gui_av_pool_cap = tg_gui_av_rich ? TG_GUI_AV_POOL_MAX : 48;
         tg_gui_av_share_d = tg_gui_av_rich ? 48L : 192L;
+        ctx.photo_truecolor =
+            tg_gui_av_rich && tg_gui_amiga_open_cybergraphics();
+        if (ctx.photo_truecolor) {
+            tg_gui_log("window: RGB888 inline-photo replay active");
+        }
     }
     tg_gui_amiga_measure_geometry(&ctx);
     tg_gui_amiga_buffer_alloc(&ctx); /* off-screen double-buffer (flicker-free) */
@@ -3464,6 +3681,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     older_cooldown = 0;
     prev_selected = state->selected_chat;
     resize_pending = 0;
+    photo_decode_deferred = 0;
     /* Live-reception heartbeat. INTUITICKS are delivered ONLY to the ACTIVE
        window, so with the window deactivated the loop slept in Wait() and the
        network poll never ran -- incoming messages stalled until the user came
@@ -4494,6 +4712,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                    drain the queue first, then rebuild once for the newest size
                    below, outside every BeginRefresh bracket. */
                 resize_pending = 1;
+                ctx.photo_decode_allowed = 0;
             } else if (msg_class == IDCMP_REFRESHWINDOW) {
                 /* BeginRefresh() already holds this window's layer locked for the
                    whole bracket, so no LockLayerRom here. With the buffer -- and
@@ -5403,6 +5622,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                Intuition to redraw its frame once, after the final geometry. */
             RefreshWindowFrame(ctx.window);
             resize_pending = 0;
+            photo_decode_deferred = 1;
+        } else if (photo_decode_deferred && !done) {
+            /* Waited through one complete event-loop turn with no NEWSIZE.
+               The geometry is stable again, so a missing canonical slot may
+               now perform its one lazy decode. */
+            ctx.photo_decode_allowed = 1;
+            photo_decode_deferred = 0;
+            tg_gui_window_paint(state, &backend);
         }
         /* 0.0.8 punto 1e: Workbench drops. An icon dropped on the window
            arms an upload to the open chat, exactly like Send file... did;
@@ -5700,6 +5927,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     tg_gui_amiga_buffer_free(&ctx); /* free the off-screen double-buffer */
     tg_gui_log("window: releasing pens");
     tg_gui_amiga_release_pens(&ctx, cmap);
+    tg_gui_amiga_close_cybergraphics();
     tg_gui_window_save_geom(ctx.inner_w, ctx.inner_h,
                             (int)ctx.window->LeftEdge,
                             (int)ctx.window->TopEdge, want_own);
