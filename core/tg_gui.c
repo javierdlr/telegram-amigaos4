@@ -528,10 +528,21 @@ static void tg_gui_paint_search_box(const tg_gui_state *state,
                            state->search_query,
                            (unsigned long)strlen(state->search_query));
     } else {
+        const char *placeholder;
+        unsigned long placeholder_len;
+
+        if (state->forward_pick_active) {
+            placeholder = "Choose destination...";
+            placeholder_len = 21UL;
+        } else if (state->search_active) {
+            placeholder = "Type a name, ENTER...";
+            placeholder_len = 20UL;
+        } else {
+            placeholder = "Search chats...";
+            placeholder_len = 15UL;
+        }
         backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, 10, sbase,
-                           state->search_active ? "Type a name, ENTER..."
-                                                : "Search chats...",
-                           state->search_active ? 20UL : 15UL);
+                           placeholder, placeholder_len);
     }
     if (state->search_active && state->cursor_on) {
         int cx;
@@ -2490,6 +2501,9 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
             labels[n] = "Forward to Saved";
             ids[n] = TG_GUI_CTX_FORWARD_SAVED;
             ++n;
+            labels[n] = "Forward to...";
+            ids[n] = TG_GUI_CTX_FORWARD_TO;
+            ++n;
         }
     }
     /* Chat-level: send a file to the open chat. Always offered (the popup only
@@ -2938,6 +2952,40 @@ int tg_gui_self_test(void)
     backend.avatar_fill = tg_gui_rec_avatar;
     backend.draw_text = tg_gui_rec_text;
     backend.set_style = 0; /* recorder renders plain; markers are just skipped */
+
+    /* Every server-backed message exposes both forwarding actions. Pin the
+       context-menu capacity and IDs so adding another conditional item cannot
+       silently overrun the fixed arrays or drop the destination picker. */
+    {
+        const char *labels[TG_GUI_CTX_ITEMS_MAX];
+        int ids[TG_GUI_CTX_ITEMS_MAX];
+        int count;
+        int i;
+        int saw_saved;
+        int saw_picker;
+
+        state.ctx_msg = 0;
+        state.messages[0].id = 123UL;
+        state.messages[0].is_own = 1;
+        state.messages[0].has_document = 1;
+        count = tg_gui_context_items(&state, labels, ids);
+        saw_saved = 0;
+        saw_picker = 0;
+        for (i = 0; i < count; ++i) {
+            if (ids[i] == TG_GUI_CTX_FORWARD_SAVED) {
+                saw_saved = 1;
+            } else if (ids[i] == TG_GUI_CTX_FORWARD_TO) {
+                saw_picker = 1;
+            }
+        }
+        state.messages[0].id = 0UL;
+        state.messages[0].is_own = 0;
+        state.messages[0].has_document = 0;
+        if (count != TG_GUI_CTX_ITEMS_MAX || !saw_saved || !saw_picker) {
+            puts("gui self-test: forwarding context items missing");
+            return 2;
+        }
+    }
 
     tg_gui_paint(&state, &backend);
 

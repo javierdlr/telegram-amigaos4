@@ -2604,8 +2604,11 @@ static void tg_gui_window_filter_chats(tg_gui_state *state,
             state->nav_chat = -1;
             state->chat_scroll = 0;
             state->in_filter = 1;
-            tg_gui_window_copy(state->status, sizeof(state->status),
-                               "ENTER lists ALL your chats - or type a name");
+            tg_gui_window_copy(
+                state->status, sizeof(state->status),
+                state->forward_pick_active
+                    ? "Choose a chat - type or ENTER to browse"
+                    : "ENTER lists ALL your chats - or type a name");
         }
         tg_gui_window_paint(state, backend);
         return;
@@ -2644,8 +2647,13 @@ static void tg_gui_window_filter_chats(tg_gui_state *state,
     {
         char st[64];
 
-        sprintf(st, "%d local - arrows + ENTER (last row: online)",
-                local_count);
+        if (state->forward_pick_active) {
+            sprintf(st, "%d local - ENTER forwards (last: online)",
+                    local_count);
+        } else {
+            sprintf(st, "%d local - arrows + ENTER (last row: online)",
+                    local_count);
+        }
         tg_gui_window_copy(state->status, sizeof(state->status), st);
     }
     tg_gui_window_paint(state, backend);
@@ -2675,6 +2683,113 @@ static void tg_gui_window_open_by_index(tg_gui_state *state,
     tg_gui_window_paint(state, backend); /* gone from cache: plain list */
 }
 
+/* Put the real sidebar back after the temporary forward-destination picker.
+   The MTProto session and transcript never left the source peer; reselect its
+   public cache row because refreshing the projection resets selected_chat. */
+static void tg_gui_window_forward_restore(tg_gui_state *state)
+{
+    unsigned long source_index;
+    int i;
+
+    source_index = state->forward_source_index;
+    state->forward_pick_active = 0;
+    state->forward_message_id = 0UL;
+    state->forward_source_index = 0UL;
+    state->in_filter = 0;
+    state->in_search = 0;
+    state->search_active = 0;
+    state->search_query[0] = '\0';
+    state->search_caret = 0;
+    state->nav_chat = -1;
+    tg_gui_session_refresh_chats();
+    for (i = 0; i < state->chat_count; ++i) {
+        if (state->chats[i].index == source_index) {
+            state->selected_chat = i;
+            state->chat_scroll_to_sel = 1;
+            break;
+        }
+    }
+}
+
+/* Complete a destination choice while the source chat remains open. */
+static void tg_gui_window_forward_to_index(tg_gui_state *state,
+                                           tg_gui_backend *backend,
+                                           unsigned long destination_index,
+                                           const char *destination_name)
+{
+    char name[TG_GUI_NAME_MAX];
+    unsigned long message_id;
+    int rc;
+
+    tg_gui_window_copy(name, sizeof(name), destination_name);
+    message_id = state->forward_message_id;
+    rc = tg_gui_session_forward(message_id, destination_index, stdout);
+    tg_gui_window_forward_restore(state);
+    if (rc == 0) {
+        sprintf(state->status, "Forwarded to %.32s", name);
+    } else {
+        const char *why = tg_gui_session_last_action_error();
+
+        if (why != 0 && why[0] != '\0') {
+            sprintf(state->status, "Forward failed: %.30s", why);
+        } else {
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Could not forward message");
+        }
+    }
+    tg_gui_window_paint(state, backend);
+}
+
+static void tg_gui_window_forward_online_result(tg_gui_state *state,
+                                                tg_gui_backend *backend,
+                                                int result_index)
+{
+    char name[TG_GUI_NAME_MAX];
+    unsigned long destination_index;
+    const char *found_name;
+
+    found_name = tg_gui_session_search_name(result_index);
+    tg_gui_window_copy(name, sizeof(name), found_name);
+    destination_index = 0UL;
+    if (tg_gui_session_search_cache_result(result_index, &destination_index,
+                                           stdout) != 0 ||
+        destination_index == 0UL) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Could not use that destination");
+        tg_gui_window_paint(state, backend);
+        return;
+    }
+    tg_gui_window_forward_to_index(state, backend, destination_index, name);
+}
+
+static void tg_gui_window_begin_forward_pick(tg_gui_state *state,
+                                             tg_gui_backend *backend,
+                                             unsigned long message_id)
+{
+    unsigned long source_index;
+
+    source_index = tg_gui_session_current_peer_index();
+    if (source_index == 0UL || message_id == 0UL) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Could not start forwarding");
+        tg_gui_window_paint(state, backend);
+        return;
+    }
+    state->forward_pick_active = 1;
+    state->forward_message_id = message_id;
+    state->forward_source_index = source_index;
+    state->composing = 0;
+    state->in_filter = 0;
+    state->in_search = 0;
+    state->search_active = 1;
+    state->search_query[0] = '\0';
+    state->search_caret = 0;
+    state->nav_chat = -1;
+    state->cursor_on = 1;
+    tg_gui_session_refresh_chats();
+    tg_gui_window_filter_chats(state, backend);
+}
+
 /* Run an online search for the current query and show the matches in the sidebar
    as a picker (click one to open). With auto_open_single, a lone match opens
    straight away -- that is what ENTER wants; the as-you-type debounce passes 0 so
@@ -2688,31 +2803,41 @@ static void tg_gui_window_run_search(tg_gui_state *state, tg_gui_backend *backen
     state->in_filter = 0; /* the sidebar is about to show ONLINE results */
     /* An empty query is no longer a no-op: it is the browse mode (list ALL
        my dialogs from the server, hidden ones included). */
-    tg_gui_window_copy(state->status, sizeof(state->status),
-                       state->search_query[0] == '\0'
-                           ? "Listing your chats..."
-                           : "Searching Telegram...");
+    tg_gui_window_copy(
+        state->status, sizeof(state->status),
+        state->forward_pick_active
+            ? (state->search_query[0] == '\0' ? "Listing destinations..."
+                                               : "Searching destinations...")
+            : (state->search_query[0] == '\0' ? "Listing your chats..."
+                                               : "Searching Telegram..."));
     tg_gui_window_paint(state, backend);
     cnt = tg_gui_session_search_run(state->search_query, stdout);
     if (cnt == 1 && auto_open_single) {
-        (void)tg_gui_session_search_open_result(0, stdout);
-        state->in_search = 0;
-        state->search_active = 0;
-        state->search_query[0] = '\0';
-        tg_gui_window_copy(state->status, sizeof(state->status),
-                           "Live - F1-F10 chats, Q quits");
+        if (state->forward_pick_active) {
+            tg_gui_window_forward_online_result(state, backend, 0);
+            return;
+        } else {
+            (void)tg_gui_session_search_open_result(0, stdout);
+            state->in_search = 0;
+            state->search_active = 0;
+            state->search_query[0] = '\0';
+            tg_gui_window_copy(state->status, sizeof(state->status),
+                               "Live - F1-F10 chats, Q quits");
+        }
     } else if (cnt >= 1) {
         /* Show the matches in the sidebar; keep the search box focused so ESC
            cancels and more typing refines. The user clicks a result to open it. */
         tg_gui_window_load_search_results(state);
-        tg_gui_window_copy(state->status, sizeof(state->status),
-                           "Pick a result - click it (ESC cancels)");
+        tg_gui_window_copy(
+            state->status, sizeof(state->status),
+            state->forward_pick_active
+                ? "Choose destination (ESC cancels)"
+                : "Pick a result - click it (ESC cancels)");
     } else {
-        /* None / error: drop any stale picker and restore the real chat list. */
-        if (state->in_search) {
-            state->in_search = 0;
-            tg_gui_session_refresh_chats();
-        }
+        /* None / error: restore the local filter so the user can edit the query
+           and retry instead of being stranded on an empty online picker. */
+        state->in_search = 0;
+        tg_gui_window_filter_chats(state, backend);
         tg_gui_window_copy(state->status, sizeof(state->status),
                            cnt < 0 ? "Search failed (network?)"
                                    : (state->search_query[0] == '\0'
@@ -3111,6 +3236,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     state->composing = 0;
     state->nav_chat = -1;   /* no arrow-key focus yet (0 would tint row 0) */
     state->in_filter = 0;
+    state->forward_pick_active = 0;
+    state->forward_message_id = 0UL;
+    state->forward_source_index = 0UL;
     state->history_count = 0;
     state->history_pos = -1;
     state->history_draft[0] = '\0';
@@ -3325,16 +3453,24 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                    name, ENTER runs an online search and opens the top match,
                    ESC cancels, BACKSPACE deletes. */
                 if (msg_code == 27) { /* ESC */
-                    state->search_active = 0;
-                    state->search_query[0] = '\0';
-                    state->search_caret = 0;
-                    if (state->in_search || state->in_filter) {
-                        state->in_search = 0; /* picker or local filter: */
-                        state->in_filter = 0; /* restore the real chats  */
-                        tg_gui_session_refresh_chats();
+                    if (state->forward_pick_active) {
+                        tg_gui_window_forward_restore(state);
+                        tg_gui_window_copy(state->status,
+                                           sizeof(state->status),
+                                           "Forward cancelled");
+                    } else {
+                        state->search_active = 0;
+                        state->search_query[0] = '\0';
+                        state->search_caret = 0;
+                        if (state->in_search || state->in_filter) {
+                            state->in_search = 0; /* picker or local filter: */
+                            state->in_filter = 0; /* restore the real chats  */
+                            tg_gui_session_refresh_chats();
+                        }
+                        tg_gui_window_copy(state->status,
+                                           sizeof(state->status),
+                                           "Live - F1-F10 chats, Q quits");
                     }
-                    tg_gui_window_copy(state->status, sizeof(state->status),
-                                       "Live - F1-F10 chats, Q quits");
                     tg_gui_window_paint(state, &backend);
                 } else if (msg_code == 8) { /* BACKSPACE: delete BEFORE the caret */
                     unsigned long n;
@@ -3370,18 +3506,47 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_filter_chats(state, &backend);
                     }
                 } else if (msg_code == 13 || msg_code == 10) { /* ENTER: search */
-                    if (state->in_filter && state->chat_count > 0 &&
+                    if (state->in_search && state->chat_count > 0 &&
+                        state->selected_chat >= 0 &&
+                        state->selected_chat < state->chat_count) {
+                        /* The online picker already contains concrete results:
+                           ENTER chooses the highlighted row instead of rerunning
+                           the same network search. */
+                        if (state->forward_pick_active) {
+                            tg_gui_window_forward_online_result(
+                                state, &backend, state->selected_chat);
+                        } else {
+                            int result_index = state->selected_chat;
+
+                            state->in_search = 0;
+                            state->search_active = 0;
+                            state->search_query[0] = '\0';
+                            (void)tg_gui_session_search_open_result(result_index,
+                                                                    stdout);
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                "Live - F1-F10 chats, Q quits");
+                            tg_gui_window_paint(state, &backend);
+                        }
+                    } else if (state->in_filter && state->chat_count > 0 &&
                         state->selected_chat >= 0 &&
                         state->selected_chat < state->chat_count &&
                         state->chats[state->selected_chat].index != 0UL) {
-                        /* Open the highlighted LOCAL match. */
-                        tg_gui_window_open_by_index(
-                            state, &backend,
-                            state->chats[state->selected_chat].index);
-                        tg_gui_window_copy(state->status,
-                                           sizeof(state->status),
-                                           "Live - F1-F10 chats, Q quits");
-                        tg_gui_window_paint(state, &backend);
+                        /* Open or choose the highlighted LOCAL match. */
+                        if (state->forward_pick_active) {
+                            tg_gui_window_forward_to_index(
+                                state, &backend,
+                                state->chats[state->selected_chat].index,
+                                state->chats[state->selected_chat].name);
+                        } else {
+                            tg_gui_window_open_by_index(
+                                state, &backend,
+                                state->chats[state->selected_chat].index);
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                "Live - F1-F10 chats, Q quits");
+                            tg_gui_window_paint(state, &backend);
+                        }
                     } else {
                         /* The "Search Telegram..." row (or no local match):
                            the online search, exactly as before. */
@@ -3732,11 +3897,12 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                 }
             } else if (msg_class == IDCMP_RAWKEY && !state->composing &&
-                       !state->in_search && state->mode == TG_GUI_MODE_CHAT) {
+                       !state->search_active && state->mode == TG_GUI_MODE_CHAT) {
                 /* F1..F10 (rawkey 0x50..0x59) pick chats 1..10; Shift adds 10
                    for 11..20 -- matching the console's F-key selection. (Disabled
-                   while the search picker is up: its rows are not real chats, so
-                   an F-key would open a bogus chat and strand the picker.) */
+                   while either local or online search is up: those rows are a
+                   projection, so an F-key could change the forwarding source or
+                   open a bogus chat and strand the picker.) */
                 if (msg_code >= 0x50 && msg_code <= 0x59 &&
                     state->chat_count > 0) {
                     int idx;
@@ -4234,7 +4400,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 
                 hx = (int)mouse_x - ctx.origin_x;
                 hy = (int)mouse_y - ctx.origin_y;
-                if (msg_code == MENUDOWN) {
+                if (msg_code == MENUDOWN && !state->forward_pick_active) {
                     /* Right press with RMBTRAP held: open OUR context menu on
                        the bubble under the pointer. (Without the trap the
                        press never reaches us -- Intuition runs the menu bar.) */
@@ -4403,6 +4569,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             }
                         }
                         tg_gui_window_paint(state, &backend);
+                    } else if (it == TG_GUI_CTX_FORWARD_TO && m != 0 &&
+                               !m->is_system && m->id != 0UL) {
+                        tg_gui_window_begin_forward_pick(state, &backend,
+                                                         m->id);
                     } else if (it == TG_GUI_CTX_SENDFILE) {
                         /* Chat-level action (not tied to the clicked message):
                            send a file to the open chat, same as the menubar
@@ -4415,7 +4585,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     if (state->sel_press_armed) {
                         state->sel_press_armed = 0;
                         if (!state->sel_active &&
-                            tg_gui_session_is_open() && !state->in_search) {
+                            tg_gui_session_is_open() && !state->in_search &&
+                            !state->forward_pick_active) {
                             /* Plain click (never dragged). A single click just
                                SELECTS/highlights the bubble; a second click on
                                the SAME bubble within the system double-click
@@ -4653,17 +4824,23 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
                                           ctx.line_h, hx, hy);
                     if (hit >= 0 && state->in_search) {
-                        /* Picker: click a search result -> add it to the cache +
-                           open it. open_result reloads the real chat list. */
-                        state->in_search = 0;
-                        state->search_active = 0;
-                        state->search_query[0] = '\0';
-                        (void)tg_gui_session_search_open_result(hit, stdout);
+                        /* Picker: a normal search opens the result; forwarding
+                           caches it as a destination without opening/unhiding. */
+                        if (state->forward_pick_active) {
+                            tg_gui_window_forward_online_result(state, &backend,
+                                                                hit);
+                        } else {
+                            state->in_search = 0;
+                            state->search_active = 0;
+                            state->search_query[0] = '\0';
+                            (void)tg_gui_session_search_open_result(hit, stdout);
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                "Live - F1-F10 chats, Q quits");
+                            tg_gui_window_paint(state, &backend);
+                        }
                         picked_secs = msg_secs;   /* swallow the second click */
                         picked_micros = msg_micros;
-                        tg_gui_window_copy(state->status, sizeof(state->status),
-                                           "Live - F1-F10 chats, Q quits");
-                        tg_gui_window_paint(state, &backend);
                     } else if (hit >= 0 && state->in_filter &&
                                hit < state->chat_count) {
                         /* Local filter: a click opens the row right away (no
@@ -4671,6 +4848,12 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                            is not the cache order). Index 0 = go online. */
                         if (state->chats[hit].index == 0UL) {
                             tg_gui_window_run_search(state, &backend, 1);
+                        } else if (state->forward_pick_active) {
+                            tg_gui_window_forward_to_index(
+                                state, &backend, state->chats[hit].index,
+                                state->chats[hit].name);
+                            picked_secs = msg_secs;
+                            picked_micros = msg_micros;
                         } else {
                             tg_gui_window_open_by_index(
                                 state, &backend, state->chats[hit].index);
@@ -4773,8 +4956,12 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                            leave the search box so only one caret is focused. */
                         state->search_active = 0;
                         state->search_query[0] = '\0';
-                        if (state->in_search) { /* abandon the picker, restore chats */
+                        if (state->forward_pick_active) {
+                            tg_gui_window_forward_restore(state);
+                        } else if (state->in_search || state->in_filter) {
+                            /* Abandon the search picker/filter, restore chats. */
                             state->in_search = 0;
+                            state->in_filter = 0;
                             tg_gui_session_refresh_chats();
                         }
                         state->composing = 1;
@@ -4806,7 +4993,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         state->reply_snippet[0] = '\0';
                         tg_gui_window_paint(state, &backend);
                     } else if (hit <= TG_GUI_HIT_MESSAGE_BASE &&
-                               tg_gui_session_is_open() && !state->in_search) {
+                               tg_gui_session_is_open() && !state->in_search &&
+                               !state->forward_pick_active) {
                         /* Press on a bubble: LATCH it. A drag past the
                            threshold becomes a text selection; a click that
                            never drags keeps the old gesture (reply), executed

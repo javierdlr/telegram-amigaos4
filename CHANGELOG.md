@@ -12,6 +12,9 @@ unless noted.
   The TUI provides `/forward` for the latest message and `/forward <id>` for an
   explicit Telegram message ID. Forwarding uses the layer-214
   `messages.forwardMessages` method and reports Telegram RPC failures by name.
+- The GUI's `Forward to...` action now reuses the local-first chat search as a
+  destination picker, including browse and online results. The TUI provides
+  `/forwardto <chat-number> [message-id]` for the same peer-to-peer operation.
 
 ### Changed
 - Hidden chats now remain in the local peer cache. They stay out of the normal

@@ -229,6 +229,11 @@ typedef struct tg_gui_state {
     int nav_chat;    /* arrow-key focus row in the sidebar (-1 = none);
                         ENTER opens it. Distinct from selected_chat, which
                         is the chat actually OPEN in the transcript. */
+    /* Forward-destination picker: the open MTProto peer and transcript stay on
+       the source chat while the sidebar is temporarily reused for selection. */
+    int forward_pick_active;
+    unsigned long forward_message_id;
+    unsigned long forward_source_index;
     /* The open chat has older history beyond what is loaded (server total > shown).
        When the loaded rows fit the window (no real scrollbar), the painter still
        draws a short scrollbar so the user has a handle to drag up / wheel up and
@@ -388,9 +393,10 @@ int tg_gui_context_menu_measure(const tg_gui_state *state,
 #define TG_GUI_CTX_SENDFILE 4
 #define TG_GUI_CTX_COPY 5
 #define TG_GUI_CTX_FORWARD_SAVED 6
+#define TG_GUI_CTX_FORWARD_TO 7
 /* "Download drawer..." remains menu-only (issue #11): a preference, not a
    message action. TG_MENU_DLDIR carries that separate command. */
-#define TG_GUI_CTX_ITEMS_MAX 7
+#define TG_GUI_CTX_ITEMS_MAX 8
 
 /* 1 when the currently selected sidebar row is the pinned Saved Messages
    (self) chat -- the row whose index carries TG_GUI_SAVED_PEER_INDEX. There

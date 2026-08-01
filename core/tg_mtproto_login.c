@@ -5660,6 +5660,31 @@ int tg_mtproto_login_self_test(void)
         query[50] != 0xa0U || query[51] != 0x7dU) {          /* inputPeerSelf */
         return 2;
     }
+    /* Generic picker path: user source -> channel destination. Both peers carry
+       access hashes; pin their constructors and offsets independently from the
+       shorter chat -> self shape above. */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_forward_message(
+            &writer, TG_PEER_USER_CONSTRUCTOR, 0x01020304UL, 0x05060708UL,
+            0x11121314UL, 0x15161718UL, 1, 0x0A0B0C0DUL,
+            0x41424344UL, 0x45464748UL, TG_PEER_CHANNEL_CONSTRUCTOR,
+            0x21222324UL, 0x25262728UL, 0x31323334UL, 0x35363738UL, 1) !=
+            TG_MTPROTO_TL_OK ||
+        writer.length != 76UL ||
+        query[8] != 0x4cU || query[9] != 0xa5U ||
+        query[10] != 0xe8U || query[11] != 0xddU ||          /* inputPeerUser */
+        query[12] != 0x08U || query[19] != 0x01U ||         /* source id */
+        query[20] != 0x18U || query[27] != 0x11U ||         /* source hash */
+        query[28] != 0x15U || query[31] != 0x1cU ||         /* id vector */
+        query[36] != 0x0dU || query[39] != 0x0aU ||         /* message id */
+        query[40] != 0x15U || query[43] != 0x1cU ||         /* random vector */
+        query[48] != 0x48U || query[55] != 0x41U ||         /* random id */
+        query[56] != 0xfcU || query[57] != 0xbbU ||
+        query[58] != 0xbcU || query[59] != 0x27U ||         /* inputPeerChannel */
+        query[60] != 0x28U || query[67] != 0x21U ||         /* destination id */
+        query[68] != 0x38U || query[75] != 0x31U) {         /* destination hash */
+        return 2;
+    }
     /* REPLY: flags bit 0 set + inputReplyToMessage#869fbe10 (flags=0,
        reply_to_msg_id=0x0A0B0C0D) inserted between peer and message -> 44 bytes.
        Pins the layer-214 ctor id + the wire position of the reply. */

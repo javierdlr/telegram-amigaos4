@@ -156,6 +156,10 @@ int tg_gui_session_forward(unsigned long message_id,
                            unsigned long destination_peer_index,
                            FILE *stream);
 
+/* Public index of the peer held open by the live session, including the
+   TG_GUI_SAVED_PEER_INDEX sentinel for Saved Messages. Zero means none. */
+unsigned long tg_gui_session_current_peer_index(void);
+
 /* One-line reason for the last interactive action failure (RPC name or
    transport reason). Empty after a successful query. Borrowed, do not free. */
 const char *tg_gui_session_last_action_error(void);
@@ -196,6 +200,10 @@ int tg_gui_session_search_count(void);
 const char *tg_gui_session_search_name(int index);
 /* Open the index-th openable result of the last search. 0 = opened. */
 int tg_gui_session_search_open_result(int index, FILE *stream);
+/* Add an online-picker result to the real cache without opening or unhiding it.
+   Returns its public peer-cache index through peer_index. */
+int tg_gui_session_search_cache_result(int index, unsigned long *peer_index,
+                                       FILE *stream);
 
 /* Rebuild the sidebar from the cached chat list (no network) -- restores the
    real list after cancelling the search picker. */

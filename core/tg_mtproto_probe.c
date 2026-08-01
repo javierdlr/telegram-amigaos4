@@ -9096,8 +9096,8 @@ static void tg_chat_history_add(const char *text)
 /* One-line command cheat-sheet shown when a lone '/' starts the input row
    (both the TUI-transcript and the linear-raw printers use it). */
 #define TG_CHAT_SLASH_HINT_TEXT \
-    "Commands: /peers /saved /forward /getfile /sendfile /search /add\n" \
-    "          /remove /history /swap /watch /diff /color /bell /help /quit\n"
+    "Commands: /peers /saved /forward /forwardto /getfile /sendfile /search\n" \
+    "          /add /remove /history /swap /watch /diff /color /bell /help /quit\n"
 
 /*
  * Chat input reader. In raw mode it echoes characters itself and supports
@@ -10543,6 +10543,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /remove n     remove cached chat n",
         "  /history      show recent messages without new-message filtering",
         "  /forward [id] forward latest (or given id) to Saved Messages",
+        "  /forwardto n [id] forward latest (or given id) to chat n",
         "  /getfile      download the newest file in this chat to downloads/",
         "  /sendfile p   send a file (large files supported; build limit applies)",
         "  /saved        open Saved Messages (your cloud transfer drawer)",
@@ -10697,6 +10698,9 @@ int tg_mtproto_auth_chat_file(const char *host,
     char requested_peer_label[128];
     char own_label[128];
     char removed_label[128];
+    char forward_destination[32];
+    char forward_id_text[32];
+    char forward_extra[2];
     char api_id[32];
     char line[512];
 #if TG_MTPROTO_DISPLAY_LATIN1
@@ -11788,6 +11792,82 @@ int tg_mtproto_auth_chat_file(const char *host,
                             "Could not read messages now (error %d).\n", rc);
                 }
                 tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        cmd_arg = 0;
+        if (tg_mtproto_chat_named_command_arg(line, "/forwardto", &cmd_arg)) {
+            char forward_note[160];
+            int forward_args;
+
+            if (peer_index[0] == '\0') {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Choose a chat before forwarding a message.");
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                            0UL, tg_chat_input_raw);
+                continue;
+            }
+            forward_destination[0] = '\0';
+            forward_id_text[0] = '\0';
+            forward_extra[0] = '\0';
+            forward_args = cmd_arg != 0
+                               ? sscanf(cmd_arg, "%31s %31s %1s",
+                                        forward_destination, forward_id_text,
+                                        forward_extra)
+                               : 0;
+            if (forward_args < 1 || forward_args > 2 ||
+                tg_mtproto_chat_copy_peer_index(
+                    requested_peer_index, sizeof(requested_peer_index),
+                    forward_destination) != 0 ||
+                tg_mtproto_load_peer_cache_label(
+                    peer_cache_file, requested_peer_index,
+                    requested_peer_label, sizeof(requested_peer_label)) != 0) {
+                tg_mtproto_chat_print_system_line(
+                    stream,
+                    "Use /forwardto <chat-number> [message-id].");
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                            0UL, tg_chat_input_raw);
+                continue;
+            }
+            forward_message_id = last_seen_message_id;
+            if (forward_args == 2 &&
+                (tg_mtproto_parse_ulong_arg(forward_id_text,
+                                            &forward_message_id) != 0 ||
+                 forward_message_id == 0UL)) {
+                tg_mtproto_chat_print_system_line(
+                    stream,
+                    "Use /forwardto <chat-number> [message-id].");
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                            0UL, tg_chat_input_raw);
+                continue;
+            }
+            if (forward_message_id == 0UL) {
+                tg_mtproto_chat_print_system_line(
+                    stream, "No recent message is available to forward.");
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                            0UL, tg_chat_input_raw);
+                continue;
+            }
+            quiet = tg_mtproto_open_quiet_stream(stream);
+            rc = tg_mtproto_auth_forward_peer_on_context(
+                host, port, api_id, auth_file, dc_id_text, &chat_context,
+                peer_cache_file, peer_index, requested_peer_index,
+                forward_message_id, quiet);
+            tg_mtproto_close_quiet_stream(quiet, stream);
+            if (rc == 0) {
+                FILE *tui_cap = tg_console_tui_capture_begin(stream);
+
+                fprintf(tui_cap, "Forwarded to ");
+                tg_mtproto_print_cache_text(tui_cap, requested_peer_label);
+                fprintf(tui_cap, ".\n");
+                tg_console_tui_capture_end(tui_cap, stream);
+            } else {
+                sprintf(forward_note, "Could not forward message: %.80s",
+                        tg_mtproto_query_fail[0] != '\0'
+                            ? tg_mtproto_query_fail : "no reply");
+                tg_mtproto_chat_print_system_line(stream, forward_note);
             }
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
                                         0UL, tg_chat_input_raw);
@@ -14159,19 +14239,24 @@ static tg_mtproto_peer_cache tg_gui_search_results;
 static int tg_gui_search_openable_idx[TG_MTPROTO_PEER_CACHE_MAX];
 static int tg_gui_search_openable_n;
 
-/* Add `selected` to the peer cache, refresh the sidebar, then highlight + open
-   it (the search path bypasses apply_selection, so set the title here too).
-   Returns 0 on success. */
-static int tg_gui_search_open_entry(const tg_mtproto_peer_cache_entry *selected,
-                                    FILE *stream)
+/* Ensure `selected` is in the real peer cache and return its public index.
+   Opening a search result unhides it; choosing it only as a forward destination
+   deliberately does not. The caller decides when to reload/open the sidebar. */
+static int tg_gui_search_cache_entry(
+    const tg_mtproto_peer_cache_entry *selected, FILE *stream, int unhide,
+    unsigned long *out_index)
 {
     char new_index[32];
     char new_label[TG_GUI_NAME_MAX];
     FILE *quiet;
     unsigned long prev_timeout;
+    unsigned long idx;
     int rc;
 
-    if (selected == 0) {
+    if (out_index != 0) {
+        *out_index = 0UL;
+    }
+    if (selected == 0 || stream == 0 || out_index == 0) {
         return 1;
     }
     new_index[0] = '\0';
@@ -14187,41 +14272,56 @@ static int tg_gui_search_open_entry(const tg_mtproto_peer_cache_entry *selected,
     if (rc != 0 || new_index[0] == '\0') {
         return 1;
     }
-    /* Deliberately reopened from the search: no longer hidden (0.0.8). */
-    tg_gui_hidden_forget(selected->id_hi, selected->id_lo);
+    if (tg_mtproto_parse_ulong_arg(new_index, &idx) != 0 || idx == 0UL) {
+        return 1;
+    }
+    if (unhide) {
+        /* Deliberately reopened from the search: no longer hidden (0.0.8). */
+        tg_gui_hidden_forget(selected->id_hi, selected->id_lo);
+    }
+    *out_index = idx;
+    return 0;
+}
+
+/* Add `selected` to the peer cache, refresh the sidebar, then highlight + open
+   it (the search path bypasses apply_selection, so set the title here too). */
+static int tg_gui_search_open_entry(const tg_mtproto_peer_cache_entry *selected,
+                                    FILE *stream)
+{
+    unsigned long idx;
+
+    if (tg_gui_search_cache_entry(selected, stream, 1, &idx) != 0) {
+        return 1;
+    }
 
     tg_gui_session_reload_chats();
     {
-        unsigned long idx;
+        tg_gui_state *gs = tg_gui_session_state.gui_driver.state;
 
-        if (tg_mtproto_parse_ulong_arg(new_index, &idx) == 0 && idx != 0UL) {
-            tg_gui_state *gs = tg_gui_session_state.gui_driver.state;
+        if (gs != 0) {
+            int r;
+            int found = 0;
 
-            if (gs != 0) {
-                int r;
-                int found = 0;
-
-                for (r = 0; r < gs->chat_count; ++r) {
-                    if (gs->chats[r].index == idx) {
-                        gs->selected_chat = r;
-                        found = 1;
-                        break;
-                    }
-                }
-                if (found) {
-                    const char *nm = gs->chats[gs->selected_chat].name;
-                    unsigned long ti;
-
-                    gs->chat_scroll_to_sel = 1; /* scroll the sidebar to it */
-                    for (ti = 0UL; ti + 1UL < sizeof(gs->title) &&
-                                   nm[ti] != '\0'; ++ti) {
-                        gs->title[ti] = nm[ti];
-                    }
-                    gs->title[ti] = '\0';
+            for (r = 0; r < gs->chat_count; ++r) {
+                if (gs->chats[r].index == idx) {
+                    gs->selected_chat = r;
+                    found = 1;
+                    break;
                 }
             }
-            (void)tg_gui_session_open_chat(idx, stream);
+            if (found) {
+                const char *nm = gs->chats[gs->selected_chat].name;
+                unsigned long ti;
+
+                gs->chat_scroll_to_sel = 1; /* scroll the sidebar to it */
+                for (ti = 0UL; ti + 1UL < sizeof(gs->title) &&
+                               nm[ti] != '\0'; ++ti) {
+                    gs->title[ti] = nm[ti];
+                }
+                gs->title[ti] = '\0';
+            }
         }
+        (void)tg_gui_session_open_chat(idx, stream);
     }
     return 0;
 }
@@ -14508,6 +14608,19 @@ int tg_gui_session_search_open_result(int i, FILE *stream)
         &tg_gui_search_results.entries[tg_gui_search_openable_idx[i]], stream);
 }
 
+/* Add an online-picker result to the cache without opening or unhiding it, and
+   return the public cache index suitable for tg_gui_session_forward(). */
+int tg_gui_session_search_cache_result(int i, unsigned long *peer_index,
+                                       FILE *stream)
+{
+    if (i < 0 || i >= tg_gui_search_openable_n) {
+        return 1;
+    }
+    return tg_gui_search_cache_entry(
+        &tg_gui_search_results.entries[tg_gui_search_openable_idx[i]], stream,
+        0, peer_index);
+}
+
 /* Back-compat: search + open the top match (no picker). 0 = opened, 1 = no
    result / network, 2 = bad args. */
 int tg_gui_session_search_open(const char *query, FILE *stream)
@@ -14629,6 +14742,24 @@ int tg_gui_session_forward(unsigned long message_id,
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     return rc;
+}
+
+unsigned long tg_gui_session_current_peer_index(void)
+{
+    unsigned long index;
+
+    if (!tg_gui_session_state.open ||
+        tg_gui_session_state.current_peer_index[0] == '\0') {
+        return 0UL;
+    }
+    if (strcmp(tg_gui_session_state.current_peer_index, "self") == 0) {
+        return TG_GUI_SAVED_PEER_INDEX;
+    }
+    if (tg_mtproto_parse_ulong_arg(tg_gui_session_state.current_peer_index,
+                                   &index) != 0) {
+        return 0UL;
+    }
+    return index;
 }
 
 int tg_gui_session_edit(const char *text, unsigned long message_id, FILE *stream)
