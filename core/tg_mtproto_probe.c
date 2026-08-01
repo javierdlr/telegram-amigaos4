@@ -12442,6 +12442,8 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
     return 2;
 }
 
+static int tg_gui_hidden_projection_self_test(void);
+
 int tg_mtproto_probe_self_test(void)
 {
     static const unsigned char nonce[16] = {
@@ -12879,6 +12881,10 @@ int tg_mtproto_probe_self_test(void)
         }
     }
 
+    if (tg_gui_hidden_projection_self_test() != 0) {
+        return 2;
+    }
+
     return 0;
 }
 
@@ -13086,23 +13092,26 @@ void tg_gui_log(const char *msg)
     }
 }
 
-/* --- Hidden chats (0.0.8): a REMOVED chat must stay removed. -------------
-   The dialog bootstrap/reload would resurrect every removed chat straight
-   from the server, so removals are remembered here (data/telegram-hidden.txt,
-   one "hi lo" hex peer id per line). The bootstrap purges hidden peers from
-   the cache after paging; opening a hidden chat from the ONLINE search adds
-   it back and forgets the hidden mark. Plain linear scans: the file is tiny. */
+/* --- Hidden chats ---------------------------------------------------------
+   A removed chat stays in the peer cache so the instant local filter can find
+   it without a network round trip. The sidebar projection skips ids listed in
+   data/telegram-hidden.txt; the filter projection includes and marks them.
+   Opening one forgets the mark. Plain linear scans: the file is tiny. */
 #define TG_GUI_HIDDEN_FILE "data/telegram-hidden.txt"
 #define TG_GUI_HIDDEN_TMP "data/telegram-hidden.tmp"
 
-static int tg_gui_hidden_contains(unsigned long id_hi, unsigned long id_lo)
+static int tg_gui_hidden_contains_file(const char *path, unsigned long id_hi,
+                                       unsigned long id_lo)
 {
     FILE *f;
     unsigned long hi;
     unsigned long lo;
     int found = 0;
 
-    f = fopen(TG_GUI_HIDDEN_FILE, "r");
+    if (path == 0) {
+        return 0;
+    }
+    f = fopen(path, "r");
     if (f == 0) {
         return 0;
     }
@@ -13116,20 +13125,29 @@ static int tg_gui_hidden_contains(unsigned long id_hi, unsigned long id_lo)
     return found;
 }
 
-static void tg_gui_hidden_add(unsigned long id_hi, unsigned long id_lo)
+static int tg_gui_hidden_contains(unsigned long id_hi, unsigned long id_lo)
+{
+    return tg_gui_hidden_contains_file(TG_GUI_HIDDEN_FILE, id_hi, id_lo);
+}
+
+static int tg_gui_hidden_add(unsigned long id_hi, unsigned long id_lo)
 {
     FILE *f;
 
-    if ((id_hi == 0UL && id_lo == 0UL) ||
-        tg_gui_hidden_contains(id_hi, id_lo)) {
-        return;
+    if (id_hi == 0UL && id_lo == 0UL) {
+        return 2;
+    }
+    if (tg_gui_hidden_contains(id_hi, id_lo)) {
+        return 0;
     }
     (void)mkdir("data", 0777);
     f = fopen(TG_GUI_HIDDEN_FILE, "a");
-    if (f != 0) {
-        fprintf(f, "%08lx %08lx\n", id_hi, id_lo);
-        fclose(f);
+    if (f == 0) {
+        return 2;
     }
+    fprintf(f, "%08lx %08lx\n", id_hi, id_lo);
+    fclose(f);
+    return 0;
 }
 
 static void tg_gui_hidden_forget(unsigned long id_hi, unsigned long id_lo)
@@ -13175,34 +13193,122 @@ static void tg_gui_hidden_forget(unsigned long id_hi, unsigned long id_lo)
 /* Shared 16K scratch for peer-cache probes (off the stack: m68k). */
 static tg_mtproto_peer_cache tg_gui_probe_cache;
 
-/* Purge every hidden peer the dialog paging just resurrected. Removing an
-   entry renumbers the cache, so rescan from the top after each hit; both
-   lists are small. */
-static void tg_gui_peer_cache_purge_hidden(const char *path, FILE *stream)
+static void tg_gui_hidden_mark_name(char *name)
 {
-    int again = 1;
+    static const char suffix[] = " (hidden)";
+    unsigned long display_max;
+    unsigned long name_len;
+    unsigned long suffix_len;
+    unsigned long keep;
 
-    while (again) {
-        unsigned long i;
-
-        again = 0;
-        if (tg_mtproto_load_peer_cache_file(path, &tg_gui_probe_cache) != 0) {
-            return;
-        }
-        for (i = 0UL; i < tg_gui_probe_cache.count; ++i) {
-            if (tg_gui_hidden_contains(tg_gui_probe_cache.entries[i].id_hi,
-                                       tg_gui_probe_cache.entries[i].id_lo)) {
-                char it[24];
-
-                sprintf(it, "%lu", i + 1UL);
-                if (tg_mtproto_peer_cache_remove_public_index(
-                        path, it, 0, 0UL, stream) == 0) {
-                    again = 1;
-                }
-                break;
-            }
-        }
+    if (name == 0) {
+        return;
     }
+    /* The GUI driver may prepend '@' and stores the result in TG_GUI_NAME_MAX.
+       Keep the suffix visible after that final projection too. */
+    display_max = TG_GUI_NAME_MAX - 2UL;
+    if (display_max >= TG_CHAT_LIST_NAME_MAX) {
+        display_max = TG_CHAT_LIST_NAME_MAX - 1UL;
+    }
+    name_len = (unsigned long)strlen(name);
+    suffix_len = (unsigned long)strlen(suffix);
+    if (name_len + suffix_len > display_max) {
+        keep = display_max - suffix_len;
+        /* Do not leave a partial UTF-8 character before the ASCII suffix. */
+        while (keep > 0UL &&
+               (((unsigned char)name[keep] & 0xc0U) == 0x80U)) {
+            --keep;
+        }
+        name[keep] = '\0';
+    }
+    strcat(name, suffix);
+}
+
+/* Parse once and keep the cache's public indexes intact. Normal sidebar
+   projection omits hidden rows; local search includes them with a marker. */
+static int tg_gui_chat_list_project(const char *cache_path,
+                                    const char *hidden_path,
+                                    unsigned long current_index,
+                                    tg_chat_list_row *rows, int max,
+                                    int *file_missing, int include_hidden,
+                                    int mark_hidden)
+{
+    int count;
+    int i;
+    int out;
+
+    count = tg_mtproto_chat_list_parse(cache_path, current_index, rows, max,
+                                       file_missing);
+    out = 0;
+    for (i = 0; i < count; ++i) {
+        int hidden;
+
+        hidden = tg_gui_hidden_contains_file(hidden_path, rows[i].peer_id_hi,
+                                             rows[i].peer_id_lo);
+        if (hidden && !include_hidden) {
+            continue;
+        }
+        if (out != i) {
+            rows[out] = rows[i];
+        }
+        if (hidden && mark_hidden) {
+            tg_gui_hidden_mark_name(rows[out].name);
+        }
+        ++out;
+    }
+    return out;
+}
+
+static int tg_gui_hidden_projection_self_test(void)
+{
+    static const char cache_path[] = "tg-hidden-cache-selftest.tmp";
+    static const char hidden_path[] = "tg-hidden-list-selftest.tmp";
+    tg_chat_list_row rows[4];
+    FILE *f;
+    int missing;
+    int count;
+
+    f = fopen(cache_path, "w");
+    if (f == 0) {
+        puts("probe self-test: cannot write hidden cache");
+        return 2;
+    }
+    fputs("peer 1 type user id 0x0000000000000001 access_hash - top 0 "
+          "unread 0 self no bot no username one title Visible One\n", f);
+    fputs("peer 2 type user id 0x0000000000000002 access_hash - top 0 "
+          "unread 0 self no bot no username two title Hidden Peer\n", f);
+    fputs("peer 3 type group id 0x0000000000000003 access_hash - top 0 "
+          "unread 0 self no bot no username three title Visible Three\n", f);
+    fclose(f);
+    f = fopen(hidden_path, "w");
+    if (f == 0) {
+        remove(cache_path);
+        puts("probe self-test: cannot write hidden list");
+        return 2;
+    }
+    fputs("00000000 00000002\n", f);
+    fclose(f);
+
+    missing = 0;
+    count = tg_gui_chat_list_project(cache_path, hidden_path, 0UL, rows, 4,
+                                     &missing, 0, 0);
+    if (missing || count != 2 || rows[0].index != 1UL ||
+        rows[1].index != 3UL) {
+        remove(cache_path);
+        remove(hidden_path);
+        puts("probe self-test: hidden sidebar projection wrong");
+        return 2;
+    }
+    count = tg_gui_chat_list_project(cache_path, hidden_path, 0UL, rows, 4,
+                                     &missing, 1, 1);
+    remove(cache_path);
+    remove(hidden_path);
+    if (missing || count != 3 || rows[1].index != 2UL ||
+        strcmp(rows[1].name, "Hidden Peer (hidden)") != 0) {
+        puts("probe self-test: hidden filter projection wrong");
+        return 2;
+    }
+    return 0;
 }
 
 int tg_gui_session_open(const char *api_file, const char *auth_file,
@@ -13352,7 +13458,6 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
             }
             prev = tg_gui_probe_cache.count;
         }
-        tg_gui_peer_cache_purge_hidden(peer_cache_file, q);
         tg_mtproto_close_quiet_stream(q, stream);
 #endif
     }
@@ -13365,8 +13470,9 @@ int tg_gui_session_open(const char *api_file, const char *auth_file,
         int missing;
 
         missing = 0;
-        count = tg_mtproto_chat_list_parse(peer_cache_file, 0UL, rows,
-                                           TG_CHAT_LIST_MAX, &missing);
+        count = tg_gui_chat_list_project(peer_cache_file, TG_GUI_HIDDEN_FILE,
+                                         0UL, rows, TG_CHAT_LIST_MAX, &missing,
+                                         0, 0);
         tg_gui_saved_messages_row(rows, &count, TG_CHAT_LIST_MAX);
         if (tg_gui_session_state.driver.on_chat_list_changed != 0 &&
             count > 0) {
@@ -13634,8 +13740,9 @@ static void tg_gui_session_reload_chats(void)
         return;
     }
     missing = 0;
-    count = tg_mtproto_chat_list_parse(tg_gui_session_state.peer_cache_file, 0UL,
-                                       rows, TG_CHAT_LIST_MAX, &missing);
+    count = tg_gui_chat_list_project(tg_gui_session_state.peer_cache_file,
+                                     TG_GUI_HIDDEN_FILE, 0UL, rows,
+                                     TG_CHAT_LIST_MAX, &missing, 0, 0);
     tg_gui_saved_messages_row(rows, &count, TG_CHAT_LIST_MAX);
     /* ALWAYS fire, even with count 0: skipping the callback on an emptied
        list left the window's chat_count stale, and the remove flow then
@@ -13676,10 +13783,59 @@ void tg_gui_session_refresh_chats(void)
     tg_gui_session_reload_chats();
 }
 
-/* Public: remove the chat at `peer_index` (the 1-based sidebar number, == the
-   peer-cache public index) from telegram-peers.txt, persist it, then reproject
-   the sidebar. The user can re-add the chat later via search. Returns 0 on
-   success, non-zero otherwise. */
+/* Project every cached row for the instant local filter. Hidden rows are kept
+   and marked here; the normal sidebar projection above omits them. */
+void tg_gui_session_show_filterable_chats(void)
+{
+    tg_chat_list_row rows[TG_CHAT_LIST_MAX];
+    int count;
+    int missing;
+
+    if (tg_gui_session_state.driver.on_chat_list_changed == 0) {
+        return;
+    }
+    missing = 0;
+    count = tg_gui_chat_list_project(tg_gui_session_state.peer_cache_file,
+                                     TG_GUI_HIDDEN_FILE, 0UL, rows,
+                                     TG_CHAT_LIST_MAX, &missing, 1, 1);
+    tg_gui_saved_messages_row(rows, &count, TG_CHAT_LIST_MAX);
+    tg_gui_session_state.driver.on_chat_list_changed(
+        tg_gui_session_state.driver.ctx, rows, count);
+}
+
+/* Opening a local-filter row is an explicit request to restore that chat to
+   the sidebar. Non-hidden rows are harmless no-ops. */
+int tg_gui_session_unhide_chat(unsigned long peer_index, FILE *stream)
+{
+    char index_text[24];
+    FILE *quiet;
+    unsigned long pc;
+    unsigned long ph;
+    unsigned long pl;
+    unsigned long ahh;
+    unsigned long ahl;
+    int hah;
+    int rc;
+
+    if (!tg_gui_session_state.open || stream == 0 || peer_index == 0UL ||
+        peer_index == TG_GUI_SAVED_PEER_INDEX) {
+        return 0;
+    }
+    sprintf(index_text, "%lu", peer_index);
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    rc = tg_mtproto_load_peer_cache_peer(
+        tg_gui_session_state.peer_cache_file, index_text, &pc, &ph, &pl, &ahh,
+        &ahl, &hah, quiet, "unhide chat");
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    if (rc != 0) {
+        return rc;
+    }
+    tg_gui_hidden_forget(ph, pl);
+    return 0;
+}
+
+/* Public: hide the chat at `peer_index` while retaining its peer-cache row.
+   That stable row makes local search instant and preserves its access hash. */
 int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
 {
     char index_text[24]; /* fits %lu of a 64-bit unsigned long (20 digits + NUL) */
@@ -13691,9 +13847,7 @@ int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
     }
     sprintf(index_text, "%lu", peer_index);
     quiet = tg_mtproto_open_quiet_stream(stream);
-    /* Remember the removal (0.0.8): the dialog reload would otherwise bring
-       the chat straight back from the server. Opening it again from the
-       ONLINE search forgets the mark. */
+    rc = 2;
     {
         unsigned long pc;
         unsigned long ph;
@@ -13705,11 +13859,9 @@ int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream)
         if (tg_mtproto_load_peer_cache_peer(
                 tg_gui_session_state.peer_cache_file, index_text, &pc, &ph,
                 &pl, &ahh, &ahl, &hah, quiet, "hide chat") == 0) {
-            tg_gui_hidden_add(ph, pl);
+            rc = tg_gui_hidden_add(ph, pl);
         }
     }
-    rc = tg_mtproto_peer_cache_remove_public_index(
-        tg_gui_session_state.peer_cache_file, index_text, 0, 0UL, quiet);
     tg_mtproto_close_quiet_stream(quiet, stream);
     if (rc == 0) {
         tg_gui_session_reload_chats(); /* reproject the sidebar from the saved file */
@@ -13765,18 +13917,17 @@ int tg_gui_session_reload_chat_list(FILE *stream)
             }
             prev = tg_gui_probe_cache.count;
         }
-        tg_gui_peer_cache_purge_hidden(tg_gui_session_state.peer_cache_file,
-                                       q);
         tg_mtproto_close_quiet_stream(q, stream);
         tg_gui_session_reload_chats();
         return 0;
     }
 }
 
-/* Public: move the chat at sidebar row src_index to dst_index (both 1-based,
-   == row + 1), persist the new order, reproject the sidebar, and re-select the
-   chat that was open (reload_chats zeroes selected_chat, so re-find it by peer id).
-   No network fetch -- the transcript is untouched. Returns 0 on success. */
+/* Public: move a chat between two peer-cache public indexes, persist the new
+   order, reproject the sidebar, and re-select the chat that was open
+   (reload_chats zeroes selected_chat, so re-find it by peer id). Hidden rows
+   may sit between the visible ones, which is why callers pass the row indexes
+   rather than sidebar positions. No network fetch; the transcript is untouched. */
 int tg_gui_session_reorder_chat(unsigned long src_index, unsigned long dst_index,
                                 FILE *stream)
 {

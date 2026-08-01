@@ -2573,6 +2573,7 @@ static void tg_gui_window_filter_chats(tg_gui_state *state,
 {
     int i;
     int k;
+    int local_count;
 
     if (state->search_query[0] == '\0') {
         if (state->in_filter || state->in_search) {
@@ -2610,7 +2611,9 @@ static void tg_gui_window_filter_chats(tg_gui_state *state,
         return;
     }
     state->in_search = 0;
-    tg_gui_session_refresh_chats(); /* full cached list back, then compact */
+    /* The filter sees the complete cache, including rows hidden from the normal
+       sidebar. Hidden names carry a local marker supplied by the session. */
+    tg_gui_session_show_filterable_chats();
     k = 0;
     for (i = 0; i < state->chat_count; ++i) {
         if (tg_gui_window_name_matches(state->chats[i].name,
@@ -2621,6 +2624,7 @@ static void tg_gui_window_filter_chats(tg_gui_state *state,
             ++k;
         }
     }
+    local_count = k;
     if (k < TG_GUI_MAX_CHATS) {
         tg_gui_chat *row = &state->chats[k];
 
@@ -2640,7 +2644,8 @@ static void tg_gui_window_filter_chats(tg_gui_state *state,
     {
         char st[64];
 
-        sprintf(st, "%d local - arrows + ENTER (last row: online)", k - 1);
+        sprintf(st, "%d local - arrows + ENTER (last row: online)",
+                local_count);
         tg_gui_window_copy(state->status, sizeof(state->status), st);
     }
     tg_gui_window_paint(state, backend);
@@ -2659,6 +2664,7 @@ static void tg_gui_window_open_by_index(tg_gui_state *state,
     state->search_active = 0;
     state->search_query[0] = '\0';
     state->search_caret = 0;
+    (void)tg_gui_session_unhide_chat(want, stdout);
     tg_gui_session_refresh_chats();
     for (i = 0; i < state->chat_count; ++i) {
         if (state->chats[i].index == want) {
@@ -4536,12 +4542,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                     TG_GUI_SAVED_PEER_INDEX &&
                                 state->chats[dest].index !=
                                     TG_GUI_SAVED_PEER_INDEX) {
-                                /* The pinned Saved Messages row neither moves
-                                   nor is displaced: positions above it keep
-                                   mapping 1:1 to the file's public indexes. */
+                                /* Hidden rows are absent from the sidebar, so
+                                   use each visible row's stable cache index. */
                                 (void)tg_gui_session_reorder_chat(
-                                    (unsigned long)(state->drag_src + 1),
-                                    (unsigned long)(dest + 1), stdout);
+                                    state->chats[state->drag_src].index,
+                                    state->chats[dest].index, stdout);
                             }
                             tg_gui_window_paint(state, &backend);
                         }

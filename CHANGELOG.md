@@ -5,6 +5,13 @@ AmigaOS 3.x, AmigaOS 4.x, MorphOS and AROS (i386/x86_64).
 Dates use YYYY-MM-DD. Each release ships on all five platform lanes
 unless noted.
 
+## [Unreleased]
+
+### Changed
+- Hidden chats now remain in the local peer cache. They stay out of the normal
+  sidebar, appear immediately in local search with a `(hidden)` marker, and
+  return to the sidebar when opened, without an online search or cache reload.
+
 ## [0.0.8] - 2026-07-31
 
 ### Added

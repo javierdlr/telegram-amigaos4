@@ -191,9 +191,16 @@ int tg_gui_session_search_open_result(int index, FILE *stream);
    real list after cancelling the search picker. */
 void tg_gui_session_refresh_chats(void);
 
-/* Remove the chat at `peer_index` (the 1-based sidebar number) from the cached
-   chat list, persist the change, and reproject the sidebar. Re-addable via search.
-   Returns 0 on success, non-zero otherwise. */
+/* Project all cached chats for the instant local filter. Hidden rows are
+   included with a visible marker; the normal sidebar projection omits them. */
+void tg_gui_session_show_filterable_chats(void);
+
+/* Explicitly opening a cached row removes its hidden marker. Non-hidden rows
+   are a no-op. Returns 0 on success. */
+int tg_gui_session_unhide_chat(unsigned long peer_index, FILE *stream);
+
+/* Hide the chat at `peer_index` from the sidebar while retaining it in the
+   peer cache for instant local search. Returns 0 on success. */
 int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream);
 
 /* Menu "Reload chat list": re-page the dialog list from the server (additive,
@@ -201,9 +208,9 @@ int tg_gui_session_remove_chat(unsigned long peer_index, FILE *stream);
    3 unsupported on this platform (MorphOS: getDialogs freeze). */
 int tg_gui_session_reload_chat_list(FILE *stream);
 
-/* Move the chat at sidebar row src_index to dst_index (both 1-based, == row + 1),
-   persist the new order, reproject the sidebar, and keep the open chat selected.
-   No network fetch. Returns 0 on success, non-zero otherwise. */
+/* Move the chat at peer-cache public index src_index to dst_index, persist the
+   new order, reproject the sidebar, and keep the open chat selected. No network
+   fetch. Returns 0 on success, non-zero otherwise. */
 int tg_gui_session_reorder_chat(unsigned long src_index, unsigned long dst_index,
                                 FILE *stream);
 
