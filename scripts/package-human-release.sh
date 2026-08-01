@@ -71,7 +71,8 @@ fill_platform_text() {
 - A few MB of free RAM. No ixemul.library and no AmiSSL are needed."
         notes_en="Notes for AmigaOS 3.x
 ---------------------
-- Photos/files are shown as [Photo] / [File] labels (no image decoding on 68k).
+- Photo messages use a small bounded thumbnail and render inline. Until a
+  thumbnail is ready, or if it cannot be downloaded, the [Photo] label remains.
 - The cloud-password (2FA) step is heavy on a 68k (PBKDF2) and can take a while.
 - First login: the DH key exchange is heavy on a 68k, so the first start
   takes a while (it happens once -- the session is saved afterwards).
@@ -84,8 +85,8 @@ fill_platform_text() {
 - Qualche MB di RAM libera. Non servono ixemul.library ne' AmiSSL."
         notes_it="Note per AmigaOS 3.x
 --------------------
-- Foto/file appaiono come etichette [Photo] / [File] (niente decodifica immagini
-  sul 68k).
+- Le foto nei messaggi usano un'anteprima piccola e limitata e appaiono nella
+  conversazione. Finche' non e' pronta, o se il download fallisce, resta [Photo].
 - Il passo della password cloud (2FA) e' pesante su 68k (PBKDF2) e puo' metterci
   un po'.
 - Primo accesso: lo scambio di chiavi DH e' pesante su 68k, quindi il primo
@@ -150,17 +151,12 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
-New in $VERSION: TRANSFERS 2.0 -- the client stays fully usable while a file
-moves (up to $upload_limit on this build): keep chatting, switch chats,
-receive messages. Downloads pipeline their chunks and show the speed next to
-the percentage; a document stored on another Telegram datacenter now
-downloads from there, and so do profile photos. Drop a file icon on the
-window to send it. Pick the download drawer from the menu. The sidebar search
-filters your chats as you type, ENTER searches your own dialogs first (it
-finds a chat you removed, even a private group) and an empty box browses ALL
-your chats. URLs in messages are blue and clickable. Menus follow the system
-colours, the chat list reloads on demand and remembers the chats you removed,
-and AmiKit/AfA_OS systems now render text correctly.
+Highlights in this build: inline message photos; one-click forwarding to Saved
+Messages and a destination picker for other chats; hidden chats available in
+local search; and non-blocking file transfers up to $upload_limit. Downloads
+pipeline their chunks and work across Telegram datacenters. Drop a file icon
+on the window to send it, or pick the download drawer from the menu. URLs are
+clickable, menus follow the system colours, and AmiKit/AfA_OS text is handled.
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
@@ -232,6 +228,11 @@ Using the GUI
 - Chat-list avatars show each peer's real profile picture: a blurred preview
   appears as soon as the chat list loads, and it turns crisp shortly after you
   open that chat (the photo is cached in the avatars/ drawer).
+- Photos sent in a conversation appear inside their message bubble. A small
+  per-platform thumbnail is cached in the photos/ drawer; [Photo] remains as a
+  safe fallback while it loads or when Telegram cannot supply it.
+- Right-click a message and choose "Forward to Saved Messages" for a one-click
+  cloud copy, or "Forward to..." to select another chat with the normal search.
 - In groups, type @ in the composer to autocomplete a member: a small list
   pops up above the input line -- Up/Down select, Enter or Tab inserts
   @username, Esc closes, typing narrows the matches.
@@ -260,7 +261,8 @@ Using the GUI
   TelegramAmiga icon on the Workbench: double-click it to come back.
 - F1..F10 jump to chats 1..10 (Shift+F1..F10 to 11..20).
 - Search box (top-left): type a name and press Enter to find a chat on Telegram
-  and add it to the list -- useful for chats not shown yet.
+  and add it to the list -- useful for chats not shown yet. A removed chat stays
+  available in this local filter with a (hidden) marker; opening it restores it.
 - Remove a chat from the list: the Telegram menu (right mouse button), the Del
   key, or right-Amiga+R (with a confirm). Re-add it later via Search.
 - Reorder the list by drag and drop. Removals, order and unread badges persist.
@@ -364,6 +366,12 @@ Usare la GUI
 - Gli avatar della lista chat mostrano la vera foto profilo: un'anteprima
   sfocata appare subito col caricamento della lista, e diventa nitida poco dopo
   che apri quella chat (la foto viene salvata nel cassetto avatars/).
+- Le foto inviate in conversazione appaiono dentro la loro bolla. Una piccola
+  anteprima adatta alla piattaforma viene salvata in photos/; [Photo] resta come
+  ripiego durante il caricamento o se Telegram non la rende disponibile.
+- Click destro su un messaggio: "Forward to Saved Messages" lo copia con un
+  click nel proprio cloud; "Forward to..." permette di scegliere un'altra chat
+  usando la ricerca normale.
 - Nei gruppi, digita @ nel composer per completare un membro: compare una
   listina sopra la riga di input -- Su/Giu' selezionano, Invio o Tab inserisce
   @username, Esc chiude, digitando filtri i risultati.
@@ -394,7 +402,8 @@ Usare la GUI
 - F1..F10 saltano alle chat 1..10 (Shift+F1..F10 alle 11..20).
 - Casella di ricerca (in alto a sinistra): scrivi un nome e premi Invio per
   trovare una chat su Telegram e aggiungerla alla lista -- utile per chat non
-  ancora mostrate.
+  ancora mostrate. Una chat rimossa resta nel filtro locale col marker (hidden):
+  aprendola torna nella lista.
 - Rimuovi una chat dalla lista: menu Telegram (tasto destro), tasto Del, oppure
   Amiga-destro+R (con conferma). La riaggiungi poi con la Ricerca.
 - Riordina la lista col trascinamento. Rimozioni, ordine e badge persistono.
@@ -547,6 +556,8 @@ WHAT CAN I ACTUALLY DO WITH IT?
 Read and send messages in private chats, groups and channels. Download a
 received file (right-click -> Download) or send one from disk, up to
 $upload_limit on this build, including files over 10 MiB.
+Photos render inline from a bounded cached thumbnail. Forward one message to
+Saved Messages in a click, or choose another destination through chat search.
 Use the pinned Saved Messages chat as a cloud transfer drawer between the
 Amiga and your phone or PC. Reply to a specific message (right-click it).
 Edit or delete your own messages. See

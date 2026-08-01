@@ -53,17 +53,13 @@ client:
   system-coloured menus, chat list reload with a memory of the chats you
   removed, a configurable download drawer, and AfA_OS (AmiKit)
   compatibility. First release cycle with an adversarial review pass.
-- Next (0.0.9): hidden chats surfacing directly in the local search filter
-  (marked as hidden while you type, no network) -- plus forwarding
-  messages, files and media to another chat -- the
-  destination picker reuses the local-first search, and a one-click
-  "Forward to Saved Messages" archives anything into your own cloud without
-  re-uploading it -- plus INLINE PHOTOS in the conversation (today a photo
-  is a [Photo] label; the JPEG decoder already in use for avatars grows into
-  the bubbles, degrading per platform; system datatypes were suggested and
-  stay on the radar as an OS4-side option, but the zero-install rule keeps
-  the in-binary decoder as the base path -- a stock OS3 has no JPEG
-  datatype).
+- In development (0.0.9): hidden chats now surface directly in the local
+  search filter; forwarding to Saved Messages and to a picker-selected chat
+  is implemented; and bounded photo thumbnails render inline through the
+  in-tree JPEG decoder and a disk cache. All three are on `main` and still
+  require the complete five-lane real-system validation before release.
+  System datatypes remain an optional OS4-side optimization, while the
+  zero-install in-binary decoder stays the portable base path.
 - Then 0.1.0, the first BETA: same program, a different promise. It ships
   once forwarding and inline photos are in, no known freeze remains on any
   of the five platforms, an adversarial review pass has run, and a full

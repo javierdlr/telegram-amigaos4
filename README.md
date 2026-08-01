@@ -45,6 +45,12 @@ drawer, script-free launch icons, and 0.0.5's real avatars,
 0.0.3's replies, checkmarks and flicker-free drawing, and 0.0.2's history
 paging, search, badges and chat management.
 
+Development on `main` is now preparing 0.0.9: hidden chats stay available in
+the local search, messages can be forwarded to Saved Messages or another chat,
+and bounded photo thumbnails render inline. These changes are not part of the
+0.0.8 downloads below until all five platform lanes complete real-system
+validation.
+
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:
 <https://androidlab.it/en/telegram-amiga-mtproto-client-development-diary/>
@@ -103,6 +109,8 @@ Full IT/EN instructions are inside each package.
   updates for messages edited elsewhere, clipboard **Copy/Cut/Paste** with
   text selection (mouse or Shift+arrows), @username autocomplete.
 - Real **profile-picture avatars** (blurred previews instantly, crisp on open).
+- Current `main`: inline message photos with an on-disk cache, forwarding to
+  Saved Messages or another chat, and hidden chats surfaced by local search.
 - Native GUI scrolling (wheel / scrollbar / arrows / pixel), remembered window
   size and position, optional own screen, Iconify to a Workbench AppIcon, dark
   theme, script-free flashless Workbench launch.
@@ -112,10 +120,10 @@ Full IT/EN instructions are inside each package.
 
 ## Not yet
 
-Inline photo rendering, reactions, contact management, forwarding messages
-to another chat, and files served by Telegram's CDN (some big
-public-channel downloads). The aim is a dependable text-and-files client
-first; rich media comes later only where the platform makes it realistic.
+Reactions, contact management, albums and media playback, and files served by
+Telegram's CDN (some big public-channel downloads). The aim is a dependable
+text-and-files client first; richer media comes later only where the platform
+makes it realistic.
 
 ## Privacy & security
 
