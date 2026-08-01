@@ -189,6 +189,23 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 
+/* messages.sendMedia#ac55d9c1 with inputMediaUploadedPhoto#1e287d04 and a
+   small inputFile. Layer 214; JPEG validation happens before this writer. */
+tg_mtproto_tl_status tg_mtproto_build_messages_send_media_photo(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long file_parts,
+    const char *file_name,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo);
+
 /* Same sendMedia envelope, but the uploaded file is referenced as inputFileBig
    after upload.saveBigFilePart. */
 tg_mtproto_tl_status tg_mtproto_build_messages_send_media_big_document(

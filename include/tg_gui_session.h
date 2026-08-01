@@ -96,6 +96,12 @@ int tg_gui_session_send_document(const char *path, FILE *stream,
                                  tg_gui_upload_progress_fn progress,
                                  void *progress_data);
 
+/* Send a JPEG as an uploaded Telegram photo. Files above 10 MiB fall back to
+   document mode; malformed JPEGs return 7 without uploading any part. */
+int tg_gui_session_send_photo(const char *path, FILE *stream,
+                              tg_gui_upload_progress_fn progress,
+                              void *progress_data);
+
 /* --- Non-blocking transfers (0.0.8): the GUI pumps, the window stays alive.
    start_* arms the transfer on the file channel and returns immediately:
    0 = armed, else the same final rc codes as the blocking calls (reason via
@@ -112,6 +118,10 @@ int tg_gui_session_transfer_busy(void);
 int tg_gui_session_transfer_start_download(unsigned long msg_id,
                                            FILE *stream);
 int tg_gui_session_transfer_start_upload(const char *path, FILE *stream);
+int tg_gui_session_transfer_start_photo(const char *path, FILE *stream);
+/* Describe the current/last upload choice, including a failed start. */
+int tg_gui_session_transfer_requested_photo(void);
+int tg_gui_session_transfer_photo_fallback(void);
 int tg_gui_session_transfer_step(unsigned long *done, unsigned long *total);
 /* Bytes moved so far by the running transfer (0 when idle), for a rate
    display: downloads count real bytes, uploads count confirmed parts. */

@@ -2213,6 +2213,67 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
         file_name, mime_type, random_id_hi, random_id_lo, 0);
 }
 
+tg_mtproto_tl_status tg_mtproto_build_messages_send_media_photo(
+    tg_mtproto_tl_writer *writer,
+    unsigned long peer_constructor,
+    unsigned long peer_id_hi,
+    unsigned long peer_id_lo,
+    unsigned long access_hash_hi,
+    unsigned long access_hash_lo,
+    int has_access_hash,
+    unsigned long file_id_hi,
+    unsigned long file_id_lo,
+    unsigned long file_parts,
+    const char *file_name,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || file_name == 0 || file_name[0] == '\0' ||
+        file_parts == 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer, 0xac55d9c1UL);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* sendMedia flags */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_input_peer(writer, peer_constructor, peer_id_hi,
+                                     peer_id_lo, access_hash_hi,
+                                     access_hash_lo, has_access_hash);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(
+            writer, 0x1e287d04UL); /* inputMediaUploadedPhoto, layer 214 */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* media flags */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0xf52ff27fUL); /* inputFile */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, file_id_hi, file_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, file_parts);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, file_name);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, ""); /* md5: server-side optional */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, ""); /* no caption */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, random_id_hi, random_id_lo);
+    }
+    return status;
+}
+
 tg_mtproto_tl_status tg_mtproto_build_messages_send_media_big_document(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,
@@ -5569,6 +5630,26 @@ int tg_mtproto_login_self_test(void)
             q[32] != 0x10U ||                        /* force_file flag */
             q[36] != 0x7fU || q[37] != 0xf2U) {      /* inputFile LE */
             puts("f9 self-test: sendMedia(document) layout mismatch");
+            return 2;
+        }
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_messages_send_media_photo(
+                &w, TG_PEER_USER_CONSTRUCTOR, 0UL, 1UL, 0UL, 2UL, 1,
+                0x0000deadUL, 0x0000beefUL, 3UL, "p.jpg",
+                0x11UL, 0x22UL) != TG_MTPROTO_TL_OK ||
+            w.length != 76UL ||
+            q[0] != 0xc1U || q[1] != 0xd9U || q[2] != 0x55U ||
+            q[3] != 0xacU ||
+            q[28] != 0x04U || q[29] != 0x7dU ||
+            q[30] != 0x28U || q[31] != 0x1eU ||
+            q[32] != 0x00U ||
+            q[36] != 0x7fU || q[37] != 0xf2U ||
+            q[38] != 0x2fU || q[39] != 0xf5U ||
+            q[48] != 0x03U || q[52] != 0x05U ||
+            q[53] != (unsigned char)'p' ||
+            q[60] != 0x00U || q[64] != 0x00U ||
+            q[68] != 0x22U || q[72] != 0x11U) {
+            puts("photo send self-test: sendMedia(photo) layout mismatch");
             return 2;
         }
         tg_mtproto_tl_writer_init(&w, q, sizeof(q));

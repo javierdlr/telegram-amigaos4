@@ -19,6 +19,9 @@ unless noted.
   Telegram thumbnail for each platform, downloads it incrementally through the
   existing multi-DC file channel, and reuses the on-disk `photos/` cache on
   later paints and runs. Text-only and failed-download fallbacks remain usable.
+- JPEG files can now be sent as Telegram photos from the GUI, Workbench drop or
+  the TUI `/photo` command. The existing non-blocking upload engine is reused;
+  photos above 10 MiB are sent as documents with explicit status feedback.
 
 ### Changed
 - Inline photos now decode once into a platform-sized canonical cache and

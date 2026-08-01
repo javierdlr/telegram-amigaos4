@@ -356,7 +356,8 @@ static int tg_mtproto_file_download(const struct tg_mtproto_file_ctx *fc,
 static int tg_mtproto_file_send(const struct tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
                                 tg_gui_upload_progress_fn progress,
-                                void *progress_data);
+                                void *progress_data,
+                                int as_photo);
 /* Live read-receipt sink (5c): the push collector records the most recent
    updateReadHistoryOutbox (which peer read up to which id); the GUI loop applies
    it when the peer matches the open chat. NULL outside a GUI session. */
@@ -9096,8 +9097,9 @@ static void tg_chat_history_add(const char *text)
 /* One-line command cheat-sheet shown when a lone '/' starts the input row
    (both the TUI-transcript and the linear-raw printers use it). */
 #define TG_CHAT_SLASH_HINT_TEXT \
-    "Commands: /peers /saved /forward /forwardto /getfile /sendfile /search\n" \
-    "          /add /remove /history /swap /watch /diff /color /bell /help /quit\n"
+    "Commands: /peers /saved /forward /forwardto /getfile /sendfile /photo\n" \
+    "          /search /add /remove /history /swap /watch /diff /color /bell\n" \
+    "          /help /quit\n"
 
 /*
  * Chat input reader. In raw mode it echoes characters itself and supports
@@ -10701,6 +10703,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /forwardto n [id] forward latest (or given id) to chat n",
         "  /getfile      download the newest file in this chat to downloads/",
         "  /sendfile p   send a file (large files supported; build limit applies)",
+        "  /photo p      send a JPEG as a photo (over 10 MiB becomes a file)",
         "  /saved        open Saved Messages (your cloud transfer drawer)",
         "  /watch sec    set auto-read interval",
         "  /watch off    disable auto-read",
@@ -11450,68 +11453,95 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
             continue;
         }
-        if (tg_mtproto_chat_named_command_arg(line, "/sendfile", &cmd_arg)) {
-            /* Upload a file to the open chat: /sendfile <path>.
-               The helper matches the bare and tab forms too, so a syntax probe
-               can never fall through and be SENT as a literal message. */
-            const char *fpath = cmd_arg;
-            char fpath_buf[256];
+        {
+            int send_as_photo;
 
-            /* An icon dropped on the console injects the path QUOTED (the
-               con-handler quotes paths with spaces, Shell-style): accept
-               "path" by stripping the surrounding double quotes. */
-            if (fpath[0] == '"') {
-                unsigned long fl = 0UL;
-
-                ++fpath;
-                while (fpath[fl] != '\0' && fpath[fl] != '"' &&
-                       fl + 1UL < sizeof(fpath_buf)) {
-                    fpath_buf[fl] = fpath[fl];
-                    ++fl;
-                }
-                fpath_buf[fl] = '\0';
-                fpath = fpath_buf;
+            send_as_photo = -1;
+            if (tg_mtproto_chat_named_command_arg(line, "/sendfile",
+                                                   &cmd_arg)) {
+                send_as_photo = 0;
+            } else if (tg_mtproto_chat_named_command_arg(line, "/photo",
+                                                          &cmd_arg)) {
+                send_as_photo = 1;
             }
-            if (peer_index[0] == '\0') {
-                tg_mtproto_chat_print_system_line(
-                    stream, "Choose a chat first with /peers or /add name.");
-            } else if (*fpath == '\0') {
-                tg_mtproto_chat_print_system_line(stream,
-                                                  "Usage: /sendfile <path>");
-            } else {
-                tg_mtproto_file_ctx fc;
-                int frc;
-                FILE *tui_cap;
+            if (send_as_photo >= 0) {
+                /* Upload to the open chat. Both helpers match their bare and
+                   tab forms, so a syntax probe can never fall through and be
+                   SENT as a literal message. */
+                const char *fpath = cmd_arg;
+                char fpath_buf[256];
 
-                fc.host = host; fc.port = port; fc.api_id = api_id;
-                fc.auth_file = auth_file; fc.dc_id_text = dc_id_text;
-                fc.context = &chat_context;
-                fc.peer_cache_file = peer_cache_file;
-                fc.peer_index = peer_index;
-                tg_mtproto_chat_print_system_line(stream, "Uploading...");
-                frc = tg_mtproto_file_send(&fc, fpath, stream, 0, 0);
-                tui_cap = tg_console_tui_capture_begin(stream);
-                if (frc == 0) {
-                    fprintf(tui_cap, "File sent.\n");
-                } else if (frc == 2) {
-                    fprintf(tui_cap,
-#if defined(__m68k__)
-                            "File too big (31 MiB limit on this build).\n");
-#else
-                            "File too big (250 MiB limit on this build).\n");
-#endif
-                } else if (frc == 3) {
-                    fprintf(tui_cap, "Could not read that file.\n");
-                } else if (frc == 5) {
-                    fprintf(tui_cap, "That file is empty (0 bytes).\n");
+                /* An icon dropped on the console injects the path QUOTED (the
+                   con-handler quotes paths with spaces, Shell-style): accept
+                   "path" by stripping the surrounding double quotes. */
+                if (fpath[0] == '"') {
+                    unsigned long fl = 0UL;
+
+                    ++fpath;
+                    while (fpath[fl] != '\0' && fpath[fl] != '"' &&
+                           fl + 1UL < sizeof(fpath_buf)) {
+                        fpath_buf[fl] = fpath[fl];
+                        ++fl;
+                    }
+                    fpath_buf[fl] = '\0';
+                    fpath = fpath_buf;
+                }
+                if (peer_index[0] == '\0') {
+                    tg_mtproto_chat_print_system_line(
+                        stream, "Choose a chat first with /peers or /add name.");
+                } else if (*fpath == '\0') {
+                    tg_mtproto_chat_print_system_line(
+                        stream, send_as_photo ? "Usage: /photo <jpeg-path>"
+                                              : "Usage: /sendfile <path>");
                 } else {
-                    fprintf(tui_cap, "Upload failed.\n");
+                    tg_mtproto_file_ctx fc;
+                    int frc;
+                    FILE *tui_cap;
+
+                    fc.host = host; fc.port = port; fc.api_id = api_id;
+                    fc.auth_file = auth_file; fc.dc_id_text = dc_id_text;
+                    fc.context = &chat_context;
+                    fc.peer_cache_file = peer_cache_file;
+                    fc.peer_index = peer_index;
+                    tg_mtproto_chat_print_system_line(
+                        stream, send_as_photo ? "Uploading photo..."
+                                              : "Uploading...");
+                    frc = tg_mtproto_file_send(&fc, fpath, stream, 0, 0,
+                                               send_as_photo);
+                    tui_cap = tg_console_tui_capture_begin(stream);
+                    if (frc == 0) {
+                        if (send_as_photo &&
+                            tg_gui_session_transfer_photo_fallback()) {
+                            fprintf(tui_cap,
+                                    "File sent (photo was over 10 MiB).\n");
+                        } else {
+                            fprintf(tui_cap, send_as_photo ? "Photo sent.\n"
+                                                          : "File sent.\n");
+                        }
+                    } else if (frc == 2) {
+                        fprintf(tui_cap,
+                                "File too big (%lu MiB limit on this build).\n",
+                                tg_gui_session_upload_limit_mib());
+                    } else if (frc == 3) {
+                        fprintf(tui_cap, send_as_photo
+                                             ? "Could not read that photo.\n"
+                                             : "Could not read that file.\n");
+                    } else if (frc == 5) {
+                        fprintf(tui_cap, "That file is empty (0 bytes).\n");
+                    } else if (frc == 7) {
+                        fprintf(tui_cap, "That is not a valid JPEG.\n");
+                    } else if (tg_mtproto_query_fail[0] != '\0') {
+                        fprintf(tui_cap, "Upload failed: %.72s\n",
+                                tg_mtproto_query_fail);
+                    } else {
+                        fprintf(tui_cap, "Upload failed.\n");
+                    }
+                    tg_console_tui_capture_end(tui_cap, stream);
                 }
-                tg_console_tui_capture_end(tui_cap, stream);
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                            0UL, tg_chat_input_raw);
+                continue;
             }
-            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
-                                        0UL, tg_chat_input_raw);
-            continue;
         }
         if (strcmp(line, "/saved") == 0 || strcmp(line, "0") == 0) {
             /* F10 parity: jump to Saved Messages (the self chat, peer index
@@ -15449,6 +15479,9 @@ typedef struct tg_gui_ul_state {
     int hah;
     unsigned long parts, part;
     int big_file;
+    int requested_photo;
+    int as_photo;
+    int photo_fallback;
     int part_retry;
     unsigned long got;  /* bytes of the CURRENT part held in part_buf */
     int part_loaded;    /* part_buf holds the current (unacknowledged) part */
@@ -15457,11 +15490,145 @@ typedef struct tg_gui_ul_state {
 
 static tg_gui_ul_state tg_gui_ul;
 
+static int tg_mtproto_jpeg_sof_marker(int marker)
+{
+    return (marker >= 0xc0 && marker <= 0xc3) ||
+           (marker >= 0xc5 && marker <= 0xc7) ||
+           (marker >= 0xc9 && marker <= 0xcb) ||
+           (marker >= 0xcd && marker <= 0xcf);
+}
+
+/* Validate the JPEG marker stream through its first scan and EOI. A SOI plus a
+   plausible SOF alone is not sufficient: a truncated upload would otherwise be
+   accepted and rejected only after every part reached Telegram. The cursor is
+   restored for the upload on every outcome. */
+static int tg_mtproto_jpeg_file_valid(FILE *f)
+{
+    unsigned long segments;
+    int c;
+    int marker;
+    int have_sof;
+    int valid;
+
+    have_sof = 0;
+    valid = 0;
+    if (f == 0 || fseek(f, 0L, SEEK_SET) != 0 ||
+        fgetc(f) != 0xff || fgetc(f) != 0xd8) {
+        if (f != 0) {
+            (void)fseek(f, 0L, SEEK_SET);
+        }
+        return 0;
+    }
+    for (segments = 0UL; segments < 512UL; ++segments) {
+        int len_hi;
+        int len_lo;
+        unsigned long segment_len;
+
+        do {
+            c = fgetc(f);
+        } while (c != EOF && c != 0xff);
+        if (c == EOF) {
+            break;
+        }
+        do {
+            marker = fgetc(f);
+        } while (marker == 0xff);
+        if (marker == EOF || marker == 0xd9) {
+            break;
+        }
+        if (marker == 0x00 || marker == 0xd8 || marker == 0x01 ||
+            (marker >= 0xd0 && marker <= 0xd7)) {
+            continue;
+        }
+        len_hi = fgetc(f);
+        len_lo = fgetc(f);
+        if (len_hi == EOF || len_lo == EOF) {
+            break;
+        }
+        segment_len = ((unsigned long)(unsigned char)len_hi << 8) |
+                      (unsigned long)(unsigned char)len_lo;
+        if (segment_len < 2UL) {
+            break;
+        }
+        if (marker == 0xda) {
+            /* Skip the scan header, then walk entropy-coded bytes until EOI.
+               A literal 0xff in entropy data is stuffed as 0xff00, so 0xffd9
+               is unambiguous here. Progressive JPEGs may contain more marker
+               segments/scans; scanning through them remains safe and bounded
+               by EOF and the 10 MiB photo cap. */
+            if (!have_sof ||
+                fseek(f, (long)(segment_len - 2UL), SEEK_CUR) != 0) {
+                break;
+            }
+            for (;;) {
+                c = fgetc(f);
+                if (c == EOF) {
+                    break;
+                }
+                if (c != 0xff) {
+                    continue;
+                }
+                do {
+                    marker = fgetc(f);
+                } while (marker == 0xff);
+                if (marker == EOF) {
+                    break;
+                }
+                if (marker == 0xd9) {
+                    valid = 1;
+                    break;
+                }
+            }
+            break;
+        }
+        if (tg_mtproto_jpeg_sof_marker(marker)) {
+            int precision;
+            int h_hi;
+            int h_lo;
+            int w_hi;
+            int w_lo;
+            unsigned long width;
+            unsigned long height;
+
+            if (segment_len < 7UL) {
+                break;
+            }
+            precision = fgetc(f);
+            h_hi = fgetc(f);
+            h_lo = fgetc(f);
+            w_hi = fgetc(f);
+            w_lo = fgetc(f);
+            if (precision == EOF || h_hi == EOF || h_lo == EOF ||
+                w_hi == EOF || w_lo == EOF) {
+                break;
+            }
+            height = ((unsigned long)(unsigned char)h_hi << 8) |
+                     (unsigned long)(unsigned char)h_lo;
+            width = ((unsigned long)(unsigned char)w_hi << 8) |
+                    (unsigned long)(unsigned char)w_lo;
+            if (precision == 0 || width == 0UL || height == 0UL) {
+                break;
+            }
+            have_sof = 1;
+            if (fseek(f, (long)(segment_len - 7UL), SEEK_CUR) != 0) {
+                break;
+            }
+            continue;
+        }
+        if (fseek(f, (long)(segment_len - 2UL), SEEK_CUR) != 0) {
+            break;
+        }
+    }
+    (void)fseek(f, 0L, SEEK_SET);
+    return valid;
+}
+
 /* Open the file, size/limit checks, peer resolution, file_id. 0 = armed;
    != 0 = failed fast with the usual rc codes (1 generic, 2 too big, 3 file,
    5 empty). */
 static int tg_mtproto_upload_begin(const tg_mtproto_file_ctx *fc,
-                                   const char *path, FILE *stream)
+                                   const char *path, FILE *stream,
+                                   int as_photo)
 {
     unsigned char rnd[8];
     long file_size;
@@ -15475,6 +15642,7 @@ static int tg_mtproto_upload_begin(const tg_mtproto_file_ctx *fc,
         return 1;
     }
     memset(&tg_gui_ul, 0, sizeof(tg_gui_ul));
+    tg_gui_ul.requested_photo = as_photo != 0;
     tg_gui_ul.fc = *fc;
     for (n = 0UL; fc->peer_index[n] != '\0' &&
                   n + 1UL < sizeof(tg_gui_ul.peer_index_copy); ++n) {
@@ -15506,6 +15674,18 @@ static int tg_mtproto_upload_begin(const tg_mtproto_file_ctx *fc,
         return 2;
     }
     tg_gui_ul.big_file = (unsigned long)file_size > TG_GUI_UL_BIG_THRESHOLD;
+    if (tg_gui_ul.requested_photo) {
+        if (tg_gui_ul.big_file) {
+            tg_gui_ul.photo_fallback = 1;
+        } else if (!tg_mtproto_jpeg_file_valid(tg_gui_ul.f)) {
+            strcpy(tg_mtproto_query_fail, "not a valid JPEG");
+            fclose(tg_gui_ul.f);
+            tg_gui_ul.f = 0;
+            return 7;
+        } else {
+            tg_gui_ul.as_photo = 1;
+        }
+    }
     /* Bare filename: whatever follows the last '/' or ':' of the path.
        COPIED: the sendMedia goes out long after begin() returns and the
        caller's path buffer may be reused by then. */
@@ -15530,7 +15710,8 @@ static int tg_mtproto_upload_begin(const tg_mtproto_file_ctx *fc,
             tg_gui_ul.fc.peer_index, &tg_gui_ul.pc, &tg_gui_ul.ph,
             &tg_gui_ul.pl, &tg_gui_ul.ahh,
             &tg_gui_ul.ahl, &tg_gui_ul.hah, tg_gui_ul.quiet,
-            "mtproto sendMedia(document)") != 0) {
+            tg_gui_ul.as_photo ? "mtproto sendMedia(photo)"
+                               : "mtproto sendMedia(document)") != 0) {
         fclose(tg_gui_ul.f);
         tg_gui_ul.f = 0;
         tg_mtproto_close_quiet_stream(tg_gui_ul.quiet, stream);
@@ -15573,25 +15754,38 @@ static int tg_mtproto_upload_step(void)
     if (tg_gui_ul.part >= tg_gui_ul.parts) {
         /* Every part is up: attach them to the chat with the sendMedia. */
         unsigned long rand_hi, rand_lo;
+        tg_mtproto_tl_status build_status;
+        const char *query_name;
 
         tg_mtproto_saved_session_random(rnd, sizeof(rnd));
         rand_lo = tg_mtproto_read_u32_le(rnd);
         rand_hi = tg_mtproto_read_u32_le(rnd + 4U);
         tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
-        if ((tg_gui_ul.big_file
-                 ? tg_mtproto_build_messages_send_media_big_document(
-                       &writer, tg_gui_ul.pc, tg_gui_ul.ph, tg_gui_ul.pl,
-                       tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
-                       tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
-                       tg_gui_ul.parts, tg_gui_ul.name,
-                       "application/octet-stream", rand_hi, rand_lo)
-                 : tg_mtproto_build_messages_send_media_document(
-                       &writer, tg_gui_ul.pc, tg_gui_ul.ph, tg_gui_ul.pl,
-                       tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
-                       tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
-                       tg_gui_ul.parts, tg_gui_ul.name,
-                       "application/octet-stream", rand_hi, rand_lo)) !=
-            TG_MTPROTO_TL_OK) {
+        if (tg_gui_ul.as_photo) {
+            build_status = tg_mtproto_build_messages_send_media_photo(
+                &writer, tg_gui_ul.pc, tg_gui_ul.ph, tg_gui_ul.pl,
+                tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
+                tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
+                tg_gui_ul.parts, tg_gui_ul.name, rand_hi, rand_lo);
+            query_name = "mtproto sendMedia(photo)";
+        } else if (tg_gui_ul.big_file) {
+            build_status = tg_mtproto_build_messages_send_media_big_document(
+                &writer, tg_gui_ul.pc, tg_gui_ul.ph, tg_gui_ul.pl,
+                tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
+                tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
+                tg_gui_ul.parts, tg_gui_ul.name,
+                "application/octet-stream", rand_hi, rand_lo);
+            query_name = "mtproto sendMedia(document)";
+        } else {
+            build_status = tg_mtproto_build_messages_send_media_document(
+                &writer, tg_gui_ul.pc, tg_gui_ul.ph, tg_gui_ul.pl,
+                tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
+                tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
+                tg_gui_ul.parts, tg_gui_ul.name,
+                "application/octet-stream", rand_hi, rand_lo);
+            query_name = "mtproto sendMedia(document)";
+        }
+        if (build_status != TG_MTPROTO_TL_OK) {
             return 0; /* rc 1 */
         }
         memset(&result, 0, sizeof(result));
@@ -15600,7 +15794,7 @@ static int tg_mtproto_upload_step(void)
                 tg_gui_ul.fc.api_id, tg_gui_ul.fc.auth_file,
                 tg_gui_ul.fc.dc_id_text, tg_gui_ul.fc.context,
                 query, writer.length, &result, tg_gui_ul.quiet,
-                "mtproto sendMedia(document)", 600U) != 0 ||
+                query_name, 600U) != 0 ||
             result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
             return 0; /* rc 1 */
         }
@@ -15705,11 +15899,12 @@ static int tg_mtproto_upload_end(void)
 static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
                                 tg_gui_upload_progress_fn progress,
-                                void *progress_data)
+                                void *progress_data,
+                                int as_photo)
 {
     int brc;
 
-    brc = tg_mtproto_upload_begin(fc, path, stream);
+    brc = tg_mtproto_upload_begin(fc, path, stream, as_photo);
     if (brc != 0) {
         return brc;
     }
@@ -16608,7 +16803,20 @@ int tg_gui_session_send_document(const char *path, FILE *stream,
         return 1;
     }
     tg_gui_session_file_ctx(&fc);
-    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data);
+    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data, 0);
+}
+
+int tg_gui_session_send_photo(const char *path, FILE *stream,
+                              tg_gui_upload_progress_fn progress,
+                              void *progress_data)
+{
+    tg_mtproto_file_ctx fc;
+
+    if (!tg_gui_session_state.open) {
+        return 1;
+    }
+    tg_gui_session_file_ctx(&fc);
+    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data, 1);
 }
 
 /* --- 0.0.8 punto 1b: non-blocking transfer API for the GUI event loop. ----
@@ -16654,12 +16862,39 @@ int tg_gui_session_transfer_start_upload(const char *path, FILE *stream)
         return 1;
     }
     tg_gui_session_file_ctx(&fc);
-    rc = tg_mtproto_upload_begin(&fc, path, stream);
+    rc = tg_mtproto_upload_begin(&fc, path, stream, 0);
     if (rc != 0) {
         return rc;
     }
     tg_gui_transfer_dir = 2;
     return 0;
+}
+
+int tg_gui_session_transfer_start_photo(const char *path, FILE *stream)
+{
+    tg_mtproto_file_ctx fc;
+    int rc;
+
+    if (!tg_gui_session_state.open || tg_gui_transfer_dir != 0) {
+        return 1;
+    }
+    tg_gui_session_file_ctx(&fc);
+    rc = tg_mtproto_upload_begin(&fc, path, stream, 1);
+    if (rc != 0) {
+        return rc;
+    }
+    tg_gui_transfer_dir = 2;
+    return 0;
+}
+
+int tg_gui_session_transfer_requested_photo(void)
+{
+    return tg_gui_ul.requested_photo;
+}
+
+int tg_gui_session_transfer_photo_fallback(void)
+{
+    return tg_gui_ul.photo_fallback;
 }
 
 unsigned long tg_gui_session_transfer_bytes(void)

@@ -322,6 +322,7 @@ static int tg_gui_amiga_afa_text_compat(void)
 #define TG_MENU_CUT 10
 #define TG_MENU_RELOAD 11
 #define TG_MENU_DLDIR 12
+#define TG_MENU_SENDPHOTO 13
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -2229,6 +2230,8 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_RELOAD },
     { NM_ITEM,  (STRPTR)"Send file...", (STRPTR)"F", 0, 0,
       (APTR)TG_MENU_SENDFILE },
+    { NM_ITEM,  (STRPTR)"Send photo...", (STRPTR)"P", 0, 0,
+      (APTR)TG_MENU_SENDPHOTO },
     { NM_ITEM,  (STRPTR)"Download drawer...", 0, 0, 0,
       (APTR)TG_MENU_DLDIR },
     { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
@@ -2263,6 +2266,7 @@ static const char tg_gui_help_text[] =
     "Click msg    select it (A+C copies); double-click replies\n"
     "Del / A+R    remove the selected chat from the list\n"
     "A+F          send a file to the open chat\n"
+    "A+P          send a JPEG as a photo\n"
     "A+I          iconify to an AppIcon (double-click it to return)\n"
     "ESC          cancel\n"
     "Q            quit";
@@ -2350,6 +2354,20 @@ static int tg_gui_amiga_confirm_delete(struct Window *win)
     es.es_Title = (STRPTR)"Delete message";
     es.es_TextFormat = (STRPTR)"Delete this message for everyone?";
     es.es_GadgetFormat = (STRPTR)"Delete|Cancel";
+    return (int)tg_gui_amiga_easyreq_args(win, &es);
+}
+
+/* A JPEG dropped on the window is ambiguous: Telegram can preserve it as a
+   document or recompress it as a photo. First button is the default action. */
+static int tg_gui_amiga_choose_jpeg_mode(struct Window *win)
+{
+    struct EasyStruct es;
+
+    es.es_StructSize = (ULONG)sizeof(struct EasyStruct);
+    es.es_Flags = 0UL;
+    es.es_Title = (STRPTR)"Send JPEG";
+    es.es_TextFormat = (STRPTR)"Send this JPEG as a photo or as a file?";
+    es.es_GadgetFormat = (STRPTR)"Photo|File";
     return (int)tg_gui_amiga_easyreq_args(win, &es);
 }
 
@@ -2459,22 +2477,38 @@ static void tg_gui_window_transfer_finished(tg_gui_state *state,
                                             const char *saved)
 {
     char line[192];
+    int requested_photo;
+    int photo_fallback;
 
     if (saved == 0) {
         saved = "";
     }
+    requested_photo = dir == 2 &&
+                      tg_gui_session_transfer_requested_photo();
+    photo_fallback = requested_photo &&
+                     tg_gui_session_transfer_photo_fallback();
     if (dir == 2) {
         if (trc == 0) {
-            strcpy(line, "File sent");
+            if (photo_fallback) {
+                strcpy(line, "File sent (photo was over 10 MiB)");
+            } else if (requested_photo) {
+                strcpy(line, "Photo sent");
+            } else {
+                strcpy(line, "File sent");
+            }
         } else if (trc == 2) {
             sprintf(line, "File too big (%lu MiB limit on this build)",
                     tg_gui_session_upload_limit_mib());
         } else if (trc == 3) {
-            strcpy(line, "Could not read that file");
+            strcpy(line, requested_photo ? "Could not read that photo"
+                                         : "Could not read that file");
         } else if (trc == 5) {
             strcpy(line, "That file is empty (0 bytes)");
         } else if (trc == 6) {
-            strcpy(line, "Upload cancelled");
+            strcpy(line, requested_photo ? "Photo upload cancelled"
+                                         : "Upload cancelled");
+        } else if (trc == 7) {
+            strcpy(line, "That is not a valid JPEG");
         } else {
             const char *why = tg_gui_session_last_transfer_error();
 
@@ -2583,12 +2617,49 @@ static void tg_gui_window_pick_download_dir(tg_gui_state *state,
     }
 }
 
-/* "Send file...": ASL file requester -> non-blocking upload on the open chat.
+static int tg_gui_window_path_is_jpeg(const char *path)
+{
+    const char *dot;
+    const char *p;
+    char ext[6];
+    int n;
+
+    if (path == 0) {
+        return 0;
+    }
+    dot = 0;
+    for (p = path; *p != '\0'; ++p) {
+        if (*p == '/' || *p == ':') {
+            dot = 0;
+        } else if (*p == '.') {
+            dot = p;
+        }
+    }
+    if (dot == 0) {
+        return 0;
+    }
+    n = 0;
+    while (dot[n] != '\0' && n < 5) {
+        char c;
+
+        c = dot[n];
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c - 'A' + 'a');
+        }
+        ext[n++] = c;
+    }
+    ext[n] = '\0';
+    return strcmp(ext, ".jpg") == 0 || strcmp(ext, ".jpeg") == 0;
+}
+
+/* ASL file requester -> non-blocking upload on the open chat.
    The requester is synchronous and system-rendered (safe while we are the
    caller); the upload is only ARMED here -- the event loop pumps it one part
    per turn, so the window keeps living during the transfer (0.0.8 1b). */
-static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
-                                    tg_gui_backend *backend)
+static void tg_gui_window_send_file_mode(tg_gui_state *state,
+                                         struct Window *win,
+                                         tg_gui_backend *backend,
+                                         int as_photo)
 {
     struct FileRequester *req;
     char path[256];
@@ -2619,9 +2690,18 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
         return;
     }
 #endif
-    req = (struct FileRequester *)AllocAslRequestTags(
-        ASL_FileRequest, ASLFR_Window, (unsigned long)win, ASLFR_TitleText,
-        (unsigned long)"Send file to this chat", TAG_DONE);
+    if (as_photo) {
+        req = (struct FileRequester *)AllocAslRequestTags(
+            ASL_FileRequest, ASLFR_Window, (unsigned long)win,
+            ASLFR_TitleText, (unsigned long)"Send photo to this chat",
+            ASLFR_DoPatterns, TRUE, ASLFR_AcceptPattern,
+            (unsigned long)"#?.jp#?g", TAG_DONE);
+    } else {
+        req = (struct FileRequester *)AllocAslRequestTags(
+            ASL_FileRequest, ASLFR_Window, (unsigned long)win,
+            ASLFR_TitleText, (unsigned long)"Send file to this chat",
+            TAG_DONE);
+    }
     path[0] = '\0';
     if (req != 0 && AslRequestTags(req, TAG_DONE)) {
         unsigned long n = 0UL;
@@ -2654,7 +2734,8 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
     if (path[0] == '\0') {
         return; /* cancelled */
     }
-    rc = tg_gui_session_transfer_start_upload(path, stdout);
+    rc = as_photo ? tg_gui_session_transfer_start_photo(path, stdout)
+                  : tg_gui_session_transfer_start_upload(path, stdout);
     if (rc == 0) {
         const char *pn = path;
         const char *pp;
@@ -2672,9 +2753,27 @@ static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
         tg_gui_window_transfer_finished(state, backend, 2, rc, "");
         return;
     }
-    tg_gui_window_copy(state->status, sizeof(state->status),
-                       "Uploading... (ESC cancels)");
+    if (as_photo && tg_gui_session_transfer_photo_fallback()) {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           "Photo over 10 MiB; sending as file");
+    } else {
+        tg_gui_window_copy(state->status, sizeof(state->status),
+                           as_photo ? "Sending photo... (ESC cancels)"
+                                    : "Uploading... (ESC cancels)");
+    }
     tg_gui_window_paint(state, backend);
+}
+
+static void tg_gui_window_send_file(tg_gui_state *state, struct Window *win,
+                                    tg_gui_backend *backend)
+{
+    tg_gui_window_send_file_mode(state, win, backend, 0);
+}
+
+static void tg_gui_window_send_photo(tg_gui_state *state, struct Window *win,
+                                     tg_gui_backend *backend)
+{
+    tg_gui_window_send_file_mode(state, win, backend, 1);
 }
 
 static void tg_gui_window_remove_selected(tg_gui_state *state,
@@ -3811,6 +3910,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 case 'X': key_menu_action = (APTR)TG_MENU_CUT; break;
                 case 'R': key_menu_action = (APTR)TG_MENU_REMOVE; break;
                 case 'F': key_menu_action = (APTR)TG_MENU_SENDFILE; break;
+                case 'P': key_menu_action = (APTR)TG_MENU_SENDPHOTO; break;
                 case 'I': key_menu_action = (APTR)TG_MENU_ICONIFY; break;
                 case 'Q': key_menu_action = (APTR)TG_MENU_QUIT; break;
                 default: break; /* unknown shortcut: swallowed, never typed */
@@ -4422,6 +4522,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_SENDFILE) {
                             tg_gui_window_send_file(state, ctx.window,
                                                     &backend);
+                        } else if (ud == (APTR)TG_MENU_SENDPHOTO) {
+                            tg_gui_window_send_photo(state, ctx.window,
+                                                     &backend);
                         } else if (ud == (APTR)TG_MENU_COPY) {
                             /* Copy the highlighted message's text (issue #5).
                                Selection = the row the user last right-clicked
@@ -5650,6 +5753,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     tg_gui_window_paint(state, &backend);
                 } else {
                     int urc;
+                    int as_photo;
                     const char *dname = dropped;
                     const char *dp;
 
@@ -5662,8 +5766,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             dname = dp + 1;
                         }
                     }
-                    urc = tg_gui_session_transfer_start_upload(dropped,
-                                                               stdout);
+                    as_photo = tg_gui_window_path_is_jpeg(dropped) &&
+                               tg_gui_amiga_choose_jpeg_mode(ctx.window);
+                    urc = as_photo
+                        ? tg_gui_session_transfer_start_photo(dropped, stdout)
+                        : tg_gui_session_transfer_start_upload(dropped, stdout);
                     if (urc == 0) {
                         /* The progress line below carries the name for the
                            whole transfer -- a one-off "Sending X..." here
@@ -5671,9 +5778,17 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                            millisecond later, so the drop still looked
                            ignored (field report). */
                         tg_gui_window_set_transfer_name(dname);
-                        tg_gui_window_copy(
-                            state->status, sizeof(state->status),
-                            "Sending... (ESC cancels)");
+                        if (as_photo &&
+                            tg_gui_session_transfer_photo_fallback()) {
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                "Photo over 10 MiB; sending as file");
+                        } else {
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                as_photo ? "Sending photo... (ESC cancels)"
+                                         : "Sending... (ESC cancels)");
+                        }
                         tg_gui_window_paint(state, &backend);
                     } else {
                         /* Same final lines the picker path shows on a
