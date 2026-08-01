@@ -29,6 +29,9 @@ unless noted.
   JPEG decode, modern RTG targets use optional RGB888 output, paletted screens
   use ordered dithering, and larger bounded thumbnails improve detail without
   making repaints depend on image size.
+- Inline JPEG decoding now advances in bounded idle slices outside the paint
+  path. Completed bands appear progressively from top to bottom, while input,
+  scrolling and resize events always take priority over image work.
 - Hidden chats now remain in the local peer cache. They stay out of the normal
   sidebar, appear immediately in local search with a `(hidden)` marker, and
   return to the sidebar when opened, without an online search or cache reload.

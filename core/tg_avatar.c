@@ -201,97 +201,259 @@ int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
     return 0;
 }
 
+typedef struct tg_image_jpeg_io {
+    const unsigned char *data;
+    unsigned long size;
+    unsigned long pos;
+    unsigned char *dst_rgb;
+    unsigned int sw;
+    unsigned int sh;
+    unsigned int dw;
+    unsigned int dh;
+    int ready_rows;
+} tg_image_jpeg_io;
+
+struct tg_image_jpeg_decoder {
+    JDEC jd;
+    tg_image_jpeg_io io;
+    unsigned char *work;
+    int failed;
+};
+
+static size_t tg_image_jpeg_in(JDEC *jd, uint8_t *buf, size_t len)
+{
+    tg_image_jpeg_io *io;
+
+    io = (tg_image_jpeg_io *)jd->device;
+    if (io->pos + len > io->size) {
+        len = (size_t)(io->size - io->pos);
+    }
+    if (buf != 0 && len > 0U) {
+        memcpy(buf, io->data + io->pos, len);
+    }
+    io->pos += (unsigned long)len;
+    return len;
+}
+
+static unsigned int tg_image_scale_ceil(unsigned int value,
+                                        unsigned int dst,
+                                        unsigned int src)
+{
+    return (unsigned int)(((unsigned long)value * (unsigned long)dst +
+                           (unsigned long)src - 1UL) /
+                          (unsigned long)src);
+}
+
+/* Scale each completed tjpgd MCU directly into the canonical destination.
+   There is no full-size source frame: every destination pixel belongs to one
+   MCU rectangle, so the callbacks fill disjoint regions from top to bottom. */
+static int tg_image_jpeg_out(JDEC *jd, void *bitmap, JRECT *rect)
+{
+    tg_image_jpeg_io *io;
+    const unsigned char *src;
+    unsigned int rw;
+    unsigned int dx0;
+    unsigned int dx1;
+    unsigned int dy0;
+    unsigned int dy1;
+    unsigned int dx;
+    unsigned int dy;
+
+    io = (tg_image_jpeg_io *)jd->device;
+    src = (const unsigned char *)bitmap;
+    rw = (unsigned int)rect->right - (unsigned int)rect->left + 1U;
+    dx0 = tg_image_scale_ceil((unsigned int)rect->left, io->dw, io->sw);
+    dx1 = tg_image_scale_ceil((unsigned int)rect->right + 1U, io->dw, io->sw);
+    dy0 = tg_image_scale_ceil((unsigned int)rect->top, io->dh, io->sh);
+    dy1 = tg_image_scale_ceil((unsigned int)rect->bottom + 1U, io->dh, io->sh);
+    if (dx1 > io->dw) {
+        dx1 = io->dw;
+    }
+    if (dy1 > io->dh) {
+        dy1 = io->dh;
+    }
+    for (dy = dy0; dy < dy1; ++dy) {
+        unsigned int sy;
+
+        sy = (unsigned int)(((unsigned long)dy * io->sh) / io->dh);
+        for (dx = dx0; dx < dx1; ++dx) {
+            unsigned int sx;
+            const unsigned char *s;
+            unsigned char *d;
+
+            sx = (unsigned int)(((unsigned long)dx * io->sw) / io->dw);
+            s = src + ((((unsigned long)sy - rect->top) * rw +
+                        ((unsigned long)sx - rect->left)) * 3UL);
+            d = io->dst_rgb +
+                ((((unsigned long)dy * io->dw) + dx) * 3UL);
+            d[0] = s[0];
+            d[1] = s[1];
+            d[2] = s[2];
+        }
+    }
+    if ((unsigned int)rect->right + 1U >= io->sw &&
+        (int)dy1 > io->ready_rows) {
+        io->ready_rows = (int)dy1;
+    }
+    return 1;
+}
+
+tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
+    const unsigned char *jpeg, unsigned long jpeg_len,
+    unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
+    int *decode_rc)
+{
+    tg_image_jpeg_decoder *decoder;
+    JRESULT jr;
+    unsigned int scale;
+    unsigned int sw;
+    unsigned int sh;
+
+    if (decode_rc != 0) {
+        *decode_rc = (int)JDR_PAR;
+    }
+    if (jpeg == 0 || jpeg_len == 0UL || dst_rgb == 0 || dw <= 0 || dh <= 0 ||
+        source_edge_cap <= 0 || source_edge_cap > 1024) {
+        return 0;
+    }
+    decoder = (tg_image_jpeg_decoder *)calloc(1, sizeof(*decoder));
+    if (decoder == 0) {
+        if (decode_rc != 0) {
+            *decode_rc = (int)JDR_MEM1;
+        }
+        return 0;
+    }
+    decoder->work = (unsigned char *)malloc(4012U);
+    if (decoder->work == 0) {
+        free(decoder);
+        if (decode_rc != 0) {
+            *decode_rc = (int)JDR_MEM1;
+        }
+        return 0;
+    }
+    decoder->io.data = jpeg;
+    decoder->io.size = jpeg_len;
+    decoder->io.dst_rgb = dst_rgb;
+    decoder->io.dw = (unsigned int)dw;
+    decoder->io.dh = (unsigned int)dh;
+    jr = jd_prepare(&decoder->jd, tg_image_jpeg_in, decoder->work, 4012U,
+                    &decoder->io);
+    if (jr != JDR_OK) {
+        tg_image_jpeg_decoder_destroy(decoder);
+        if (decode_rc != 0) {
+            *decode_rc = (int)jr;
+        }
+        return 0;
+    }
+    sw = sh = 0U;
+    for (scale = 0U; scale <= 3U; ++scale) {
+        unsigned int div;
+        unsigned int cap_w;
+        unsigned int cap_h;
+
+        div = 1U << scale;
+        cap_w = ((unsigned int)decoder->jd.width + div - 1U) / div;
+        cap_h = ((unsigned int)decoder->jd.height + div - 1U) / div;
+        if (cap_w > 0U && cap_h > 0U &&
+            cap_w <= (unsigned int)source_edge_cap &&
+            cap_h <= (unsigned int)source_edge_cap) {
+            sw = (unsigned int)decoder->jd.width >> scale;
+            sh = (unsigned int)decoder->jd.height >> scale;
+            break;
+        }
+    }
+    if (scale > 3U || sw == 0U || sh == 0U) {
+        tg_image_jpeg_decoder_destroy(decoder);
+        if (decode_rc != 0) {
+            *decode_rc = (int)JDR_PAR;
+        }
+        return 0;
+    }
+    decoder->io.sw = sw;
+    decoder->io.sh = sh;
+    jr = jd_decomp_begin(&decoder->jd, (uint8_t)scale);
+    if (jr != JDR_OK) {
+        tg_image_jpeg_decoder_destroy(decoder);
+        if (decode_rc != 0) {
+            *decode_rc = (int)jr;
+        }
+        return 0;
+    }
+    if (decode_rc != 0) {
+        *decode_rc = (int)JDR_OK;
+    }
+    return decoder;
+}
+
+int tg_image_jpeg_decoder_step(tg_image_jpeg_decoder *decoder,
+                               unsigned int max_mcus,
+                               int *ready_rows,
+                               int *decode_rc)
+{
+    JRESULT jr;
+    int done;
+
+    if (ready_rows != 0) {
+        *ready_rows = decoder != 0 ? decoder->io.ready_rows : 0;
+    }
+    if (decode_rc != 0) {
+        *decode_rc = (int)JDR_PAR;
+    }
+    if (decoder == 0 || max_mcus == 0U || decoder->failed) {
+        return -1;
+    }
+    done = 0;
+    jr = jd_decomp_step(&decoder->jd, tg_image_jpeg_out, max_mcus, &done);
+    if (jr != JDR_OK) {
+        decoder->failed = 1;
+        if (decode_rc != 0) {
+            *decode_rc = (int)jr;
+        }
+        return -1;
+    }
+    if (done) {
+        decoder->io.ready_rows = (int)decoder->io.dh;
+    }
+    if (ready_rows != 0) {
+        *ready_rows = decoder->io.ready_rows;
+    }
+    if (decode_rc != 0) {
+        *decode_rc = (int)JDR_OK;
+    }
+    return done ? 1 : 0;
+}
+
+void tg_image_jpeg_decoder_destroy(tg_image_jpeg_decoder *decoder)
+{
+    if (decoder == 0) {
+        return;
+    }
+    free(decoder->work);
+    free(decoder);
+}
+
 int tg_image_decode_jpeg_scaled(const unsigned char *jpeg,
                                 unsigned long jpeg_len,
                                 unsigned char *dst_rgb,
                                 int dw, int dh,
                                 int source_edge_cap)
 {
-    tg_avatar_io io;
-    JDEC jd;
-    unsigned char *work;
-    unsigned char *src_rgb;
-    unsigned int scale;
-    unsigned int sw;
-    unsigned int sh;
-    unsigned long pixels;
-    int x;
-    int y;
-    int rc;
+    tg_image_jpeg_decoder *decoder;
+    int ready_rows;
+    int decode_rc;
+    int step;
 
-    if (jpeg == 0 || jpeg_len == 0UL || dst_rgb == 0 || dw <= 0 || dh <= 0 ||
-        source_edge_cap <= 0 || source_edge_cap > 1024) {
+    decoder = tg_image_jpeg_decoder_begin(jpeg, jpeg_len, dst_rgb, dw, dh,
+                                          source_edge_cap, &decode_rc);
+    if (decoder == 0) {
         return 1;
     }
-    work = (unsigned char *)malloc(4012U);
-    if (work == 0) {
-        return 1;
-    }
-    memset(&io, 0, sizeof(io));
-    io.data = jpeg;
-    io.size = jpeg_len;
-    if (jd_prepare(&jd, tg_avatar_in, work, 4012U, &io) != JDR_OK) {
-        free(work);
-        return 1;
-    }
-    for (scale = 0U; scale <= 3U; ++scale) {
-        unsigned int div;
-
-        /* TJpgDec rounds the right/bottom MCU edge up after scaling. Match
-           that extent so odd JPEG dimensions retain their final row/column. */
-        div = 1U << scale;
-        sw = ((unsigned int)jd.width + div - 1U) / div;
-        sh = ((unsigned int)jd.height + div - 1U) / div;
-        if (sw > 0U && sh > 0U && sw <= (unsigned int)source_edge_cap &&
-            sh <= (unsigned int)source_edge_cap) {
-            break;
-        }
-    }
-    if (scale > 3U) {
-        free(work);
-        return 1;
-    }
-    pixels = (unsigned long)sw * (unsigned long)sh;
-    if (pixels == 0UL || pixels > 1048576UL) {
-        free(work);
-        return 1;
-    }
-    src_rgb = (unsigned char *)malloc((size_t)(pixels * 3UL));
-    if (src_rgb == 0) {
-        free(work);
-        return 1;
-    }
-    memset(src_rgb, 0, (size_t)(pixels * 3UL));
-    io.rgb = src_rgb;
-    io.w = sw;
-    io.h = sh;
-    io.stride = sw;
-    rc = 1;
-    if (jd_decomp(&jd, tg_avatar_out, (uint8_t)scale) == JDR_OK) {
-        for (y = 0; y < dh; ++y) {
-            unsigned long sy;
-
-            sy = ((unsigned long)y * sh) / (unsigned long)dh;
-            for (x = 0; x < dw; ++x) {
-                unsigned long sx;
-                const unsigned char *s;
-                unsigned char *d;
-
-                sx = ((unsigned long)x * sw) / (unsigned long)dw;
-                s = src_rgb + ((sy * sw + sx) * 3UL);
-                d = dst_rgb +
-                    ((((unsigned long)y * (unsigned long)dw) +
-                      (unsigned long)x) * 3UL);
-                d[0] = s[0];
-                d[1] = s[1];
-                d[2] = s[2];
-            }
-        }
-        rc = 0;
-    }
-    free(src_rgb);
-    free(work);
-    return rc;
+    do {
+        step = tg_image_jpeg_decoder_step(decoder, ~0U, &ready_rows,
+                                          &decode_rc);
+    } while (step == 0);
+    tg_image_jpeg_decoder_destroy(decoder);
+    return step == 1 ? 0 : 1;
 }
 
 int tg_image_canonical_size(unsigned long source_w,
@@ -375,6 +537,7 @@ int tg_avatar_decode_stripped(const unsigned char *stripped,
 
 int tg_avatar_self_test(void)
 {
+#include "tg_photo_test_fixture.inc"
     static const unsigned char photo_jpeg[] = {
         0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
         0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43,
@@ -464,6 +627,50 @@ int tg_avatar_self_test(void)
         if (dithered[0] != 29U || dithered[1] != 156U ||
             dithered[2] != 255U) {
             puts("avatar self-test: ordered photo dither clamp failed");
+            return 2;
+        }
+    }
+    {
+        static unsigned char progressive[32 * 32 * 3];
+        static unsigned char complete[32 * 32 * 3];
+        tg_image_jpeg_decoder *decoder;
+        int ready_rows;
+        int previous_rows;
+        int decode_rc;
+        int step_rc;
+        int steps;
+        int saw_partial;
+
+        memset(progressive, 0, sizeof(progressive));
+        decoder = tg_image_jpeg_decoder_begin(
+            tg_progress_jpeg, sizeof(tg_progress_jpeg), progressive,
+            32, 32, 64, &decode_rc);
+        if (decoder == 0) {
+            puts("avatar self-test: progressive JPEG begin failed");
+            return 2;
+        }
+        ready_rows = previous_rows = steps = saw_partial = 0;
+        do {
+            step_rc = tg_image_jpeg_decoder_step(
+                decoder, 1U, &ready_rows, &decode_rc);
+            ++steps;
+            if (ready_rows < previous_rows || ready_rows > 32 || steps > 64) {
+                tg_image_jpeg_decoder_destroy(decoder);
+                puts("avatar self-test: progressive JPEG state mismatch");
+                return 2;
+            }
+            if (ready_rows > 0 && ready_rows < 32) {
+                saw_partial = 1;
+            }
+            previous_rows = ready_rows;
+        } while (step_rc == 0);
+        tg_image_jpeg_decoder_destroy(decoder);
+        if (step_rc != 1 || ready_rows != 32 || !saw_partial || steps <= 1 ||
+            tg_image_decode_jpeg_scaled(
+                tg_progress_jpeg, sizeof(tg_progress_jpeg), complete,
+                32, 32, 64) != 0 ||
+            memcmp(progressive, complete, sizeof(progressive)) != 0) {
+            puts("avatar self-test: progressive JPEG result mismatch");
             return 2;
         }
     }
