@@ -472,6 +472,42 @@ aminet_meta() {
 # The Aminet .readme: machine-readable header (Short/Uploader/Author/Type/
 # Version/Architecture/Requires) FIRST, blank line, then the body. LF-only (the
 # heredoc emits LF), lines <= 78 cols, version ONLY here (never in the filename).
+# Plain-text rendering of THIS release's CHANGELOG section, for the Aminet
+# readme (readers there expect the changes in the readme itself, not only
+# inside the archive). Markdown in, 78-column plain text out: "### Added"
+# becomes a heading, bullets keep their dash, `code` loses its backticks,
+# and paragraphs are re-wrapped so no line breaks the Aminet limit.
+changelog_section_text() {
+    awk -v ver="$VERSION" '
+        $0 ~ "^## \\[" ver "\\]" { inside = 1; next }
+        inside && /^## \[/          { exit }
+        inside                       { print }
+    ' "$ROOT_DIR/CHANGELOG.md" | sed 's/`//g' | awk '
+        function flush(  n, w, i, line, first) {
+            if (buf == "") return
+            n = split(buf, w, " ")
+            line = indent w[1]        # first line keeps the bullet
+            first = 0
+            for (i = 2; i <= n; ++i) {
+                if (length(line) + 1 + length(w[i]) > 78) {
+                    print line
+                    line = cont w[i]  # wrapped lines are indented, not bulleted
+                } else {
+                    line = line " " w[i]
+                }
+            }
+            print line
+            buf = ""
+        }
+        /^### / { flush(); sub(/^### /, ""); print ""; print toupper($0); next }
+        /^- /   { flush(); indent = "- "; cont = "  "; buf = substr($0, 3); next }
+        /^  /   { buf = buf " " substr($0, 3); next }
+        /^$/    { flush(); indent = ""; cont = ""; next }
+                { flush(); indent = ""; cont = ""; buf = $0 }
+        END     { flush() }
+    '
+}
+
 write_aminet_readme() {
     out=$1; archval=$2; requires=$3; replaces=$4
     cat > "$out" <<EOF
@@ -535,6 +571,10 @@ The login is stored in telegram-auth.bin next to the program. Treat that
 file like a house key: NEVER copy it around or share it -- anyone who has
 it has your Telegram session. Full EN and IT manuals are in the archive,
 including per-platform notes and troubleshooting.
+
+WHAT IS NEW IN $VERSION
+$(printf '%*s' $((15 + ${#VERSION})) '' | tr ' ' '-')
+$(changelog_section_text)
 
 A COMMUNITY PROJECT
 -------------------
