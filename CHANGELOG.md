@@ -32,6 +32,9 @@ unless noted.
 - Inline JPEG decoding now advances in bounded idle slices outside the paint
   path. Completed bands appear progressively from top to bottom, while input,
   scrolling and resize events always take priority over image work.
+- The AfA_OS compatibility renderer now composes complete bitmap-font runs in
+  memory and submits one `BltTemplate` per run instead of one per glyph. Native
+  text rendering on systems without AfA_OS is unchanged.
 - Hidden chats now remain in the local peer cache. They stay out of the normal
   sidebar, appear immediately in local search with a `(hidden)` marker, and
   return to the sidebar when opened, without an online search or cache reload.

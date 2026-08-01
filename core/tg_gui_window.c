@@ -1459,36 +1459,143 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
     return 1;
 }
 
-/* Render a bitmap font without graphics.library Text(). This is kept narrowly
-   behind bitmap_text_compat: normal systems retain their native Text() path,
-   including colour-font support. */
-static void tg_gui_amiga_blt_text(struct RastPort *rp, int x, int baseline,
-                                  const char *text, unsigned long length)
+/* Render bitmap-font text without AfA's layerless Text() path. The old
+   workaround issued one BltTemplate per glyph (and per row for italic), which
+   made a full RTG repaint disproportionately expensive. Compose a whole run in
+   a reusable 1-bit template, then submit it in one blit. */
+#define TG_GUI_AFA_TEMPLATE_BYTES 16384U
+#define TG_GUI_AFA_RUN_CHARS 512UL
+static UWORD tg_gui_afa_template[TG_GUI_AFA_TEMPLATE_BYTES / sizeof(UWORD)];
+static unsigned long tg_gui_afa_template_blits;
+static unsigned long tg_gui_afa_template_chars;
+
+static int tg_gui_amiga_char_advance(const struct TextFont *font,
+                                     const struct RastPort *rp,
+                                     unsigned long index)
+{
+    int advance;
+
+    if (font->tf_CharSpace != 0) {
+        advance = (int)((WORD *)font->tf_CharSpace)[index];
+    } else {
+        advance = (int)font->tf_XSize;
+    }
+    return advance + (int)rp->TxSpacing;
+}
+
+static void tg_gui_amiga_italic_bounds(const struct TextFont *font,
+                                       ULONG style,
+                                       int *out_min, int *out_max)
+{
+    int row;
+    int check;
+    int shift;
+    int min_shift;
+    int max_shift;
+
+    min_shift = max_shift = 0;
+    if ((style & FSF_ITALIC) != 0) {
+        check = (int)font->tf_Baseline;
+        shift = check / 2;
+        min_shift = max_shift = shift;
+        for (row = 0; row < (int)font->tf_YSize; ++row) {
+            if (shift < min_shift) {
+                min_shift = shift;
+            }
+            if (shift > max_shift) {
+                max_shift = shift;
+            }
+            --check;
+            if ((check & 1) != 0) {
+                --shift;
+            }
+        }
+    }
+    *out_min = min_shift;
+    *out_max = max_shift;
+}
+
+static int tg_gui_amiga_blt_text_run(struct RastPort *rp, int x,
+                                     int baseline, const char *text,
+                                     unsigned long length,
+                                     int *out_advance)
 {
     struct TextFont *font;
     unsigned long i;
     int cursor;
+    int min_x;
+    int max_x;
+    int italic_min;
+    int italic_max;
+    int bold_max;
+    int width;
+    int row_bytes;
+    unsigned long template_bytes;
+    UBYTE *template_data;
 
-    if (rp == 0 || text == 0 || length == 0UL) {
-        return;
-    }
     font = rp->Font;
-    if (font == 0 || font->tf_CharData == 0 || font->tf_CharLoc == 0) {
-        return;
+    if (font == 0 || font->tf_CharData == 0 || font->tf_CharLoc == 0 ||
+        font->tf_YSize == 0 || length == 0UL) {
+        return 0;
     }
-    cursor = x;
+    tg_gui_amiga_italic_bounds(font, rp->AlgoStyle,
+                               &italic_min, &italic_max);
+    bold_max = ((rp->AlgoStyle & FSF_BOLD) != 0)
+                   ? (int)font->tf_BoldSmear : 0;
+    cursor = 0;
+    min_x = 0;
+    max_x = 0;
     for (i = 0UL; i < length; ++i) {
-        unsigned int c;
+        unsigned long index;
+        ULONG charloc;
+        int glyph_x;
+        int glyph_width;
+        int left;
+        int right;
+
+        index = tg_gui_amiga_font_char_index(
+            font, (unsigned int)(unsigned char)text[i]);
+        charloc = ((ULONG *)font->tf_CharLoc)[index];
+        glyph_width = (int)(UWORD)(charloc & 0xffffUL);
+        glyph_x = cursor;
+        if (font->tf_CharKern != 0) {
+            glyph_x += (int)((WORD *)font->tf_CharKern)[index];
+        }
+        left = glyph_x + italic_min;
+        right = glyph_x + glyph_width + italic_max + bold_max;
+        if (left < min_x) {
+            min_x = left;
+        }
+        if (right > max_x) {
+            max_x = right;
+        }
+        cursor += tg_gui_amiga_char_advance(font, rp, index);
+        if (cursor > max_x) {
+            max_x = cursor;
+        }
+    }
+    width = max_x - min_x;
+    row_bytes = ((width + 15) / 16) * 2;
+    template_bytes = (unsigned long)row_bytes * (unsigned long)font->tf_YSize;
+    if (width <= 0 || row_bytes <= 0 ||
+        template_bytes > TG_GUI_AFA_TEMPLATE_BYTES) {
+        return 0;
+    }
+    template_data = (UBYTE *)tg_gui_afa_template;
+    memset(template_data, 0, (size_t)template_bytes);
+    cursor = 0;
+    for (i = 0UL; i < length; ++i) {
         unsigned long index;
         ULONG charloc;
         UWORD glyph_pos;
         UWORD glyph_width;
         int glyph_x;
-        int bold_pass;
-        int bold_passes;
+        int row;
+        int italic_check;
+        int italic_shift;
 
-        c = (unsigned int)(unsigned char)text[i];
-        index = tg_gui_amiga_font_char_index(font, c);
+        index = tg_gui_amiga_font_char_index(
+            font, (unsigned int)(unsigned char)text[i]);
         charloc = ((ULONG *)font->tf_CharLoc)[index];
         glyph_pos = (UWORD)(charloc >> 16);
         glyph_width = (UWORD)(charloc & 0xffffUL);
@@ -1496,47 +1603,158 @@ static void tg_gui_amiga_blt_text(struct RastPort *rp, int x, int baseline,
         if (font->tf_CharKern != 0) {
             glyph_x += (int)((WORD *)font->tf_CharKern)[index];
         }
-        bold_passes = ((rp->AlgoStyle & FSF_BOLD) != 0) ? 2 : 1;
-        for (bold_pass = 0; bold_pass < bold_passes; ++bold_pass) {
-            int bold_x;
+        italic_check = (int)font->tf_Baseline;
+        italic_shift = ((rp->AlgoStyle & FSF_ITALIC) != 0)
+                           ? italic_check / 2 : 0;
+        for (row = 0; row < (int)font->tf_YSize; ++row) {
+            UBYTE *dst_row;
+            const UBYTE *src_row;
+            int col;
 
-            bold_x = bold_pass ? (int)font->tf_BoldSmear : 0;
-            if ((rp->AlgoStyle & FSF_ITALIC) != 0) {
-                int row;
-                int italic_check;
-                int italic_shift;
+            dst_row = template_data + (unsigned long)row * row_bytes;
+            src_row = (const UBYTE *)font->tf_CharData +
+                      (unsigned long)row * font->tf_Modulo;
+            for (col = 0; col < (int)glyph_width; ++col) {
+                unsigned int source_bit;
 
-                italic_check = (int)font->tf_Baseline;
-                italic_shift = italic_check / 2;
-                for (row = 0; row < (int)font->tf_YSize; ++row) {
-                    BltTemplate(
-                        (PLANEPTR)((UBYTE *)font->tf_CharData +
-                                   ((unsigned long)row * font->tf_Modulo) +
-                                   (glyph_pos >> 3)),
-                        (LONG)(glyph_pos & 7U), (LONG)font->tf_Modulo, rp,
-                        (LONG)(glyph_x + bold_x + italic_shift),
-                        (LONG)(baseline - (int)font->tf_Baseline + row),
-                        (LONG)glyph_width, 1L);
-                    --italic_check;
-                    if ((italic_check & 1) != 0) {
-                        --italic_shift;
+                source_bit = (unsigned int)glyph_pos + (unsigned int)col;
+                if ((src_row[source_bit >> 3] &
+                     (UBYTE)(0x80U >> (source_bit & 7U))) != 0) {
+                    int passes;
+                    int pass;
+
+                    passes = ((rp->AlgoStyle & FSF_BOLD) != 0) ? 2 : 1;
+                    for (pass = 0; pass < passes; ++pass) {
+                        int dx;
+
+                        dx = glyph_x + col + italic_shift - min_x;
+                        if (pass != 0) {
+                            dx += (int)font->tf_BoldSmear;
+                        }
+                        if (dx >= 0 && dx < width) {
+                            dst_row[dx >> 3] |=
+                                (UBYTE)(0x80U >> ((unsigned int)dx & 7U));
+                        }
                     }
                 }
-            } else {
-                BltTemplate((PLANEPTR)((UBYTE *)font->tf_CharData +
-                                       (glyph_pos >> 3)),
-                            (LONG)(glyph_pos & 7U), (LONG)font->tf_Modulo, rp,
-                            (LONG)(glyph_x + bold_x),
-                            (LONG)(baseline - (int)font->tf_Baseline),
-                            (LONG)glyph_width, (LONG)font->tf_YSize);
+            }
+            if ((rp->AlgoStyle & FSF_ITALIC) != 0) {
+                --italic_check;
+                if ((italic_check & 1) != 0) {
+                    --italic_shift;
+                }
             }
         }
-        if (font->tf_CharSpace != 0) {
-            cursor += (int)((WORD *)font->tf_CharSpace)[index];
+        cursor += tg_gui_amiga_char_advance(font, rp, index);
+    }
+    BltTemplate((PLANEPTR)template_data, 0L, (LONG)row_bytes, rp,
+                (LONG)(x + min_x),
+                (LONG)(baseline - (int)font->tf_Baseline),
+                (LONG)width, (LONG)font->tf_YSize);
+    ++tg_gui_afa_template_blits;
+    tg_gui_afa_template_chars += length;
+    *out_advance = cursor;
+    return 1;
+}
+
+/* A single-glyph fallback for an unusually large font/run that cannot fit the
+   bounded scratch template. Normal UI fonts never take this path. */
+static int tg_gui_amiga_blt_text_glyph(struct RastPort *rp, int x,
+                                       int baseline, unsigned char c)
+{
+    struct TextFont *font;
+    unsigned long index;
+    ULONG charloc;
+    UWORD glyph_pos;
+    UWORD glyph_width;
+    int glyph_x;
+    int bold_pass;
+    int bold_passes;
+
+    font = rp->Font;
+    index = tg_gui_amiga_font_char_index(font, (unsigned int)c);
+    charloc = ((ULONG *)font->tf_CharLoc)[index];
+    glyph_pos = (UWORD)(charloc >> 16);
+    glyph_width = (UWORD)(charloc & 0xffffUL);
+    glyph_x = x;
+    if (font->tf_CharKern != 0) {
+        glyph_x += (int)((WORD *)font->tf_CharKern)[index];
+    }
+    bold_passes = ((rp->AlgoStyle & FSF_BOLD) != 0) ? 2 : 1;
+    for (bold_pass = 0; bold_pass < bold_passes; ++bold_pass) {
+        int bold_x;
+
+        bold_x = bold_pass ? (int)font->tf_BoldSmear : 0;
+        if ((rp->AlgoStyle & FSF_ITALIC) != 0) {
+            int row;
+            int italic_check;
+            int italic_shift;
+
+            italic_check = (int)font->tf_Baseline;
+            italic_shift = italic_check / 2;
+            for (row = 0; row < (int)font->tf_YSize; ++row) {
+                BltTemplate(
+                    (PLANEPTR)((UBYTE *)font->tf_CharData +
+                               ((unsigned long)row * font->tf_Modulo) +
+                               (glyph_pos >> 3)),
+                    (LONG)(glyph_pos & 7U), (LONG)font->tf_Modulo, rp,
+                    (LONG)(glyph_x + bold_x + italic_shift),
+                    (LONG)(baseline - (int)font->tf_Baseline + row),
+                    (LONG)glyph_width, 1L);
+                ++tg_gui_afa_template_blits;
+                --italic_check;
+                if ((italic_check & 1) != 0) {
+                    --italic_shift;
+                }
+            }
         } else {
-            cursor += (int)font->tf_XSize;
+            BltTemplate((PLANEPTR)((UBYTE *)font->tf_CharData +
+                                   (glyph_pos >> 3)),
+                        (LONG)(glyph_pos & 7U), (LONG)font->tf_Modulo, rp,
+                        (LONG)(glyph_x + bold_x),
+                        (LONG)(baseline - (int)font->tf_Baseline),
+                        (LONG)glyph_width, (LONG)font->tf_YSize);
+            ++tg_gui_afa_template_blits;
         }
-        cursor += (int)rp->TxSpacing;
+    }
+    ++tg_gui_afa_template_chars;
+    return tg_gui_amiga_char_advance(font, rp, index);
+}
+
+static void tg_gui_amiga_blt_text(struct RastPort *rp, int x, int baseline,
+                                  const char *text, unsigned long length)
+{
+    unsigned long pos;
+    int cursor;
+
+    if (rp == 0 || text == 0 || length == 0UL || rp->Font == 0 ||
+        rp->Font->tf_CharData == 0 || rp->Font->tf_CharLoc == 0) {
+        return;
+    }
+    pos = 0UL;
+    cursor = x;
+    while (pos < length) {
+        unsigned long chunk;
+        int advance;
+
+        chunk = length - pos;
+        if (chunk > TG_GUI_AFA_RUN_CHARS) {
+            chunk = TG_GUI_AFA_RUN_CHARS;
+        }
+        advance = 0;
+        while (chunk > 1UL &&
+               !tg_gui_amiga_blt_text_run(rp, cursor, baseline,
+                                           text + pos, chunk, &advance)) {
+            chunk /= 2UL;
+        }
+        if (chunk == 1UL &&
+            !tg_gui_amiga_blt_text_run(rp, cursor, baseline,
+                                        text + pos, 1UL, &advance)) {
+            advance = tg_gui_amiga_blt_text_glyph(
+                rp, cursor, baseline, (unsigned char)text[pos]);
+        }
+        cursor += advance;
+        pos += chunk;
     }
     if ((rp->AlgoStyle & FSF_UNDERLINED) != 0 && cursor > x) {
         RectFill(rp, (LONG)x, (LONG)(baseline + 1), (LONG)(cursor - 1),
@@ -1838,6 +2056,10 @@ static void tg_gui_window_paint(const tg_gui_state *state,
             /* First buffered render only: one line per primitive, so a crash
                inside a graphics call names it. No lock is held here. */
             tg_gui_prim_trail = 1;
+            if (c->bitmap_text_compat) {
+                tg_gui_afa_template_blits = 0UL;
+                tg_gui_afa_template_chars = 0UL;
+            }
         }
         c->rport = &c->buf_rp;
         c->origin_x = 0;
@@ -1847,6 +2069,15 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         c->rport = saved_rport;
         c->origin_x = saved_ox;
         c->origin_y = saved_oy;
+
+        if (!first_logged && c->bitmap_text_compat &&
+            tg_gui_log_is_enabled()) {
+            char line[96];
+
+            sprintf(line, "paint1: afa templates %lu for %lu chars",
+                    tg_gui_afa_template_blits, tg_gui_afa_template_chars);
+            tg_gui_log(line);
+        }
 
         if (!first_logged) {
             tg_gui_log("paint1: blit start");
@@ -1963,11 +2194,11 @@ static void tg_gui_window_paint_caret(const tg_gui_state *state,
     }
 }
 
-/* AfA's glyph fallback is intentionally conservative but expensive: a full
-   frame redraw emits one BltTemplate per visible character. During ordinary
-   composer edits, redraw only the input strip when its height and popup
-   footprint did not change. Other systems retain the established full-paint
-   behaviour; their native buffered Text() path is already fast. */
+/* AfA's bitmap-font fallback is still more expensive than native Text(), even
+   after batching glyphs into run templates. During ordinary composer edits,
+   redraw only the input strip when its height and popup footprint did not
+   change. Other systems retain the established full-paint behaviour; their
+   native buffered Text() path is already fast. */
 static void tg_gui_window_paint_composer_edit(tg_gui_state *state,
                                                tg_gui_backend *backend,
                                                int old_input_h,
