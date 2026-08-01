@@ -2486,6 +2486,11 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
             ids[n] = TG_GUI_CTX_COPY;
             ++n;
         }
+        if (!m->is_system) {
+            labels[n] = "Forward to Saved";
+            ids[n] = TG_GUI_CTX_FORWARD_SAVED;
+            ++n;
+        }
     }
     /* Chat-level: send a file to the open chat. Always offered (the popup only
        appears over a conversation) so it need not be reached via the menubar.

@@ -30,6 +30,9 @@
 #define TG_MESSAGES_PEER_DIALOGS_CONSTRUCTOR 0x3371c354UL
 #define TG_MESSAGES_GET_HISTORY_CONSTRUCTOR 0x4423e6c5UL
 #define TG_MESSAGES_SEND_MESSAGE_CONSTRUCTOR 0xfe05dc9aUL
+/* messages.forwardMessages#978928ca at layer 214, verified against the
+   official TDLib schema revision that declares MTPROTO_LAYER = 214. */
+#define TG_MESSAGES_FORWARD_MESSAGES_CONSTRUCTOR 0x978928caUL
 /* inputReplyToMessage, layer 214 -- verified on core.telegram.org/constructor/
    inputReplyToMessage (current schema page self-reports Layer 214). For a plain
    reply we serialize flags=0 + reply_to_msg_id only, so the newest fields
@@ -1197,6 +1200,70 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u64(writer, random_id_hi, random_id_lo);
+    }
+    return status;
+}
+
+/* messages.forwardMessages#978928ca flags:# from_peer:InputPeer
+   id:Vector<int> random_id:Vector<long> to_peer:InputPeer ... = Updates.
+   The first implementation forwards one message with flags=0; keeping both
+   peers generic lets Saved Messages and the destination picker share the same
+   wire builder. */
+tg_mtproto_tl_status tg_mtproto_build_messages_forward_message(
+    tg_mtproto_tl_writer *writer,
+    unsigned long from_peer_constructor,
+    unsigned long from_peer_id_hi,
+    unsigned long from_peer_id_lo,
+    unsigned long from_access_hash_hi,
+    unsigned long from_access_hash_lo,
+    int from_has_access_hash,
+    unsigned long message_id,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo,
+    unsigned long to_peer_constructor,
+    unsigned long to_peer_id_hi,
+    unsigned long to_peer_id_lo,
+    unsigned long to_access_hash_hi,
+    unsigned long to_access_hash_lo,
+    int to_has_access_hash)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || message_id == 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(
+        writer, TG_MESSAGES_FORWARD_MESSAGES_CONSTRUCTOR);
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* flags */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_input_peer(
+            writer, from_peer_constructor, from_peer_id_hi, from_peer_id_lo,
+            from_access_hash_hi, from_access_hash_lo, from_has_access_hash);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_VECTOR_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, message_id);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, TG_VECTOR_CONSTRUCTOR);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 1UL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, random_id_hi, random_id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_input_peer(
+            writer, to_peer_constructor, to_peer_id_hi, to_peer_id_lo,
+            to_access_hash_hi, to_access_hash_lo, to_has_access_hash);
     }
     return status;
 }
@@ -5566,6 +5633,31 @@ int tg_mtproto_login_self_test(void)
         query[30] != 'i' ||
         query[32] != 0x88U || query[33] != 0x77U ||
         query[34] != 0x66U || query[35] != 0x55U) {
+        return 2;
+    }
+    /* FORWARD: messages.forwardMessages#978928ca flags=0, chat source,
+       id=[0x0A0B0C0D], random_id=[0x1122334455667788], self destination.
+       The exact 52-byte shape pins the official layer-214 hash and field order. */
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_forward_message(
+            &writer, TG_PEER_CHAT_CONSTRUCTOR, 0x01020304UL, 0x05060708UL,
+            0UL, 0UL, 0, 0x0A0B0C0DUL, 0x11223344UL, 0x55667788UL,
+            TG_MTPROTO_PEER_SELF_CONSTRUCTOR, 0UL, 0UL, 0UL, 0UL, 0) !=
+            TG_MTPROTO_TL_OK ||
+        writer.length != 52UL ||
+        query[0] != 0xcaU || query[1] != 0x28U ||
+        query[2] != 0x89U || query[3] != 0x97U ||            /* method */
+        query[4] != 0x00U ||                                 /* flags */
+        query[8] != 0xb9U || query[11] != 0x35U ||           /* source */
+        query[12] != 0x08U || query[19] != 0x01U ||          /* source id */
+        query[20] != 0x15U || query[23] != 0x1cU ||          /* id vector */
+        query[24] != 0x01U || query[28] != 0x0dU ||
+        query[31] != 0x0aU ||                                /* one message id */
+        query[32] != 0x15U || query[35] != 0x1cU ||          /* random vector */
+        query[36] != 0x01U || query[40] != 0x88U ||
+        query[47] != 0x11U ||                                /* one random id */
+        query[48] != 0xc9U || query[49] != 0x7eU ||
+        query[50] != 0xa0U || query[51] != 0x7dU) {          /* inputPeerSelf */
         return 2;
     }
     /* REPLY: flags bit 0 set + inputReplyToMessage#869fbe10 (flags=0,

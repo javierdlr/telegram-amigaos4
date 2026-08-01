@@ -7,6 +7,12 @@ unless noted.
 
 ## [Unreleased]
 
+### Added
+- A message can now be forwarded to Saved Messages from its GUI context menu.
+  The TUI provides `/forward` for the latest message and `/forward <id>` for an
+  explicit Telegram message ID. Forwarding uses the layer-214
+  `messages.forwardMessages` method and reports Telegram RPC failures by name.
+
 ### Changed
 - Hidden chats now remain in the local peer cache. They stay out of the normal
   sidebar, appear immediately in local search with a `(hidden)` marker, and

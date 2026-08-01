@@ -522,6 +522,26 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_peer(
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 
+/* messages.forwardMessages#978928ca (layer 214), one message, flags=0. Both
+   endpoints use the same peer-constructor convention as send/getHistory. */
+tg_mtproto_tl_status tg_mtproto_build_messages_forward_message(
+    tg_mtproto_tl_writer *writer,
+    unsigned long from_peer_constructor,
+    unsigned long from_peer_id_hi,
+    unsigned long from_peer_id_lo,
+    unsigned long from_access_hash_hi,
+    unsigned long from_access_hash_lo,
+    int from_has_access_hash,
+    unsigned long message_id,
+    unsigned long random_id_hi,
+    unsigned long random_id_lo,
+    unsigned long to_peer_constructor,
+    unsigned long to_peer_id_hi,
+    unsigned long to_peer_id_lo,
+    unsigned long to_access_hash_hi,
+    unsigned long to_access_hash_lo,
+    int to_has_access_hash);
+
 /* messages.editMessage#dfd14005: edit an own message's text (flags.11 message,
    peer, id, message). */
 /* Avatar v2: upload.getFile of a peer's small (160px) profile photo via the

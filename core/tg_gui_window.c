@@ -4380,6 +4380,29 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                ? "Copied to clipboard"
                                                : "Copy failed");
                         tg_gui_window_paint(state, &backend);
+                    } else if (it == TG_GUI_CTX_FORWARD_SAVED && m != 0 &&
+                               !m->is_system && m->id != 0UL) {
+                        unsigned long forward_id = m->id;
+                        int frc = tg_gui_session_forward(
+                            forward_id, TG_GUI_SAVED_PEER_INDEX, stdout);
+
+                        if (frc == 0) {
+                            tg_gui_window_copy(
+                                state->status, sizeof(state->status),
+                                "Forwarded to Saved Messages");
+                        } else {
+                            const char *why =
+                                tg_gui_session_last_action_error();
+                            if (why != 0 && why[0] != '\0') {
+                                sprintf(state->status,
+                                        "Forward failed: %.30s", why);
+                            } else {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Could not forward message");
+                            }
+                        }
+                        tg_gui_window_paint(state, &backend);
                     } else if (it == TG_GUI_CTX_SENDFILE) {
                         /* Chat-level action (not tied to the clicked message):
                            send a file to the open chat, same as the menubar

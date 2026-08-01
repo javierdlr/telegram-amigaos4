@@ -2646,6 +2646,10 @@ static int tg_mtproto_print_rpc_error(const char *label,
             TG_MTPROTO_TL_OK) {
         return 0;
     }
+    /* Keep the RPC name available to non-console front-ends. The query loop
+       clears this buffer before each request, so a later status line cannot
+       inherit an older operation's failure. */
+    sprintf(tg_mtproto_query_fail, "%.63s", error_message);
     if (strcmp(error_message, "SESSION_PASSWORD_NEEDED") == 0 ||
         strcmp(error_message, "PHONE_PASSWORD_PROTECTED") == 0) {
         /* Expected during login: the wizard prints the human "2FA password
@@ -8510,6 +8514,89 @@ static int tg_mtproto_auth_simple_query_on_context(
     return 0;
 }
 
+/* Forward one message between two cached peers on the open chat connection.
+   "self" is accepted at either endpoint and serializes as inputPeerSelf. */
+static int tg_mtproto_auth_forward_peer_on_context(
+    const char *host, const char *port, const char *api_id,
+    const char *auth_file, const char *dc_id_text,
+    tg_mtproto_auth_context *context, const char *peer_cache_file,
+    const char *from_peer_index_text, const char *to_peer_index_text,
+    unsigned long message_id, FILE *stream)
+{
+    unsigned char query[256];
+    unsigned char random_id[8];
+    unsigned long from_constructor;
+    unsigned long from_id_hi;
+    unsigned long from_id_lo;
+    unsigned long from_hash_hi;
+    unsigned long from_hash_lo;
+    unsigned long to_constructor;
+    unsigned long to_id_hi;
+    unsigned long to_id_lo;
+    unsigned long to_hash_hi;
+    unsigned long to_hash_lo;
+    unsigned long random_id_hi;
+    unsigned long random_id_lo;
+    int from_has_hash;
+    int to_has_hash;
+    int qrc;
+    tg_mtproto_rpc_result result;
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_updates_summary updates;
+    static const char label[] = "mtproto messages.forwardMessages";
+
+    if (stream == 0 || message_id == 0UL || from_peer_index_text == 0 ||
+        to_peer_index_text == 0) {
+        return 2;
+    }
+    if (tg_mtproto_load_peer_cache_peer(
+            peer_cache_file, from_peer_index_text, &from_constructor,
+            &from_id_hi, &from_id_lo, &from_hash_hi, &from_hash_lo,
+            &from_has_hash, stream, label) != 0 ||
+        tg_mtproto_load_peer_cache_peer(
+            peer_cache_file, to_peer_index_text, &to_constructor, &to_id_hi,
+            &to_id_lo, &to_hash_hi, &to_hash_lo, &to_has_hash, stream,
+            label) != 0) {
+        return 2;
+    }
+    tg_mtproto_saved_session_random(random_id, sizeof(random_id));
+    random_id_lo = tg_mtproto_read_u32_le(random_id);
+    random_id_hi = tg_mtproto_read_u32_le(random_id + 4U);
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_messages_forward_message(
+            &writer, from_constructor, from_id_hi, from_id_lo, from_hash_hi,
+            from_hash_lo, from_has_hash, message_id, random_id_hi,
+            random_id_lo, to_constructor, to_id_hi, to_id_lo, to_hash_hi,
+            to_hash_lo, to_has_hash) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: query-build-failed\n", label);
+        return 2;
+    }
+    memset(&result, 0, sizeof(result));
+    qrc = tg_mtproto_send_saved_query_on_context(
+        host, port, api_id, auth_file, dc_id_text, context, query,
+        writer.length, &result, stream, label, 600U);
+    if (qrc != 0) {
+        return qrc == TG_MTPROTO_QUERY_SOFT_FAIL ?
+            TG_MTPROTO_QUERY_SOFT_FAIL : 2;
+    }
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        if (!tg_mtproto_print_rpc_error(label, &result, stream)) {
+            fprintf(stream, "%s: rpc-error-parse-failed\n", label);
+        }
+        return 2;
+    }
+    if (tg_mtproto_unpack_gzip_result(&result, stream, label) != 0 ||
+        tg_mtproto_parse_updates_summary(result.result_constructor,
+                                         result.result_body,
+                                         result.result_body_length,
+                                         &updates) != TG_MTPROTO_TL_OK) {
+        fprintf(stream, "%s: updates-parse-failed constructor 0x%08lx\n",
+                label, result.result_constructor);
+        return 2;
+    }
+    return 0;
+}
+
 /* messages.editMessage on the open context: replace an OWN message's text. */
 static int tg_mtproto_auth_edit_peer_on_context(
     const char *host, const char *port, const char *api_id,
@@ -9009,8 +9096,8 @@ static void tg_chat_history_add(const char *text)
 /* One-line command cheat-sheet shown when a lone '/' starts the input row
    (both the TUI-transcript and the linear-raw printers use it). */
 #define TG_CHAT_SLASH_HINT_TEXT \
-    "Commands: /peers /saved /getfile /sendfile /search /add /remove\n" \
-    "          /history /swap /watch /diff /color /bell /resize /help /quit\n"
+    "Commands: /peers /saved /forward /getfile /sendfile /search /add\n" \
+    "          /remove /history /swap /watch /diff /color /bell /help /quit\n"
 
 /*
  * Chat input reader. In raw mode it echoes characters itself and supports
@@ -10455,6 +10542,7 @@ static void tg_mtproto_chat_print_help(FILE *stream)
         "  /add name     search Telegram and add a chat",
         "  /remove n     remove cached chat n",
         "  /history      show recent messages without new-message filtering",
+        "  /forward [id] forward latest (or given id) to Saved Messages",
         "  /getfile      download the newest file in this chat to downloads/",
         "  /sendfile p   send a file (large files supported; build limit applies)",
         "  /saved        open Saved Messages (your cloud transfer drawer)",
@@ -10625,6 +10713,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     unsigned long printed_message_count;
     unsigned long consecutive_failures;
     unsigned long sent_message_id;
+    unsigned long forward_message_id;
     unsigned long watch_seconds;
     unsigned long parsed_watch_seconds;
     unsigned long saved_timeout;
@@ -11699,6 +11788,53 @@ int tg_mtproto_auth_chat_file(const char *host,
                             "Could not read messages now (error %d).\n", rc);
                 }
                 tg_console_tui_capture_end(tui_cap, stream);
+            }
+            tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                        0UL, tg_chat_input_raw);
+            continue;
+        }
+        cmd_arg = 0;
+        if (tg_mtproto_chat_named_command_arg(line, "/forward", &cmd_arg)) {
+            char forward_note[128];
+
+            if (peer_index[0] == '\0') {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Choose a chat before forwarding a message.");
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                            0UL, tg_chat_input_raw);
+                continue;
+            }
+            forward_message_id = last_seen_message_id;
+            if (cmd_arg != 0 && cmd_arg[0] != '\0' &&
+                (tg_mtproto_parse_ulong_arg(cmd_arg, &forward_message_id) != 0 ||
+                 forward_message_id == 0UL)) {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Use /forward or /forward <message-id>.");
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                            0UL, tg_chat_input_raw);
+                continue;
+            }
+            if (forward_message_id == 0UL) {
+                tg_mtproto_chat_print_system_line(
+                    stream, "No recent message is available to forward.");
+                tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
+                                            0UL, tg_chat_input_raw);
+                continue;
+            }
+            quiet = tg_mtproto_open_quiet_stream(stream);
+            rc = tg_mtproto_auth_forward_peer_on_context(
+                host, port, api_id, auth_file, dc_id_text, &chat_context,
+                peer_cache_file, peer_index, "self", forward_message_id,
+                quiet);
+            tg_mtproto_close_quiet_stream(quiet, stream);
+            if (rc == 0) {
+                tg_mtproto_chat_print_system_line(
+                    stream, "Forwarded to Saved Messages.");
+            } else {
+                sprintf(forward_note, "Could not forward message: %.80s",
+                        tg_mtproto_query_fail[0] != '\0'
+                            ? tg_mtproto_query_fail : "no reply");
+                tg_mtproto_chat_print_system_line(stream, forward_note);
             }
             tg_mtproto_chat_show_prompt(stream, own_label, peer_label, 0,
                                         0UL, tg_chat_input_raw);
@@ -14451,6 +14587,45 @@ int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
                                      : 0,
                                  sent_id);
     }
+    tg_net_set_connect_timeout_seconds(prev_timeout);
+    tg_mtproto_close_quiet_stream(quiet, stream);
+    return rc;
+}
+
+const char *tg_gui_session_last_action_error(void)
+{
+    return tg_mtproto_query_fail;
+}
+
+int tg_gui_session_forward(unsigned long message_id,
+                           unsigned long destination_peer_index,
+                           FILE *stream)
+{
+    char destination[32];
+    FILE *quiet;
+    unsigned long prev_timeout;
+    int rc;
+
+    if (!tg_gui_session_state.open || stream == 0 || message_id == 0UL ||
+        destination_peer_index == 0UL ||
+        tg_gui_session_state.current_peer_index[0] == '\0') {
+        return 2;
+    }
+    if (destination_peer_index == TG_GUI_SAVED_PEER_INDEX) {
+        strcpy(destination, "self");
+    } else {
+        sprintf(destination, "%lu", destination_peer_index);
+    }
+    quiet = tg_mtproto_open_quiet_stream(stream);
+    prev_timeout = tg_net_connect_timeout_seconds();
+    tg_net_set_connect_timeout_seconds(10UL);
+    rc = tg_mtproto_auth_forward_peer_on_context(
+        tg_gui_session_state.host, tg_gui_session_state.port,
+        tg_gui_session_state.api_id, tg_gui_session_state.auth_file,
+        tg_gui_session_state.dc_id_text, &tg_gui_session_state.context,
+        tg_gui_session_state.peer_cache_file,
+        tg_gui_session_state.current_peer_index, destination, message_id,
+        quiet);
     tg_net_set_connect_timeout_seconds(prev_timeout);
     tg_mtproto_close_quiet_stream(quiet, stream);
     return rc;

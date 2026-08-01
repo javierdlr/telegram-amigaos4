@@ -150,6 +150,16 @@ int tg_gui_session_load_older(FILE *stream, int allow_drop_newest);
 int tg_gui_session_send(const char *text, unsigned long reply_to_msg_id,
                         FILE *stream);
 
+/* Forwards one server-backed message from the open chat to a destination peer.
+   TG_GUI_SAVED_PEER_INDEX selects Saved Messages. */
+int tg_gui_session_forward(unsigned long message_id,
+                           unsigned long destination_peer_index,
+                           FILE *stream);
+
+/* One-line reason for the last interactive action failure (RPC name or
+   transport reason). Empty after a successful query. Borrowed, do not free. */
+const char *tg_gui_session_last_action_error(void);
+
 /* Edits an own message (messages.editMessage) to `text`, and on success updates
    the on-screen bubble in place. Returns 0 ok, non-zero on failure / no chat. */
 int tg_gui_session_edit(const char *text, unsigned long message_id,
