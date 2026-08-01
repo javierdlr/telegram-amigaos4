@@ -36,6 +36,9 @@ unless noted.
 ### Fixed
 - Documents with a caption now keep the caption and append the downloadable
   file label on a new line instead of hiding the attachment name.
+- Inline-photo cache downloads no longer become permanently suppressed after a
+  transient network, datacenter or filesystem failure. Opt-in live diagnostics
+  now identify each fetch and render stage without logging chat content.
 
 ## [0.0.8] - 2026-07-31
 

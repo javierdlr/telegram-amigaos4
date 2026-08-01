@@ -50,6 +50,11 @@ int tg_gui_session_receive_pending(FILE *stream);
    photo became drawable and the GUI should repaint. */
 int tg_gui_session_photo_step(FILE *stream);
 
+/* Discard a cached JPEG that the renderer proved undecodable. This is the only
+   permanent per-session photo rejection: transport failures remain retryable. */
+void tg_gui_session_photo_decode_failed(unsigned long photo_id_hi,
+                                        unsigned long photo_id_lo);
+
 /* Upload progress + CANCEL hook: `completed`/`total` are parts; percentage is
    completed*100/total. Runs on the calling task after each confirmed part.
    Return non-zero to abort the upload (call returns 5); the parts already sent
@@ -303,6 +308,7 @@ int tg_gui_session_login_activate(tg_gui_state *state, FILE *stream);
    pin down where a hard crash happens. tg_gui_log_enable() turns it on
    (--gui-live-debug); tg_gui_log() writes one flushed line when enabled. */
 void tg_gui_log_enable(void);
+int tg_gui_log_is_enabled(void);
 void tg_gui_log(const char *msg);
 
 #endif
