@@ -82,6 +82,11 @@ struct tg_gui_backend {
        initials square. NULL on backends without image support (host tests). */
     int (*avatar_image)(tg_gui_backend *backend, unsigned long peer_id_hi,
                         unsigned long peer_id_lo, tg_gui_rect rect);
+    /* OPTIONAL: replay a cached message photo into rect, clipped to the
+       transcript viewport. Returns 1 when drawn, 0 for the text fallback. */
+    int (*photo_image)(tg_gui_backend *backend, unsigned long photo_id_hi,
+                       unsigned long photo_id_lo, tg_gui_rect rect,
+                       tg_gui_rect clip);
 };
 
 /* Sidebar capacity. Raised from 32 so a congested account shows far more of its
@@ -172,6 +177,13 @@ typedef struct tg_gui_message {
     unsigned long from_id_hi;          /* sender user id, to name a live typing peer */
     unsigned long from_id_lo;
     int has_document;                  /* F9: a document is attached (Download) */
+    int has_photo;                     /* 0.0.9: inline photo metadata present */
+    int photo_ready;                   /* cached JPEG is ready for the backend */
+    int photo_only;                    /* hide the synthetic label once drawn */
+    unsigned long photo_id_hi;
+    unsigned long photo_id_lo;
+    unsigned long photo_width;
+    unsigned long photo_height;
 } tg_gui_message;
 
 typedef struct tg_gui_state {

@@ -15,11 +15,19 @@ unless noted.
 - The GUI's `Forward to...` action now reuses the local-first chat search as a
   destination picker, including browse and online results. The TUI provides
   `/forwardto <chat-number> [message-id]` for the same peer-to-peer operation.
+- Photo messages now render inline in GUI bubbles. The client selects a bounded
+  Telegram thumbnail for each platform, downloads it incrementally through the
+  existing multi-DC file channel, and reuses the on-disk `photos/` cache on
+  later paints and runs. Text-only and failed-download fallbacks remain usable.
 
 ### Changed
 - Hidden chats now remain in the local peer cache. They stay out of the normal
   sidebar, appear immediately in local search with a `(hidden)` marker, and
   return to the sidebar when opened, without an online search or cache reload.
+
+### Fixed
+- Documents with a caption now keep the caption and append the downloadable
+  file label on a new line instead of hiding the attachment name.
 
 ## [0.0.8] - 2026-07-31
 

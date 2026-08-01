@@ -10,6 +10,7 @@
  * in tg_avatar_self_test.
  */
 
+#include <stdlib.h>
 #include <string.h>
 #include "tg_avatar.h"
 #include "../third_party/tjpgd/tjpgd.h"
@@ -104,6 +105,7 @@ typedef struct tg_avatar_io {
     unsigned char *rgb;   /* TG_AVATAR_SRC_MAX * TG_AVATAR_SRC_MAX * 3 */
     unsigned int w;
     unsigned int h;
+    unsigned int stride;
 } tg_avatar_io;
 
 static size_t tg_avatar_in(JDEC *jd, uint8_t *buf, size_t len)
@@ -129,10 +131,9 @@ static int tg_avatar_out(JDEC *jd, void *bitmap, JRECT *rect)
 
     for (y = rect->top; y <= rect->bottom; ++y) {
         for (x = rect->left; x <= rect->right; ++x) {
-            if (x < io->w && y < io->h && x < TG_AVATAR_SRC_MAX &&
-                y < TG_AVATAR_SRC_MAX) {
+            if (x < io->w && y < io->h) {
                 unsigned char *d = io->rgb +
-                    (((unsigned long)y * TG_AVATAR_SRC_MAX + x) * 3UL);
+                    (((unsigned long)y * io->stride + x) * 3UL);
                 d[0] = src[0];
                 d[1] = src[1];
                 d[2] = src[2];
@@ -162,6 +163,7 @@ int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
     io.data = jpeg;
     io.size = jpeg_len;
     io.rgb = src_rgb;
+    io.stride = TG_AVATAR_SRC_MAX;
     if (jd_prepare(&jd, tg_avatar_in, work, sizeof(work), &io) != JDR_OK) {
         return 1;
     }
@@ -197,6 +199,99 @@ int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
         }
     }
     return 0;
+}
+
+int tg_image_decode_jpeg_scaled(const unsigned char *jpeg,
+                                unsigned long jpeg_len,
+                                unsigned char *dst_rgb,
+                                int dw, int dh,
+                                int source_edge_cap)
+{
+    tg_avatar_io io;
+    JDEC jd;
+    unsigned char *work;
+    unsigned char *src_rgb;
+    unsigned int scale;
+    unsigned int sw;
+    unsigned int sh;
+    unsigned long pixels;
+    int x;
+    int y;
+    int rc;
+
+    if (jpeg == 0 || jpeg_len == 0UL || dst_rgb == 0 || dw <= 0 || dh <= 0 ||
+        source_edge_cap <= 0 || source_edge_cap > 1024) {
+        return 1;
+    }
+    work = (unsigned char *)malloc(4012U);
+    if (work == 0) {
+        return 1;
+    }
+    memset(&io, 0, sizeof(io));
+    io.data = jpeg;
+    io.size = jpeg_len;
+    if (jd_prepare(&jd, tg_avatar_in, work, 4012U, &io) != JDR_OK) {
+        free(work);
+        return 1;
+    }
+    for (scale = 0U; scale <= 3U; ++scale) {
+        unsigned int div;
+
+        /* TJpgDec rounds the right/bottom MCU edge up after scaling. Match
+           that extent so odd JPEG dimensions retain their final row/column. */
+        div = 1U << scale;
+        sw = ((unsigned int)jd.width + div - 1U) / div;
+        sh = ((unsigned int)jd.height + div - 1U) / div;
+        if (sw > 0U && sh > 0U && sw <= (unsigned int)source_edge_cap &&
+            sh <= (unsigned int)source_edge_cap) {
+            break;
+        }
+    }
+    if (scale > 3U) {
+        free(work);
+        return 1;
+    }
+    pixels = (unsigned long)sw * (unsigned long)sh;
+    if (pixels == 0UL || pixels > 1048576UL) {
+        free(work);
+        return 1;
+    }
+    src_rgb = (unsigned char *)malloc((size_t)(pixels * 3UL));
+    if (src_rgb == 0) {
+        free(work);
+        return 1;
+    }
+    memset(src_rgb, 0, (size_t)(pixels * 3UL));
+    io.rgb = src_rgb;
+    io.w = sw;
+    io.h = sh;
+    io.stride = sw;
+    rc = 1;
+    if (jd_decomp(&jd, tg_avatar_out, (uint8_t)scale) == JDR_OK) {
+        for (y = 0; y < dh; ++y) {
+            unsigned long sy;
+
+            sy = ((unsigned long)y * sh) / (unsigned long)dh;
+            for (x = 0; x < dw; ++x) {
+                unsigned long sx;
+                const unsigned char *s;
+                unsigned char *d;
+
+                sx = ((unsigned long)x * sw) / (unsigned long)dw;
+                s = src_rgb + ((sy * sw + sx) * 3UL);
+                d = dst_rgb +
+                    ((((unsigned long)y * (unsigned long)dw) +
+                      (unsigned long)x) * 3UL);
+                d[0] = s[0];
+                d[1] = s[1];
+                d[2] = s[2];
+            }
+        }
+        rc = 0;
+    }
+    free(src_rgb);
+    free(work);
+    return rc;
 }
 
 int tg_avatar_decode_stripped(const unsigned char *stripped,

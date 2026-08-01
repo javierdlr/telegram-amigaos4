@@ -45,6 +45,11 @@ int tg_gui_session_tick(FILE *stream);
    when GUI state changed. Safe to call frequently and with no open session. */
 int tg_gui_session_receive_pending(FILE *stream);
 
+/* Move at most one bounded inline-photo cache download step. Manual file
+   transfers have priority and make this a no-op. Returns 1 only when a cached
+   photo became drawable and the GUI should repaint. */
+int tg_gui_session_photo_step(FILE *stream);
+
 /* Upload progress + CANCEL hook: `completed`/`total` are parts; percentage is
    completed*100/total. Runs on the calling task after each confirmed part.
    Return non-zero to abort the upload (call returns 5); the parts already sent

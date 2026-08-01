@@ -1585,6 +1585,192 @@ static tg_mtproto_tl_status tg_skip_photo_size(tg_mtproto_tl_reader *reader)
     }
 }
 
+static tg_mtproto_tl_status tg_skip_video_size(tg_mtproto_tl_reader *reader);
+
+#ifndef TG_MTPROTO_PHOTO_TARGET_EDGE
+#if defined(__m68k__)
+#define TG_MTPROTO_PHOTO_TARGET_EDGE 160UL
+#else
+#define TG_MTPROTO_PHOTO_TARGET_EDGE 320UL
+#endif
+#endif
+#ifndef TG_MTPROTO_PHOTO_BYTES_MAX
+#if defined(__m68k__)
+#define TG_MTPROTO_PHOTO_BYTES_MAX (96UL * 1024UL)
+#else
+#define TG_MTPROTO_PHOTO_BYTES_MAX (256UL * 1024UL)
+#endif
+#endif
+
+/* Reads one PhotoSize and, when it names a downloadable server-side thumb,
+   records its dimensions/bytes. Cached/stripped/path variants are consumed but
+   deliberately not selected: they are inline helper payloads rather than the
+   JPEG file requested through inputPhotoFileLocation. */
+static tg_mtproto_tl_status tg_read_photo_size_candidate(
+    tg_mtproto_tl_reader *reader, char *type, unsigned long type_size,
+    unsigned long *width, unsigned long *height, unsigned long *size,
+    int *downloadable)
+{
+    unsigned long ctor;
+    unsigned long count;
+    unsigned long i;
+    unsigned long value;
+
+    if (type == 0 || type_size == 0UL || width == 0 || height == 0 ||
+        size == 0 || downloadable == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    type[0] = '\0';
+    *width = 0UL;
+    *height = 0UL;
+    *size = 0UL;
+    *downloadable = 0;
+    if (tg_mtproto_tl_read_u32(reader, &ctor) != TG_MTPROTO_TL_OK ||
+        tg_read_string_copy(reader, type, type_size) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    switch (ctor) {
+    case 0x0e17e23cUL: /* photoSizeEmpty */
+        return TG_MTPROTO_TL_OK;
+    case 0x75c78e60UL: /* photoSize: w h size */
+        if (tg_mtproto_tl_read_u32(reader, width) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, height) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, size) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        *downloadable = 1;
+        return TG_MTPROTO_TL_OK;
+    case 0x021e1ad6UL: /* photoCachedSize: w h bytes */
+        if (tg_mtproto_tl_read_u32(reader, width) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, height) != TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        return tg_skip_bytes_field(reader);
+    case 0xe0b0bc2eUL: /* photoStrippedSize: bytes */
+    case 0xd8214d41UL: /* photoPathSize: bytes */
+        return tg_skip_bytes_field(reader);
+    case 0xfa3efb95UL: /* photoSizeProgressive: w h Vector<int> */
+        if (tg_mtproto_tl_read_u32(reader, width) != TG_MTPROTO_TL_OK ||
+            tg_mtproto_tl_read_u32(reader, height) != TG_MTPROTO_TL_OK ||
+            tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK ||
+            count == 0UL || count > 64UL) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        value = 0UL;
+        for (i = 0UL; i < count; ++i) {
+            if (tg_mtproto_tl_read_u32(reader, &value) != TG_MTPROTO_TL_OK) {
+                return TG_MTPROTO_TL_INVALID_DATA;
+            }
+        }
+        *size = value; /* final progressive cut is the complete thumb */
+        *downloadable = 1;
+        return TG_MTPROTO_TL_OK;
+    default:
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+}
+
+static int tg_photo_candidate_better(unsigned long edge, unsigned long best)
+{
+    unsigned long target;
+    unsigned long distance;
+    unsigned long best_distance;
+
+    target = TG_MTPROTO_PHOTO_TARGET_EDGE;
+    distance = edge > target ? edge - target : target - edge;
+    best_distance = best > target ? best - target : target - best;
+    if (distance != best_distance) {
+        return distance < best_distance;
+    }
+    /* Equal distance: prefer the smaller representation on retro hardware. */
+    return edge < best;
+}
+
+tg_mtproto_tl_status tg_mtproto_read_photo(tg_mtproto_tl_reader *reader,
+                                           tg_mtproto_photo_meta *out)
+{
+    unsigned long ctor;
+    unsigned long flags;
+    unsigned long scratch;
+    const unsigned char *ref;
+    unsigned long ref_len;
+    unsigned long count;
+    unsigned long i;
+    unsigned long best_edge;
+
+    if (reader == 0 || out == 0) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    memset(out, 0, sizeof(*out));
+    if (tg_mtproto_tl_read_u32(reader, &ctor) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (ctor == 0x2331b22dUL) { /* photoEmpty: id */
+        return tg_mtproto_tl_read_u64(reader, &out->id_hi, &out->id_lo);
+    }
+    if (ctor != 0xfb197a65UL ||
+        tg_mtproto_tl_read_u32(reader, &flags) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &out->id_hi, &out->id_lo) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u64(reader, &out->access_hash_hi,
+                               &out->access_hash_lo) != TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_bytes(reader, &ref, &ref_len) !=
+            TG_MTPROTO_TL_OK ||
+        tg_mtproto_tl_read_u32(reader, &scratch) != TG_MTPROTO_TL_OK ||
+        tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK ||
+        count > 64UL) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    if (ref_len > 0UL && ref_len <= TG_MTPROTO_FILE_REF_MAX) {
+        memcpy(out->file_reference, ref, ref_len);
+        out->file_reference_len = ref_len;
+    }
+    best_edge = 0UL;
+    for (i = 0UL; i < count; ++i) {
+        char type[TG_MTPROTO_PHOTO_TYPE_MAX];
+        unsigned long width;
+        unsigned long height;
+        unsigned long size;
+        unsigned long edge;
+        int downloadable;
+
+        if (tg_read_photo_size_candidate(reader, type, sizeof(type), &width,
+                                         &height, &size, &downloadable) !=
+            TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        edge = width > height ? width : height;
+        if (!downloadable || type[0] == '\0' || width == 0UL || height == 0UL ||
+            width > 8192UL || height > 8192UL ||
+            size == 0UL || size > TG_MTPROTO_PHOTO_BYTES_MAX ||
+            (best_edge != 0UL && !tg_photo_candidate_better(edge, best_edge))) {
+            continue;
+        }
+        strcpy(out->thumb_type, type);
+        out->width = width;
+        out->height = height;
+        out->size = size;
+        best_edge = edge;
+    }
+    if ((flags & 2UL) != 0UL) { /* video_sizes:Vector<VideoSize> */
+        if (tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK ||
+            count > 64UL) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        for (i = 0UL; i < count; ++i) {
+            if (tg_skip_video_size(reader) != TG_MTPROTO_TL_OK) {
+                return TG_MTPROTO_TL_INVALID_DATA;
+            }
+        }
+    }
+    if (tg_mtproto_tl_read_u32(reader, &out->dc_id) != TG_MTPROTO_TL_OK) {
+        return TG_MTPROTO_TL_INVALID_DATA;
+    }
+    out->has_photo = out->file_reference_len != 0UL &&
+                     out->thumb_type[0] != '\0' && out->size != 0UL;
+    return TG_MTPROTO_TL_OK;
+}
+
 static tg_mtproto_tl_status tg_skip_video_size(tg_mtproto_tl_reader *reader)
 {
     unsigned long ctor;
@@ -1814,6 +2000,50 @@ tg_mtproto_tl_status tg_mtproto_build_upload_get_document(
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u64(writer, 0UL, offset); /* long */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, limit);
+    }
+    return status;
+}
+
+tg_mtproto_tl_status tg_mtproto_build_upload_get_photo(
+    tg_mtproto_tl_writer *writer,
+    const tg_mtproto_photo_meta *photo,
+    unsigned long offset,
+    unsigned long limit)
+{
+    tg_mtproto_tl_status status;
+
+    if (writer == 0 || photo == 0 || !photo->has_photo ||
+        photo->file_reference_len == 0UL || photo->thumb_type[0] == '\0' ||
+        limit == 0UL || (limit % 4096UL) != 0UL ||
+        (1048576UL % limit) != 0UL || (offset % 4096UL) != 0UL) {
+        return TG_MTPROTO_TL_INVALID_ARGUMENT;
+    }
+    status = tg_mtproto_tl_write_u32(writer, 0xbe5335beUL); /* upload.getFile */
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0UL); /* flags */
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u32(writer, 0x40181ffeUL);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, photo->id_hi, photo->id_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, photo->access_hash_hi,
+                                         photo->access_hash_lo);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_bytes(writer, photo->file_reference,
+                                           photo->file_reference_len);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_write_string(writer, photo->thumb_type);
+    }
+    if (status == TG_MTPROTO_TL_OK) {
+        status = tg_mtproto_tl_write_u64(writer, 0UL, offset);
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u32(writer, limit);
@@ -4226,6 +4456,44 @@ static void tg_mtproto_format_document_label(
     text[n] = '\0';
 }
 
+/* Keep a real caption first (entity offsets refer to it), then place the file
+   affordance on its own line. A truncated suffix is still preferable to losing
+   either the caption or the fact that the attachment is downloadable. */
+static void tg_mtproto_append_document_label(
+    const tg_mtproto_document_meta *doc, char *text, unsigned long text_size)
+{
+    char label[TG_MTPROTO_DOC_NAME_MAX + 40U];
+    unsigned long n;
+    unsigned long i;
+    unsigned long label_len;
+
+    if (text == 0 || text_size == 0UL) {
+        return;
+    }
+    tg_mtproto_format_document_label(doc, label, sizeof(label));
+    n = (unsigned long)strlen(text);
+    label_len = (unsigned long)strlen(label);
+    if (n != 0UL && n + 1UL + label_len + 1UL > text_size) {
+        n = text_size > label_len + 2UL
+                ? text_size - label_len - 2UL : 0UL;
+        /* The caption is UTF-8 at this point. Never leave a partial sequence
+           before the newline when the fixed message buffer needs trimming. */
+        while (n > 0UL &&
+               (((unsigned char)text[n] & 0xc0U) == 0x80U)) {
+            --n;
+        }
+        text[n] = '\0';
+    }
+    if (n != 0UL && n + 1UL < text_size) {
+        text[n++] = '\n';
+    }
+    i = 0UL;
+    while (label[i] != '\0' && n + 1UL < text_size) {
+        text[n++] = label[i++];
+    }
+    text[n] = '\0';
+}
+
 static tg_mtproto_tl_status tg_read_common_message_text(
     tg_mtproto_tl_reader *reader,
     tg_mtproto_message_text *out,
@@ -4350,11 +4618,20 @@ static tg_mtproto_tl_status tg_read_common_message_text(
                         (mflags & 1UL) != 0UL &&
                         tg_mtproto_read_document(reader, &out->document) ==
                             TG_MTPROTO_TL_OK &&
-                        out->document.has_document && !out->has_text) {
-                        tg_mtproto_format_document_label(&out->document,
+                        out->document.has_document) {
+                        tg_mtproto_append_document_label(&out->document,
                                                          out->text,
                                                          sizeof(out->text));
                         out->has_text = out->text[0] != '\0';
+                    }
+                } else if (media_ctor == 0x695150d7UL) {
+                    unsigned long mflags;
+
+                    out->photo_only = !out->has_text;
+                    if (tg_mtproto_tl_read_u32(reader, &mflags) ==
+                            TG_MTPROTO_TL_OK &&
+                        (mflags & 1UL) != 0UL) {
+                        (void)tg_mtproto_read_photo(reader, &out->photo);
                     }
                 }
                 if (!out->has_text) { /* non-document media, or no caption */
@@ -5118,6 +5395,90 @@ int tg_mtproto_login_self_test(void)
         tg_mtproto_format_document_label(&d, lbl, sizeof(lbl));
         if (strcmp(lbl, "[File: clip.mp4 (3 MB)]") != 0) {
             puts("f9 self-test: document label (MB) mismatch");
+            return 2;
+        }
+        strcpy(lbl, "commento");
+        tg_mtproto_append_document_label(&d, lbl, sizeof(lbl));
+        if (strcmp(lbl, "commento\n[File: clip.mp4 (3 MB)]") != 0) {
+            puts("f9 self-test: caption plus document label mismatch");
+            return 2;
+        }
+    }
+
+    /* 0.0.9 photo metadata: parse a full layer-214 Photo, select the nearest
+       bounded server thumb, consume a progressive oversize sibling, then pin
+       inputPhotoFileLocation byte layout. */
+    {
+        unsigned char photo_wire[256];
+        unsigned char query[80];
+        unsigned char ref_byte[1];
+        tg_mtproto_tl_writer pw;
+        tg_mtproto_tl_writer qw;
+        tg_mtproto_tl_reader pr;
+        tg_mtproto_photo_meta photo;
+        tg_mtproto_tl_status ps;
+
+        ref_byte[0] = 0xfeU;
+        tg_mtproto_tl_writer_init(&pw, photo_wire, sizeof(photo_wire));
+        ps = tg_mtproto_tl_write_u32(&pw, 0xfb197a65UL); /* photo */
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 0UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u64(
+            &pw, 0x01020304UL, 0x05060708UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u64(
+            &pw, 0x0a0b0c0dUL, 0x0e0f1011UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_bytes(
+            &pw, ref_byte, sizeof(ref_byte));
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 123UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
+            &pw, TG_VECTOR_CONSTRUCTOR);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 3UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
+            &pw, 0x75c78e60UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "s");
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 80UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 50UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 10000UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
+            &pw, 0x75c78e60UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "m");
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 160UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 100UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 50000UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
+            &pw, 0xfa3efb95UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "x");
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 320UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 200UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
+            &pw, TG_VECTOR_CONSTRUCTOR);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 2UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 120000UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 300000UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 4UL);
+        if (ps != TG_MTPROTO_TL_OK) {
+            puts("photo self-test: fixture build failed");
+            return 2;
+        }
+        tg_mtproto_tl_reader_init(&pr, photo_wire, pw.length);
+        if (tg_mtproto_read_photo(&pr, &photo) != TG_MTPROTO_TL_OK ||
+            pr.offset != pw.length || !photo.has_photo ||
+            strcmp(photo.thumb_type, "m") != 0 || photo.width != 160UL ||
+            photo.height != 100UL || photo.size != 50000UL ||
+            photo.dc_id != 4UL || photo.file_reference_len != 1UL ||
+            photo.file_reference[0] != 0xfeU) {
+            puts("photo self-test: Photo parse/selection mismatch");
+            return 2;
+        }
+        tg_mtproto_tl_writer_init(&qw, query, sizeof(query));
+        if (tg_mtproto_build_upload_get_photo(&qw, &photo, 0UL, 65536UL) !=
+                TG_MTPROTO_TL_OK ||
+            qw.length != 48UL || query[0] != 0xbeU || query[3] != 0xbeU ||
+            query[8] != 0xfeU || query[9] != 0x1fU ||
+            query[10] != 0x18U || query[11] != 0x40U ||
+            query[28] != 0x01U || query[29] != 0xfeU ||
+            query[32] != 0x01U || query[33] != (unsigned char)'m' ||
+            query[44] != 0x00U || query[46] != 0x01U) {
+            puts("photo self-test: getFile(photo) layout mismatch");
             return 2;
         }
     }

@@ -239,6 +239,13 @@ static void tg_gui_driver_on_message(void *ctx, const tg_chat_message_row *row)
     message->is_own = row->is_out ? 1 : 0;
     message->is_system = 0;
     message->has_document = row->has_document; /* F9: gates the Download item */
+    message->has_photo = row->has_photo;
+    message->photo_ready = row->photo_ready;
+    message->photo_only = row->photo_only;
+    message->photo_id_hi = row->photo_id_hi;
+    message->photo_id_lo = row->photo_id_lo;
+    message->photo_width = row->photo_width;
+    message->photo_height = row->photo_height;
 
     /* Sender label: own name when outgoing; the resolved sender otherwise; the
        1:1 peer name as the fallback; empty for an unresolved group author (the
@@ -443,6 +450,35 @@ int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui, unsigned long message_id
         }
     }
     return 0;
+}
+
+int tg_gui_driver_mark_photo_ready(tg_gui_chat_driver *gui,
+                                   unsigned long photo_id_hi,
+                                   unsigned long photo_id_lo)
+{
+    int i;
+    int changed;
+
+    if (gui == 0 || gui->state == 0 ||
+        (photo_id_hi == 0UL && photo_id_lo == 0UL)) {
+        return 0;
+    }
+    changed = 0;
+    for (i = 0; i < gui->state->message_count; ++i) {
+        tg_gui_message *message;
+
+        message = &gui->state->messages[i];
+        if (message->has_photo && !message->photo_ready &&
+            message->photo_id_hi == photo_id_hi &&
+            message->photo_id_lo == photo_id_lo) {
+            message->photo_ready = 1;
+            changed = 1;
+        }
+    }
+    if (changed) {
+        gui->state->msg_gen++;
+    }
+    return changed;
 }
 
 /* Derives 1-2 uppercase initials from a display name (skipping a leading '@'):
@@ -660,6 +696,37 @@ int tg_gui_driver_self_test(void)
         strcmp(state.messages[2].time, "23:13") != 0) {
         puts("gui driver self-test: group resolved-sender row wrong");
         return 2;
+    }
+
+    /* Inline-photo metadata stays compact across the engine/GUI boundary and
+       completion flips every matching bubble exactly once. */
+    {
+        tg_gui_state ps;
+        tg_gui_chat_driver pg;
+        tg_chat_driver pd;
+        tg_chat_message_row prow;
+
+        memset(&ps, 0, sizeof(ps));
+        tg_gui_chat_driver_bind(&pg, &ps, &pd);
+        memset(&prow, 0, sizeof(prow));
+        prow.text = "[Photo]";
+        prow.sender = "Mario";
+        prow.has_photo = 1;
+        prow.photo_only = 1;
+        prow.photo_id_hi = 0x12UL;
+        prow.photo_id_lo = 0x34UL;
+        prow.photo_width = 320UL;
+        prow.photo_height = 180UL;
+        pd.on_message(pd.ctx, &prow);
+        if (ps.message_count != 1 || !ps.messages[0].has_photo ||
+            ps.messages[0].photo_ready || !ps.messages[0].photo_only ||
+            ps.messages[0].photo_width != 320UL ||
+            tg_gui_driver_mark_photo_ready(&pg, 0x12UL, 0x34UL) != 1 ||
+            !ps.messages[0].photo_ready ||
+            tg_gui_driver_mark_photo_ready(&pg, 0x12UL, 0x34UL) != 0) {
+            puts("gui driver self-test: inline photo projection mismatch");
+            return 2;
+        }
     }
     if (state.messages[3].sender[0] != '\0') {
         puts("gui driver self-test: unknown group author should have no name");

@@ -21,6 +21,7 @@
 #include "tg_platform.h"
 #include "tg_version.h"
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -529,6 +530,44 @@ static int tg_gui_av_pool_cap = 48;   /* 48 paletted / 96 truecolor */
 static long tg_gui_av_share_d = 192L; /* 192 paletted / 48 truecolor */
 static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 
+/* Message photos share the avatar pen pool but keep only a few dynamically
+   sized pen grids. This bounds persistent RAM while making repaint and expose
+   events disk-free. A resize may rebuild a grid at the new bubble size. */
+#if defined(__m68k__)
+#define TG_GUI_PHOTO_SLOTS 2
+#define TG_GUI_PHOTO_JPEG_MAX (112UL * 1024UL)
+#define TG_GUI_PHOTO_SOURCE_CAP 192
+#else
+#define TG_GUI_PHOTO_SLOTS 4
+#define TG_GUI_PHOTO_JPEG_MAX (288UL * 1024UL)
+#define TG_GUI_PHOTO_SOURCE_CAP 384
+#endif
+
+typedef struct tg_gui_photo_slot {
+    unsigned long id_hi;
+    unsigned long id_lo;
+    int w;
+    int h;
+    int state; /* 0 free, 1 pen grid ready, -1 decode failed */
+    unsigned char *pen;
+} tg_gui_photo_slot;
+
+static tg_gui_photo_slot tg_gui_photo_slots[TG_GUI_PHOTO_SLOTS];
+static unsigned long tg_gui_photo_evict;
+
+static void tg_gui_photo_slots_reset(void)
+{
+    int i;
+
+    for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+        if (tg_gui_photo_slots[i].pen != 0) {
+            free(tg_gui_photo_slots[i].pen);
+        }
+        memset(&tg_gui_photo_slots[i], 0, sizeof(tg_gui_photo_slots[i]));
+    }
+    tg_gui_photo_evict = 0UL;
+}
+
 static void tg_gui_av_reset(void)
 {
     int i;
@@ -538,6 +577,7 @@ static void tg_gui_av_reset(void)
     }
     tg_gui_av_pool_n = 0;
     tg_gui_av_evict = 0UL;
+    tg_gui_photo_slots_reset();
 }
 
 static void tg_gui_av_release_pool(struct ColorMap *cmap)
@@ -793,6 +833,172 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
                      ctx->origin_y + rect.y + y,
                      ctx->origin_x + rect.x + run - 1,
                      ctx->origin_y + rect.y + y);
+            x = run;
+        }
+    }
+    return 1;
+}
+
+static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
+                                    unsigned long id_hi,
+                                    unsigned long id_lo,
+                                    tg_gui_rect rect,
+                                    tg_gui_rect clip)
+{
+    tg_gui_amiga_ctx *ctx;
+    tg_gui_photo_slot *slot;
+    int i;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+    int y;
+
+    ctx = (tg_gui_amiga_ctx *)backend->context;
+    if (rect.w <= 0 || rect.h <= 0 || (id_hi == 0UL && id_lo == 0UL) ||
+        tg_gui_av_cmap == 0) {
+        return 0;
+    }
+    slot = 0;
+    for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+        if (tg_gui_photo_slots[i].state != 0 &&
+            tg_gui_photo_slots[i].id_hi == id_hi &&
+            tg_gui_photo_slots[i].id_lo == id_lo &&
+            tg_gui_photo_slots[i].w == rect.w &&
+            tg_gui_photo_slots[i].h == rect.h) {
+            slot = &tg_gui_photo_slots[i];
+            break;
+        }
+    }
+    if (slot == 0) {
+        char path[64];
+        FILE *f;
+        long flen;
+        unsigned char *jpeg;
+        unsigned char *rgb;
+        unsigned char *pens;
+        unsigned long pixels;
+        unsigned long got;
+        unsigned long px;
+        int ok;
+
+        sprintf(path, "photos/tgph%08lx%08lx.jpg", id_hi, id_lo);
+        f = fopen(path, "rb");
+        if (f == 0 || fseek(f, 0L, SEEK_END) != 0) {
+            if (f != 0) {
+                fclose(f);
+            }
+            return 0;
+        }
+        flen = ftell(f);
+        if (flen <= 0L || (unsigned long)flen > TG_GUI_PHOTO_JPEG_MAX ||
+            fseek(f, 0L, SEEK_SET) != 0) {
+            fclose(f);
+            return 0;
+        }
+        pixels = (unsigned long)rect.w * (unsigned long)rect.h;
+        jpeg = (unsigned char *)malloc((size_t)flen);
+        rgb = (unsigned char *)malloc((size_t)(pixels * 3UL));
+        pens = (unsigned char *)malloc((size_t)pixels);
+        if (jpeg == 0 || rgb == 0 || pens == 0) {
+            free(jpeg);
+            free(rgb);
+            free(pens);
+            fclose(f);
+            return 0;
+        }
+        got = (unsigned long)fread(jpeg, 1, (size_t)flen, f);
+        fclose(f);
+        ok = got == (unsigned long)flen &&
+             tg_image_decode_jpeg_scaled(jpeg, got, rgb, rect.w, rect.h,
+                                         TG_GUI_PHOTO_SOURCE_CAP) == 0;
+        free(jpeg);
+        if (ok) {
+            for (px = 0UL; px < pixels; ++px) {
+                LONG p;
+
+                p = tg_gui_av_pen_for(rgb + px * 3UL);
+                if (p == -1) {
+                    ok = 0;
+                    break;
+                }
+                pens[px] = (unsigned char)p;
+            }
+        }
+        free(rgb);
+        if (!ok) {
+            free(pens);
+            return 0;
+        }
+        /* Reuse another-size slot for this photo first, then a free slot,
+           finally evict round-robin. */
+        for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+            if (tg_gui_photo_slots[i].state != 0 &&
+                tg_gui_photo_slots[i].id_hi == id_hi &&
+                tg_gui_photo_slots[i].id_lo == id_lo) {
+                slot = &tg_gui_photo_slots[i];
+                break;
+            }
+        }
+        if (slot == 0) {
+            for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+                if (tg_gui_photo_slots[i].state == 0) {
+                    slot = &tg_gui_photo_slots[i];
+                    break;
+                }
+            }
+        }
+        if (slot == 0) {
+            slot = &tg_gui_photo_slots[
+                tg_gui_photo_evict % TG_GUI_PHOTO_SLOTS];
+            ++tg_gui_photo_evict;
+        }
+        free(slot->pen);
+        slot->pen = pens;
+        slot->id_hi = id_hi;
+        slot->id_lo = id_lo;
+        slot->w = rect.w;
+        slot->h = rect.h;
+        slot->state = 1;
+    }
+    if (slot->state != 1 || slot->pen == 0) {
+        return 0;
+    }
+    x0 = rect.x > clip.x ? rect.x : clip.x;
+    y0 = rect.y > clip.y ? rect.y : clip.y;
+    x1 = rect.x + rect.w;
+    if (x1 > clip.x + clip.w) {
+        x1 = clip.x + clip.w;
+    }
+    y1 = rect.y + rect.h;
+    if (y1 > clip.y + clip.h) {
+        y1 = clip.y + clip.h;
+    }
+    if (x1 <= x0 || y1 <= y0) {
+        return 1; /* decoded and ready, merely outside this paint clip */
+    }
+    tg_gui_prim_log("pimg", x0, y0, x1 - x0, y1 - y0);
+    for (y = y0; y < y1; ++y) {
+        int sy;
+        int x;
+
+        sy = y - rect.y;
+        x = x0;
+        while (x < x1) {
+            int sx;
+            unsigned char p;
+            int run;
+
+            sx = x - rect.x;
+            p = slot->pen[sy * slot->w + sx];
+            run = x + 1;
+            while (run < x1 &&
+                   slot->pen[sy * slot->w + (run - rect.x)] == p) {
+                ++run;
+            }
+            SetAPen(ctx->rport, (LONG)p);
+            RectFill(ctx->rport, ctx->origin_x + x, ctx->origin_y + y,
+                     ctx->origin_x + run - 1, ctx->origin_y + y);
             x = run;
         }
     }
@@ -3160,6 +3366,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     backend.fill_rect = tg_gui_amiga_fill_rect;
     backend.avatar_fill = tg_gui_amiga_avatar_fill;
     backend.avatar_image = tg_gui_amiga_avatar_image;
+    backend.photo_image = tg_gui_amiga_photo_image;
     backend.draw_text = tg_gui_amiga_draw_text;
     backend.set_style = tg_gui_amiga_set_style;
 
@@ -5335,6 +5542,13 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     session_dirty = 1; /* the poll shows the sent file row */
                 }
             }
+        }
+        /* 0.0.9 inline photos: explicit user transfers always win. Otherwise
+           move one bounded cache chunk per turn; completion flips the matching
+           bubbles to image mode and asks the normal repaint path to redraw. */
+        if (!tg_gui_session_transfer_busy() &&
+            tg_gui_session_photo_step(stdout)) {
+            session_dirty = 1;
         }
         /* Load-older paging: a scroll-up reached the top of the transcript. "Top"
            INCLUDES the case where the whole backlog FITS the window (sb_tr_max==0,

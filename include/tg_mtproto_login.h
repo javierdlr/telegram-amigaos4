@@ -106,6 +106,26 @@ typedef struct tg_mtproto_document_meta {
     char file_name[TG_MTPROTO_DOC_NAME_MAX]; /* "" when no filename attr */
 } tg_mtproto_document_meta;
 
+/* Inline message photo (layer 214 Photo + selected PhotoSize). The parser keeps
+   only one downloadable representation: the size nearest the per-platform
+   display target that also fits the byte cap. A file_reference that does not
+   fit whole is rejected because a truncated reference is unusable. */
+#define TG_MTPROTO_PHOTO_TYPE_MAX 8U
+typedef struct tg_mtproto_photo_meta {
+    int has_photo; /* 0 = photoEmpty, no usable size, or absent */
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned long access_hash_hi;
+    unsigned long access_hash_lo;
+    unsigned long dc_id;
+    unsigned long file_reference_len;
+    unsigned char file_reference[TG_MTPROTO_FILE_REF_MAX];
+    char thumb_type[TG_MTPROTO_PHOTO_TYPE_MAX];
+    unsigned long width;
+    unsigned long height;
+    unsigned long size;
+} tg_mtproto_photo_meta;
+
 /* Parses one bare Document (document#8fd4c4d8 / documentEmpty#36f8c871),
    reader positioned ON the constructor; leaves the reader right after the
    object (all thumb/attribute variants are skipped wire-exactly). */
@@ -117,6 +137,18 @@ tg_mtproto_tl_status tg_mtproto_read_document(tg_mtproto_tl_reader *reader,
 tg_mtproto_tl_status tg_mtproto_build_upload_get_document(
     tg_mtproto_tl_writer *writer,
     const tg_mtproto_document_meta *doc,
+    unsigned long offset,
+    unsigned long limit);
+
+/* Parses one bare Photo (photo#fb197a65 / photoEmpty#2331b22d), selecting one
+   downloadable PhotoSize while consuming every size/video-size wire-exactly. */
+tg_mtproto_tl_status tg_mtproto_read_photo(tg_mtproto_tl_reader *reader,
+                                           tg_mtproto_photo_meta *out);
+
+/* upload.getFile(inputPhotoFileLocation) for the selected thumbnail. */
+tg_mtproto_tl_status tg_mtproto_build_upload_get_photo(
+    tg_mtproto_tl_writer *writer,
+    const tg_mtproto_photo_meta *photo,
     unsigned long offset,
     unsigned long limit);
 
@@ -332,6 +364,11 @@ typedef struct tg_mtproto_message_text {
        name (size)]" label AND the on-request download -- has_document is 0 for
        a plain-text or non-document media message. */
     tg_mtproto_document_meta document;
+    /* 0.0.9: photo metadata is transiently retained long enough for the GUI
+       session to queue a bounded cache download. photo_only distinguishes the
+       synthetic "[Photo]" fallback from a real caption. */
+    tg_mtproto_photo_meta photo;
+    int photo_only;
 } tg_mtproto_message_text;
 
 typedef struct tg_mtproto_message_text_list {

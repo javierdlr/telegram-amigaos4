@@ -84,6 +84,13 @@ typedef struct tg_chat_message_row {
     unsigned long from_id_hi;  /* sender user id, to match a live typing update */
     unsigned long from_id_lo;
     int has_document;          /* F9: message carries a downloadable document */
+    int has_photo;             /* 0.0.9: message carries an inline photo */
+    int photo_ready;           /* its selected JPEG is present in photos/ */
+    int photo_only;            /* text is the synthetic "[Photo]" fallback */
+    unsigned long photo_id_hi;
+    unsigned long photo_id_lo;
+    unsigned long photo_width;
+    unsigned long photo_height;
 } tg_chat_message_row;
 
 /* One resolved chat-list row. The engine parses the peer cache into these

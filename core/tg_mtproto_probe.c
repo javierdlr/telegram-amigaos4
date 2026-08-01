@@ -9734,6 +9734,7 @@ static void tg_chat_render_emit(tg_chat_driver *driver, unsigned long date,
 {
     tg_chat_message_row row;
 
+    memset(&row, 0, sizeof(row));
     row.text = text;
     row.has_time = (date != 0UL);
     row.local_epoch = date; /* the test uses delta 0, so local_epoch == date */
@@ -9743,10 +9744,6 @@ static void tg_chat_render_emit(tg_chat_driver *driver, unsigned long date,
     row.own_label = own_label;
     row.sender = sender;
     row.reply_quote = 0; /* golden script carries no replies */
-    row.id = 0UL;
-    row.from_id_hi = 0UL;
-    row.from_id_lo = 0UL;
-    row.has_document = 0;
     driver->on_message(driver->ctx, &row);
 }
 
@@ -9830,6 +9827,7 @@ int tg_mtproto_chat_render_self_test(void)
             puts("chat render self-test: cannot open temp file");
             return 2;
         }
+        memset(&qrow, 0, sizeof(qrow));
         qrow.text = "ok";
         qrow.has_time = 0;
         qrow.local_epoch = 0UL;
@@ -9852,6 +9850,147 @@ int tg_mtproto_chat_render_self_test(void)
     }
     puts("chat render self-test: ok (transcript renderer golden)");
     return 0;
+}
+
+/* --- 0.0.9 inline-photo cache queue ------------------------------------
+   History parsing offers compact Photo metadata here while the response is
+   still alive. The GUI event loop later downloads at most one chunk per turn;
+   paints only ever read a completed photos/tgph*.jpg. Newest visible photos
+   win if the bounded queue fills. */
+#if defined(__m68k__)
+#define TG_GUI_PHOTO_QUEUE_MAX 8
+#define TG_GUI_PHOTO_TRIED_MAX 24
+#else
+#define TG_GUI_PHOTO_QUEUE_MAX 16
+#define TG_GUI_PHOTO_TRIED_MAX 48
+#endif
+
+typedef struct tg_gui_photo_fetch_state {
+    int active;
+    tg_mtproto_photo_meta photo;
+    tg_mtproto_file_ctx home;
+    tg_mtproto_file_ctx file;
+    FILE *out;
+    FILE *quiet;
+    FILE *stream;
+    unsigned long offset;
+    unsigned long need_dc;
+    int retries;
+    char path[64];
+    char part_path[72];
+} tg_gui_photo_fetch_state;
+
+static tg_mtproto_photo_meta tg_gui_photo_queue[TG_GUI_PHOTO_QUEUE_MAX];
+static int tg_gui_photo_queue_count;
+static unsigned long tg_gui_photo_tried_hi[TG_GUI_PHOTO_TRIED_MAX];
+static unsigned long tg_gui_photo_tried_lo[TG_GUI_PHOTO_TRIED_MAX];
+static int tg_gui_photo_tried_count;
+static tg_gui_photo_fetch_state tg_gui_photo_fetch;
+
+static void tg_gui_photo_cache_path(char *path, unsigned long path_size,
+                                    unsigned long id_hi, unsigned long id_lo)
+{
+    if (path == 0 || path_size < 32UL) {
+        return;
+    }
+    sprintf(path, "photos/tgph%08lx%08lx.jpg", id_hi, id_lo);
+}
+
+static int tg_gui_photo_cache_exists(unsigned long id_hi, unsigned long id_lo)
+{
+    char path[64];
+    FILE *probe;
+
+    tg_gui_photo_cache_path(path, sizeof(path), id_hi, id_lo);
+    probe = fopen(path, "rb");
+    if (probe == 0) {
+        return 0;
+    }
+    fclose(probe);
+    return 1;
+}
+
+static int tg_gui_photo_was_tried(unsigned long id_hi, unsigned long id_lo)
+{
+    int i;
+
+    for (i = 0; i < tg_gui_photo_tried_count; ++i) {
+        if (tg_gui_photo_tried_hi[i] == id_hi &&
+            tg_gui_photo_tried_lo[i] == id_lo) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void tg_gui_photo_remember_tried(unsigned long id_hi,
+                                        unsigned long id_lo)
+{
+    int at;
+
+    if (tg_gui_photo_was_tried(id_hi, id_lo)) {
+        return;
+    }
+    at = tg_gui_photo_tried_count;
+    if (at >= TG_GUI_PHOTO_TRIED_MAX) {
+        int i;
+
+        for (i = 1; i < TG_GUI_PHOTO_TRIED_MAX; ++i) {
+            tg_gui_photo_tried_hi[i - 1] = tg_gui_photo_tried_hi[i];
+            tg_gui_photo_tried_lo[i - 1] = tg_gui_photo_tried_lo[i];
+        }
+        at = TG_GUI_PHOTO_TRIED_MAX - 1;
+    } else {
+        ++tg_gui_photo_tried_count;
+    }
+    tg_gui_photo_tried_hi[at] = id_hi;
+    tg_gui_photo_tried_lo[at] = id_lo;
+}
+
+static void tg_gui_photo_queue_offer(const tg_mtproto_photo_meta *photo)
+{
+    int i;
+
+    if (photo == 0 || !photo->has_photo ||
+        tg_gui_photo_cache_exists(photo->id_hi, photo->id_lo) ||
+        tg_gui_photo_was_tried(photo->id_hi, photo->id_lo) ||
+        (tg_gui_photo_fetch.active &&
+         tg_gui_photo_fetch.photo.id_hi == photo->id_hi &&
+         tg_gui_photo_fetch.photo.id_lo == photo->id_lo)) {
+        return;
+    }
+    for (i = 0; i < tg_gui_photo_queue_count; ++i) {
+        if (tg_gui_photo_queue[i].id_hi == photo->id_hi &&
+            tg_gui_photo_queue[i].id_lo == photo->id_lo) {
+            tg_gui_photo_queue[i] = *photo; /* refresh the file_reference */
+            return;
+        }
+    }
+    if (tg_gui_photo_queue_count >= TG_GUI_PHOTO_QUEUE_MAX) {
+        for (i = 1; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
+            tg_gui_photo_queue[i - 1] = tg_gui_photo_queue[i];
+        }
+        tg_gui_photo_queue_count = TG_GUI_PHOTO_QUEUE_MAX - 1;
+    }
+    tg_gui_photo_queue[tg_gui_photo_queue_count++] = *photo;
+}
+
+static void tg_gui_photo_queue_reset(void)
+{
+    if (tg_gui_photo_fetch.out != 0) {
+        fclose(tg_gui_photo_fetch.out);
+        tg_gui_photo_fetch.out = 0;
+    }
+    if (tg_gui_photo_fetch.part_path[0] != '\0') {
+        (void)remove(tg_gui_photo_fetch.part_path);
+    }
+    if (tg_gui_photo_fetch.quiet != 0) {
+        tg_mtproto_close_quiet_stream(tg_gui_photo_fetch.quiet,
+                                      tg_gui_photo_fetch.stream);
+    }
+    memset(&tg_gui_photo_fetch, 0, sizeof(tg_gui_photo_fetch));
+    tg_gui_photo_queue_count = 0;
+    tg_gui_photo_tried_count = 0;
 }
 
 static int tg_mtproto_auth_print_history_text_peer_on_context(
@@ -10053,6 +10192,8 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                 const char *sender = 0;
                 tg_chat_message_row row;
 
+                memset(&row, 0, sizeof(row));
+
                 if (!texts.messages[i].is_out &&
                     texts.messages[i].from_constructor != 0UL) {
                     for (k = 0UL; k < sender_cache.count; ++k) {
@@ -10096,6 +10237,20 @@ static int tg_mtproto_auth_print_history_text_peer_on_context(
                 row.from_id_hi = texts.messages[i].from_id_hi;
                 row.from_id_lo = texts.messages[i].from_id_lo;
                 row.has_document = texts.messages[i].document.has_document;
+                row.has_photo = texts.messages[i].photo.has_photo;
+                row.photo_only = texts.messages[i].photo_only;
+                row.photo_id_hi = texts.messages[i].photo.id_hi;
+                row.photo_id_lo = texts.messages[i].photo.id_lo;
+                row.photo_width = texts.messages[i].photo.width;
+                row.photo_height = texts.messages[i].photo.height;
+                if (row.has_photo) {
+                    row.photo_ready = tg_gui_photo_cache_exists(
+                        row.photo_id_hi, row.photo_id_lo);
+                    if (!row.photo_ready &&
+                        tg_chat_message_driver_override != 0) {
+                        tg_gui_photo_queue_offer(&texts.messages[i].photo);
+                    }
+                }
                 driver.on_message(driver.ctx, &row);
             }
             ++printed;
@@ -13715,6 +13870,9 @@ int tg_gui_session_open_chat(unsigned long peer_index, FILE *stream)
         return 0;
     }
     tg_gui_log("open_chat: start");
+    /* Do not finish an old chat's thumbnails after the user switched. Fresh
+       history below repopulates the bounded queue with the visible chat. */
+    tg_gui_photo_queue_reset();
     /* Opening getHistory limit -- must be <= TG_MTPROTO_MESSAGE_TEXT_LIST_MAX (the
        parser only keeps that many per read, the real backlog cap). MorphOS stays
        tiny (a large reply is its documented bsdsocket freeze trigger); m68k a bit
@@ -16207,6 +16365,221 @@ static void tg_gui_session_file_ctx(tg_mtproto_file_ctx *fc)
     fc->context = &tg_gui_file_context;
 }
 
+static unsigned long tg_gui_session_home_dc(void)
+{
+    unsigned long dc;
+    const char *p;
+
+    dc = 0UL;
+    p = tg_gui_session_state.dc_id_text;
+    while (p != 0 && *p >= '0' && *p <= '9') {
+        dc = dc * 10UL + (unsigned long)(*p - '0');
+        ++p;
+    }
+    return dc;
+}
+
+static int tg_gui_photo_finish(int success)
+{
+    unsigned long id_hi;
+    unsigned long id_lo;
+    int dirty;
+
+    id_hi = tg_gui_photo_fetch.photo.id_hi;
+    id_lo = tg_gui_photo_fetch.photo.id_lo;
+    dirty = 0;
+    if (tg_gui_photo_fetch.out != 0) {
+        if (fclose(tg_gui_photo_fetch.out) != 0) {
+            success = 0;
+        }
+        tg_gui_photo_fetch.out = 0;
+    }
+    if (success) {
+        (void)remove(tg_gui_photo_fetch.path);
+        if (rename(tg_gui_photo_fetch.part_path,
+                   tg_gui_photo_fetch.path) != 0) {
+            success = 0;
+        }
+    }
+    if (!success) {
+        (void)remove(tg_gui_photo_fetch.part_path);
+    } else {
+        dirty = tg_gui_driver_mark_photo_ready(
+            &tg_gui_session_state.gui_driver, id_hi, id_lo);
+    }
+    if (tg_gui_photo_fetch.quiet != 0) {
+        tg_mtproto_close_quiet_stream(tg_gui_photo_fetch.quiet,
+                                      tg_gui_photo_fetch.stream);
+    }
+    memset(&tg_gui_photo_fetch, 0, sizeof(tg_gui_photo_fetch));
+    return dirty;
+}
+
+static int tg_gui_photo_begin(FILE *stream)
+{
+    tg_mtproto_photo_meta photo;
+    unsigned long home_dc;
+    int found;
+
+    found = 0;
+    while (tg_gui_photo_queue_count > 0) {
+        /* Newest visible first. The older queued items remain bounded. */
+        photo = tg_gui_photo_queue[--tg_gui_photo_queue_count];
+        if (!tg_gui_photo_cache_exists(photo.id_hi, photo.id_lo) &&
+            !tg_gui_photo_was_tried(photo.id_hi, photo.id_lo)) {
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        return 0;
+    }
+    memset(&tg_gui_photo_fetch, 0, sizeof(tg_gui_photo_fetch));
+    tg_gui_photo_fetch.photo = photo;
+    tg_gui_photo_remember_tried(photo.id_hi, photo.id_lo);
+    tg_gui_photo_cache_path(tg_gui_photo_fetch.path,
+                            sizeof(tg_gui_photo_fetch.path), photo.id_hi,
+                            photo.id_lo);
+    sprintf(tg_gui_photo_fetch.part_path, "%s.part", tg_gui_photo_fetch.path);
+    (void)mkdir("photos", 0777);
+    (void)remove(tg_gui_photo_fetch.part_path);
+    tg_gui_photo_fetch.out = fopen(tg_gui_photo_fetch.part_path, "wb");
+    if (tg_gui_photo_fetch.out == 0) {
+        memset(&tg_gui_photo_fetch, 0, sizeof(tg_gui_photo_fetch));
+        return 0;
+    }
+    tg_gui_photo_fetch.stream = stream;
+    tg_gui_photo_fetch.quiet = tg_mtproto_open_quiet_stream(stream);
+    tg_gui_session_file_ctx(&tg_gui_photo_fetch.home);
+    tg_gui_photo_fetch.file = tg_gui_photo_fetch.home;
+    home_dc = tg_gui_session_home_dc();
+    if (home_dc != 0UL && photo.dc_id != 0UL && photo.dc_id != home_dc) {
+        tg_gui_photo_fetch.need_dc = photo.dc_id;
+    }
+    tg_gui_photo_fetch.active = 1;
+    return 1;
+}
+
+int tg_gui_session_photo_step(FILE *stream)
+{
+    unsigned char query[384];
+    tg_mtproto_tl_writer writer;
+    tg_mtproto_rpc_result result;
+    const unsigned char *bytes;
+    unsigned long bytes_len;
+    unsigned long previous_timeout;
+    char previous_fail[64];
+    int cdn;
+    int rc;
+    int dirty;
+
+    if (!tg_gui_session_state.open || stream == 0 ||
+        tg_gui_session_transfer_busy()) {
+        return 0;
+    }
+    if (!tg_gui_photo_fetch.active && !tg_gui_photo_begin(stream)) {
+        return 0;
+    }
+    if (tg_gui_photo_fetch.need_dc != 0UL ||
+        (tg_gui_photo_fetch.photo.dc_id != 0UL &&
+         tg_gui_photo_fetch.photo.dc_id != tg_gui_session_home_dc() &&
+         tg_gui_foreign_dc != tg_gui_photo_fetch.photo.dc_id)) {
+        if (tg_gui_session_setup_foreign_channel(
+                &tg_gui_photo_fetch.home, tg_gui_photo_fetch.photo.dc_id,
+                &tg_gui_photo_fetch.file, tg_gui_photo_fetch.quiet) != 0) {
+            return tg_gui_photo_finish(0);
+        }
+        tg_gui_photo_fetch.need_dc = 0UL;
+    }
+    tg_mtproto_tl_writer_init(&writer, query, sizeof(query));
+    if (tg_mtproto_build_upload_get_photo(
+            &writer, &tg_gui_photo_fetch.photo, tg_gui_photo_fetch.offset,
+            TG_GUI_DL_CHUNK) != TG_MTPROTO_TL_OK) {
+        return tg_gui_photo_finish(0);
+    }
+    strcpy(previous_fail, tg_mtproto_query_fail);
+    previous_timeout = tg_net_connect_timeout_seconds();
+    /* Background thumbnails yield quickly on a slow link; the foreground chat
+       and explicit downloads retain their normal, longer timeout. */
+    tg_net_set_connect_timeout_seconds(3UL);
+    memset(&result, 0, sizeof(result));
+    rc = tg_mtproto_send_saved_query_on_context(
+        tg_gui_photo_fetch.file.host, tg_gui_photo_fetch.file.port,
+        tg_gui_photo_fetch.file.api_id, tg_gui_photo_fetch.file.auth_file,
+        tg_gui_photo_fetch.file.dc_id_text, tg_gui_photo_fetch.file.context,
+        query, writer.length, &result, tg_gui_photo_fetch.quiet,
+        "mtproto getFile(photo)", 600U);
+    tg_net_set_connect_timeout_seconds(previous_timeout);
+    if (rc != 0) {
+        if (++tg_gui_photo_fetch.retries <= 2) {
+            if (strncmp(tg_mtproto_query_fail, "send", 4) == 0 ||
+                strncmp(tg_mtproto_query_fail, "transport", 9) == 0) {
+                tg_mtproto_close_auth_context(
+                    tg_gui_photo_fetch.file.context);
+            }
+            strcpy(tg_mtproto_query_fail, previous_fail);
+            return 0;
+        }
+        strcpy(tg_mtproto_query_fail, previous_fail);
+        return tg_gui_photo_finish(0);
+    }
+    tg_gui_photo_fetch.retries = 0;
+    if (result.result_constructor == TG_MTPROTO_RPC_ERROR_CONSTRUCTOR) {
+        long ecode;
+        char emsg[64];
+
+        ecode = 0L;
+        emsg[0] = '\0';
+        (void)tg_mtproto_parse_rpc_error(result.result_body - 4U,
+                                         result.result_body_length + 4U,
+                                         &ecode, emsg, sizeof(emsg));
+        if (strncmp(emsg, "FILE_MIGRATE_", 13) == 0) {
+            unsigned long dc;
+            const char *p;
+
+            dc = 0UL;
+            p = emsg + 13;
+            while (*p >= '0' && *p <= '9') {
+                dc = dc * 10UL + (unsigned long)(*p - '0');
+                ++p;
+            }
+            if (dc != 0UL && tg_mtproto_dc_by_id((int)dc) != 0) {
+                tg_gui_photo_fetch.need_dc = dc;
+                tg_gui_photo_fetch.photo.dc_id = dc;
+                strcpy(tg_mtproto_query_fail, previous_fail);
+                return 0;
+            }
+        }
+        strcpy(tg_mtproto_query_fail, previous_fail);
+        return tg_gui_photo_finish(0);
+    }
+    cdn = 0;
+    if (tg_mtproto_unpack_gzip_result(&result, tg_gui_photo_fetch.quiet,
+                                      "mtproto getFile(photo)") != 0 ||
+        tg_mtproto_parse_upload_file(result.result_constructor,
+                                     result.result_body,
+                                     result.result_body_length, &bytes,
+                                     &bytes_len, &cdn) != TG_MTPROTO_TL_OK ||
+        cdn || bytes_len == 0UL ||
+        tg_gui_photo_fetch.offset + bytes_len >
+            tg_gui_photo_fetch.photo.size) {
+        strcpy(tg_mtproto_query_fail, previous_fail);
+        return tg_gui_photo_finish(0);
+    }
+    if (fwrite(bytes, 1, bytes_len, tg_gui_photo_fetch.out) != bytes_len) {
+        strcpy(tg_mtproto_query_fail, previous_fail);
+        return tg_gui_photo_finish(0);
+    }
+    tg_gui_photo_fetch.offset += bytes_len;
+    dirty = 0;
+    if (bytes_len < TG_GUI_DL_CHUNK ||
+        tg_gui_photo_fetch.offset >= tg_gui_photo_fetch.photo.size) {
+        dirty = tg_gui_photo_finish(1);
+    }
+    strcpy(tg_mtproto_query_fail, previous_fail);
+    return dirty;
+}
+
 int tg_gui_session_download_document(unsigned long msg_id, char *out_path,
                                      unsigned long out_path_size, FILE *stream,
                                      tg_gui_download_progress_fn progress,
@@ -16981,6 +17354,7 @@ int tg_gui_session_tick(FILE *stream)
 void tg_gui_session_close(void)
 {
     tg_mtproto_avatar_store_save(); /* keep the previews for next run */
+    tg_gui_photo_queue_reset();
     if (!tg_gui_session_state.open) {
         tg_chat_nq = 0;
         tg_chat_typing_target = 0;

@@ -83,6 +83,12 @@ int tg_gui_driver_update_text_utf8(tg_gui_chat_driver *gui,
 int tg_gui_driver_remove_by_id(tg_gui_chat_driver *gui,
                                unsigned long message_id);
 
+/* A background photo download completed: mark every shown message carrying
+   that Telegram photo id ready. Returns 1 when the model changed. */
+int tg_gui_driver_mark_photo_ready(tg_gui_chat_driver *gui,
+                                   unsigned long photo_id_hi,
+                                   unsigned long photo_id_lo);
+
 /* Host-CI self-test: feeds synthetic rows through the driver and asserts the
    resulting tg_gui_state (sender, text, time, is_own, colour, ring overflow).
    Returns 0 on success. */

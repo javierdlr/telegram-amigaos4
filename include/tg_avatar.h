@@ -23,6 +23,15 @@ int tg_avatar_expand_stripped(const unsigned char *stripped,
 int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
                           unsigned char *dst_rgb, int dw, int dh);
 
+/* General message-photo path: decode a baseline JPEG with tjpgd and scale it
+   into caller-owned RGB888. Intermediate memory is allocated only for the
+   duration of the decode and bounded by source_edge_cap. */
+int tg_image_decode_jpeg_scaled(const unsigned char *jpeg,
+                                unsigned long jpeg_len,
+                                unsigned char *dst_rgb,
+                                int dw, int dh,
+                                int source_edge_cap);
+
 /* Expand + decode + nearest-neighbour scale into dst_rgb (dw*dh*3, RGB888).
    0 = ok; any failure leaves the caller free to fall back to initials. */
 int tg_avatar_decode_stripped(const unsigned char *stripped,
