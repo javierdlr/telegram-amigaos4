@@ -35,9 +35,10 @@ unless noted.
 
 ### Changed
 - Live resize now paints only the window background while intermediate sizes
-  are arriving, then rebuilds the complete frame once after the final resize
-  event. This gives AfA_OS live resize the lightweight behaviour of classic
-  AmigaOS without changing the final layout.
+  are arriving. On AfA_OS it also clears the current client area at the first
+  size event, so the system's opaque resize stretches only blank background;
+  the complete frame is rebuilt once after release. Crash-safe diagnostics mark
+  resize begin, rebuild, repaint and end without changing the final layout.
 - Inline photos now decode once into a platform-sized canonical cache and
   repaint from that cache at every bubble size. Resize paints never trigger a
   JPEG decode, modern RTG targets use optional RGB888 output, paletted screens

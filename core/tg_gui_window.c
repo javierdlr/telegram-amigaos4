@@ -2450,6 +2450,35 @@ static void tg_gui_amiga_buffer_free(tg_gui_amiga_ctx *ctx)
     ctx->buf_h = 0;
 }
 
+/* AfA_OS performs opaque resize by stretching the window's current pixels
+   before it asks the application for intermediate refreshes. Blank the client
+   area once at the first NEWSIZE so it stretches only a stable background,
+   not stale chat rows. Native systems do not need the extra fill. */
+static void tg_gui_amiga_resize_blank(tg_gui_amiga_ctx *ctx)
+{
+    struct Layer *layer;
+
+    if (ctx == 0 || ctx->rport == 0 || ctx->window == 0 ||
+        ctx->inner_w <= 0 || ctx->inner_h <= 0) {
+        return;
+    }
+    tg_gui_log("resize: blank begin");
+    WaitBlit();
+    layer = ctx->rport->Layer;
+    if (layer != 0) {
+        LockLayerRom(layer);
+    }
+    SetAPen(ctx->rport, ctx->pens[TG_GUI_PEN_WINDOW]);
+    RectFill(ctx->rport, ctx->origin_x, ctx->origin_y,
+             ctx->origin_x + ctx->inner_w - 1,
+             ctx->origin_y + ctx->inner_h - 1);
+    if (layer != 0) {
+        UnlockLayerRom(layer);
+    }
+    WaitBlit();
+    tg_gui_log("resize: blank done");
+}
+
 /* (Re)allocate the off-screen buffer to the CURRENT inner_w/inner_h as a friend
    of the window bitmap, so depth/format/placement match (chunky on a gfx card,
    planar on AGA) and the blit is native. Frees any old buffer first. On any
@@ -6580,7 +6609,18 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     mnum = item->NextSelect;
                 }
             } else if (msg_class == IDCMP_NEWSIZE) {
+                int first_resize;
+
+                first_resize = !resize_pending;
+                if (first_resize) {
+                    tg_gui_log("resize: begin");
+                    resize_pending = 1;
+                    ctx.photo_resize_active = 1;
+                }
                 tg_gui_amiga_measure_geometry(&ctx);
+                if (first_resize && ctx.bitmap_text_compat) {
+                    tg_gui_amiga_resize_blank(&ctx);
+                }
                 /* A live size drag can queue many NEWSIZE/REFRESH pairs. Do not
                    free, allocate and repaint for every intermediate geometry:
                    drain the queue first, then rebuild once for the newest size
@@ -7525,6 +7565,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             }
         }
         if (resize_pending && !done && resize_settle_ticks <= 0) {
+            tg_gui_log("resize: rebuild begin");
             tg_gui_amiga_measure_geometry(&ctx);
             tg_gui_amiga_buffer_alloc(&ctx);
             /* The first quiet tick marks release of the live-resize burst.
@@ -7532,13 +7573,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                network/decode work out of the same turn. */
             ctx.photo_resize_active = 0;
             photo_resume_turn = 1;
+            tg_gui_log("resize: repaint begin");
             tg_gui_window_paint(state, &backend);
             WaitBlit();
+            tg_gui_log("resize: repaint done");
             /* NEWSIZE/REFRESH bursts can leave themed AfA/RTG borders with an
                exposed strip even though the client area is current. Ask
                Intuition to redraw its frame once, after the final geometry. */
             RefreshWindowFrame(ctx.window);
             resize_pending = 0;
+            tg_gui_log("resize: end");
         }
         /* 0.0.8 punto 1e: Workbench drops. An icon dropped on the window
            arms an upload to the open chat, exactly like Send file... did;
