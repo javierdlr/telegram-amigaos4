@@ -8,6 +8,9 @@ unless noted.
 ## [Unreleased]
 
 ### Added
+- The Telegram menu now groups persistent preferences under `Settings`:
+  download drawer, inline photos and `Photo dithering` with Full, Light and
+  Off levels. Each change is written immediately and restored at next start.
 - Clicking a photo, including the `[Photo]` label while inline photos are
   disabled, now opens one reusable fixed-size viewer window. It requests a
   larger bounded Telegram image, keeps a separate `-l.jpg` disk cache and
@@ -57,6 +60,8 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- The JPEG drop requester now offers Photo, File and Cancel as distinct
+  actions; its Cancel button and Escape key leave the file untouched.
 - Empty inline-photo preference files now fall back cleanly to the default
   setting without relying on an unchecked read result.
 - Documents with a caption now keep the caption and append the downloadable

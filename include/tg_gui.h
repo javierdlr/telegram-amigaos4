@@ -16,6 +16,12 @@
 #define TG_GUI_THEME_LIGHT 1 /* follow Workbench pens */
 #define TG_GUI_THEME_AMIRC 2 /* future classic skin */
 
+/* Ordered-dither strength for photos rendered through the pen-grid fallback.
+   FULL is zero so a memset-initialized GUI state keeps the historical default. */
+#define TG_GUI_PHOTO_DITHER_FULL 0
+#define TG_GUI_PHOTO_DITHER_LIGHT 1
+#define TG_GUI_PHOTO_DITHER_OFF 2
+
 /* Colour roles. The backend resolves these to pens/RGB for the active theme so
    the portable renderer never hard-codes a colour. */
 #define TG_GUI_PEN_WINDOW 0      /* window background */
@@ -200,6 +206,7 @@ typedef struct tg_gui_state {
     int transcript_scroll; /* PIXELS scrolled up from the newest-pinned bottom (0 = newest) */
     int input_h;           /* composer box height (px), cached by the painter for the hit-test */
     int inline_photos;     /* persistent GUI preference; default on */
+    int photo_dither;      /* TG_GUI_PHOTO_DITHER_*; default full */
     /* Scrollbar geometry the painter caches each frame for the event loop's
        knob-drag / track-click (only the painter has the backend to size the
        transcript). *_max == 0 means no bar / nothing to drag. */
@@ -393,8 +400,14 @@ int tg_gui_input_layout_height(const tg_gui_state *state,
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
 
-/* Persistent inline-photo preference. Missing or malformed files mean ON;
-   save writes a short "on"/"off" value atomically through a sibling .tmp. */
+/* Persistent photo preferences. The first line remains exactly "on"/"off"
+   so older builds can read files written by newer ones; newer keys follow as
+   key=value lines. Missing or malformed values use ON + FULL dithering. */
+void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
+                                   int *photo_dither);
+int tg_gui_photo_preferences_save(const char *path, int inline_photos,
+                                  int photo_dither);
+/* Compatibility wrappers for callers interested only in the first line. */
 int tg_gui_inline_photos_load(const char *path);
 int tg_gui_inline_photos_save(const char *path, int enabled);
 

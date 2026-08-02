@@ -241,9 +241,12 @@ Using the GUI
   The conversation returns to lightweight [Photo] labels and does no background
   photo fetch or decode work. Click an individual [Photo] label to load only
   that image in the viewer. The choice is remembered for the next run.
+- "Settings > Photo dithering" controls pen-grid photo quality: Full is the
+  default, Light uses a gentler pattern, and Off uses direct colour matching.
+  This mainly helps MorphOS and paletted screens; truecolour replay is unchanged.
 - To send a JPEG as a Telegram photo, use "Send photo..." in the Telegram menu
-  (Amiga+P). Dropping a .jpg/.jpeg on the GUI asks Photo or File; Photo is the
-  default. A photo over 10 MiB is preserved and sent as a document instead.
+  (Amiga+P). Dropping a .jpg/.jpeg on the GUI asks Photo, File or Cancel; ESC
+  also cancels. A photo over 10 MiB is preserved and sent as a document instead.
 - Right-click a message and choose "Forward to Saved Messages" for a one-click
   cloud copy, or "Forward to..." to select another chat with the normal search.
 - In groups, type @ in the composer to autocomplete a member: a small list
@@ -257,7 +260,7 @@ Using the GUI
   the percentage and speed in the status line and ESC cancels them, while
   the client stays usable -- keep chatting while a file moves.
   To download somewhere else (a RAM: drawer is much quicker on a floppy
-  or slow disk), pick it with the "Download drawer..." menu item -- or put
+  or slow disk), pick it with "Settings > Download drawer..." -- or put
   that path on a single line in data/telegram-downloads.txt, e.g. RAM:TGdl
   -- remember RAM: is emptied by a reboot.
 - SAVED MESSAGES: the last chat in the list is you. Send files or notes to
@@ -390,9 +393,13 @@ Usare la GUI
   Telegram. La conversazione torna alle leggere etichette [Photo] e non avvia
   download o decodifiche in background. Clicca una singola [Photo] per caricare
   solo quella immagine nel viewer. La scelta resta memorizzata al riavvio.
+- "Settings > Photo dithering" regola la resa delle foto a penne: Full e' il
+  valore predefinito, Light usa una trama piu' leggera e Off usa i colori
+  diretti. E' utile soprattutto su MorphOS e schermi a palette; il truecolor
+  non cambia.
 - Per inviare un JPEG come vera foto Telegram usa "Send photo..." nel menu
-  Telegram (Amiga+P). Trascinando un .jpg/.jpeg sulla GUI puoi scegliere Photo
-  o File; Photo e' la scelta predefinita. Oltre 10 MiB viene inviato come file.
+  Telegram (Amiga+P). Trascinando un .jpg/.jpeg sulla GUI puoi scegliere Photo,
+  File o Cancel; anche ESC annulla. Oltre 10 MiB viene inviato come file.
 - Click destro su un messaggio: "Forward to Saved Messages" lo copia con un
   click nel proprio cloud; "Forward to..." permette di scegliere un'altra chat
   usando la ricerca normale.
@@ -407,8 +414,8 @@ Usare la GUI
   Durante i trasferimenti vedi percentuale e velocita' nella riga di stato,
   ESC annulla, e il client resta usabile: puoi continuare a chattare.
   Per scaricare altrove (un cassetto in RAM: e' molto piu' rapido su
-  floppy o dischi lenti) scegli il cassetto dalla voce di menu "Download
-  drawer...", oppure scrivi il percorso su una riga sola in
+  floppy o dischi lenti) scegli "Settings > Download drawer...", oppure scrivi
+  il percorso su una riga sola in
   data/telegram-downloads.txt, per esempio RAM:TGdl -- ricorda che RAM:
   si svuota al riavvio.
 - MESSAGGI SALVATI: l'ultima chat della lista sei tu. Mandaci file o appunti

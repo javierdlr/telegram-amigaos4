@@ -15421,7 +15421,10 @@ const char *tg_gui_session_download_dir(void)
 int tg_gui_session_set_download_dir(const char *dir)
 {
     FILE *f;
+    const char *path = "data/telegram-downloads.txt";
+    char tmp[64];
     unsigned long n;
+    int failed;
 
     if (dir == 0 || dir[0] == '\0' ||
         strlen(dir) + 1UL > sizeof(tg_gui_dl_dir)) {
@@ -15441,12 +15444,28 @@ int tg_gui_session_set_download_dir(const char *dir)
         return 1;
     }
     (void)mkdir("data", 0777);
-    f = fopen("data/telegram-downloads.txt", "w");
+    if (strlen(path) + 5UL > sizeof(tmp)) {
+        return 2;
+    }
+    strcpy(tmp, path);
+    strcat(tmp, ".tmp");
+    f = fopen(tmp, "w");
     if (f == 0) {
         return 2; /* in force for this run, but not remembered */
     }
-    fprintf(f, "%s\n", tg_gui_dl_dir);
-    fclose(f);
+    failed = fprintf(f, "%s\n", tg_gui_dl_dir) < 0;
+    if (fclose(f) != 0) {
+        failed = 1;
+    }
+    if (failed) {
+        (void)remove(tmp);
+        return 2;
+    }
+    (void)remove(path);
+    if (rename(tmp, path) != 0) {
+        (void)remove(tmp);
+        return 2;
+    }
     return 0;
 }
 

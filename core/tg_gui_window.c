@@ -324,6 +324,9 @@ static int tg_gui_amiga_afa_text_compat(void)
 #define TG_MENU_DLDIR 12
 #define TG_MENU_SENDPHOTO 13
 #define TG_MENU_INLINEPHOTOS 14
+#define TG_MENU_DITHER_FULL 15
+#define TG_MENU_DITHER_LIGHT 16
+#define TG_MENU_DITHER_OFF 17
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -389,6 +392,7 @@ typedef struct tg_gui_amiga_ctx {
     int photo_cgx_failed;     /* permanent pen fallback for this window session */
     int photo_viewer_scope;   /* fallback must not mutate transcript cache slots */
     int photo_resize_active;  /* no photo cache/replay work while buffer geometry moves */
+    int photo_dither;         /* TG_GUI_PHOTO_DITHER_* for the pen-grid path */
     unsigned int afa_profile_paints; /* bounded --gui-live-debug paint samples */
 } tg_gui_amiga_ctx;
 
@@ -859,17 +863,23 @@ static LONG tg_gui_av_pen_for(const unsigned char *rgb)
     return (best >= 0) ? tg_gui_av_pool_pen[best] : -1;
 }
 
-/* Bayer 4x4 ordered dither for paletted screens. The richer RTG profile keeps
-   the exact RGB so its larger pen pool is not needlessly perturbed. This runs
-   only while a canonical slot is built, never during repaint. */
-static LONG tg_gui_photo_pen_for(const unsigned char *rgb, int x, int y)
+/* Configurable Bayer 4x4 ordered dither for the pen-grid fallback. Truecolor
+   replay never calls this path. It runs while a canonical slot is built, not
+   during repaint, so changing the preference deliberately rebuilds the slot. */
+static LONG tg_gui_photo_pen_for(const tg_gui_amiga_ctx *ctx,
+                                 const unsigned char *rgb, int x, int y)
 {
     unsigned char adjusted[3];
+    int amplitude;
 
-    if (tg_gui_av_rich) {
-        return tg_gui_av_pen_for(rgb);
+    amplitude = 4;
+    if (ctx != 0 && ctx->photo_dither == TG_GUI_PHOTO_DITHER_LIGHT) {
+        amplitude = 2;
+    } else if (ctx != 0 &&
+               ctx->photo_dither == TG_GUI_PHOTO_DITHER_OFF) {
+        amplitude = 0;
     }
-    tg_image_ordered_dither_rgb(rgb, x, y, adjusted);
+    tg_image_ordered_dither_rgb_level(rgb, x, y, amplitude, adjusted);
     return tg_gui_av_pen_for(adjusted);
 }
 
@@ -1142,7 +1152,8 @@ static void tg_gui_photo_request_offer(unsigned long id_hi,
     ++tg_gui_photo_request_count;
 }
 
-static int tg_gui_photo_map_pen_rows(tg_gui_photo_slot *slot, int max_rows)
+static int tg_gui_photo_map_pen_rows(tg_gui_amiga_ctx *ctx,
+                                     tg_gui_photo_slot *slot, int max_rows)
 {
     int end_row;
     int y;
@@ -1172,6 +1183,7 @@ static int tg_gui_photo_map_pen_rows(tg_gui_photo_slot *slot, int max_rows)
             LONG p;
 
             p = tg_gui_photo_pen_for(
+                ctx,
                 slot->rgb + ((((unsigned long)y * (unsigned long)slot->w) +
                               (unsigned long)x) * 3UL), x, y);
             if (p == -1) {
@@ -1405,7 +1417,7 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
     }
     changed = 0;
     if (!ctx->photo_truecolor) {
-        changed = tg_gui_photo_map_pen_rows(slot, pen_row_budget);
+        changed = tg_gui_photo_map_pen_rows(ctx, slot, pen_row_budget);
     }
     if (slot->decode_done &&
         (ctx->photo_truecolor || slot->pen_rows >= slot->h)) {
@@ -3005,15 +3017,21 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_SENDFILE },
     { NM_ITEM,  (STRPTR)"Send photo...", (STRPTR)"P", 0, 0,
       (APTR)TG_MENU_SENDPHOTO },
-    { NM_ITEM,  (STRPTR)"Download drawer...", 0, 0, 0,
-      (APTR)TG_MENU_DLDIR },
     { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
       (APTR)TG_MENU_ICONIFY },
     { NM_ITEM,  (STRPTR)"Own screen", 0, CHECKIT | MENUTOGGLE, 0,
       (APTR)TG_MENU_OWNSCREEN },
     { NM_ITEM,  (STRPTR)"Settings", 0, 0, 0, 0 },
+    { NM_SUB,   (STRPTR)"Download drawer...", 0, 0, 0,
+      (APTR)TG_MENU_DLDIR },
     { NM_SUB,   (STRPTR)"Inline photos", 0, CHECKIT | MENUTOGGLE, 0,
       (APTR)TG_MENU_INLINEPHOTOS },
+    { NM_SUB,   (STRPTR)"Photo dithering: Full", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_FULL },
+    { NM_SUB,   (STRPTR)"Photo dithering: Light", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_LIGHT },
+    { NM_SUB,   (STRPTR)"Photo dithering: Off", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_OFF },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
     { NM_TITLE, (STRPTR)"Edit", 0, 0, 0, 0 },
@@ -3047,6 +3065,31 @@ static struct MenuItem *tg_gui_menu_find_userdata(struct Menu *menu, APTR data)
         }
     }
     return 0;
+}
+
+static void tg_gui_menu_set_photo_dither(struct Menu *menu, int dither)
+{
+    static APTR const ids[3] = {
+        (APTR)TG_MENU_DITHER_FULL, (APTR)TG_MENU_DITHER_LIGHT,
+        (APTR)TG_MENU_DITHER_OFF
+    };
+    int selected;
+    int i;
+
+    selected = dither == TG_GUI_PHOTO_DITHER_LIGHT ? 1 :
+               dither == TG_GUI_PHOTO_DITHER_OFF ? 2 : 0;
+    for (i = 0; i < 3; ++i) {
+        struct MenuItem *item;
+
+        item = tg_gui_menu_find_userdata(menu, ids[i]);
+        if (item != 0) {
+            if (i == selected) {
+                item->Flags |= CHECKED;
+            } else {
+                item->Flags &= (UWORD)~CHECKED;
+            }
+        }
+    }
 }
 
 static const char tg_gui_about_text[] =
@@ -3084,6 +3127,53 @@ static LONG tg_gui_amiga_easyreq_args(struct Window *win, struct EasyStruct *es)
         ModifyIDCMP(win, saved & ~(ULONG)IDCMP_MENUVERIFY);
     }
     result = EasyRequestArgs(win, es, 0, 0);
+    if ((saved & IDCMP_MENUVERIFY) != 0UL) {
+        ModifyIDCMP(win, saved);
+    }
+    return result;
+}
+
+/* EasyRequestArgs does not map ESC to its rightmost gadget. This small
+   requester loop preserves the standard gadget return values while making
+   raw ESC an explicit zero (Cancel) on every Intuition-compatible target. */
+static LONG tg_gui_amiga_easyreq_cancel_args(struct Window *win,
+                                             struct EasyStruct *es)
+{
+    ULONG saved;
+    struct Window *requester;
+    LONG result;
+
+    saved = win->IDCMPFlags;
+    if ((saved & IDCMP_MENUVERIFY) != 0UL) {
+        ModifyIDCMP(win, saved & ~(ULONG)IDCMP_MENUVERIFY);
+    }
+    requester = BuildEasyRequestArgs(win, es, IDCMP_RAWKEY, 0);
+    result = requester == (struct Window *)1 ? 1L : 0L;
+    if (requester != 0 && requester != (struct Window *)1) {
+        int done;
+        struct IntuiMessage *msg;
+
+        done = 0;
+        while (!done) {
+            WaitPort(requester->UserPort);
+            while ((msg = (struct IntuiMessage *)GetMsg(
+                        requester->UserPort)) != 0) {
+                if (msg->Class == IDCMP_GADGETUP) {
+                    result = (LONG)((struct Gadget *)msg->IAddress)->GadgetID;
+                    done = 1;
+                } else if (msg->Class == IDCMP_RAWKEY && msg->Code == 0x45U) {
+                    result = 0L;
+                    done = 1;
+                }
+                ReplyMsg((struct Message *)msg);
+            }
+        }
+        while ((msg = (struct IntuiMessage *)GetMsg(
+                    requester->UserPort)) != 0) {
+            ReplyMsg((struct Message *)msg);
+        }
+    }
+    FreeSysRequest(requester);
     if ((saved & IDCMP_MENUVERIFY) != 0UL) {
         ModifyIDCMP(win, saved);
     }
@@ -3166,8 +3256,8 @@ static int tg_gui_amiga_choose_jpeg_mode(struct Window *win)
     es.es_Flags = 0UL;
     es.es_Title = (STRPTR)"Send JPEG";
     es.es_TextFormat = (STRPTR)"Send this JPEG as a photo or as a file?";
-    es.es_GadgetFormat = (STRPTR)"Photo|File";
-    return (int)tg_gui_amiga_easyreq_args(win, &es);
+    es.es_GadgetFormat = (STRPTR)"Photo|File|Cancel";
+    return (int)tg_gui_amiga_easyreq_cancel_args(win, &es);
 }
 
 /* Confirm + remove the selected chat from the sidebar, persist it, then land on
@@ -4451,6 +4541,7 @@ static int tg_gui_photo_viewer_open_window(tg_gui_photo_viewer *viewer,
     viewer->ctx.photo_truecolor = main_ctx->photo_truecolor;
     viewer->ctx.photo_cgx_failed = main_ctx->photo_cgx_failed;
     viewer->ctx.photo_viewer_scope = 1;
+    viewer->ctx.photo_dither = main_ctx->photo_dither;
     tg_gui_amiga_measure_geometry(&viewer->ctx);
     tg_gui_amiga_buffer_alloc(&viewer->ctx);
     tg_gui_photo_viewer_paint(viewer);
@@ -4645,7 +4736,8 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
     }
     changed = 0;
     if (!viewer->ctx.photo_truecolor) {
-        changed = tg_gui_photo_map_pen_rows(slot, pen_row_budget);
+        changed = tg_gui_photo_map_pen_rows(&viewer->ctx, slot,
+                                            pen_row_budget);
     }
     if (slot->decode_done &&
         (viewer->ctx.photo_truecolor || slot->pen_rows >= slot->h)) {
@@ -4803,6 +4895,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 
     memset(&ctx, 0, sizeof(ctx));
     memset(&viewer, 0, sizeof(viewer));
+    ctx.photo_dither = state->photo_dither;
     own_scr = 0;
     tg_gui_window_load_geom(&init_w, &init_h, &init_x, &init_y, &init_own);
     want_own = init_own;
@@ -5050,6 +5143,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         it2->Flags |= CHECKED;
                     }
                 }
+                tg_gui_menu_set_photo_dither(menu, state->photo_dither);
                 SetMenuStrip(ctx.window, menu);
             }
         }
@@ -6177,9 +6271,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             tg_gui_session_set_inline_photos(
                                 state->inline_photos);
                             tg_gui_photo_slots_reset();
-                            if (tg_gui_inline_photos_save(
+                            if (tg_gui_photo_preferences_save(
                                     "data/telegram-photos.txt",
-                                    state->inline_photos) != 0) {
+                                    state->inline_photos,
+                                    state->photo_dither) != 0) {
                                 tg_gui_window_copy(state->status,
                                                    sizeof(state->status),
                                                    "Could not save photo setting");
@@ -6189,6 +6284,51 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                     state->inline_photos
                                         ? "Inline photos enabled"
                                         : "Inline photos disabled");
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        } else if (ud == (APTR)TG_MENU_DITHER_FULL ||
+                                   ud == (APTR)TG_MENU_DITHER_LIGHT ||
+                                   ud == (APTR)TG_MENU_DITHER_OFF) {
+                            unsigned long viewer_hi;
+                            unsigned long viewer_lo;
+
+                            state->photo_dither =
+                                ud == (APTR)TG_MENU_DITHER_LIGHT
+                                    ? TG_GUI_PHOTO_DITHER_LIGHT
+                                    : ud == (APTR)TG_MENU_DITHER_OFF
+                                          ? TG_GUI_PHOTO_DITHER_OFF
+                                          : TG_GUI_PHOTO_DITHER_FULL;
+                            ctx.photo_dither = state->photo_dither;
+                            viewer.ctx.photo_dither = state->photo_dither;
+                            viewer_hi = viewer.slot.id_hi;
+                            viewer_lo = viewer.slot.id_lo;
+                            tg_gui_photo_slots_reset();
+                            if (viewer.ctx.window != 0 &&
+                                (viewer_hi != 0UL || viewer_lo != 0UL)) {
+                                tg_gui_photo_slot_clear(&viewer.slot);
+                                viewer.slot.id_hi = viewer_hi;
+                                viewer.slot.id_lo = viewer_lo;
+                                tg_gui_photo_viewer_paint(&viewer);
+                            }
+                            tg_gui_menu_set_photo_dither(
+                                menu, state->photo_dither);
+                            if (tg_gui_photo_preferences_save(
+                                    "data/telegram-photos.txt",
+                                    state->inline_photos,
+                                    state->photo_dither) != 0) {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Could not save photo setting");
+                            } else {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    state->photo_dither ==
+                                            TG_GUI_PHOTO_DITHER_LIGHT
+                                        ? "Photo dithering: Light"
+                                        : state->photo_dither ==
+                                                  TG_GUI_PHOTO_DITHER_OFF
+                                              ? "Photo dithering: Off"
+                                              : "Photo dithering: Full");
                             }
                             tg_gui_window_paint(state, &backend);
                         } else if (ud == (APTR)TG_MENU_RELOAD) {
@@ -7214,6 +7354,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     tg_gui_window_paint(state, &backend);
                 } else {
                     int urc;
+                    int jpeg_mode;
                     int as_photo;
                     const char *dname = dropped;
                     const char *dp;
@@ -7227,35 +7368,45 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             dname = dp + 1;
                         }
                     }
-                    as_photo = tg_gui_window_path_is_jpeg(dropped) &&
-                               tg_gui_amiga_choose_jpeg_mode(ctx.window);
-                    urc = as_photo
-                        ? tg_gui_session_transfer_start_photo(dropped, stdout)
-                        : tg_gui_session_transfer_start_upload(dropped, stdout);
-                    if (urc == 0) {
-                        /* The progress line below carries the name for the
-                           whole transfer -- a one-off "Sending X..." here
-                           was overwritten by the first pumped step a
-                           millisecond later, so the drop still looked
-                           ignored (field report). */
-                        tg_gui_window_set_transfer_name(dname);
-                        if (as_photo &&
-                            tg_gui_session_transfer_photo_fallback()) {
-                            tg_gui_window_copy(
-                                state->status, sizeof(state->status),
-                                "Photo over 10 MiB; sending as file");
-                        } else {
-                            tg_gui_window_copy(
-                                state->status, sizeof(state->status),
-                                as_photo ? "Sending photo... (ESC cancels)"
-                                         : "Sending... (ESC cancels)");
-                        }
+                    jpeg_mode = tg_gui_window_path_is_jpeg(dropped)
+                        ? tg_gui_amiga_choose_jpeg_mode(ctx.window) : 2;
+                    if (jpeg_mode == 0) {
+                        tg_gui_window_copy(state->status,
+                                           sizeof(state->status),
+                                           "Send cancelled");
                         tg_gui_window_paint(state, &backend);
                     } else {
-                        /* Same final lines the picker path shows on a
-                           failed start (unreadable, too big, empty...). */
-                        tg_gui_window_transfer_finished(state, &backend, 2,
-                                                        urc, "");
+                        as_photo = jpeg_mode == 1;
+                        urc = as_photo
+                            ? tg_gui_session_transfer_start_photo(dropped,
+                                                                  stdout)
+                            : tg_gui_session_transfer_start_upload(dropped,
+                                                                   stdout);
+                        if (urc == 0) {
+                            /* The progress line below carries the name for the
+                               whole transfer -- a one-off "Sending X..." here
+                               was overwritten by the first pumped step a
+                               millisecond later, so the drop still looked
+                               ignored (field report). */
+                            tg_gui_window_set_transfer_name(dname);
+                            if (as_photo &&
+                                tg_gui_session_transfer_photo_fallback()) {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Photo over 10 MiB; sending as file");
+                            } else {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    as_photo ? "Sending photo... (ESC cancels)"
+                                             : "Sending... (ESC cancels)");
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        } else {
+                            /* Same final lines the picker path shows on a
+                               failed start (unreadable, too big, empty...). */
+                            tg_gui_window_transfer_finished(
+                                state, &backend, 2, urc, "");
+                        }
                     }
                 }
             }

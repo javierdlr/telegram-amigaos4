@@ -491,9 +491,9 @@ int tg_image_canonical_size(unsigned long source_w,
     return 0;
 }
 
-void tg_image_ordered_dither_rgb(const unsigned char *rgb,
-                                 int x, int y,
-                                 unsigned char *out_rgb)
+void tg_image_ordered_dither_rgb_level(const unsigned char *rgb,
+                                       int x, int y, int amplitude,
+                                       unsigned char *out_rgb)
 {
     static const signed char bayer[16] = {
         -8,  0, -6,  2,
@@ -507,7 +507,12 @@ void tg_image_ordered_dither_rgb(const unsigned char *rgb,
     if (rgb == 0 || out_rgb == 0) {
         return;
     }
-    offset = (int)bayer[((y & 3) << 2) | (x & 3)] * 4;
+    if (amplitude < 0) {
+        amplitude = 0;
+    } else if (amplitude > 4) {
+        amplitude = 4;
+    }
+    offset = (int)bayer[((y & 3) << 2) | (x & 3)] * amplitude;
     for (c = 0; c < 3; ++c) {
         int value;
 
@@ -519,6 +524,13 @@ void tg_image_ordered_dither_rgb(const unsigned char *rgb,
         }
         out_rgb[c] = (unsigned char)value;
     }
+}
+
+void tg_image_ordered_dither_rgb(const unsigned char *rgb,
+                                 int x, int y,
+                                 unsigned char *out_rgb)
+{
+    tg_image_ordered_dither_rgb_level(rgb, x, y, 4, out_rgb);
 }
 
 int tg_avatar_decode_stripped(const unsigned char *stripped,
@@ -627,6 +639,17 @@ int tg_avatar_self_test(void)
         if (dithered[0] != 29U || dithered[1] != 156U ||
             dithered[2] != 255U) {
             puts("avatar self-test: ordered photo dither clamp failed");
+            return 2;
+        }
+        tg_image_ordered_dither_rgb_level(rgb, 0, 0, 2, dithered);
+        if (dithered[0] != 0U || dithered[1] != 112U ||
+            dithered[2] != 238U) {
+            puts("avatar self-test: light photo dither failed");
+            return 2;
+        }
+        tg_image_ordered_dither_rgb_level(rgb, 0, 0, 0, dithered);
+        if (memcmp(rgb, dithered, 3U) != 0) {
+            puts("avatar self-test: disabled photo dither failed");
             return 2;
         }
     }

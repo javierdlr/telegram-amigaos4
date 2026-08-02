@@ -39,36 +39,63 @@ void tg_gui_set_background_clear(int enabled)
     tg_gui_clear_background = enabled ? 1 : 0;
 }
 
-int tg_gui_inline_photos_load(const char *path)
+static int tg_gui_photo_dither_parse(const char *value)
 {
-    FILE *file;
-    char value[16];
-
-    if (path == 0 || path[0] == '\0') {
-        return 1;
+    if (value != 0 &&
+        (value[0] == 'l' || value[0] == 'L') &&
+        (value[1] == 'i' || value[1] == 'I')) {
+        return TG_GUI_PHOTO_DITHER_LIGHT;
     }
-    file = fopen(path, "rb");
-    if (file == 0) {
-        return 1;
+    if (value != 0 &&
+        (value[0] == 'o' || value[0] == 'O') &&
+        (value[1] == 'f' || value[1] == 'F')) {
+        return TG_GUI_PHOTO_DITHER_OFF;
     }
-    value[0] = '\0';
-    if (fgets(value, sizeof(value), file) == 0) {
-        value[0] = '\0';
-    }
-    fclose(file);
-    if ((value[0] == 'o' || value[0] == 'O') &&
-        (value[1] == 'f' || value[1] == 'F') &&
-        (value[2] == 'f' || value[2] == 'F')) {
-        return 0;
-    }
-    return 1;
+    return TG_GUI_PHOTO_DITHER_FULL;
 }
 
-int tg_gui_inline_photos_save(const char *path, int enabled)
+void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
+                                   int *photo_dither)
+{
+    FILE *file;
+    char value[64];
+    int enabled;
+    int dither;
+
+    enabled = 1;
+    dither = TG_GUI_PHOTO_DITHER_FULL;
+    file = (path != 0 && path[0] != '\0') ? fopen(path, "rb") : 0;
+    if (file != 0) {
+        value[0] = '\0';
+        if (fgets(value, sizeof(value), file) != 0 &&
+            (value[0] == 'o' || value[0] == 'O') &&
+            (value[1] == 'f' || value[1] == 'F') &&
+            (value[2] == 'f' || value[2] == 'F')) {
+            enabled = 0;
+        }
+        while (fgets(value, sizeof(value), file) != 0) {
+            if (strncmp(value, "dither=", 7UL) == 0) {
+                dither = tg_gui_photo_dither_parse(value + 7);
+            }
+        }
+        fclose(file);
+    }
+    if (inline_photos != 0) {
+        *inline_photos = enabled;
+    }
+    if (photo_dither != 0) {
+        *photo_dither = dither;
+    }
+}
+
+int tg_gui_photo_preferences_save(const char *path, int inline_photos,
+                                  int photo_dither)
 {
     FILE *file;
     char tmp[288];
     unsigned long length;
+    const char *dither;
+    int failed;
 
     if (path == 0 || path[0] == '\0') {
         return 1;
@@ -83,7 +110,15 @@ int tg_gui_inline_photos_save(const char *path, int enabled)
     if (file == 0) {
         return 1;
     }
-    if (fputs(enabled ? "on\n" : "off\n", file) == EOF || fclose(file) != 0) {
+    dither = photo_dither == TG_GUI_PHOTO_DITHER_LIGHT ? "light" :
+              photo_dither == TG_GUI_PHOTO_DITHER_OFF ? "off" : "full";
+    failed = fputs(inline_photos ? "on\n" : "off\n", file) == EOF ||
+             fputs("dither=", file) == EOF || fputs(dither, file) == EOF ||
+             fputc('\n', file) == EOF;
+    if (fclose(file) != 0) {
+        failed = 1;
+    }
+    if (failed) {
         (void)remove(tmp);
         return 1;
     }
@@ -93,6 +128,22 @@ int tg_gui_inline_photos_save(const char *path, int enabled)
         return 1;
     }
     return 0;
+}
+
+int tg_gui_inline_photos_load(const char *path)
+{
+    int enabled;
+
+    tg_gui_photo_preferences_load(path, &enabled, 0);
+    return enabled;
+}
+
+int tg_gui_inline_photos_save(const char *path, int enabled)
+{
+    int dither;
+
+    tg_gui_photo_preferences_load(path, 0, &dither);
+    return tg_gui_photo_preferences_save(path, enabled, dither);
 }
 
 int tg_gui_photo_cache_choose_slot(const int *states,
@@ -177,6 +228,7 @@ void tg_gui_demo_state(tg_gui_state *state)
     memset(state, 0, sizeof(*state));
     state->theme = TG_GUI_THEME_DARK;
     state->inline_photos = 1;
+    state->photo_dither = TG_GUI_PHOTO_DITHER_FULL;
 
     tg_gui_set_chat(&state->chats[0], "Sviluppo AmigaIta",
                     "Tu: ottimo, la pausa-bozza ha fatto il suo", "09:20",
@@ -3340,19 +3392,48 @@ int tg_gui_self_test(void)
         }
     }
 
-    /* Preference persistence defaults safely to ON and round-trips both
-       explicit values through the same helpers used by the native menu. */
+    /* The old first-line format remains readable, while the extended format
+       persists both settings and defaults safely when no file exists. */
     {
         const char *pref = "tg-gui-photos-selftest.txt";
+        FILE *file;
+        int enabled;
+        int dither;
 
         (void)remove(pref);
-        if (!tg_gui_inline_photos_load(pref) ||
-            tg_gui_inline_photos_save(pref, 0) != 0 ||
-            tg_gui_inline_photos_load(pref) != 0 ||
-            tg_gui_inline_photos_save(pref, 1) != 0 ||
-            tg_gui_inline_photos_load(pref) != 1) {
+        tg_gui_photo_preferences_load(pref, &enabled, &dither);
+        if (!enabled || dither != TG_GUI_PHOTO_DITHER_FULL ||
+            tg_gui_photo_preferences_save(
+                pref, 0, TG_GUI_PHOTO_DITHER_LIGHT) != 0) {
             (void)remove(pref);
-            puts("gui self-test: inline photo preference mismatch");
+            puts("gui self-test: photo preference default/save mismatch");
+            return 2;
+        }
+        tg_gui_photo_preferences_load(pref, &enabled, &dither);
+        if (enabled || dither != TG_GUI_PHOTO_DITHER_LIGHT) {
+            (void)remove(pref);
+            puts("gui self-test: photo preference round-trip mismatch");
+            return 2;
+        }
+        file = fopen(pref, "wb");
+        if (file == 0) {
+            (void)remove(pref);
+            puts("gui self-test: old photo preference fixture failed");
+            return 2;
+        }
+        enabled = fputs("on\n", file) != EOF;
+        if (fclose(file) != 0) {
+            enabled = 0;
+        }
+        if (!enabled) {
+            (void)remove(pref);
+            puts("gui self-test: old photo preference fixture failed");
+            return 2;
+        }
+        tg_gui_photo_preferences_load(pref, &enabled, &dither);
+        if (!enabled || dither != TG_GUI_PHOTO_DITHER_FULL) {
+            (void)remove(pref);
+            puts("gui self-test: old photo preference compatibility failed");
             return 2;
         }
         (void)remove(pref);

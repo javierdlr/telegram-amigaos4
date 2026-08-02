@@ -59,6 +59,11 @@ int tg_image_canonical_size(unsigned long source_w,
 void tg_image_ordered_dither_rgb(const unsigned char *rgb,
                                  int x, int y,
                                  unsigned char *out_rgb);
+/* Same Bayer matrix with an explicit amplitude: 4 = full, 2 = light,
+   0 = disabled. Values outside 0..4 are clamped. */
+void tg_image_ordered_dither_rgb_level(const unsigned char *rgb,
+                                       int x, int y, int amplitude,
+                                       unsigned char *out_rgb);
 
 /* Expand + decode + nearest-neighbour scale into dst_rgb (dw*dh*3, RGB888).
    0 = ok; any failure leaves the caller free to fall back to initials. */
