@@ -45,6 +45,10 @@ unless noted.
 - Inline-photo cache downloads no longer become permanently suppressed after a
   transient network, datacenter or filesystem failure. Opt-in live diagnostics
   now identify each fetch and render stage without logging chat content.
+- Inline photos on MorphOS now use the proven pen-grid renderer instead of an
+  RGB888 path that could leave decoded photos grey. Other RTG targets validate
+  the destination bitmap with a write/read self-check and fall back for the
+  whole session when the driver cannot replay RGB pixels reliably.
 
 ## [0.0.8] - 2026-07-31
 

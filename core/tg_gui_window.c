@@ -384,6 +384,8 @@ typedef struct tg_gui_amiga_ctx {
     int buf_ok;              /* 1 iff buf_bm and buf_rp.Font are valid */
     int bitmap_text_compat;  /* AfA_OS Text() cannot target this off-screen RP */
     int photo_truecolor;      /* optional cybergraphics RGB888 row replay */
+    int photo_cgx_checked;    /* destination bitmap passed the RGB write/read test */
+    int photo_cgx_failed;     /* permanent pen fallback for this window session */
 } tg_gui_amiga_ctx;
 
 static int tg_gui_amiga_width(tg_gui_backend *backend)
@@ -1284,6 +1286,64 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx)
     return changed;
 }
 
+static void tg_gui_photo_queue_pen_fallback(tg_gui_amiga_ctx *ctx)
+{
+    int i;
+
+    if (ctx == 0) {
+        return;
+    }
+    ctx->photo_truecolor = 0;
+    ctx->photo_cgx_failed = 1;
+    for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+        if (tg_gui_photo_slots[i].state > 0 &&
+            tg_gui_photo_slots[i].rgb != 0 &&
+            tg_gui_photo_slots[i].pen == 0) {
+            tg_gui_photo_slots[i].render_logged = 0;
+            tg_gui_photo_slots[i].state = 2;
+        }
+    }
+}
+
+/* A cybergraphics library can be present while the layerless friend bitmap is
+   not a CyberGraphX bitmap. Prove the actual destination once before relying
+   on RGB888 replay: write two known pixels and read them back. The test uses
+   tolerant primary-channel checks so 15/16-bit RTG formats also pass. */
+#if defined(TG_GUI_HAVE_CYBERGRAPHICS)
+static int tg_gui_photo_cgx_self_check(tg_gui_amiga_ctx *ctx, int x, int y)
+{
+    unsigned char expected[6] = { 255U, 0U, 0U, 0U, 255U, 0U };
+    unsigned char actual[6];
+
+    if (ctx == 0 || ctx->photo_cgx_failed || !ctx->photo_truecolor ||
+        ctx->rport == 0 || ctx->rport->BitMap == 0 || CyberGfxBase == 0) {
+        return 0;
+    }
+    if (ctx->photo_cgx_checked) {
+        return 1;
+    }
+    ctx->photo_cgx_checked = 1;
+    memset(actual, 0, sizeof(actual));
+    if (GetCyberMapAttr(ctx->rport->BitMap, CYBRMATTR_ISCYBERGFX) == 0UL ||
+        WritePixelArray(expected, 0, 0, 6, ctx->rport,
+                        (UWORD)(ctx->origin_x + x),
+                        (UWORD)(ctx->origin_y + y), 2, 1,
+                        RECTFMT_RGB) == 0UL ||
+        ReadPixelArray(actual, 0, 0, 6, ctx->rport,
+                       (UWORD)(ctx->origin_x + x),
+                       (UWORD)(ctx->origin_y + y), 2, 1,
+                       RECTFMT_RGB) == 0UL ||
+        actual[0] < 200U || actual[1] > 55U || actual[2] > 55U ||
+        actual[3] > 55U || actual[4] < 200U || actual[5] > 55U) {
+        tg_gui_photo_diag("photo: cgx self-check failed, pen fallback");
+        tg_gui_photo_queue_pen_fallback(ctx);
+        return 0;
+    }
+    tg_gui_photo_diag("photo: cgx self-check passed");
+    return 1;
+}
+#endif
+
 /* Replay canonical RGB888 through cybergraphics one scaled row at a time.
    Horizontal/vertical nearest scaling is CPU-cheap and never touches JPEG or
    the pen allocator. A zero return lets the caller use the pen-grid fallback. */
@@ -1297,7 +1357,8 @@ static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
     int width;
     int y;
 
-    if (!ctx->photo_truecolor || slot->rgb == 0 || CyberGfxBase == 0) {
+    if (!ctx->photo_truecolor || slot->rgb == 0 || CyberGfxBase == 0 ||
+        !tg_gui_photo_cgx_self_check(ctx, x0, y0)) {
         return 0;
     }
     width = x1 - x0;
@@ -1351,7 +1412,6 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
 {
     tg_gui_amiga_ctx *ctx;
     tg_gui_photo_slot *slot;
-    int i;
     int x0;
     int y0;
     int x1;
@@ -1410,17 +1470,11 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
         if (tg_gui_photo_draw_truecolor(ctx, slot, rect, x0, y0, x1, y1)) {
             return 1;
         }
-        /* Some MorphOS/RTG friend bitmaps reject RECTFMT_RGB even though the
-           library opened. Queue the portable pen mapper; never quantize here. */
-        tg_gui_photo_diag("photo: cgx fail; pen path queued");
-        ctx->photo_truecolor = 0;
-        for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
-            if (tg_gui_photo_slots[i].state > 0 &&
-                tg_gui_photo_slots[i].rgb != 0 &&
-                tg_gui_photo_slots[i].pen == 0) {
-                tg_gui_photo_slots[i].render_logged = 0;
-                tg_gui_photo_slots[i].state = 2;
-            }
+        if (!ctx->photo_cgx_failed) {
+            /* A later driver failure gets the same permanent portable path as
+               a failed self-check. Never quantize inside paint. */
+            tg_gui_photo_diag("photo: cgx replay failed, pen fallback");
+            tg_gui_photo_queue_pen_fallback(ctx);
         }
         return 0;
     }
@@ -2019,6 +2073,9 @@ static void tg_gui_amiga_buffer_alloc(tg_gui_amiga_ctx *ctx)
     ctx->buf_w = w;
     ctx->buf_h = h;
     ctx->buf_ok = 1;
+    if (!ctx->photo_cgx_failed) {
+        ctx->photo_cgx_checked = 0;
+    }
 }
 
 /* Full-window paint. With the off-screen buffer, render the whole frame INTO it
@@ -4098,6 +4155,16 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         tg_gui_av_share_d = tg_gui_av_rich ? 48L : 192L;
         ctx.photo_truecolor =
             tg_gui_av_rich && tg_gui_amiga_open_cybergraphics();
+#if defined(__MORPHOS__) || defined(__MORPHOS)
+        /* MorphOS field logs prove that fetch and JPEG decode complete while
+           RGB888 writes to the layerless friend bitmap leave it unchanged.
+           The avatar pen-grid path is already proven on the same systems. */
+        if (ctx.photo_truecolor) {
+            tg_gui_photo_diag("photo: MorphOS pen fallback active");
+            ctx.photo_truecolor = 0;
+            ctx.photo_cgx_failed = 1;
+        }
+#endif
         if (ctx.photo_truecolor) {
             tg_gui_log("window: RGB888 inline-photo replay active");
         }
