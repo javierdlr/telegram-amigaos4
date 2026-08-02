@@ -9900,6 +9900,7 @@ static tg_mtproto_photo_meta tg_gui_photo_catalog[TG_GUI_PHOTO_CATALOG_MAX];
 static int tg_gui_photo_catalog_count;
 static int tg_gui_photo_inline_enabled = 1;
 static tg_gui_photo_fetch_state tg_gui_photo_fetch;
+static int tg_gui_photo_queue_pop(tg_gui_photo_queue_entry *entry);
 
 static void tg_gui_photo_log(const char *message)
 {
@@ -10086,17 +10087,42 @@ static void tg_gui_photo_queue_offer(const tg_mtproto_photo_meta *source,
         if (tg_gui_photo_queue[i].large == entry.large &&
             tg_gui_photo_queue[i].photo.id_hi == entry.photo.id_hi &&
             tg_gui_photo_queue[i].photo.id_lo == entry.photo.id_lo) {
-            tg_gui_photo_queue[i] = entry; /* refresh the file_reference */
+            int j;
+
+            /* Refresh the file_reference and move viewer demand to the newest
+               end. Inline paints cannot then leave a clicked photo behind a
+               full screen of thumbnail requests. */
+            for (j = i + 1; j < tg_gui_photo_queue_count; ++j) {
+                tg_gui_photo_queue[j - 1] = tg_gui_photo_queue[j];
+            }
+            tg_gui_photo_queue[tg_gui_photo_queue_count - 1] = entry;
             return;
         }
     }
     if (tg_gui_photo_queue_count >= TG_GUI_PHOTO_QUEUE_MAX) {
-        for (i = 1; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
+        int drop;
+
+        /* Preserve foreground viewer requests whenever an inline entry can be
+           evicted instead. There is one viewer, but a rapid photo switch can
+           briefly leave more than one large request in this bounded queue. */
+        drop = 0;
+        for (i = 0; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
+            if (!tg_gui_photo_queue[i].large) {
+                drop = i;
+                break;
+            }
+        }
+        for (i = drop + 1; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
             tg_gui_photo_queue[i - 1] = tg_gui_photo_queue[i];
         }
         tg_gui_photo_queue_count = TG_GUI_PHOTO_QUEUE_MAX - 1;
     }
     tg_gui_photo_queue[tg_gui_photo_queue_count++] = entry;
+}
+
+int tg_gui_session_photo_pending(void)
+{
+    return tg_gui_photo_fetch.active || tg_gui_photo_queue_count > 0;
 }
 
 int tg_gui_session_request_inline_photo(unsigned long id_hi,
@@ -13486,6 +13512,55 @@ int tg_mtproto_probe_self_test(void)
         return 2;
     }
 
+    /* Foreground viewer demand survives a full inline queue and is selected
+       first. This pins the scheduler rule without opening a network context. */
+    {
+        tg_mtproto_photo_meta photo;
+        tg_gui_photo_queue_entry next;
+        int i;
+        int large_found;
+
+        tg_gui_photo_queue_reset();
+        tg_gui_photo_inline_enabled = 1;
+        for (i = 0; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
+            memset(&photo, 0, sizeof(photo));
+            photo.has_photo = 1;
+            photo.id_hi = 0xf0090000UL;
+            photo.id_lo = (unsigned long)i + 1UL;
+            photo.width = photo.height = 64UL;
+            photo.size = 1024UL;
+            tg_gui_photo_queue_offer(&photo, 0);
+        }
+        memset(&photo, 0, sizeof(photo));
+        photo.has_photo = 1;
+        photo.id_hi = 0xf0090001UL;
+        photo.id_lo = 1UL;
+        photo.width = photo.height = 64UL;
+        photo.size = 1024UL;
+        photo.has_large = 1;
+        strcpy(photo.large_thumb_type, "x");
+        photo.large_width = photo.large_height = 256UL;
+        photo.large_size = 4096UL;
+        tg_gui_photo_queue_offer(&photo, 1);
+        photo.id_hi = 0xf0090002UL;
+        photo.id_lo = 1UL;
+        photo.has_large = 0;
+        tg_gui_photo_queue_offer(&photo, 0);
+        large_found = 0;
+        for (i = 0; i < tg_gui_photo_queue_count; ++i) {
+            if (tg_gui_photo_queue[i].large) {
+                large_found = 1;
+            }
+        }
+        if (!large_found || !tg_gui_session_photo_pending() ||
+            !tg_gui_photo_queue_pop(&next) || !next.large) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: viewer photo queue priority wrong");
+            return 2;
+        }
+        tg_gui_photo_queue_reset();
+    }
+
     return 0;
 }
 
@@ -16850,6 +16925,31 @@ static int tg_gui_photo_finish(int success, const char *reason)
     return dirty;
 }
 
+static int tg_gui_photo_queue_pop(tg_gui_photo_queue_entry *entry)
+{
+    int at;
+    int i;
+
+    if (entry == 0 || tg_gui_photo_queue_count <= 0) {
+        return 0;
+    }
+    at = tg_gui_photo_queue_count - 1;
+    /* A clicked viewer is foreground work. Pick the newest large request
+       before inline thumbnails even when later paints refreshed the latter. */
+    for (i = tg_gui_photo_queue_count - 1; i >= 0; --i) {
+        if (tg_gui_photo_queue[i].large) {
+            at = i;
+            break;
+        }
+    }
+    *entry = tg_gui_photo_queue[at];
+    for (i = at + 1; i < tg_gui_photo_queue_count; ++i) {
+        tg_gui_photo_queue[i - 1] = tg_gui_photo_queue[i];
+    }
+    --tg_gui_photo_queue_count;
+    return 1;
+}
+
 static int tg_gui_photo_begin(FILE *stream)
 {
     tg_gui_photo_queue_entry entry;
@@ -16857,9 +16957,9 @@ static int tg_gui_photo_begin(FILE *stream)
     int found;
 
     found = 0;
-    while (tg_gui_photo_queue_count > 0) {
-        /* Newest visible first. The older queued items remain bounded. */
-        entry = tg_gui_photo_queue[--tg_gui_photo_queue_count];
+    while (tg_gui_photo_queue_pop(&entry)) {
+        /* Viewer first, otherwise newest visible. Stale/cached entries are
+           discarded here without poisoning retry of a future visible paint. */
         if ((entry.large || tg_gui_photo_inline_enabled) &&
             !tg_gui_photo_cache_exists(entry.photo.id_hi, entry.photo.id_lo,
                                        entry.large) &&

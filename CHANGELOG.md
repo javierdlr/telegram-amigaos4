@@ -60,6 +60,9 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- Background photo work can no longer wait forever behind continuous window
+  events or an inactive window. The heartbeat now advances it, visible failed
+  fetches are re-queued, and a clicked viewer photo has queue priority.
 - The JPEG drop requester now offers Photo, File and Cancel as distinct
   actions; its Cancel button and Escape key leave the file untouched.
 - Empty inline-photo preference files now fall back cleanly to the default

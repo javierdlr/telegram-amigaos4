@@ -641,6 +641,14 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_REPLAY_CAP TG_GUI_PHOTO_VIEWER_CANONICAL_CAP
 #define TG_GUI_PHOTO_REQUESTS 24
 #define TG_GUI_PHOTO_VISIBLE_MAX 24
+#define TG_GUI_PHOTO_MAX_DEFER_TICKS 6
+
+#define TG_GUI_PHOTO_STALL_NONE 0
+#define TG_GUI_PHOTO_STALL_INTERACTIVE 1
+#define TG_GUI_PHOTO_STALL_RESIZE 2
+#define TG_GUI_PHOTO_STALL_TRANSFER 3
+#define TG_GUI_PHOTO_STALL_QUEUED_EVENT 4
+#define TG_GUI_PHOTO_STALL_RESUME 5
 
 typedef struct tg_gui_photo_slot {
     unsigned long id_hi;
@@ -693,6 +701,21 @@ static void tg_gui_photo_diag(const char *message)
 {
     if (tg_gui_log_is_enabled()) {
         tg_gui_log(message);
+    }
+}
+
+static void tg_gui_photo_stall_diag(int reason)
+{
+    if (reason == TG_GUI_PHOTO_STALL_INTERACTIVE) {
+        tg_gui_photo_diag("photo: queue stalled (interactive events)");
+    } else if (reason == TG_GUI_PHOTO_STALL_RESIZE) {
+        tg_gui_photo_diag("photo: queue stalled (resize)");
+    } else if (reason == TG_GUI_PHOTO_STALL_TRANSFER) {
+        tg_gui_photo_diag("photo: queue stalled (manual transfer)");
+    } else if (reason == TG_GUI_PHOTO_STALL_QUEUED_EVENT) {
+        tg_gui_photo_diag("photo: queue stalled (queued window event)");
+    } else if (reason == TG_GUI_PHOTO_STALL_RESUME) {
+        tg_gui_photo_diag("photo: queue stalled (resize resume)");
     }
 }
 
@@ -1051,6 +1074,37 @@ static int tg_gui_photo_visible_mark(unsigned long id_hi,
     tg_gui_photo_visible_ids[priority].id_lo = id_lo;
     ++tg_gui_photo_visible_count;
     return priority;
+}
+
+/* A transient fetch failure clears the session queue but must not leave the
+   already painted placeholder inert forever. Re-offer current viewport demand
+   on later photo ticks; duplicate/active/cache checks keep this O(visible). */
+static void tg_gui_photo_reoffer_visible(void)
+{
+    int i;
+
+    for (i = 0; i < tg_gui_photo_visible_count; ++i) {
+        (void)tg_gui_session_request_inline_photo(
+            tg_gui_photo_visible_ids[i].id_hi,
+            tg_gui_photo_visible_ids[i].id_lo);
+    }
+}
+
+static int tg_gui_photo_decode_pending(const tg_gui_photo_viewer *viewer)
+{
+    int i;
+
+    if (tg_gui_photo_request_count > 0) {
+        return 1;
+    }
+    for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+        if (tg_gui_photo_slots[i].state == 2) {
+            return 1;
+        }
+    }
+    return viewer != 0 && viewer->ctx.window != 0 &&
+           (viewer->slot.id_hi != 0UL || viewer->slot.id_lo != 0UL) &&
+           (viewer->slot.state == 0 || viewer->slot.state == 2);
 }
 
 static void tg_gui_photo_slot_touch(tg_gui_photo_slot *slot)
@@ -4634,6 +4688,11 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
     }
     file = fopen(path, "rb");
     if (file == 0) {
+        /* Keep the foreground request alive if a bounded queue overflow or a
+           transient fetch failure removed its previous entry. */
+        (void)tg_gui_session_request_viewer_photo(
+            viewer->slot.id_hi, viewer->slot.id_lo,
+            &viewer->source_w, &viewer->source_h);
         return 0; /* foreground fetch is still in progress */
     }
     if (fseek(file, 0L, SEEK_END) != 0) {
@@ -4883,6 +4942,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     time_t last_interactive_time;
     int resize_pending;
     int resize_settle_ticks;
+    int photo_defer_ticks;
+    int photo_stall_reason;
 
     if (state == 0) {
         return 2;
@@ -5257,6 +5318,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     prev_selected = state->selected_chat;
     resize_pending = 0;
     resize_settle_ticks = 0;
+    photo_defer_ticks = 0;
+    photo_stall_reason = TG_GUI_PHOTO_STALL_NONE;
     last_interactive_time = time(0);
     /* Live-reception heartbeat. INTUITICKS are delivered ONLY to the ACTIVE
        window, so with the window deactivated the loop slept in Wait() and the
@@ -5290,7 +5353,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         int photo_tick;
         int interactive_event;
         int photo_resume_turn;
+        int photo_background_turn;
         int viewer_dirty;
+        ULONG wake_signals;
 
         session_dirty = 0;
         scroll_dirty = 0;
@@ -5299,7 +5364,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         photo_tick = 0;
         interactive_event = 0;
         photo_resume_turn = 0;
+        photo_background_turn = 0;
         viewer_dirty = 0;
+        wake_signals = 0UL;
         if (older_cooldown > 0) {
             older_cooldown -= 1;
         }
@@ -5319,7 +5386,13 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                network RPC inside the step paces the loop, so this is not a
                busy spin. */
             if (!tg_gui_session_transfer_busy()) {
-                (void)Wait(wait_mask);
+                wake_signals = Wait(wait_mask);
+            }
+            /* INTUITICKS stop when a window is inactive. The existing VBLANK
+               heartbeat must schedule photo work too, not only message polls. */
+            if (timer_ok &&
+                (wake_signals & (1UL << timer_port->mp_SigBit)) != 0UL) {
+                photo_tick = 1;
             }
         }
         tg_gui_photo_viewer_drain(&viewer, &photo_tick,
@@ -7497,13 +7570,61 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 }
             }
         }
-        /* 0.0.9 inline photos: explicit user transfers always win. Otherwise
-           move one bounded cache chunk per turn; completion flips the matching
-           bubbles to image mode and asks the normal repaint path to redraw. */
-        if (photo_tick && !interactive_event && !resize_pending &&
-            !ctx.photo_resize_active && !photo_resume_turn &&
-            !tg_gui_window_user_events_pending(&ctx, &viewer) &&
-            !tg_gui_session_transfer_busy() &&
+        /* Re-offer visible placeholders before deciding whether work exists.
+           This heals a transient network failure without waiting for an
+           unrelated repaint. Continuous input may defer six photo ticks, then
+           one small slice runs after the queued events have been drained. */
+        if (photo_tick) {
+            int pending;
+            int events_pending;
+            int reason;
+
+            tg_gui_photo_reoffer_visible();
+            pending = tg_gui_session_photo_pending() ||
+                      tg_gui_photo_decode_pending(&viewer);
+            events_pending = tg_gui_window_user_events_pending(&ctx, &viewer);
+            reason = TG_GUI_PHOTO_STALL_NONE;
+            if (pending && !done) {
+                if (resize_pending || ctx.photo_resize_active) {
+                    reason = TG_GUI_PHOTO_STALL_RESIZE;
+                } else if (tg_gui_session_transfer_busy()) {
+                    reason = TG_GUI_PHOTO_STALL_TRANSFER;
+                } else if (photo_resume_turn) {
+                    reason = TG_GUI_PHOTO_STALL_RESUME;
+                } else if (events_pending) {
+                    reason = TG_GUI_PHOTO_STALL_QUEUED_EVENT;
+                } else if (interactive_event) {
+                    reason = TG_GUI_PHOTO_STALL_INTERACTIVE;
+                }
+                if (reason == TG_GUI_PHOTO_STALL_NONE ||
+                    (reason == TG_GUI_PHOTO_STALL_INTERACTIVE &&
+                     photo_defer_ticks >=
+                         TG_GUI_PHOTO_MAX_DEFER_TICKS - 1)) {
+                    if (reason == TG_GUI_PHOTO_STALL_INTERACTIVE &&
+                        photo_stall_reason != reason) {
+                        tg_gui_photo_stall_diag(reason);
+                    }
+                    photo_background_turn = 1;
+                    photo_defer_ticks = 0;
+                    photo_stall_reason = TG_GUI_PHOTO_STALL_NONE;
+                } else {
+                    if (photo_defer_ticks < TG_GUI_PHOTO_MAX_DEFER_TICKS) {
+                        ++photo_defer_ticks;
+                    }
+                    if (photo_defer_ticks >= TG_GUI_PHOTO_MAX_DEFER_TICKS &&
+                        photo_stall_reason != reason) {
+                        tg_gui_photo_stall_diag(reason);
+                        photo_stall_reason = reason;
+                    }
+                }
+            } else if (!pending) {
+                photo_defer_ticks = 0;
+                photo_stall_reason = TG_GUI_PHOTO_STALL_NONE;
+            }
+        }
+        /* Explicit user transfers still win. Otherwise move one bounded cache
+           chunk per permitted background turn. */
+        if (photo_background_turn &&
             tg_gui_session_photo_step(stdout)) {
             session_dirty = 1;
             viewer_dirty = 1;
@@ -7511,10 +7632,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         /* Decode only on an idle tick, after every queued GUI event was handled.
            A key, wheel, pointer move or NEWSIZE wins this turn; the decoder
            resumes from the same MCU on the next tick. */
-        if (photo_tick && !interactive_event && !resize_pending && !done &&
-            !ctx.photo_resize_active && !photo_resume_turn &&
-            !tg_gui_window_user_events_pending(&ctx, &viewer) &&
-            !tg_gui_session_transfer_busy()) {
+        if (photo_background_turn) {
             unsigned int mcu_budget = TG_GUI_PHOTO_MCUS_PER_TICK;
             int pen_row_budget = TG_GUI_PHOTO_PEN_ROWS_PER_TICK;
             int viewer_used = 0;

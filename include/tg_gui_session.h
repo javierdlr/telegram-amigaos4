@@ -49,6 +49,9 @@ int tg_gui_session_receive_pending(FILE *stream);
    transfers have priority and make this a no-op. Returns 1 only when a cached
    photo became drawable and the GUI should repaint. */
 int tg_gui_session_photo_step(FILE *stream);
+/* True while an inline/viewer JPEG is queued or a fetch owns the file channel.
+   Used only by the native scheduler to avoid counting idle ticks as stalls. */
+int tg_gui_session_photo_pending(void);
 
 /* Inline-photo policy and demand queue. The renderer calls request_inline only
    for a visible photo; 1 means the JPEG is already cached and may be decoded,
