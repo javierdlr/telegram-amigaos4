@@ -151,13 +151,14 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
-Highlights in this build: inline message photos and native JPEG photo uploads;
-one-click forwarding to Saved Messages and a destination picker for other
-chats; hidden chats available in local search; and non-blocking file transfers
-up to $upload_limit. Downloads pipeline their chunks and work across Telegram
-datacenters. Drop a file icon on the window to send it, or pick the download
-drawer from the menu. URLs are clickable, menus follow the system colours, and
-AmiKit/AfA_OS text is handled.
+Highlights in this build: inline message photos, a larger progressive viewer on
+click, an optional lightweight text-only photo mode, and native JPEG photo
+uploads; one-click forwarding to Saved Messages and a destination picker for
+other chats; hidden chats available in local search; and non-blocking file
+transfers up to $upload_limit. Downloads pipeline their chunks and work across
+Telegram datacenters. Drop a file icon on the window to send it, or pick the
+download drawer from the menu. URLs are clickable, menus follow the system
+colours, and AmiKit/AfA_OS text is handled.
 
 Full instructions:
   Manuale-IT.txt   (Italiano)
@@ -233,6 +234,13 @@ Using the GUI
 - Photos sent in a conversation appear inside their message bubble. A small
   per-platform thumbnail is cached in the photos/ drawer; [Photo] remains as a
   safe fallback while it loads or when Telegram cannot supply it.
+- Click a photo to open a fixed-size viewer with a larger copy. It fills from
+  top to bottom while decoding and reuses the same window for the next photo.
+  The larger cached file has a -l.jpg suffix in photos/.
+- On a slower machine, uncheck "Settings > Inline photos" in the Telegram menu.
+  The conversation returns to lightweight [Photo] labels and does no background
+  photo fetch or decode work. Click an individual [Photo] label to load only
+  that image in the viewer. The choice is remembered for the next run.
 - To send a JPEG as a Telegram photo, use "Send photo..." in the Telegram menu
   (Amiga+P). Dropping a .jpg/.jpeg on the GUI asks Photo or File; Photo is the
   default. A photo over 10 MiB is preserved and sent as a document instead.
@@ -374,6 +382,14 @@ Usare la GUI
 - Le foto inviate in conversazione appaiono dentro la loro bolla. Una piccola
   anteprima adatta alla piattaforma viene salvata in photos/; [Photo] resta come
   ripiego durante il caricamento o se Telegram non la rende disponibile.
+- Clicca una foto per aprire un viewer a dimensione fissa con una copia piu'
+  grande. L'immagine si completa dall'alto verso il basso e la stessa finestra
+  viene riutilizzata per la foto successiva. La copia grande in photos/ ha il
+  suffisso -l.jpg.
+- Su una macchina lenta togli la spunta da "Settings > Inline photos" nel menu
+  Telegram. La conversazione torna alle leggere etichette [Photo] e non avvia
+  download o decodifiche in background. Clicca una singola [Photo] per caricare
+  solo quella immagine nel viewer. La scelta resta memorizzata al riavvio.
 - Per inviare un JPEG come vera foto Telegram usa "Send photo..." nel menu
   Telegram (Amiga+P). Trascinando un .jpg/.jpeg sulla GUI puoi scegliere Photo
   o File; Photo e' la scelta predefinita. Oltre 10 MiB viene inviato come file.
@@ -564,8 +580,10 @@ WHAT CAN I ACTUALLY DO WITH IT?
 Read and send messages in private chats, groups and channels. Download a
 received file (right-click -> Download) or send one from disk, up to
 $upload_limit on this build, including files over 10 MiB.
-Photos render inline from a bounded cached thumbnail. Forward one message to
-Saved Messages in a click, or choose another destination through chat search.
+Photos render inline from a bounded cached thumbnail; click one for a larger
+progressive viewer, or disable inline loading on a slower machine and open only
+the images you choose. Forward one message to Saved Messages in a click, or
+choose another destination through chat search.
 Use the pinned Saved Messages chat as a cloud transfer drawer between the
 Amiga and your phone or PC. Reply to a specific message (right-click it).
 Edit or delete your own messages. See

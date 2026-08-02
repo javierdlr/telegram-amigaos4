@@ -10126,7 +10126,10 @@ int tg_gui_session_request_viewer_photo(unsigned long id_hi,
 
     photo = tg_gui_photo_catalog_find(id_hi, id_lo);
     if (photo == 0) {
-        return 1;
+        /* A cached large JPEG remains useful after the bounded per-chat
+           metadata catalog has rotated. Keep the caller's dimensions in that
+           case: the viewer can still decode and fit the cached image. */
+        return tg_gui_photo_cache_exists(id_hi, id_lo, 1) ? 0 : 1;
     }
     if (source_w != 0) {
         *source_w = photo->has_large ? photo->large_width : photo->width;

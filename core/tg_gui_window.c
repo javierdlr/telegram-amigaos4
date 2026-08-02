@@ -387,6 +387,7 @@ typedef struct tg_gui_amiga_ctx {
     int photo_truecolor;      /* optional cybergraphics RGB888 row replay */
     int photo_cgx_checked;    /* destination bitmap passed the RGB write/read test */
     int photo_cgx_failed;     /* permanent pen fallback for this window session */
+    int photo_viewer_scope;   /* fallback must not mutate transcript cache slots */
     int photo_resize_active;  /* no photo cache/replay work while buffer geometry moves */
     unsigned int afa_profile_paints; /* bounded --gui-live-debug paint samples */
 } tg_gui_amiga_ctx;
@@ -617,6 +618,9 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 4
 #define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 12U
 #define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 12
+#define TG_GUI_PHOTO_VIEWER_JPEG_MAX (768UL * 1024UL)
+#define TG_GUI_PHOTO_VIEWER_CANONICAL_CAP 512
+#define TG_GUI_PHOTO_VIEWER_DECODE_CAP 768
 #else
 #define TG_GUI_PHOTO_SLOTS 6
 #define TG_GUI_PHOTO_JPEG_MAX (512UL * 1024UL)
@@ -626,7 +630,11 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 16
 #define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 48U
 #define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 48
+#define TG_GUI_PHOTO_VIEWER_JPEG_MAX (2UL * 1024UL * 1024UL)
+#define TG_GUI_PHOTO_VIEWER_CANONICAL_CAP 768
+#define TG_GUI_PHOTO_VIEWER_DECODE_CAP 1024
 #endif
+#define TG_GUI_PHOTO_REPLAY_CAP TG_GUI_PHOTO_VIEWER_CANONICAL_CAP
 #define TG_GUI_PHOTO_REQUESTS 24
 #define TG_GUI_PHOTO_VISIBLE_MAX 24
 
@@ -659,6 +667,16 @@ typedef struct tg_gui_photo_visible {
     unsigned long id_hi;
     unsigned long id_lo;
 } tg_gui_photo_visible;
+
+/* The popup owns one dedicated canonical image. It never participates in the
+   transcript LRU, so opening a large photo cannot evict an inline one. */
+typedef struct tg_gui_photo_viewer {
+    tg_gui_amiga_ctx ctx;
+    tg_gui_photo_slot slot;
+    unsigned long source_w;
+    unsigned long source_h;
+    char title[TG_GUI_NAME_MAX];
+} tg_gui_photo_viewer;
 
 static tg_gui_photo_slot tg_gui_photo_slots[TG_GUI_PHOTO_SLOTS];
 static unsigned long tg_gui_photo_use_clock;
@@ -1422,6 +1440,9 @@ static void tg_gui_photo_queue_pen_fallback(tg_gui_amiga_ctx *ctx)
     }
     ctx->photo_truecolor = 0;
     ctx->photo_cgx_failed = 1;
+    if (ctx->photo_viewer_scope) {
+        return;
+    }
     for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
         if (tg_gui_photo_slots[i].state > 0 &&
             tg_gui_photo_slots[i].rgb != 0 &&
@@ -1480,7 +1501,7 @@ static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
                                        int x0, int y0, int x1, int y1)
 {
 #if defined(TG_GUI_HAVE_CYBERGRAPHICS)
-    static unsigned char row[TG_GUI_PHOTO_CANONICAL_CAP * 3];
+    static unsigned char row[TG_GUI_PHOTO_REPLAY_CAP * 3];
     int width;
     int y;
 
@@ -1489,7 +1510,7 @@ static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
         return 0;
     }
     width = x1 - x0;
-    if (width <= 0 || width > TG_GUI_PHOTO_CANONICAL_CAP) {
+    if (width <= 0 || width > TG_GUI_PHOTO_REPLAY_CAP) {
         return 0;
     }
     for (y = y0; y < y1; ++y) {
@@ -1532,25 +1553,24 @@ static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
 #endif
 }
 
-static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
-                                    unsigned long id_hi,
-                                    unsigned long id_lo,
-                                    unsigned long source_w,
-                                    unsigned long source_h,
-                                    tg_gui_rect rect,
-                                    tg_gui_rect clip)
+/* Replay any canonical slot into a clipped rectangle. The transcript and the
+   popup viewer share this exact path, including progressive rows and the
+   runtime CyberGraphX fallback, but keep separate slot ownership. */
+static int tg_gui_photo_draw_slot(tg_gui_amiga_ctx *ctx,
+                                  tg_gui_photo_slot *slot,
+                                  tg_gui_rect rect,
+                                  tg_gui_rect clip)
 {
-    tg_gui_amiga_ctx *ctx;
-    tg_gui_photo_slot *slot;
     int x0;
     int y0;
     int x1;
     int y1;
     int y;
 
-    ctx = (tg_gui_amiga_ctx *)backend->context;
-    if (rect.w <= 0 || rect.h <= 0 || (id_hi == 0UL && id_lo == 0UL) ||
-        tg_gui_av_cmap == 0 || ctx->photo_resize_active) {
+    if (ctx == 0 || slot == 0 || rect.w <= 0 || rect.h <= 0 ||
+        tg_gui_av_cmap == 0 || ctx->photo_resize_active || slot->state < 0 ||
+        slot->w <= 0 || slot->h <= 0 ||
+        (ctx->photo_truecolor ? slot->ready_rows : slot->pen_rows) <= 0) {
         return 0;
     }
     x0 = rect.x > clip.x ? rect.x : clip.x;
@@ -1564,21 +1584,6 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
         y1 = clip.y + clip.h;
     }
     if (x1 <= x0 || y1 <= y0) {
-        return 0;
-    }
-    (void)tg_gui_photo_visible_mark(id_hi, id_lo);
-    slot = tg_gui_photo_slot_find(id_hi, id_lo);
-    if (slot == 0) {
-        /* Paint is I/O-free: it only queues visible cache entries. INTUITICKS
-           advance one decoder outside the paint and reveal completed bands. */
-        if (tg_gui_session_request_inline_photo(id_hi, id_lo)) {
-            tg_gui_photo_request_offer(id_hi, id_lo, source_w, source_h);
-        }
-        return 0;
-    }
-    tg_gui_photo_slot_touch(slot);
-    if (slot->state < 0 || slot->w <= 0 || slot->h <= 0 ||
-        (ctx->photo_truecolor ? slot->ready_rows : slot->pen_rows) <= 0) {
         return 0;
     }
     {
@@ -1612,6 +1617,12 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
                a failed self-check. Never quantize inside paint. */
             tg_gui_photo_diag("photo: cgx replay failed, pen fallback");
             tg_gui_photo_queue_pen_fallback(ctx);
+        }
+        /* The viewer slot is outside the transcript cache array. Queue its own
+           palette mapping after a failed RGB self-check/replay. */
+        if (!ctx->photo_truecolor && slot->rgb != 0 && slot->pen == 0) {
+            slot->state = 2;
+            slot->render_logged = 0;
         }
         return 0;
     }
@@ -1651,6 +1662,36 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
         }
     }
     return 1;
+}
+
+static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
+                                    unsigned long id_hi,
+                                    unsigned long id_lo,
+                                    unsigned long source_w,
+                                    unsigned long source_h,
+                                    tg_gui_rect rect,
+                                    tg_gui_rect clip)
+{
+    tg_gui_amiga_ctx *ctx;
+    tg_gui_photo_slot *slot;
+
+    ctx = (tg_gui_amiga_ctx *)backend->context;
+    if (rect.w <= 0 || rect.h <= 0 || (id_hi == 0UL && id_lo == 0UL) ||
+        tg_gui_av_cmap == 0 || ctx->photo_resize_active) {
+        return 0;
+    }
+    (void)tg_gui_photo_visible_mark(id_hi, id_lo);
+    slot = tg_gui_photo_slot_find(id_hi, id_lo);
+    if (slot == 0) {
+        /* Paint is I/O-free: it only queues visible cache entries. INTUITICKS
+           advance one decoder outside the paint and reveal completed bands. */
+        if (tg_gui_session_request_inline_photo(id_hi, id_lo)) {
+            tg_gui_photo_request_offer(id_hi, id_lo, source_w, source_h);
+        }
+        return 0;
+    }
+    tg_gui_photo_slot_touch(slot);
+    return tg_gui_photo_draw_slot(ctx, slot, rect, clip);
 }
 
 /* Render bitmap-font text without AfA's layerless Text() path. The old
@@ -3196,7 +3237,9 @@ static void tg_gui_window_track_rmbtrap(tg_gui_state *state,
                           hx, hy);
     over_msg = 0;
     if (hit <= TG_GUI_HIT_MESSAGE_BASE) {
-        int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
+        int mi = hit <= TG_GUI_HIT_PHOTO_BASE
+            ? TG_GUI_HIT_PHOTO_BASE - hit
+            : TG_GUI_HIT_MESSAGE_BASE - hit;
 
         over_msg = (mi >= 0 && mi < state->message_count &&
                     !state->messages[mi].is_system &&
@@ -4120,7 +4163,557 @@ static void tg_gui_window_run_search(tg_gui_state *state, tg_gui_backend *backen
     tg_gui_window_paint(state, backend);
 }
 
-static int tg_gui_window_user_events_pending(const tg_gui_amiga_ctx *ctx)
+static void tg_gui_photo_viewer_fit(unsigned long source_w,
+                                    unsigned long source_h,
+                                    int max_w, int max_h,
+                                    int *out_w, int *out_h)
+{
+    int cap;
+    int w;
+    int h;
+
+    if (source_w == 0UL || source_h == 0UL) {
+        source_w = 320UL;
+        source_h = 240UL;
+    }
+    if (max_w < 1) {
+        max_w = 1;
+    }
+    if (max_h < 1) {
+        max_h = 1;
+    }
+    cap = max_w > max_h ? max_w : max_h;
+    w = h = 1;
+    if (tg_image_canonical_size(source_w, source_h, cap, &w, &h) != 0) {
+        w = h = 1;
+    }
+    if (w > max_w) {
+        h = (h * max_w) / w;
+        w = max_w;
+    }
+    if (h > max_h) {
+        w = (w * max_h) / h;
+        h = max_h;
+    }
+    if (w < 1) {
+        w = 1;
+    }
+    if (h < 1) {
+        h = 1;
+    }
+    *out_w = w;
+    *out_h = h;
+}
+
+static tg_gui_rect tg_gui_photo_viewer_rect(const tg_gui_photo_viewer *viewer)
+{
+    tg_gui_rect rect;
+    unsigned long source_w;
+    unsigned long source_h;
+    int max_w;
+    int max_h;
+
+    rect.x = rect.y = 8;
+    rect.w = rect.h = 1;
+    if (viewer == 0 || viewer->ctx.window == 0) {
+        return rect;
+    }
+    max_w = viewer->ctx.inner_w - 16;
+    max_h = viewer->ctx.inner_h - 16;
+    source_w = viewer->slot.w > 0 ? (unsigned long)viewer->slot.w
+                                  : viewer->source_w;
+    source_h = viewer->slot.h > 0 ? (unsigned long)viewer->slot.h
+                                  : viewer->source_h;
+    tg_gui_photo_viewer_fit(source_w, source_h, max_w, max_h,
+                            &rect.w, &rect.h);
+    rect.x = (viewer->ctx.inner_w - rect.w) / 2;
+    rect.y = (viewer->ctx.inner_h - rect.h) / 2;
+    return rect;
+}
+
+static void tg_gui_photo_viewer_render_target(tg_gui_photo_viewer *viewer)
+{
+    tg_gui_amiga_ctx *ctx;
+    tg_gui_rect rect;
+    tg_gui_rect clip;
+
+    if (viewer == 0 || viewer->ctx.rport == 0) {
+        return;
+    }
+    ctx = &viewer->ctx;
+    SetAPen(ctx->rport, ctx->pens[TG_GUI_PEN_WINDOW]);
+    RectFill(ctx->rport, ctx->origin_x, ctx->origin_y,
+             ctx->origin_x + ctx->inner_w - 1,
+             ctx->origin_y + ctx->inner_h - 1);
+    rect = tg_gui_photo_viewer_rect(viewer);
+    SetAPen(ctx->rport, ctx->pens[TG_GUI_PEN_SURFACE]);
+    RectFill(ctx->rport, ctx->origin_x + rect.x,
+             ctx->origin_y + rect.y,
+             ctx->origin_x + rect.x + rect.w - 1,
+             ctx->origin_y + rect.y + rect.h - 1);
+    clip.x = 0;
+    clip.y = 0;
+    clip.w = ctx->inner_w;
+    clip.h = ctx->inner_h;
+    (void)tg_gui_photo_draw_slot(ctx, &viewer->slot, rect, clip);
+}
+
+static void tg_gui_photo_viewer_paint(tg_gui_photo_viewer *viewer)
+{
+    tg_gui_amiga_ctx *ctx;
+    struct Layer *layer;
+
+    if (viewer == 0 || viewer->ctx.window == 0 || viewer->ctx.rport == 0) {
+        return;
+    }
+    ctx = &viewer->ctx;
+    layer = ctx->rport->Layer;
+    if (ctx->buf_ok && ctx->buf_bm != 0 &&
+        ctx->buf_w == ctx->inner_w && ctx->buf_h == ctx->inner_h) {
+        struct RastPort *saved_rport;
+        int saved_ox;
+        int saved_oy;
+
+        WaitBlit();
+        saved_rport = ctx->rport;
+        saved_ox = ctx->origin_x;
+        saved_oy = ctx->origin_y;
+        ctx->rport = &ctx->buf_rp;
+        ctx->origin_x = 0;
+        ctx->origin_y = 0;
+        tg_gui_photo_viewer_render_target(viewer);
+        ctx->rport = saved_rport;
+        ctx->origin_x = saved_ox;
+        ctx->origin_y = saved_oy;
+        if (layer != 0) {
+            LockLayerRom(layer);
+        }
+        BltBitMapRastPort(ctx->buf_bm, 0, 0, ctx->rport,
+                          ctx->origin_x, ctx->origin_y,
+                          ctx->inner_w, ctx->inner_h, 0xC0);
+        if (layer != 0) {
+            UnlockLayerRom(layer);
+        }
+    } else {
+        if (layer != 0) {
+            LockLayerRom(layer);
+        }
+        tg_gui_photo_viewer_render_target(viewer);
+        if (layer != 0) {
+            UnlockLayerRom(layer);
+        }
+    }
+}
+
+static void tg_gui_photo_viewer_refresh(tg_gui_photo_viewer *viewer)
+{
+    tg_gui_amiga_ctx *ctx;
+
+    if (viewer == 0 || viewer->ctx.window == 0) {
+        return;
+    }
+    ctx = &viewer->ctx;
+    BeginRefresh(ctx->window);
+    tg_gui_amiga_measure_geometry(ctx);
+    if (ctx->buf_ok && ctx->buf_bm != 0 &&
+        ctx->buf_w == ctx->inner_w && ctx->buf_h == ctx->inner_h) {
+        BltBitMapRastPort(ctx->buf_bm, 0, 0, ctx->rport,
+                          ctx->origin_x, ctx->origin_y,
+                          ctx->inner_w, ctx->inner_h, 0xC0);
+    } else {
+        tg_gui_photo_viewer_render_target(viewer);
+    }
+    EndRefresh(ctx->window, TRUE);
+}
+
+static void tg_gui_photo_viewer_close(tg_gui_photo_viewer *viewer)
+{
+    struct IntuiMessage *msg;
+
+    if (viewer == 0) {
+        return;
+    }
+    if (viewer->ctx.window != 0) {
+        while ((msg = (struct IntuiMessage *)GetMsg(
+                    viewer->ctx.window->UserPort)) != 0) {
+            ReplyMsg((struct Message *)msg);
+        }
+        tg_gui_amiga_buffer_free(&viewer->ctx);
+        CloseWindow(viewer->ctx.window);
+    }
+    tg_gui_photo_slot_clear(&viewer->slot);
+    memset(viewer, 0, sizeof(*viewer));
+}
+
+static int tg_gui_photo_viewer_open_window(tg_gui_photo_viewer *viewer,
+                                           const tg_gui_amiga_ctx *main_ctx)
+{
+    struct TagItem tags[16];
+    struct Screen *screen;
+    int max_w;
+    int max_h;
+    int image_w;
+    int image_h;
+    int inner_w;
+    int inner_h;
+    int left;
+    int top;
+    int i;
+
+    if (viewer == 0 || main_ctx == 0 || main_ctx->window == 0) {
+        return 1;
+    }
+    screen = main_ctx->window->WScreen;
+    max_w = (int)screen->Width - 48;
+    max_h = (int)screen->Height - 64;
+    if (max_w > TG_GUI_PHOTO_VIEWER_CANONICAL_CAP) {
+        max_w = TG_GUI_PHOTO_VIEWER_CANONICAL_CAP;
+    }
+    if (max_h > TG_GUI_PHOTO_VIEWER_CANONICAL_CAP) {
+        max_h = TG_GUI_PHOTO_VIEWER_CANONICAL_CAP;
+    }
+    if (max_w < 80) {
+        max_w = 80;
+    }
+    if (max_h < 60) {
+        max_h = 60;
+    }
+    tg_gui_photo_viewer_fit(viewer->source_w, viewer->source_h,
+                            max_w, max_h, &image_w, &image_h);
+    inner_w = image_w + 16;
+    inner_h = image_h + 16;
+    if (inner_w < 176) {
+        inner_w = 176;
+    }
+    if (inner_h < 136) {
+        inner_h = 136;
+    }
+    if (inner_w > (int)screen->Width - 16) {
+        inner_w = (int)screen->Width - 16;
+    }
+    if (inner_h > (int)screen->Height - 32) {
+        inner_h = (int)screen->Height - 32;
+    }
+    left = ((int)screen->Width - inner_w) / 2;
+    top = ((int)screen->Height - inner_h) / 2;
+    if (left < 0) {
+        left = 0;
+    }
+    if (top < 0) {
+        top = 0;
+    }
+    i = 0;
+    tags[i].ti_Tag = WA_Title;
+    tags[i++].ti_Data = TG_GUI_TAG(viewer->title);
+    tags[i].ti_Tag = WA_Left;
+    tags[i++].ti_Data = (ULONG)left;
+    tags[i].ti_Tag = WA_Top;
+    tags[i++].ti_Data = (ULONG)top;
+    tags[i].ti_Tag = WA_InnerWidth;
+    tags[i++].ti_Data = (ULONG)inner_w;
+    tags[i].ti_Tag = WA_InnerHeight;
+    tags[i++].ti_Data = (ULONG)inner_h;
+    tags[i].ti_Tag = WA_DragBar;
+    tags[i++].ti_Data = TRUE;
+    tags[i].ti_Tag = WA_DepthGadget;
+    tags[i++].ti_Data = TRUE;
+    tags[i].ti_Tag = WA_CloseGadget;
+    tags[i++].ti_Data = TRUE;
+    tags[i].ti_Tag = WA_Activate;
+    tags[i++].ti_Data = FALSE;
+    tags[i].ti_Tag = WA_SmartRefresh;
+    tags[i++].ti_Data = TRUE;
+    tags[i].ti_Tag = WA_NewLookMenus;
+    tags[i++].ti_Data = TRUE;
+    tags[i].ti_Tag = WA_AutoAdjust;
+    tags[i++].ti_Data = TRUE;
+    tags[i].ti_Tag = WA_IDCMP;
+    tags[i++].ti_Data = IDCMP_CLOSEWINDOW | IDCMP_VANILLAKEY |
+                        IDCMP_RAWKEY | IDCMP_REFRESHWINDOW | IDCMP_INTUITICKS;
+    tags[i].ti_Tag = WA_CustomScreen;
+    tags[i++].ti_Data = TG_GUI_TAG(screen);
+    tags[i].ti_Tag = TAG_END;
+    tags[i++].ti_Data = 0;
+
+    viewer->ctx.window = OpenWindowTagList(0, tags);
+    if (viewer->ctx.window == 0) {
+        return 1;
+    }
+    viewer->ctx.rport = viewer->ctx.window->RPort;
+    if (main_ctx->rport != 0 && main_ctx->rport->Font != 0) {
+        SetFont(viewer->ctx.rport, main_ctx->rport->Font);
+    }
+    viewer->ctx.line_h = main_ctx->line_h;
+    memcpy(viewer->ctx.pens, main_ctx->pens, sizeof(viewer->ctx.pens));
+    memcpy(viewer->ctx.avatar_pens, main_ctx->avatar_pens,
+           sizeof(viewer->ctx.avatar_pens));
+    viewer->ctx.bitmap_text_compat = main_ctx->bitmap_text_compat;
+    viewer->ctx.photo_truecolor = main_ctx->photo_truecolor;
+    viewer->ctx.photo_cgx_failed = main_ctx->photo_cgx_failed;
+    viewer->ctx.photo_viewer_scope = 1;
+    tg_gui_amiga_measure_geometry(&viewer->ctx);
+    tg_gui_amiga_buffer_alloc(&viewer->ctx);
+    tg_gui_photo_viewer_paint(viewer);
+    ActivateWindow(viewer->ctx.window);
+    return 0;
+}
+
+static int tg_gui_photo_viewer_show(tg_gui_photo_viewer *viewer,
+                                    const tg_gui_amiga_ctx *main_ctx,
+                                    const tg_gui_message *message)
+{
+    int same;
+
+    if (viewer == 0 || main_ctx == 0 || message == 0 || !message->has_photo ||
+        (message->photo_id_hi == 0UL && message->photo_id_lo == 0UL)) {
+        return 1;
+    }
+    same = viewer->slot.id_hi == message->photo_id_hi &&
+           viewer->slot.id_lo == message->photo_id_lo;
+    if (!same) {
+        tg_gui_photo_slot_clear(&viewer->slot);
+        viewer->slot.id_hi = message->photo_id_hi;
+        viewer->slot.id_lo = message->photo_id_lo;
+        viewer->source_w = message->photo_width;
+        viewer->source_h = message->photo_height;
+    }
+    tg_gui_window_copy(viewer->title, sizeof(viewer->title),
+                       message->sender[0] != '\0' ? message->sender : "Photo");
+    if (tg_gui_session_request_viewer_photo(
+            message->photo_id_hi, message->photo_id_lo,
+            &viewer->source_w, &viewer->source_h) != 0) {
+        return 1;
+    }
+    if (viewer->ctx.window == 0 &&
+        tg_gui_photo_viewer_open_window(viewer, main_ctx) != 0) {
+        return 1;
+    }
+    SetWindowTitles(viewer->ctx.window, (CONST_STRPTR)viewer->title,
+                    (CONST_STRPTR)-1L);
+    tg_gui_photo_viewer_paint(viewer);
+    WindowToFront(viewer->ctx.window);
+    ActivateWindow(viewer->ctx.window);
+    return 0;
+}
+
+static void tg_gui_photo_viewer_reject(tg_gui_photo_viewer *viewer,
+                                       int decode_rc, int bad_cache)
+{
+    unsigned long id_hi;
+    unsigned long id_lo;
+    char line[72];
+
+    if (viewer == 0) {
+        return;
+    }
+    id_hi = viewer->slot.id_hi;
+    id_lo = viewer->slot.id_lo;
+    if (bad_cache) {
+        tg_gui_session_photo_decode_failed_variant(id_hi, id_lo, 1);
+    }
+    if (tg_gui_log_is_enabled()) {
+        sprintf(line, "photo: viewer decode fail rc=%d", decode_rc);
+        tg_gui_log(line);
+    }
+    tg_gui_photo_slot_clear(&viewer->slot);
+    viewer->slot.id_hi = id_hi;
+    viewer->slot.id_lo = id_lo;
+    viewer->slot.state = -1;
+}
+
+static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
+{
+    FILE *file;
+    char path[64];
+    long flen;
+    unsigned long got;
+    unsigned long pixels;
+    int canonical_w;
+    int canonical_h;
+    int decode_rc;
+
+    if (viewer == 0 || viewer->ctx.window == 0 || viewer->slot.state != 0 ||
+        (viewer->slot.id_hi == 0UL && viewer->slot.id_lo == 0UL)) {
+        return 0;
+    }
+    if (tg_gui_session_photo_cache_path(
+            path, sizeof(path), viewer->slot.id_hi,
+            viewer->slot.id_lo, 1) != 0) {
+        return 0;
+    }
+    file = fopen(path, "rb");
+    if (file == 0) {
+        return 0; /* foreground fetch is still in progress */
+    }
+    if (fseek(file, 0L, SEEK_END) != 0) {
+        fclose(file);
+        tg_gui_photo_viewer_reject(viewer, 1, 1);
+        return 0;
+    }
+    flen = ftell(file);
+    if (flen <= 0L || (unsigned long)flen > TG_GUI_PHOTO_VIEWER_JPEG_MAX ||
+        fseek(file, 0L, SEEK_SET) != 0) {
+        fclose(file);
+        tg_gui_photo_viewer_reject(viewer, 2, 1);
+        return 0;
+    }
+    canonical_w = canonical_h = 0;
+    if (tg_image_canonical_size(viewer->source_w, viewer->source_h,
+                                TG_GUI_PHOTO_VIEWER_CANONICAL_CAP,
+                                &canonical_w, &canonical_h) != 0) {
+        fclose(file);
+        tg_gui_photo_viewer_reject(viewer, 3, 0);
+        return 0;
+    }
+    pixels = (unsigned long)canonical_w * (unsigned long)canonical_h;
+    viewer->slot.jpeg = (unsigned char *)malloc((size_t)flen);
+    viewer->slot.rgb = (unsigned char *)calloc((size_t)pixels, 3U);
+    if (viewer->slot.jpeg == 0 || viewer->slot.rgb == 0) {
+        fclose(file);
+        tg_gui_photo_viewer_reject(viewer, 4, 0);
+        return 0;
+    }
+    got = (unsigned long)fread(viewer->slot.jpeg, 1, (size_t)flen, file);
+    fclose(file);
+    if (got != (unsigned long)flen) {
+        tg_gui_photo_viewer_reject(viewer, 5, 0);
+        return 0;
+    }
+    viewer->slot.jpeg_len = got;
+    viewer->slot.w = canonical_w;
+    viewer->slot.h = canonical_h;
+    viewer->slot.state = 2;
+    viewer->slot.decoder = tg_image_jpeg_decoder_begin(
+        viewer->slot.jpeg, viewer->slot.jpeg_len, viewer->slot.rgb,
+        viewer->slot.w, viewer->slot.h, TG_GUI_PHOTO_VIEWER_DECODE_CAP,
+        &decode_rc);
+    if (viewer->slot.decoder == 0) {
+        tg_gui_photo_viewer_reject(viewer, decode_rc, 1);
+        return 0;
+    }
+    tg_gui_photo_diag("photo: viewer decode begin");
+    return 1;
+}
+
+static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
+                                           unsigned int mcu_budget,
+                                           int pen_row_budget,
+                                           int *used_turn)
+{
+    tg_gui_photo_slot *slot;
+    int old_rows;
+    int ready_rows;
+    int decode_rc;
+    int step_rc;
+    int changed;
+
+    if (used_turn != 0) {
+        *used_turn = 0;
+    }
+    if (viewer == 0 || viewer->ctx.window == 0 ||
+        viewer->ctx.photo_resize_active) {
+        return 0;
+    }
+    slot = &viewer->slot;
+    if (slot->state == 0 && !tg_gui_photo_viewer_decode_start(viewer)) {
+        return 0;
+    }
+    if (slot->state != 2) {
+        return 0;
+    }
+    if (used_turn != 0) {
+        *used_turn = 1;
+    }
+    old_rows = viewer->ctx.photo_truecolor ? slot->ready_rows : slot->pen_rows;
+    if (slot->decoder != 0) {
+        ready_rows = slot->ready_rows;
+        step_rc = tg_image_jpeg_decoder_step(slot->decoder, mcu_budget,
+                                             &ready_rows, &decode_rc);
+        if (step_rc < 0) {
+            tg_gui_photo_viewer_reject(viewer, decode_rc, 1);
+            return 1;
+        }
+        slot->ready_rows = ready_rows;
+        if (step_rc == 1) {
+            tg_image_jpeg_decoder_destroy(slot->decoder);
+            slot->decoder = 0;
+            free(slot->jpeg);
+            slot->jpeg = 0;
+            slot->jpeg_len = 0UL;
+            slot->decode_done = 1;
+        }
+    }
+    changed = 0;
+    if (!viewer->ctx.photo_truecolor) {
+        changed = tg_gui_photo_map_pen_rows(slot, pen_row_budget);
+    }
+    if (slot->decode_done &&
+        (viewer->ctx.photo_truecolor || slot->pen_rows >= slot->h)) {
+        slot->state = 1;
+        if (!viewer->ctx.photo_truecolor) {
+            free(slot->rgb);
+            slot->rgb = 0;
+        }
+        tg_gui_photo_diag("photo: viewer decode done");
+        changed = 1;
+    }
+    if ((viewer->ctx.photo_truecolor ? slot->ready_rows : slot->pen_rows) >
+        old_rows) {
+        if (tg_gui_log_is_enabled()) {
+            char line[72];
+
+            sprintf(line, "photo: viewer decode band %d/%d",
+                    viewer->ctx.photo_truecolor ? slot->ready_rows
+                                                : slot->pen_rows,
+                    slot->h);
+            tg_gui_log(line);
+        }
+        changed = 1;
+    }
+    return changed;
+}
+
+static void tg_gui_photo_viewer_drain(tg_gui_photo_viewer *viewer,
+                                      int *photo_tick,
+                                      int *interactive_event)
+{
+    struct IntuiMessage *msg;
+    int close_requested;
+
+    if (viewer == 0 || viewer->ctx.window == 0) {
+        return;
+    }
+    close_requested = 0;
+    while ((msg = (struct IntuiMessage *)GetMsg(
+                viewer->ctx.window->UserPort)) != 0) {
+        ULONG msg_class;
+        UWORD msg_code;
+
+        msg_class = msg->Class;
+        msg_code = msg->Code;
+        ReplyMsg((struct Message *)msg);
+        if (msg_class == IDCMP_INTUITICKS) {
+            if (photo_tick != 0) {
+                *photo_tick = 1;
+            }
+        } else if (interactive_event != 0) {
+            *interactive_event = 1;
+        }
+        if (msg_class == IDCMP_CLOSEWINDOW ||
+            (msg_class == IDCMP_VANILLAKEY && msg_code == 27U) ||
+            (msg_class == IDCMP_RAWKEY && msg_code == 0x45U)) {
+            close_requested = 1;
+        } else if (msg_class == IDCMP_REFRESHWINDOW) {
+            tg_gui_photo_viewer_refresh(viewer);
+        }
+    }
+    if (close_requested) {
+        tg_gui_photo_viewer_close(viewer);
+    }
+}
+
+static int tg_gui_window_user_events_pending(
+    const tg_gui_amiga_ctx *ctx, const tg_gui_photo_viewer *viewer)
 {
     ULONG mask;
 
@@ -4128,12 +4721,17 @@ static int tg_gui_window_user_events_pending(const tg_gui_amiga_ctx *ctx)
         return 0;
     }
     mask = 1UL << ctx->window->UserPort->mp_SigBit;
+    if (viewer != 0 && viewer->ctx.window != 0 &&
+        viewer->ctx.window->UserPort != 0) {
+        mask |= 1UL << viewer->ctx.window->UserPort->mp_SigBit;
+    }
     return (SetSignal(0UL, 0UL) & mask) != 0UL;
 }
 
 static int tg_gui_run_window_once(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
+    tg_gui_photo_viewer viewer;
     tg_gui_backend backend;
     int init_w;
     int init_h;
@@ -4192,7 +4790,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     time_t last_key_time;
     time_t last_interactive_time;
     int resize_pending;
-    int photo_resume_pending;
+    int resize_settle_ticks;
 
     if (state == 0) {
         return 2;
@@ -4204,6 +4802,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     }
 
     memset(&ctx, 0, sizeof(ctx));
+    memset(&viewer, 0, sizeof(viewer));
     own_scr = 0;
     tg_gui_window_load_geom(&init_w, &init_h, &init_x, &init_y, &init_own);
     want_own = init_own;
@@ -4563,7 +5162,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     older_cooldown = 0;
     prev_selected = state->selected_chat;
     resize_pending = 0;
-    photo_resume_pending = 0;
+    resize_settle_ticks = 0;
     last_interactive_time = time(0);
     /* Live-reception heartbeat. INTUITICKS are delivered ONLY to the ACTIVE
        window, so with the window deactivated the loop slept in Wait() and the
@@ -4597,6 +5196,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         int photo_tick;
         int interactive_event;
         int photo_resume_turn;
+        int viewer_dirty;
 
         session_dirty = 0;
         scroll_dirty = 0;
@@ -4605,6 +5205,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         photo_tick = 0;
         interactive_event = 0;
         photo_resume_turn = 0;
+        viewer_dirty = 0;
         if (older_cooldown > 0) {
             older_cooldown -= 1;
         }
@@ -4614,6 +5215,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             if (timer_ok) {
                 wait_mask |= 1UL << timer_port->mp_SigBit;
             }
+            if (viewer.ctx.window != 0 &&
+                viewer.ctx.window->UserPort != 0) {
+                wait_mask |= 1UL << viewer.ctx.window->UserPort->mp_SigBit;
+            }
             wait_mask |= (ULONG)tg_platform_gui_drop_sigmask();
             /* 0.0.8 1b: while a transfer is active the loop must not sleep --
                each turn drains events, then pumps ONE chunk/part below. The
@@ -4622,6 +5227,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             if (!tg_gui_session_transfer_busy()) {
                 (void)Wait(wait_mask);
             }
+        }
+        tg_gui_photo_viewer_drain(&viewer, &photo_tick,
+                                  &interactive_event);
+        if (interactive_event) {
+            last_interactive_time = time(0);
         }
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
@@ -5631,8 +6241,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                    drain the queue first, then rebuild once for the newest size
                    below, outside every BeginRefresh bracket. */
                 resize_pending = 1;
+                resize_settle_ticks = 1;
                 ctx.photo_resize_active = 1;
-                photo_resume_pending = 1;
             } else if (msg_class == IDCMP_REFRESHWINDOW) {
                 /* BeginRefresh() already holds this window's layer locked for the
                    whole bracket, so no LockLayerRom here. With the buffer -- and
@@ -5650,6 +6260,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 } else if (!resize_pending) {
                     tg_gui_photo_frame_begin();
                     tg_gui_paint(state, &backend);
+                } else {
+                    /* Live/opaque resize implementations (notably AfA_OS) ask
+                       for intermediate refreshes while the pointer is moving.
+                       Show only the stable background during that burst; the
+                       coalesced path below rebuilds the complete frame once. */
+                    SetAPen(ctx.rport, ctx.pens[TG_GUI_PEN_WINDOW]);
+                    RectFill(ctx.rport, ctx.origin_x, ctx.origin_y,
+                             ctx.origin_x + ctx.inner_w - 1,
+                             ctx.origin_y + ctx.inner_h - 1);
                 }
                 EndRefresh(ctx.window, TRUE);
             } else if (msg_class == IDCMP_INTUITICKS) {
@@ -5755,7 +6374,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                               ctx.line_h, hx, hy);
 
                     if (hit <= TG_GUI_HIT_MESSAGE_BASE) {
-                        int mi = TG_GUI_HIT_MESSAGE_BASE - hit;
+                        int mi = hit <= TG_GUI_HIT_PHOTO_BASE
+                            ? TG_GUI_HIT_PHOTO_BASE - hit
+                            : TG_GUI_HIT_MESSAGE_BASE - hit;
 
                         if (mi >= 0 && mi < state->message_count &&
                             !state->messages[mi].is_system &&
@@ -6170,7 +6791,25 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     picked_secs = 0UL;
                     hit = tg_gui_hit_test(state, ctx.inner_w, ctx.inner_h,
                                           ctx.line_h, hx, hy);
-                    if (hit >= 0 && state->in_search) {
+                    if (hit <= TG_GUI_HIT_PHOTO_BASE) {
+                        int mi = TG_GUI_HIT_PHOTO_BASE - hit;
+
+                        if (mi >= 0 && mi < state->message_count &&
+                            state->messages[mi].has_photo) {
+                            if (tg_gui_photo_viewer_show(
+                                    &viewer, &ctx, &state->messages[mi]) == 0) {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Photo viewer open");
+                            } else {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Could not open that photo");
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        }
+                        continue;
+                    } else if (hit >= 0 && state->in_search) {
                         /* Picker: a normal search opens the result; forwarding
                            caches it as a destination without opening/unhiding. */
                         if (state->forward_pick_active) {
@@ -6340,6 +6979,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         state->reply_snippet[0] = '\0';
                         tg_gui_window_paint(state, &backend);
                     } else if (hit <= TG_GUI_HIT_MESSAGE_BASE &&
+                               hit > TG_GUI_HIT_PHOTO_BASE &&
                                tg_gui_session_is_open() && !state->in_search &&
                                !state->forward_pick_active) {
                         /* Press on a bubble: LATCH it. A drag past the
@@ -6533,9 +7173,20 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 }
             }
         }
-        if (resize_pending && !done) {
+        if (resize_pending && !done && photo_tick && !interactive_event &&
+            !tg_gui_window_user_events_pending(&ctx, &viewer)) {
+            if (resize_settle_ticks > 0) {
+                resize_settle_ticks -= 1;
+            }
+        }
+        if (resize_pending && !done && resize_settle_ticks <= 0) {
             tg_gui_amiga_measure_geometry(&ctx);
             tg_gui_amiga_buffer_alloc(&ctx);
+            /* The first quiet tick marks release of the live-resize burst.
+               Re-enable replay before this one final composition, then keep
+               network/decode work out of the same turn. */
+            ctx.photo_resize_active = 0;
+            photo_resume_turn = 1;
             tg_gui_window_paint(state, &backend);
             WaitBlit();
             /* NEWSIZE/REFRESH bursts can leave themed AfA/RTG borders with an
@@ -6543,17 +7194,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                Intuition to redraw its frame once, after the final geometry. */
             RefreshWindowFrame(ctx.window);
             resize_pending = 0;
-        }
-        /* The resize paint intentionally contains placeholders only. Resume on
-           the first event-free tick, repaint the stable geometry once, then let
-           decode/fetch continue on the following tick. */
-        if (photo_tick && !interactive_event && !resize_pending &&
-            photo_resume_pending &&
-            !tg_gui_window_user_events_pending(&ctx)) {
-            ctx.photo_resize_active = 0;
-            photo_resume_pending = 0;
-            photo_resume_turn = 1;
-            session_dirty = 1;
         }
         /* 0.0.8 punto 1e: Workbench drops. An icon dropped on the window
            arms an upload to the open chat, exactly like Send file... did;
@@ -6711,20 +7351,22 @@ static int tg_gui_run_window_once(tg_gui_state *state)
            bubbles to image mode and asks the normal repaint path to redraw. */
         if (photo_tick && !interactive_event && !resize_pending &&
             !ctx.photo_resize_active && !photo_resume_turn &&
-            !tg_gui_window_user_events_pending(&ctx) &&
+            !tg_gui_window_user_events_pending(&ctx, &viewer) &&
             !tg_gui_session_transfer_busy() &&
             tg_gui_session_photo_step(stdout)) {
             session_dirty = 1;
+            viewer_dirty = 1;
         }
         /* Decode only on an idle tick, after every queued GUI event was handled.
            A key, wheel, pointer move or NEWSIZE wins this turn; the decoder
            resumes from the same MCU on the next tick. */
         if (photo_tick && !interactive_event && !resize_pending && !done &&
             !ctx.photo_resize_active && !photo_resume_turn &&
-            !tg_gui_window_user_events_pending(&ctx) &&
+            !tg_gui_window_user_events_pending(&ctx, &viewer) &&
             !tg_gui_session_transfer_busy()) {
             unsigned int mcu_budget = TG_GUI_PHOTO_MCUS_PER_TICK;
             int pen_row_budget = TG_GUI_PHOTO_PEN_ROWS_PER_TICK;
+            int viewer_used = 0;
             time_t photo_now = time(0);
 
             if (photo_now != (time_t)-1 &&
@@ -6734,7 +7376,12 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 mcu_budget = TG_GUI_PHOTO_IDLE_MCUS_PER_TICK;
                 pen_row_budget = TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK;
             }
-            if (tg_gui_photo_decode_tick(&ctx, mcu_budget,
+            if (tg_gui_photo_viewer_decode_tick(
+                    &viewer, mcu_budget, pen_row_budget, &viewer_used)) {
+                viewer_dirty = 1;
+            }
+            if (!viewer_used &&
+                tg_gui_photo_decode_tick(&ctx, mcu_budget,
                                          pen_row_budget)) {
                 session_dirty = 1;
             }
@@ -6823,6 +7470,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         if (session_dirty || scroll_dirty) {
             tg_gui_window_paint(state, &backend);
         }
+        if (viewer_dirty && viewer.ctx.window != 0) {
+            tg_gui_photo_viewer_paint(&viewer);
+        }
         /* A fits-window load left the older rows above the pinned-newest view: if
            it now overflows, scroll to the top to reveal them (the paint above
            refreshed sb_tr_max). If it still fits, they are already on screen. */
@@ -6850,6 +7500,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     }
 
     tg_platform_gui_drop_disarm(); /* before the window goes away */
+    /* The viewer is a visitor on the same screen. Close it before releasing
+       shared pens, the CyberGraphX interface or a private application screen. */
+    tg_gui_photo_viewer_close(&viewer);
     /* Window going away with a transfer still running (menu Quit, iconify,
        Amiga+Q): cancel and unwind it -- end() closes the file (removing a
        partial download) so session_close finds the engine idle. */

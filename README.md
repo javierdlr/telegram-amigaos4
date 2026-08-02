@@ -47,9 +47,11 @@ paging, search, badges and chat management.
 
 Development on `main` is now preparing 0.0.9: hidden chats stay available in
 the local search, messages can be forwarded to Saved Messages or another chat,
-photo thumbnails render inline from a geometry-independent cache, and JPEGs can
-be sent as native Telegram photos. These changes are not part of the 0.0.8
-downloads below until all five platform lanes complete real-system validation.
+photo thumbnails render inline from a geometry-independent cache, a click opens
+a larger progressive photo viewer, inline loading can be disabled on slower
+machines, and JPEGs can be sent as native Telegram photos. These changes are not
+part of the 0.0.8 downloads below until all five platform lanes complete
+real-system validation.
 
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:
@@ -109,8 +111,10 @@ Full IT/EN instructions are inside each package.
   updates for messages edited elsewhere, clipboard **Copy/Cut/Paste** with
   text selection (mouse or Shift+arrows), @username autocomplete.
 - Real **profile-picture avatars** (blurred previews instantly, crisp on open).
-- Current `main`: inline message photos with an on-disk cache, forwarding to
-  Saved Messages or another chat, and hidden chats surfaced by local search.
+- Current `main`: inline message photos with an on-disk cache and a larger
+  click-to-open viewer, a persistent text-only photo mode for slower machines,
+  forwarding to Saved Messages or another chat, and hidden chats surfaced by
+  local search.
 - Native GUI scrolling (wheel / scrollbar / arrows / pixel), remembered window
   size and position, optional own screen, Iconify to a Workbench AppIcon, dark
   theme, script-free flashless Workbench launch.

@@ -8,6 +8,10 @@ unless noted.
 ## [Unreleased]
 
 ### Added
+- Clicking a photo, including the `[Photo]` label while inline photos are
+  disabled, now opens one reusable fixed-size viewer window. It requests a
+  larger bounded Telegram image, keeps a separate `-l.jpg` disk cache and
+  reveals the JPEG progressively without evicting transcript photo slots.
 - The GUI now has a persistent `Settings > Inline photos` toggle. It defaults
   to on; disabling it restores the lightweight text-only `[Photo]` bubbles
   without starting background photo fetch or decode work.
@@ -27,6 +31,10 @@ unless noted.
   photos above 10 MiB are sent as documents with explicit status feedback.
 
 ### Changed
+- Live resize now paints only the window background while intermediate sizes
+  are arriving, then rebuilds the complete frame once after the final resize
+  event. This gives AfA_OS live resize the lightweight behaviour of classic
+  AmigaOS without changing the final layout.
 - Inline photos now decode once into a platform-sized canonical cache and
   repaint from that cache at every bubble size. Resize paints never trigger a
   JPEG decode, modern RTG targets use optional RGB888 output, paletted screens
