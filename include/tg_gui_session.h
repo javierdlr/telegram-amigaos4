@@ -54,8 +54,8 @@ int tg_gui_session_photo_step(FILE *stream);
 int tg_gui_session_photo_pending(void);
 
 /* Inline-photo policy and demand queue. The renderer calls request_inline only
-   for a visible photo; 1 means the JPEG is already cached and may be decoded,
-   0 means it was queued or inline work is disabled. */
+   for a visible photo; 2 means the complete JPEG is cached, 1 means only its
+   stripped preview is cached, and 0 means work is queued or disabled. */
 void tg_gui_session_set_inline_photos(int enabled);
 int tg_gui_session_request_inline_photo(unsigned long photo_id_hi,
                                         unsigned long photo_id_lo);
@@ -73,6 +73,11 @@ int tg_gui_session_request_viewer_photo(unsigned long photo_id_hi,
 int tg_gui_session_photo_cache_path(char *path, unsigned long path_size,
                                     unsigned long photo_id_hi,
                                     unsigned long photo_id_lo, int large);
+/* Expanded photoStrippedSize JPEG used as the no-network first frame. */
+int tg_gui_session_photo_thumb_cache_path(char *path,
+                                          unsigned long path_size,
+                                          unsigned long photo_id_hi,
+                                          unsigned long photo_id_lo);
 
 /* Discard a cached JPEG that the renderer proved undecodable. This is the only
    permanent per-session photo rejection: transport failures remain retryable. */

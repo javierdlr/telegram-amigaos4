@@ -8,6 +8,10 @@ unless noted.
 ## [Unreleased]
 
 ### Added
+- Photo messages now use Telegram's embedded stripped thumbnail as an instant
+  blurred preview while the bounded network image is fetched and refined. The
+  tiny preview is cached separately, works in the transcript and viewer, and
+  does not start background work when inline photos are disabled.
 - The Telegram menu now groups persistent preferences under `Settings`:
   download drawer, inline photos and `Photo dithering` with Full, Light and
   Off levels. Each change is written immediately and restored at next start.

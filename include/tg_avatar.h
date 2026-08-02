@@ -62,6 +62,14 @@ int tg_image_canonical_size(unsigned long source_w,
                             int *out_w,
                             int *out_h);
 
+/* Bilinear RGB888 resize. Source and destination are tightly packed; unlike
+   the cheap replay scaler this is intended for one-time thumbnail/canonical
+   preparation, never for paint. 0 = ok. */
+int tg_image_scale_rgb_bilinear(const unsigned char *src_rgb,
+                                int sw, int sh,
+                                unsigned char *dst_rgb,
+                                int dw, int dh);
+
 /* Apply the 4x4 ordered-dither offset used before palette matching. */
 void tg_image_ordered_dither_rgb(const unsigned char *rgb,
                                  int x, int y,

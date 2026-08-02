@@ -144,6 +144,81 @@ static int tg_avatar_out(JDEC *jd, void *bitmap, JRECT *rect)
     return 1;
 }
 
+static int tg_image_scale_rgb_bilinear_stride(
+    const unsigned char *src_rgb, int sw, int sh, int src_stride,
+    unsigned char *dst_rgb, int dw, int dh)
+{
+    int y;
+
+    if (src_rgb == 0 || dst_rgb == 0 || sw <= 0 || sh <= 0 ||
+        src_stride < sw || dw <= 0 || dh <= 0) {
+        return 1;
+    }
+    for (y = 0; y < dh; ++y) {
+        unsigned long fy_pos;
+        unsigned long fy;
+        int y0;
+        int y1;
+        int x;
+
+        fy_pos = (dh > 1 && sh > 1)
+            ? ((unsigned long)y * (unsigned long)(sh - 1) * 65536UL) /
+                  (unsigned long)(dh - 1)
+            : 0UL;
+        y0 = (int)(fy_pos >> 16);
+        fy = fy_pos & 0xffffUL;
+        y1 = y0 + 1 < sh ? y0 + 1 : y0;
+        for (x = 0; x < dw; ++x) {
+            unsigned long fx_pos;
+            unsigned long fx;
+            int x0;
+            int x1;
+            int c;
+
+            fx_pos = (dw > 1 && sw > 1)
+                ? ((unsigned long)x * (unsigned long)(sw - 1) * 65536UL) /
+                      (unsigned long)(dw - 1)
+                : 0UL;
+            x0 = (int)(fx_pos >> 16);
+            fx = fx_pos & 0xffffUL;
+            x1 = x0 + 1 < sw ? x0 + 1 : x0;
+            for (c = 0; c < 3; ++c) {
+                unsigned long top;
+                unsigned long bottom;
+                unsigned long value;
+                const unsigned char *row0;
+                const unsigned char *row1;
+
+                row0 = src_rgb +
+                    ((unsigned long)y0 * (unsigned long)src_stride * 3UL);
+                row1 = src_rgb +
+                    ((unsigned long)y1 * (unsigned long)src_stride * 3UL);
+                top = ((unsigned long)row0[x0 * 3 + c] *
+                           (65536UL - fx) +
+                       (unsigned long)row0[x1 * 3 + c] * fx + 32768UL) >> 16;
+                bottom = ((unsigned long)row1[x0 * 3 + c] *
+                              (65536UL - fx) +
+                          (unsigned long)row1[x1 * 3 + c] * fx +
+                          32768UL) >> 16;
+                value = (top * (65536UL - fy) + bottom * fy + 32768UL) >> 16;
+                dst_rgb[(((unsigned long)y * (unsigned long)dw +
+                          (unsigned long)x) * 3UL) + (unsigned long)c] =
+                    (unsigned char)value;
+            }
+        }
+    }
+    return 0;
+}
+
+int tg_image_scale_rgb_bilinear(const unsigned char *src_rgb,
+                                int sw, int sh,
+                                unsigned char *dst_rgb,
+                                int dw, int dh)
+{
+    return tg_image_scale_rgb_bilinear_stride(src_rgb, sw, sh, sw,
+                                               dst_rgb, dw, dh);
+}
+
 int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
                           unsigned char *dst_rgb, int dw, int dh)
 {
@@ -152,8 +227,6 @@ int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
     tg_avatar_io io;
     JDEC jd;
     unsigned int scale;
-    int y;
-    int x;
 
     if (jpeg == 0 || jpeg_len == 0UL || dst_rgb == 0 || dw <= 0 || dh <= 0) {
         return 1;
@@ -183,22 +256,9 @@ int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
     if (jd_decomp(&jd, tg_avatar_out, (uint8_t)scale) != JDR_OK) {
         return 1;
     }
-    /* nearest-neighbour into the destination square (fixed point 16.16) */
-    for (y = 0; y < dh; ++y) {
-        unsigned long sy = ((unsigned long)y * io.h) / (unsigned long)dh;
-
-        for (x = 0; x < dw; ++x) {
-            unsigned long sx = ((unsigned long)x * io.w) / (unsigned long)dw;
-            const unsigned char *s = src_rgb +
-                ((sy * TG_AVATAR_SRC_MAX + sx) * 3UL);
-            unsigned char *d = dst_rgb + (((unsigned long)y * dw + x) * 3UL);
-
-            d[0] = s[0];
-            d[1] = s[1];
-            d[2] = s[2];
-        }
-    }
-    return 0;
+    return tg_image_scale_rgb_bilinear_stride(
+        src_rgb, (int)io.w, (int)io.h, TG_AVATAR_SRC_MAX,
+        dst_rgb, dw, dh);
 }
 
 typedef struct tg_image_jpeg_io {
@@ -635,6 +695,11 @@ int tg_avatar_self_test(void)
         int w;
         int h;
         unsigned char scaled[16 * 8 * 3];
+        static const unsigned char bilinear_src[12] = {
+            0U, 0U, 0U,       255U, 0U, 0U,
+            0U, 255U, 0U,     255U, 255U, 255U
+        };
+        unsigned char bilinear_dst[3 * 3 * 3];
         unsigned char rgb[3];
         unsigned char dithered[3];
 
@@ -647,6 +712,16 @@ int tg_avatar_self_test(void)
                                         scaled, 16, 8, 32) != 0 ||
             memcmp(scaled, scaled + ((16 * 8 - 1) * 3), 3) == 0) {
             puts("avatar self-test: canonical photo geometry failed");
+            return 2;
+        }
+        if (tg_image_scale_rgb_bilinear(
+                bilinear_src, 2, 2, bilinear_dst, 3, 3) != 0 ||
+            bilinear_dst[(4 * 3)] != 128U ||
+            bilinear_dst[(4 * 3) + 1] != 128U ||
+            bilinear_dst[(4 * 3) + 2] != 64U ||
+            memcmp(bilinear_dst, bilinear_src, 3U) != 0 ||
+            memcmp(bilinear_dst + (8 * 3), bilinear_src + 9, 3U) != 0) {
+            puts("avatar self-test: bilinear photo scaling failed");
             return 2;
         }
         rgb[0] = 1U;

@@ -36,6 +36,7 @@
 #include "tg_console.h"
 #include "tg_console_ui.h"
 #include "tg_console_tui.h"
+#include "tg_avatar.h"
 #include "tg_file.h"
 #include "tg_gui.h"
 #include "tg_gui_driver.h"
@@ -9935,6 +9936,76 @@ int tg_gui_session_photo_cache_path(char *path, unsigned long path_size,
     return 0;
 }
 
+int tg_gui_session_photo_thumb_cache_path(char *path,
+                                          unsigned long path_size,
+                                          unsigned long id_hi,
+                                          unsigned long id_lo)
+{
+    if (path == 0 || path_size < 42UL || (id_hi == 0UL && id_lo == 0UL)) {
+        return 1;
+    }
+    sprintf(path, "photos/tgph%08lx%08lx-t.jpg", id_hi, id_lo);
+    return 0;
+}
+
+static int tg_gui_photo_thumb_cache_exists(unsigned long id_hi,
+                                           unsigned long id_lo)
+{
+    char path[64];
+    FILE *probe;
+
+    if (tg_gui_session_photo_thumb_cache_path(
+            path, sizeof(path), id_hi, id_lo) != 0) {
+        return 0;
+    }
+    probe = fopen(path, "rb");
+    if (probe == 0) {
+        return 0;
+    }
+    fclose(probe);
+    return 1;
+}
+
+static void tg_gui_photo_store_stripped(const tg_mtproto_photo_meta *photo)
+{
+    unsigned char jpeg[900];
+    unsigned long jpeg_len;
+    char path[64];
+    char part_path[72];
+    FILE *out;
+    int ok;
+    int close_rc;
+
+    if (photo == 0 || photo->stripped_len == 0UL ||
+        tg_gui_photo_thumb_cache_exists(photo->id_hi, photo->id_lo) ||
+        tg_gui_session_photo_thumb_cache_path(
+            path, sizeof(path), photo->id_hi, photo->id_lo) != 0 ||
+        tg_avatar_expand_stripped(photo->stripped, photo->stripped_len,
+                                  jpeg, sizeof(jpeg), &jpeg_len) != 0) {
+        return;
+    }
+    (void)mkdir("photos", 0777);
+    sprintf(part_path, "%s.part", path);
+    (void)remove(part_path);
+    out = fopen(part_path, "wb");
+    if (out == 0) {
+        return;
+    }
+    ok = fwrite(jpeg, 1, jpeg_len, out) == jpeg_len;
+    close_rc = fclose(out);
+    if (close_rc != 0) {
+        ok = 0;
+    }
+    if (ok) {
+        (void)remove(path); /* AmigaDOS Rename does not replace a target. */
+        ok = rename(part_path, path) == 0;
+    }
+    if (!ok) {
+        (void)remove(part_path);
+        tg_gui_photo_log("photo: stripped preview cache write failed");
+    }
+}
+
 static int tg_gui_photo_cache_exists(unsigned long id_hi, unsigned long id_lo,
                                      int large)
 {
@@ -10040,6 +10111,7 @@ static void tg_gui_photo_catalog_offer(const tg_mtproto_photo_meta *photo)
     if (photo == 0 || !photo->has_photo) {
         return;
     }
+    tg_gui_photo_store_stripped(photo);
     old = tg_gui_photo_catalog_find(photo->id_hi, photo->id_lo);
     if (old != 0) {
         *old = *photo;
@@ -10129,18 +10201,19 @@ int tg_gui_session_request_inline_photo(unsigned long id_hi,
                                         unsigned long id_lo)
 {
     tg_mtproto_photo_meta *photo;
+    int full_ready;
+    int preview_ready;
 
     if (!tg_gui_photo_inline_enabled) {
         return 0;
     }
-    if (tg_gui_photo_cache_exists(id_hi, id_lo, 0)) {
-        return 1;
-    }
+    full_ready = tg_gui_photo_cache_exists(id_hi, id_lo, 0);
+    preview_ready = tg_gui_photo_thumb_cache_exists(id_hi, id_lo);
     photo = tg_gui_photo_catalog_find(id_hi, id_lo);
-    if (photo != 0) {
+    if (!full_ready && photo != 0) {
         tg_gui_photo_queue_offer(photo, 0);
     }
-    return 0;
+    return full_ready ? 2 : (preview_ready ? 1 : 0);
 }
 
 int tg_gui_session_request_viewer_photo(unsigned long id_hi,

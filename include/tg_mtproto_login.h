@@ -128,6 +128,8 @@ typedef struct tg_mtproto_photo_meta {
     unsigned long large_width;
     unsigned long large_height;
     unsigned long large_size;
+    unsigned long stripped_len;
+    unsigned char stripped[TG_MTPROTO_STRIPPED_MAX];
 } tg_mtproto_photo_meta;
 
 /* Parses one bare Document (document#8fd4c4d8 / documentEmpty#36f8c871),

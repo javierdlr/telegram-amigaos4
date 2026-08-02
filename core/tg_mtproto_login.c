@@ -1624,7 +1624,8 @@ static tg_mtproto_tl_status tg_skip_video_size(tg_mtproto_tl_reader *reader);
 static tg_mtproto_tl_status tg_read_photo_size_candidate(
     tg_mtproto_tl_reader *reader, char *type, unsigned long type_size,
     unsigned long *width, unsigned long *height, unsigned long *size,
-    int *downloadable)
+    int *downloadable, unsigned char *stripped,
+    unsigned long stripped_cap, unsigned long *stripped_len)
 {
     unsigned long ctor;
     unsigned long count;
@@ -1632,7 +1633,8 @@ static tg_mtproto_tl_status tg_read_photo_size_candidate(
     unsigned long value;
 
     if (type == 0 || type_size == 0UL || width == 0 || height == 0 ||
-        size == 0 || downloadable == 0) {
+        size == 0 || downloadable == 0 || stripped == 0 ||
+        stripped_len == 0) {
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
     }
     type[0] = '\0';
@@ -1662,6 +1664,21 @@ static tg_mtproto_tl_status tg_read_photo_size_candidate(
         }
         return tg_skip_bytes_field(reader);
     case 0xe0b0bc2eUL: /* photoStrippedSize: bytes */
+    {
+        const unsigned char *bytes;
+        unsigned long bytes_len;
+
+        if (tg_mtproto_tl_read_bytes(reader, &bytes, &bytes_len) !=
+                TG_MTPROTO_TL_OK) {
+            return TG_MTPROTO_TL_INVALID_DATA;
+        }
+        if (*stripped_len == 0UL && bytes_len >= 3UL &&
+            bytes_len <= stripped_cap && bytes[0] == 0x01U) {
+            memcpy(stripped, bytes, bytes_len);
+            *stripped_len = bytes_len;
+        }
+        return TG_MTPROTO_TL_OK;
+    }
     case 0xd8214d41UL: /* photoPathSize: bytes */
         return tg_skip_bytes_field(reader);
     case 0xfa3efb95UL: /* photoSizeProgressive: w h Vector<int> */
@@ -1751,7 +1768,10 @@ tg_mtproto_tl_status tg_mtproto_read_photo(tg_mtproto_tl_reader *reader,
         int downloadable;
 
         if (tg_read_photo_size_candidate(reader, type, sizeof(type), &width,
-                                         &height, &size, &downloadable) !=
+                                         &height, &size, &downloadable,
+                                         out->stripped,
+                                         sizeof(out->stripped),
+                                         &out->stripped_len) !=
             TG_MTPROTO_TL_OK) {
             return TG_MTPROTO_TL_INVALID_DATA;
         }
@@ -5505,6 +5525,9 @@ int tg_mtproto_login_self_test(void)
         unsigned char photo_wire[256];
         unsigned char query[80];
         unsigned char ref_byte[1];
+        static const unsigned char stripped_thumb[5] = {
+            0x01U, 0x08U, 0x0cU, 0xaaU, 0xbbU
+        };
         tg_mtproto_tl_writer pw;
         tg_mtproto_tl_writer qw;
         tg_mtproto_tl_reader pr;
@@ -5524,7 +5547,12 @@ int tg_mtproto_login_self_test(void)
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 123UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
             &pw, TG_VECTOR_CONSTRUCTOR);
-        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 4UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 5UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
+            &pw, 0xe0b0bc2eUL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "i");
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_bytes(
+            &pw, stripped_thumb, sizeof(stripped_thumb));
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
             &pw, 0x75c78e60UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "s");
@@ -5567,7 +5595,10 @@ int tg_mtproto_login_self_test(void)
             photo.large_width != 800UL || photo.large_height != 500UL ||
             photo.large_size != 500000UL ||
             photo.dc_id != 4UL || photo.file_reference_len != 1UL ||
-            photo.file_reference[0] != 0xfeU) {
+            photo.file_reference[0] != 0xfeU ||
+            photo.stripped_len != sizeof(stripped_thumb) ||
+            memcmp(photo.stripped, stripped_thumb,
+                   sizeof(stripped_thumb)) != 0) {
             puts("photo self-test: Photo parse/selection mismatch");
             return 2;
         }
