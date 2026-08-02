@@ -387,6 +387,7 @@ typedef struct tg_gui_amiga_ctx {
     int photo_cgx_checked;    /* destination bitmap passed the RGB write/read test */
     int photo_cgx_failed;     /* permanent pen fallback for this window session */
     int photo_resize_active;  /* no photo cache/replay work while buffer geometry moves */
+    unsigned int afa_profile_paints; /* bounded --gui-live-debug paint samples */
 } tg_gui_amiga_ctx;
 
 static int tg_gui_amiga_width(tg_gui_backend *backend)
@@ -493,11 +494,19 @@ static LONG tg_gui_amiga_resolve_pen(tg_gui_amiga_ctx *ctx, int pen)
    is forbidden. Text probes log position and LENGTH only, never content. */
 static int tg_gui_prim_trail;
 static int tg_gui_prim_n;
+static int tg_gui_profile_active;
+static unsigned long tg_gui_profile_prims;
+static unsigned long tg_gui_profile_photo_rgb_rows;
+static unsigned long tg_gui_profile_photo_pen_runs;
+static unsigned long tg_gui_profile_afa_fallback_blits;
 
 static void tg_gui_prim_log(const char *kind, int x, int y, int w, int h)
 {
     char line[80];
 
+    if (tg_gui_profile_active) {
+        ++tg_gui_profile_prims;
+    }
     if (!tg_gui_prim_trail) {
         return;
     }
@@ -1505,6 +1514,9 @@ static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
                             (UWORD)width, 1, RECTFMT_RGB) == 0UL) {
             return 0;
         }
+        if (tg_gui_profile_active) {
+            ++tg_gui_profile_photo_rgb_rows;
+        }
     }
     return 1;
 #else
@@ -1629,6 +1641,9 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
             SetAPen(ctx->rport, (LONG)p);
             RectFill(ctx->rport, ctx->origin_x + x, ctx->origin_y + y,
                      ctx->origin_x + run - 1, ctx->origin_y + y);
+            if (tg_gui_profile_active) {
+                ++tg_gui_profile_photo_pen_runs;
+            }
             x = run;
         }
     }
@@ -1878,6 +1893,9 @@ static int tg_gui_amiga_blt_text_glyph(struct RastPort *rp, int x,
                     (LONG)(baseline - (int)font->tf_Baseline + row),
                     (LONG)glyph_width, 1L);
                 ++tg_gui_afa_template_blits;
+                if (tg_gui_profile_active) {
+                    ++tg_gui_profile_afa_fallback_blits;
+                }
                 --italic_check;
                 if ((italic_check & 1) != 0) {
                     --italic_shift;
@@ -1891,6 +1909,9 @@ static int tg_gui_amiga_blt_text_glyph(struct RastPort *rp, int x,
                         (LONG)(baseline - (int)font->tf_Baseline),
                         (LONG)glyph_width, (LONG)font->tf_YSize);
             ++tg_gui_afa_template_blits;
+            if (tg_gui_profile_active) {
+                ++tg_gui_profile_afa_fallback_blits;
+            }
         }
     }
     ++tg_gui_afa_template_chars;
@@ -2227,10 +2248,30 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         struct RastPort *saved_rport = c->rport;
         int saved_ox = c->origin_x;
         int saved_oy = c->origin_y;
+        int profile_paint;
+        clock_t profile_start;
+        clock_t profile_render_done;
+        clock_t profile_blit_done;
+
+        profile_paint = c->bitmap_text_compat && tg_gui_log_is_enabled() &&
+                        c->afa_profile_paints < 24U;
+        profile_start = (clock_t)-1;
+        profile_render_done = (clock_t)-1;
+        profile_blit_done = (clock_t)-1;
 
         /* The previous frame copy may still be reading this bitmap. Do not
            modify its pixels until the blitter has finished with the source. */
         WaitBlit();
+        if (profile_paint) {
+            tg_gui_profile_prims = 0UL;
+            tg_gui_profile_photo_rgb_rows = 0UL;
+            tg_gui_profile_photo_pen_runs = 0UL;
+            tg_gui_profile_afa_fallback_blits = 0UL;
+            tg_gui_afa_template_blits = 0UL;
+            tg_gui_afa_template_chars = 0UL;
+            profile_start = clock();
+            tg_gui_profile_active = 1;
+        }
         if (!first_logged) {
             tg_gui_log("paint1: off-screen render start");
             /* First buffered render only: one line per primitive, so a crash
@@ -2245,6 +2286,10 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         c->origin_x = 0;
         c->origin_y = 0;
         tg_gui_paint(state, backend);
+        if (profile_paint) {
+            tg_gui_profile_active = 0;
+            profile_render_done = clock();
+        }
         tg_gui_prim_trail = 0;
         c->rport = saved_rport;
         c->origin_x = saved_ox;
@@ -2269,6 +2314,36 @@ static void tg_gui_window_paint(const tg_gui_state *state,
                           c->inner_w, c->inner_h, 0xC0);
         if (layer != 0) {
             UnlockLayerRom(layer);
+        }
+        if (profile_paint) {
+            char line[160];
+            unsigned long render_ticks;
+            unsigned long blit_ticks;
+
+            /* Complete the debug sample before reading the clock. This wait is
+               gated by --gui-live-debug and never burdens normal painting. */
+            WaitBlit();
+            profile_blit_done = clock();
+            render_ticks = (profile_start != (clock_t)-1 &&
+                            profile_render_done != (clock_t)-1 &&
+                            profile_render_done >= profile_start)
+                ? (unsigned long)(profile_render_done - profile_start) : 0UL;
+            blit_ticks = (profile_render_done != (clock_t)-1 &&
+                          profile_blit_done != (clock_t)-1 &&
+                          profile_blit_done >= profile_render_done)
+                ? (unsigned long)(profile_blit_done - profile_render_done) : 0UL;
+            sprintf(line, "paint: afa ticks render=%lu blit=%lu hz=%lu prim=%lu",
+                    render_ticks, blit_ticks, (unsigned long)CLOCKS_PER_SEC,
+                    tg_gui_profile_prims);
+            tg_gui_log(line);
+            sprintf(line,
+                    "paint: afa text blits=%lu chars=%lu fallback=%lu photo rgbrows=%lu penruns=%lu",
+                    tg_gui_afa_template_blits, tg_gui_afa_template_chars,
+                    tg_gui_profile_afa_fallback_blits,
+                    tg_gui_profile_photo_rgb_rows,
+                    tg_gui_profile_photo_pen_runs);
+            tg_gui_log(line);
+            ++c->afa_profile_paints;
         }
         if (!first_logged) {
             tg_gui_log("paint1: blit done");

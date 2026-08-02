@@ -58,6 +58,9 @@ unless noted.
 - Photo fetch, decode and partial replay now remain suspended for the complete
   resize cycle. A stable placeholder frame is built first and cached images are
   restored on the next idle paint, avoiding buffer access during reallocation.
+- `--gui-live-debug` now records a bounded set of AfA_OS full-paint metrics:
+  render/blit clock ticks, primitive count, batched and fallback text blits,
+  and RGB-row or pen-run photo replay work. Normal GUI runs remain unchanged.
 
 ## [0.0.8] - 2026-07-31
 
