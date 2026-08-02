@@ -35,6 +35,12 @@ unless noted.
 - The AfA_OS compatibility renderer now composes complete bitmap-font runs in
   memory and submits one `BltTemplate` per run instead of one per glyph. Native
   text rendering on systems without AfA_OS is unchanged.
+- Inline-photo decoding now follows the visible viewport: the topmost visible
+  photo is advanced first, off-screen partial decoders wait, and idle periods
+  use larger bounded slices without taking priority over queued GUI events.
+- The canonical photo cache now keeps four slots on 68k and six on wider
+  targets. True LRU eviction skips active and currently visible photos, so a
+  third visible image no longer makes an earlier one disappear.
 - Hidden chats now remain in the local peer cache. They stay out of the normal
   sidebar, appear immediately in local search with a `(hidden)` marker, and
   return to the sidebar when opened, without an online search or cache reload.
@@ -49,6 +55,9 @@ unless noted.
   RGB888 path that could leave decoded photos grey. Other RTG targets validate
   the destination bitmap with a write/read self-check and fall back for the
   whole session when the driver cannot replay RGB pixels reliably.
+- Photo fetch, decode and partial replay now remain suspended for the complete
+  resize cycle. A stable placeholder frame is built first and cached images are
+  restored on the next idle paint, avoiding buffer access during reallocation.
 
 ## [0.0.8] - 2026-07-31
 

@@ -39,6 +39,37 @@ void tg_gui_set_background_clear(int enabled)
     tg_gui_clear_background = enabled ? 1 : 0;
 }
 
+int tg_gui_photo_cache_choose_slot(const int *states,
+                                   const unsigned char *visible,
+                                   const unsigned long *last_use,
+                                   int count)
+{
+    int i;
+    int best;
+    unsigned long oldest;
+
+    if (states == 0 || visible == 0 || last_use == 0 || count <= 0) {
+        return -1;
+    }
+    for (i = 0; i < count; ++i) {
+        if (states[i] == 0) {
+            return i;
+        }
+    }
+    best = -1;
+    oldest = 0UL;
+    for (i = 0; i < count; ++i) {
+        if (states[i] == 2 || visible[i]) {
+            continue;
+        }
+        if (best < 0 || last_use[i] < oldest) {
+            best = i;
+            oldest = last_use[i];
+        }
+    }
+    return best;
+}
+
 static void tg_gui_copy(char *dest, unsigned long size, const char *src)
 {
     unsigned long i;
@@ -3037,6 +3068,28 @@ int tg_gui_self_test(void)
     backend.fill_rect = tg_gui_rec_fill;
     backend.avatar_image = 0;
     backend.photo_image = tg_gui_rec_photo;
+    /* The oldest slot is visible and the next one is active: neither may be
+       evicted. Once every resident slot is protected, the cache must wait. */
+    {
+        int states[4] = { 1, 1, 2, 1 };
+        unsigned char visible[4] = { 1U, 0U, 0U, 1U };
+        unsigned long used[4] = { 1UL, 2UL, 3UL, 4UL };
+
+        if (tg_gui_photo_cache_choose_slot(states, visible, used, 4) != 1) {
+            puts("gui self-test: photo cache evicted a visible/active slot");
+            return 2;
+        }
+        visible[1] = 1U;
+        if (tg_gui_photo_cache_choose_slot(states, visible, used, 4) != -1) {
+            puts("gui self-test: photo cache ignored protected slots");
+            return 2;
+        }
+        states[2] = 0;
+        if (tg_gui_photo_cache_choose_slot(states, visible, used, 4) != 2) {
+            puts("gui self-test: photo cache did not prefer a free slot");
+            return 2;
+        }
+    }
     /* Newlines split into real lines (recording backend, wide max_width so
        only the '\n' breaks apply): "a\nbc\n\nd" -> a / bc / (blank) / d. */
     {

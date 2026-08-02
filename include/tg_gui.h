@@ -465,6 +465,15 @@ int tg_gui_mention_click(const tg_gui_state *state, tg_gui_backend *backend,
    download) so the next repaint rebuilds it from the disk JPEG. */
 void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo);
 
+/* Portable inline-photo cache policy. Returns a free slot first, otherwise the
+   least-recently-used completed/rejected slot that is neither active nor
+   visible. Returns -1 when every slot is protected. Kept public so host CI can
+   exercise the exact eviction policy used by the Amiga window backend. */
+int tg_gui_photo_cache_choose_slot(const int *states,
+                                   const unsigned char *visible,
+                                   const unsigned long *last_use,
+                                   int count);
+
 /* Maps a cursor Y (window-inner-relative) to a drag-and-drop INSERT-BEFORE target
    in [0, chat_count] for the sidebar list (chat_count == drop at the end). Uses
    the same search_h/row_h/chat_scroll geometry the painter uses, rounded to the

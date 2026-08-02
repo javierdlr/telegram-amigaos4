@@ -386,6 +386,7 @@ typedef struct tg_gui_amiga_ctx {
     int photo_truecolor;      /* optional cybergraphics RGB888 row replay */
     int photo_cgx_checked;    /* destination bitmap passed the RGB write/read test */
     int photo_cgx_failed;     /* permanent pen fallback for this window session */
+    int photo_resize_active;  /* no photo cache/replay work while buffer geometry moves */
 } tg_gui_amiga_ctx;
 
 static int tg_gui_amiga_width(tg_gui_backend *backend)
@@ -598,21 +599,26 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
    grids. A slot is keyed only by Telegram photo id: bubble geometry never
    invalidates it, and every later paint is disk/decode/remap-free. */
 #if defined(__m68k__)
-#define TG_GUI_PHOTO_SLOTS 3
+#define TG_GUI_PHOTO_SLOTS 4
 #define TG_GUI_PHOTO_JPEG_MAX (192UL * 1024UL)
 #define TG_GUI_PHOTO_CANONICAL_CAP 256
 #define TG_GUI_PHOTO_DECODE_CAP 512
 #define TG_GUI_PHOTO_MCUS_PER_TICK 4U
 #define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 4
+#define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 12U
+#define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 12
 #else
-#define TG_GUI_PHOTO_SLOTS 4
+#define TG_GUI_PHOTO_SLOTS 6
 #define TG_GUI_PHOTO_JPEG_MAX (512UL * 1024UL)
 #define TG_GUI_PHOTO_CANONICAL_CAP 448
 #define TG_GUI_PHOTO_DECODE_CAP 768
 #define TG_GUI_PHOTO_MCUS_PER_TICK 16U
 #define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 16
+#define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 48U
+#define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 48
 #endif
-#define TG_GUI_PHOTO_REQUESTS 8
+#define TG_GUI_PHOTO_REQUESTS 24
+#define TG_GUI_PHOTO_VISIBLE_MAX 24
 
 typedef struct tg_gui_photo_slot {
     unsigned long id_hi;
@@ -624,6 +630,7 @@ typedef struct tg_gui_photo_slot {
     int pen_rows;
     int decode_done;
     int render_logged;
+    unsigned long last_use;
     unsigned char *jpeg;
     unsigned long jpeg_len;
     tg_image_jpeg_decoder *decoder;
@@ -638,10 +645,17 @@ typedef struct tg_gui_photo_request {
     unsigned long source_h;
 } tg_gui_photo_request;
 
+typedef struct tg_gui_photo_visible {
+    unsigned long id_hi;
+    unsigned long id_lo;
+} tg_gui_photo_visible;
+
 static tg_gui_photo_slot tg_gui_photo_slots[TG_GUI_PHOTO_SLOTS];
-static unsigned long tg_gui_photo_evict;
+static unsigned long tg_gui_photo_use_clock;
 static tg_gui_photo_request tg_gui_photo_requests[TG_GUI_PHOTO_REQUESTS];
 static int tg_gui_photo_request_count;
+static tg_gui_photo_visible tg_gui_photo_visible_ids[TG_GUI_PHOTO_VISIBLE_MAX];
+static int tg_gui_photo_visible_count;
 
 static void tg_gui_photo_diag(const char *message)
 {
@@ -669,8 +683,9 @@ static void tg_gui_photo_slots_reset(void)
     for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
         tg_gui_photo_slot_clear(&tg_gui_photo_slots[i]);
     }
-    tg_gui_photo_evict = 0UL;
+    tg_gui_photo_use_clock = 0UL;
     tg_gui_photo_request_count = 0;
+    tg_gui_photo_visible_count = 0;
 }
 
 static void tg_gui_av_reset(void)
@@ -958,45 +973,97 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
     return 1;
 }
 
+/* A full paint rebuilds visibility in transcript order (top to bottom). It also
+   rebuilds the pending queue: active partial decoders keep their slots, while
+   every still-missing visible photo is offered again by photo_image(). */
+static void tg_gui_photo_frame_begin(void)
+{
+    tg_gui_photo_visible_count = 0;
+    tg_gui_photo_request_count = 0;
+}
+
+static int tg_gui_photo_visible_priority(unsigned long id_hi,
+                                         unsigned long id_lo)
+{
+    int i;
+
+    for (i = 0; i < tg_gui_photo_visible_count; ++i) {
+        if (tg_gui_photo_visible_ids[i].id_hi == id_hi &&
+            tg_gui_photo_visible_ids[i].id_lo == id_lo) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int tg_gui_photo_visible_mark(unsigned long id_hi,
+                                     unsigned long id_lo)
+{
+    int priority;
+
+    priority = tg_gui_photo_visible_priority(id_hi, id_lo);
+    if (priority >= 0) {
+        return priority;
+    }
+    if (tg_gui_photo_visible_count >= TG_GUI_PHOTO_VISIBLE_MAX) {
+        return TG_GUI_PHOTO_VISIBLE_MAX;
+    }
+    priority = tg_gui_photo_visible_count;
+    tg_gui_photo_visible_ids[priority].id_hi = id_hi;
+    tg_gui_photo_visible_ids[priority].id_lo = id_lo;
+    ++tg_gui_photo_visible_count;
+    return priority;
+}
+
+static void tg_gui_photo_slot_touch(tg_gui_photo_slot *slot)
+{
+    if (slot == 0) {
+        return;
+    }
+    ++tg_gui_photo_use_clock;
+    if (tg_gui_photo_use_clock == 0UL) {
+        tg_gui_photo_use_clock = 1UL;
+    }
+    slot->last_use = tg_gui_photo_use_clock;
+}
+
 static tg_gui_photo_slot *tg_gui_photo_slot_claim(unsigned long id_hi,
                                                   unsigned long id_lo)
 {
     tg_gui_photo_slot *slot;
+    int states[TG_GUI_PHOTO_SLOTS];
+    unsigned char visible[TG_GUI_PHOTO_SLOTS];
+    unsigned long last_use[TG_GUI_PHOTO_SLOTS];
     int i;
-    int tries;
+    int chosen;
 
     slot = 0;
     for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
         if (tg_gui_photo_slots[i].state != 0 &&
             tg_gui_photo_slots[i].id_hi == id_hi &&
             tg_gui_photo_slots[i].id_lo == id_lo) {
+            tg_gui_photo_slot_touch(&tg_gui_photo_slots[i]);
             return &tg_gui_photo_slots[i];
         }
     }
     for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
-        if (tg_gui_photo_slots[i].state == 0) {
-            slot = &tg_gui_photo_slots[i];
-            break;
-        }
+        states[i] = tg_gui_photo_slots[i].state;
+        visible[i] = (unsigned char)(
+            states[i] > 0 &&
+            tg_gui_photo_visible_priority(tg_gui_photo_slots[i].id_hi,
+                                          tg_gui_photo_slots[i].id_lo) >= 0);
+        last_use[i] = tg_gui_photo_slots[i].last_use;
     }
-    if (slot == 0) {
-        /* Never evict the one slot whose decoder/pen mapper is yielding across
-           event-loop turns. Completed slots are a bounded LRU-like ring. */
-        for (tries = 0; tries < TG_GUI_PHOTO_SLOTS; ++tries) {
-            i = (int)(tg_gui_photo_evict % TG_GUI_PHOTO_SLOTS);
-            ++tg_gui_photo_evict;
-            if (tg_gui_photo_slots[i].state != 2) {
-                slot = &tg_gui_photo_slots[i];
-                break;
-            }
-        }
-        if (slot == 0) {
-            return 0;
-        }
+    chosen = tg_gui_photo_cache_choose_slot(states, visible, last_use,
+                                            TG_GUI_PHOTO_SLOTS);
+    if (chosen < 0) {
+        return 0;
     }
+    slot = &tg_gui_photo_slots[chosen];
     tg_gui_photo_slot_clear(slot);
     slot->id_hi = id_hi;
     slot->id_lo = id_lo;
+    tg_gui_photo_slot_touch(slot);
     return slot;
 }
 
@@ -1207,28 +1274,79 @@ static int tg_gui_photo_decode_start(void)
 /* One bounded idle slice. JPEG entropy work and palette mapping both live
    here, never inside paint or NEWSIZE. A return of 1 means a new top-down band
    became drawable (or a failure changed the placeholder state). */
-static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx)
+static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
+                                    unsigned int mcu_budget,
+                                    int pen_row_budget)
 {
     tg_gui_photo_slot *slot;
+    tg_gui_photo_slot *offscreen_active;
     int i;
+    int best_priority;
+    int request_priority;
+    int started;
     int old_rows;
     int decode_rc;
     int step_rc;
     int changed;
 
+    if (ctx == 0 || ctx->photo_resize_active || mcu_budget == 0U ||
+        pen_row_budget <= 0) {
+        return 0;
+    }
     slot = 0;
+    offscreen_active = 0;
+    best_priority = TG_GUI_PHOTO_VISIBLE_MAX + 1;
     for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
         if (tg_gui_photo_slots[i].state == 2) {
-            slot = &tg_gui_photo_slots[i];
-            break;
+            int priority;
+
+            priority = tg_gui_photo_visible_priority(
+                tg_gui_photo_slots[i].id_hi, tg_gui_photo_slots[i].id_lo);
+            if (priority >= 0 && priority < best_priority) {
+                slot = &tg_gui_photo_slots[i];
+                best_priority = priority;
+            } else if (priority < 0 &&
+                       (offscreen_active == 0 ||
+                        tg_gui_photo_slots[i].last_use <
+                            offscreen_active->last_use)) {
+                offscreen_active = &tg_gui_photo_slots[i];
+            }
         }
     }
-    if (slot == 0) {
+    request_priority = tg_gui_photo_request_count > 0
+        ? tg_gui_photo_visible_priority(tg_gui_photo_requests[0].id_hi,
+                                        tg_gui_photo_requests[0].id_lo)
+        : -1;
+    started = 0;
+    /* A newly exposed photo may outrank a lower visible partial decode after
+       scrolling. Start it when a normal cache slot is available; only one
+       decoder still receives CPU work below. */
+    if (request_priority >= 0 &&
+        (slot == 0 || request_priority < best_priority)) {
+        started = tg_gui_photo_decode_start();
+    }
+    if (slot == 0 && !started && tg_gui_photo_request_count > 0 &&
+        offscreen_active != 0) {
+        /* If every cache slot is tied up by partial work that has scrolled out
+           of view, abandon the oldest one. Its JPEG remains on disk and a
+           future visible paint will queue it again from the beginning. */
+        tg_gui_photo_slot_clear(offscreen_active);
         (void)tg_gui_photo_decode_start();
+    }
+    if (slot == 0 || request_priority >= 0) {
+        slot = 0;
+        best_priority = TG_GUI_PHOTO_VISIBLE_MAX + 1;
         for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
             if (tg_gui_photo_slots[i].state == 2) {
-                slot = &tg_gui_photo_slots[i];
-                break;
+                int priority;
+
+                priority = tg_gui_photo_visible_priority(
+                    tg_gui_photo_slots[i].id_hi,
+                    tg_gui_photo_slots[i].id_lo);
+                if (priority >= 0 && priority < best_priority) {
+                    slot = &tg_gui_photo_slots[i];
+                    best_priority = priority;
+                }
             }
         }
     }
@@ -1241,7 +1359,7 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx)
 
         ready_rows = slot->ready_rows;
         step_rc = tg_image_jpeg_decoder_step(
-            slot->decoder, TG_GUI_PHOTO_MCUS_PER_TICK,
+            slot->decoder, mcu_budget,
             &ready_rows, &decode_rc);
         if (step_rc < 0) {
             tg_gui_photo_decode_reject(slot, decode_rc);
@@ -1259,8 +1377,7 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx)
     }
     changed = 0;
     if (!ctx->photo_truecolor) {
-        changed = tg_gui_photo_map_pen_rows(
-            slot, TG_GUI_PHOTO_PEN_ROWS_PER_TICK);
+        changed = tg_gui_photo_map_pen_rows(slot, pen_row_budget);
     }
     if (slot->decode_done &&
         (ctx->photo_truecolor || slot->pen_rows >= slot->h)) {
@@ -1420,18 +1537,7 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
 
     ctx = (tg_gui_amiga_ctx *)backend->context;
     if (rect.w <= 0 || rect.h <= 0 || (id_hi == 0UL && id_lo == 0UL) ||
-        tg_gui_av_cmap == 0) {
-        return 0;
-    }
-    slot = tg_gui_photo_slot_find(id_hi, id_lo);
-    if (slot == 0) {
-        /* Paint is I/O-free: it only queues visible cache entries. INTUITICKS
-           advance one decoder outside the paint and reveal completed bands. */
-        tg_gui_photo_request_offer(id_hi, id_lo, source_w, source_h);
-        return 0;
-    }
-    if (slot->state < 0 || slot->w <= 0 || slot->h <= 0 ||
-        (ctx->photo_truecolor ? slot->ready_rows : slot->pen_rows) <= 0) {
+        tg_gui_av_cmap == 0 || ctx->photo_resize_active) {
         return 0;
     }
     x0 = rect.x > clip.x ? rect.x : clip.x;
@@ -1443,6 +1549,22 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
     y1 = rect.y + rect.h;
     if (y1 > clip.y + clip.h) {
         y1 = clip.y + clip.h;
+    }
+    if (x1 <= x0 || y1 <= y0) {
+        return 0;
+    }
+    (void)tg_gui_photo_visible_mark(id_hi, id_lo);
+    slot = tg_gui_photo_slot_find(id_hi, id_lo);
+    if (slot == 0) {
+        /* Paint is I/O-free: it only queues visible cache entries. INTUITICKS
+           advance one decoder outside the paint and reveal completed bands. */
+        tg_gui_photo_request_offer(id_hi, id_lo, source_w, source_h);
+        return 0;
+    }
+    tg_gui_photo_slot_touch(slot);
+    if (slot->state < 0 || slot->w <= 0 || slot->h <= 0 ||
+        (ctx->photo_truecolor ? slot->ready_rows : slot->pen_rows) <= 0) {
+        return 0;
     }
     {
         int available_rows;
@@ -2098,6 +2220,7 @@ static void tg_gui_window_paint(const tg_gui_state *state,
     if (c == 0 || c->rport == 0) {
         return;
     }
+    tg_gui_photo_frame_begin();
     layer = c->rport->Layer;
     if (c->buf_ok && c->buf_bm != 0 &&
         c->buf_w == c->inner_w && c->buf_h == c->inner_h) {
@@ -3893,6 +4016,17 @@ static void tg_gui_window_run_search(tg_gui_state *state, tg_gui_backend *backen
     tg_gui_window_paint(state, backend);
 }
 
+static int tg_gui_window_user_events_pending(const tg_gui_amiga_ctx *ctx)
+{
+    ULONG mask;
+
+    if (ctx == 0 || ctx->window == 0 || ctx->window->UserPort == 0) {
+        return 0;
+    }
+    mask = 1UL << ctx->window->UserPort->mp_SigBit;
+    return (SetSignal(0UL, 0UL) & mask) != 0UL;
+}
+
 static int tg_gui_run_window_once(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
@@ -3952,7 +4086,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     time_t last_session_poll;
     time_t last_receive_drain;
     time_t last_key_time;
+    time_t last_interactive_time;
     int resize_pending;
+    int photo_resume_pending;
 
     if (state == 0) {
         return 2;
@@ -4319,6 +4455,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     older_cooldown = 0;
     prev_selected = state->selected_chat;
     resize_pending = 0;
+    photo_resume_pending = 0;
+    last_interactive_time = time(0);
     /* Live-reception heartbeat. INTUITICKS are delivered ONLY to the ACTIVE
        window, so with the window deactivated the loop slept in Wait() and the
        network poll never ran -- incoming messages stalled until the user came
@@ -4350,6 +4488,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         int reveal_older;   /* a fits-window load happened: scroll to show it */
         int photo_tick;
         int interactive_event;
+        int photo_resume_turn;
 
         session_dirty = 0;
         scroll_dirty = 0;
@@ -4357,6 +4496,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         reveal_older = 0;
         photo_tick = 0;
         interactive_event = 0;
+        photo_resume_turn = 0;
         if (older_cooldown > 0) {
             older_cooldown -= 1;
         }
@@ -4401,6 +4541,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             } else {
                 /* Any real queued event wins over background image work. */
                 interactive_event = 1;
+                last_interactive_time = time(0);
             }
             /* Feed REAL user input (keys, clicks, pointer motion) into the
                platform entropy ring -- the DRBG absorbs it on every generate.
@@ -5363,6 +5504,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                    drain the queue first, then rebuild once for the newest size
                    below, outside every BeginRefresh bracket. */
                 resize_pending = 1;
+                ctx.photo_resize_active = 1;
+                photo_resume_pending = 1;
             } else if (msg_class == IDCMP_REFRESHWINDOW) {
                 /* BeginRefresh() already holds this window's layer locked for the
                    whole bracket, so no LockLayerRom here. With the buffer -- and
@@ -5378,6 +5521,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                       ctx.origin_x, ctx.origin_y,
                                       ctx.inner_w, ctx.inner_h, 0xC0);
                 } else if (!resize_pending) {
+                    tg_gui_photo_frame_begin();
                     tg_gui_paint(state, &backend);
                 }
                 EndRefresh(ctx.window, TRUE);
@@ -6273,6 +6417,17 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             RefreshWindowFrame(ctx.window);
             resize_pending = 0;
         }
+        /* The resize paint intentionally contains placeholders only. Resume on
+           the first event-free tick, repaint the stable geometry once, then let
+           decode/fetch continue on the following tick. */
+        if (photo_tick && !interactive_event && !resize_pending &&
+            photo_resume_pending &&
+            !tg_gui_window_user_events_pending(&ctx)) {
+            ctx.photo_resize_active = 0;
+            photo_resume_pending = 0;
+            photo_resume_turn = 1;
+            session_dirty = 1;
+        }
         /* 0.0.8 punto 1e: Workbench drops. An icon dropped on the window
            arms an upload to the open chat, exactly like Send file... did;
            the pump below then moves it one part per turn. */
@@ -6428,6 +6583,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
            move one bounded cache chunk per turn; completion flips the matching
            bubbles to image mode and asks the normal repaint path to redraw. */
         if (photo_tick && !interactive_event && !resize_pending &&
+            !ctx.photo_resize_active && !photo_resume_turn &&
+            !tg_gui_window_user_events_pending(&ctx) &&
             !tg_gui_session_transfer_busy() &&
             tg_gui_session_photo_step(stdout)) {
             session_dirty = 1;
@@ -6436,9 +6593,24 @@ static int tg_gui_run_window_once(tg_gui_state *state)
            A key, wheel, pointer move or NEWSIZE wins this turn; the decoder
            resumes from the same MCU on the next tick. */
         if (photo_tick && !interactive_event && !resize_pending && !done &&
-            !tg_gui_session_transfer_busy() &&
-            tg_gui_photo_decode_tick(&ctx)) {
-            session_dirty = 1;
+            !ctx.photo_resize_active && !photo_resume_turn &&
+            !tg_gui_window_user_events_pending(&ctx) &&
+            !tg_gui_session_transfer_busy()) {
+            unsigned int mcu_budget = TG_GUI_PHOTO_MCUS_PER_TICK;
+            int pen_row_budget = TG_GUI_PHOTO_PEN_ROWS_PER_TICK;
+            time_t photo_now = time(0);
+
+            if (photo_now != (time_t)-1 &&
+                last_interactive_time != (time_t)-1 &&
+                photo_now > last_interactive_time &&
+                (unsigned long)(photo_now - last_interactive_time) > 1UL) {
+                mcu_budget = TG_GUI_PHOTO_IDLE_MCUS_PER_TICK;
+                pen_row_budget = TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK;
+            }
+            if (tg_gui_photo_decode_tick(&ctx, mcu_budget,
+                                         pen_row_budget)) {
+                session_dirty = 1;
+            }
         }
         /* Load-older paging: a scroll-up reached the top of the transcript. "Top"
            INCLUDES the case where the whole backlog FITS the window (sb_tr_max==0,
