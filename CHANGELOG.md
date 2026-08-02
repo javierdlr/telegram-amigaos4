@@ -42,6 +42,9 @@ unless noted.
   files beside their JPEGs. Reopening a viewed chat can load the exact pixels
   in bounded idle chunks without decoding JPEG again; corrupt or stale cache
   entries are discarded and rebuilt automatically.
+- Non-68k targets now select an approximately 800-pixel inline Telegram source
+  within a 1 MiB cap. Final-pass upscales use bilinear filtering, while coarse
+  preview passes and ordinary downscales retain the bounded fast path.
 - Live resize now paints only the window background while intermediate sizes
   are arriving. On AfA_OS it also clears the current client area at the first
   size event, so the system's opaque resize stretches only blank background;

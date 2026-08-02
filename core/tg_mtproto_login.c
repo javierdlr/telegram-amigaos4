@@ -1591,7 +1591,7 @@ static tg_mtproto_tl_status tg_skip_video_size(tg_mtproto_tl_reader *reader);
 #if defined(__m68k__)
 #define TG_MTPROTO_PHOTO_TARGET_EDGE 256UL
 #else
-#define TG_MTPROTO_PHOTO_TARGET_EDGE 448UL
+#define TG_MTPROTO_PHOTO_TARGET_EDGE 800UL
 #endif
 #endif
 
@@ -1613,7 +1613,7 @@ static tg_mtproto_tl_status tg_skip_video_size(tg_mtproto_tl_reader *reader);
 #if defined(__m68k__)
 #define TG_MTPROTO_PHOTO_BYTES_MAX (160UL * 1024UL)
 #else
-#define TG_MTPROTO_PHOTO_BYTES_MAX (384UL * 1024UL)
+#define TG_MTPROTO_PHOTO_BYTES_MAX (1024UL * 1024UL)
 #endif
 #endif
 
@@ -5533,8 +5533,23 @@ int tg_mtproto_login_self_test(void)
         tg_mtproto_tl_reader pr;
         tg_mtproto_photo_meta photo;
         tg_mtproto_tl_status ps;
+        const char *expected_inline_type;
+        unsigned long expected_inline_width;
+        unsigned long expected_inline_height;
+        unsigned long expected_inline_size;
 
         ref_byte[0] = 0xfeU;
+#if defined(__m68k__)
+        expected_inline_type = "m";
+        expected_inline_width = 160UL;
+        expected_inline_height = 100UL;
+        expected_inline_size = 50000UL;
+#else
+        expected_inline_type = "x";
+        expected_inline_width = 800UL;
+        expected_inline_height = 500UL;
+        expected_inline_size = 500000UL;
+#endif
         tg_mtproto_tl_writer_init(&pw, photo_wire, sizeof(photo_wire));
         ps = tg_mtproto_tl_write_u32(&pw, 0xfb197a65UL); /* photo */
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 0UL);
@@ -5568,19 +5583,19 @@ int tg_mtproto_login_self_test(void)
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
             &pw, 0xfa3efb95UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "x");
-        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 320UL);
-        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 200UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 800UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 500UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
             &pw, TG_VECTOR_CONSTRUCTOR);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 2UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 120000UL);
-        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 150000UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 500000UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
             &pw, 0x75c78e60UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "y");
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 1280UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 800UL);
-        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 500UL);
-        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 500000UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 900000UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 4UL);
         if (ps != TG_MTPROTO_TL_OK) {
             puts("photo self-test: fixture build failed");
@@ -5589,9 +5604,11 @@ int tg_mtproto_login_self_test(void)
         tg_mtproto_tl_reader_init(&pr, photo_wire, pw.length);
         if (tg_mtproto_read_photo(&pr, &photo) != TG_MTPROTO_TL_OK ||
             pr.offset != pw.length || !photo.has_photo ||
-            strcmp(photo.thumb_type, "x") != 0 || photo.width != 320UL ||
-            photo.height != 200UL || photo.size != 150000UL ||
-            !photo.has_large || strcmp(photo.large_thumb_type, "y") != 0 ||
+            strcmp(photo.thumb_type, expected_inline_type) != 0 ||
+            photo.width != expected_inline_width ||
+            photo.height != expected_inline_height ||
+            photo.size != expected_inline_size ||
+            !photo.has_large || strcmp(photo.large_thumb_type, "x") != 0 ||
             photo.large_width != 800UL || photo.large_height != 500UL ||
             photo.large_size != 500000UL ||
             photo.dc_id != 4UL || photo.file_reference_len != 1UL ||
@@ -5609,7 +5626,8 @@ int tg_mtproto_login_self_test(void)
             query[8] != 0xfeU || query[9] != 0x1fU ||
             query[10] != 0x18U || query[11] != 0x40U ||
             query[28] != 0x01U || query[29] != 0xfeU ||
-            query[32] != 0x01U || query[33] != (unsigned char)'x' ||
+            query[32] != 0x01U ||
+            query[33] != (unsigned char)expected_inline_type[0] ||
             query[44] != 0x00U || query[46] != 0x01U) {
             puts("photo self-test: getFile(photo) layout mismatch");
             return 2;

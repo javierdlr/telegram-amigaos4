@@ -630,7 +630,7 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_CACHE_READ_CHUNK (16UL * 1024UL)
 #else
 #define TG_GUI_PHOTO_SLOTS 6
-#define TG_GUI_PHOTO_JPEG_MAX (512UL * 1024UL)
+#define TG_GUI_PHOTO_JPEG_MAX (1024UL * 1024UL)
 #define TG_GUI_PHOTO_CANONICAL_CAP 448
 #define TG_GUI_PHOTO_DECODE_CAP 768
 #define TG_GUI_PHOTO_MCUS_PER_TICK 16U
@@ -1308,6 +1308,7 @@ static int tg_gui_photo_next_quality_scale(const tg_gui_photo_slot *slot)
 static int tg_gui_photo_begin_quality_pass(tg_gui_photo_slot *slot,
                                            int decode_cap,
                                            int requested_scale,
+                                           int bilinear_upscale,
                                            int *actual_scale,
                                            int *decode_rc)
 {
@@ -1334,10 +1335,15 @@ static int tg_gui_photo_begin_quality_pass(tg_gui_photo_slot *slot,
         }
         return 0;
     }
-    slot->decoder = tg_image_jpeg_decoder_begin_scale(
-        slot->jpeg, slot->jpeg_len, slot->stage_rgb,
-        slot->decode_w, slot->decode_h, decode_cap, requested_scale,
-        actual_scale, decode_rc);
+    slot->decoder = bilinear_upscale
+        ? tg_image_jpeg_decoder_begin_scale_bilinear(
+              slot->jpeg, slot->jpeg_len, slot->stage_rgb,
+              slot->decode_w, slot->decode_h, decode_cap, requested_scale,
+              actual_scale, decode_rc)
+        : tg_image_jpeg_decoder_begin_scale(
+              slot->jpeg, slot->jpeg_len, slot->stage_rgb,
+              slot->decode_w, slot->decode_h, decode_cap, requested_scale,
+              actual_scale, decode_rc);
     return slot->decoder != 0;
 }
 
@@ -1350,7 +1356,7 @@ static int tg_gui_photo_begin_quality_sequence(tg_gui_photo_slot *slot,
     actual_scale = TG_IMAGE_JPEG_SCALE_AUTO;
     if (!tg_gui_photo_begin_quality_pass(
             slot, decode_cap, TG_IMAGE_JPEG_SCALE_AUTO,
-            &actual_scale, decode_rc)) {
+            1, &actual_scale, decode_rc)) {
         return 0;
     }
     slot->final_scale = actual_scale;
@@ -1358,7 +1364,7 @@ static int tg_gui_photo_begin_quality_sequence(tg_gui_photo_slot *slot,
     if (actual_scale < 3) {
         tg_image_jpeg_decoder_destroy(slot->decoder);
         slot->decoder = 0;
-        if (!tg_gui_photo_begin_quality_pass(slot, decode_cap, 3,
+        if (!tg_gui_photo_begin_quality_pass(slot, decode_cap, 3, 0,
                                              &actual_scale, decode_rc)) {
             return 0;
         }
@@ -1581,7 +1587,9 @@ static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
     }
     if (next_scale != TG_IMAGE_JPEG_SCALE_AUTO) {
         actual_scale = TG_IMAGE_JPEG_SCALE_AUTO;
-        if (tg_gui_photo_begin_quality_pass(slot, decode_cap, next_scale,
+        if (tg_gui_photo_begin_quality_pass(
+                slot, decode_cap, next_scale,
+                next_scale == slot->final_scale,
                                             &actual_scale, &decode_rc)) {
             slot->pass_scale = actual_scale;
             slot->state = 2;

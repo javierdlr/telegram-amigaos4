@@ -220,7 +220,7 @@ int tg_image_scale_rgb_bilinear(const unsigned char *src_rgb,
 }
 
 #define TG_IMAGE_CANON_CACHE_HEADER 20U
-#define TG_IMAGE_CANON_CACHE_VERSION 1U
+#define TG_IMAGE_CANON_CACHE_VERSION 2U
 #define TG_IMAGE_CANON_CACHE_RGB888 1U
 
 static void tg_image_cache_put_u32(unsigned char *p, unsigned long value)
@@ -421,6 +421,11 @@ struct tg_image_jpeg_decoder {
     JDEC jd;
     tg_image_jpeg_io io;
     unsigned char *work;
+    unsigned char *resample_rgb;
+    unsigned char *final_rgb;
+    int final_w;
+    int final_h;
+    int bilinear_pending;
     int failed;
 };
 
@@ -502,10 +507,11 @@ static int tg_image_jpeg_out(JDEC *jd, void *bitmap, JRECT *rect)
     return 1;
 }
 
-tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale(
+static tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale_internal(
     const unsigned char *jpeg, unsigned long jpeg_len,
     unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
-    int requested_scale, int *actual_scale, int *decode_rc)
+    int requested_scale, int bilinear_upscale,
+    int *actual_scale, int *decode_rc)
 {
     tg_image_jpeg_decoder *decoder;
     JRESULT jr;
@@ -585,6 +591,27 @@ tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale(
     }
     decoder->io.sw = sw;
     decoder->io.sh = sh;
+    if (bilinear_upscale && (sw < (unsigned int)dw || sh < (unsigned int)dh)) {
+        unsigned long pixels;
+
+        pixels = (unsigned long)sw * (unsigned long)sh;
+        decoder->resample_rgb =
+            (unsigned char *)malloc((size_t)pixels * 3U);
+        if (decoder->resample_rgb == 0) {
+            tg_image_jpeg_decoder_destroy(decoder);
+            if (decode_rc != 0) {
+                *decode_rc = (int)JDR_MEM1;
+            }
+            return 0;
+        }
+        decoder->final_rgb = dst_rgb;
+        decoder->final_w = dw;
+        decoder->final_h = dh;
+        decoder->bilinear_pending = 1;
+        decoder->io.dst_rgb = decoder->resample_rgb;
+        decoder->io.dw = sw;
+        decoder->io.dh = sh;
+    }
     jr = jd_decomp_begin(&decoder->jd, (uint8_t)scale);
     if (jr != JDR_OK) {
         tg_image_jpeg_decoder_destroy(decoder);
@@ -600,6 +627,26 @@ tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale(
         *actual_scale = (int)scale;
     }
     return decoder;
+}
+
+tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale(
+    const unsigned char *jpeg, unsigned long jpeg_len,
+    unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
+    int requested_scale, int *actual_scale, int *decode_rc)
+{
+    return tg_image_jpeg_decoder_begin_scale_internal(
+        jpeg, jpeg_len, dst_rgb, dw, dh, source_edge_cap,
+        requested_scale, 0, actual_scale, decode_rc);
+}
+
+tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale_bilinear(
+    const unsigned char *jpeg, unsigned long jpeg_len,
+    unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
+    int requested_scale, int *actual_scale, int *decode_rc)
+{
+    return tg_image_jpeg_decoder_begin_scale_internal(
+        jpeg, jpeg_len, dst_rgb, dw, dh, source_edge_cap,
+        requested_scale, 1, actual_scale, decode_rc);
 }
 
 tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
@@ -639,7 +686,25 @@ int tg_image_jpeg_decoder_step(tg_image_jpeg_decoder *decoder,
         return -1;
     }
     if (done) {
-        decoder->io.ready_rows = (int)decoder->io.dh;
+        if (decoder->bilinear_pending) {
+            if (tg_image_scale_rgb_bilinear(
+                    decoder->resample_rgb,
+                    (int)decoder->io.sw, (int)decoder->io.sh,
+                    decoder->final_rgb,
+                    decoder->final_w, decoder->final_h) != 0) {
+                decoder->failed = 1;
+                if (decode_rc != 0) {
+                    *decode_rc = (int)JDR_FMT3;
+                }
+                return -1;
+            }
+            free(decoder->resample_rgb);
+            decoder->resample_rgb = 0;
+            decoder->bilinear_pending = 0;
+            decoder->io.ready_rows = decoder->final_h;
+        } else {
+            decoder->io.ready_rows = (int)decoder->io.dh;
+        }
     }
     if (ready_rows != 0) {
         *ready_rows = decoder->io.ready_rows;
@@ -655,6 +720,7 @@ void tg_image_jpeg_decoder_destroy(tg_image_jpeg_decoder *decoder)
     if (decoder == 0) {
         return;
     }
+    free(decoder->resample_rgb);
     free(decoder->work);
     free(decoder);
 }
@@ -672,6 +738,31 @@ int tg_image_decode_jpeg_scaled(const unsigned char *jpeg,
 
     decoder = tg_image_jpeg_decoder_begin(jpeg, jpeg_len, dst_rgb, dw, dh,
                                           source_edge_cap, &decode_rc);
+    if (decoder == 0) {
+        return 1;
+    }
+    do {
+        step = tg_image_jpeg_decoder_step(decoder, ~0U, &ready_rows,
+                                          &decode_rc);
+    } while (step == 0);
+    tg_image_jpeg_decoder_destroy(decoder);
+    return step == 1 ? 0 : 1;
+}
+
+int tg_image_decode_jpeg_bilinear_scaled(const unsigned char *jpeg,
+                                         unsigned long jpeg_len,
+                                         unsigned char *dst_rgb,
+                                         int dw, int dh,
+                                         int source_edge_cap)
+{
+    tg_image_jpeg_decoder *decoder;
+    int ready_rows;
+    int decode_rc;
+    int step;
+
+    decoder = tg_image_jpeg_decoder_begin_scale_bilinear(
+        jpeg, jpeg_len, dst_rgb, dw, dh, source_edge_cap,
+        TG_IMAGE_JPEG_SCALE_AUTO, 0, &decode_rc);
     if (decoder == 0) {
         return 1;
     }
@@ -839,6 +930,9 @@ int tg_avatar_self_test(void)
         int w;
         int h;
         unsigned char scaled[16 * 8 * 3];
+        unsigned char native_rgb[8 * 4 * 3];
+        unsigned char smooth[16 * 8 * 3];
+        unsigned char smooth_expected[16 * 8 * 3];
         static const unsigned char bilinear_src[12] = {
             0U, 0U, 0U,       255U, 0U, 0U,
             0U, 255U, 0U,     255U, 255U, 255U
@@ -857,6 +951,17 @@ int tg_avatar_self_test(void)
                                         scaled, 16, 8, 32) != 0 ||
             memcmp(scaled, scaled + ((16 * 8 - 1) * 3), 3) == 0) {
             puts("avatar self-test: canonical photo geometry failed");
+            return 2;
+        }
+        if (tg_image_decode_jpeg_scaled(
+                photo_jpeg, sizeof(photo_jpeg), native_rgb, 8, 4, 32) != 0 ||
+            tg_image_scale_rgb_bilinear(
+                native_rgb, 8, 4, smooth_expected, 16, 8) != 0 ||
+            tg_image_decode_jpeg_bilinear_scaled(
+                photo_jpeg, sizeof(photo_jpeg), smooth, 16, 8, 32) != 0 ||
+            memcmp(smooth, smooth_expected, sizeof(smooth)) != 0 ||
+            memcmp(smooth, scaled, sizeof(smooth)) == 0) {
+            puts("avatar self-test: filtered final upscale failed");
             return 2;
         }
         if (tg_image_scale_rgb_bilinear(

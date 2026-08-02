@@ -48,6 +48,12 @@ tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale(
     const unsigned char *jpeg, unsigned long jpeg_len,
     unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
     int requested_scale, int *actual_scale, int *decode_rc);
+/* Same state machine, with bilinear replacement only when the selected JPEG
+   scale is smaller than the destination. */
+tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale_bilinear(
+    const unsigned char *jpeg, unsigned long jpeg_len,
+    unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
+    int requested_scale, int *actual_scale, int *decode_rc);
 int tg_image_jpeg_decoder_step(tg_image_jpeg_decoder *decoder,
                                unsigned int max_mcus,
                                int *ready_rows,
@@ -69,6 +75,11 @@ int tg_image_scale_rgb_bilinear(const unsigned char *src_rgb,
                                 int sw, int sh,
                                 unsigned char *dst_rgb,
                                 int dw, int dh);
+int tg_image_decode_jpeg_bilinear_scaled(const unsigned char *jpeg,
+                                         unsigned long jpeg_len,
+                                         unsigned char *dst_rgb,
+                                         int dw, int dh,
+                                         int source_edge_cap);
 
 /* Versioned RGB888 canonical-photo cache. The file helper validates magic,
    format, dimensions and exact payload size, leaving FILE positioned at the
