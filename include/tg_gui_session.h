@@ -50,10 +50,34 @@ int tg_gui_session_receive_pending(FILE *stream);
    photo became drawable and the GUI should repaint. */
 int tg_gui_session_photo_step(FILE *stream);
 
+/* Inline-photo policy and demand queue. The renderer calls request_inline only
+   for a visible photo; 1 means the JPEG is already cached and may be decoded,
+   0 means it was queued or inline work is disabled. */
+void tg_gui_session_set_inline_photos(int enabled);
+int tg_gui_session_request_inline_photo(unsigned long photo_id_hi,
+                                        unsigned long photo_id_lo);
+
+/* Queue the larger representation for the reusable photo viewer. Returns 0
+   when metadata exists (cached or queued), non-zero when the photo is unknown.
+   The selected source dimensions are returned for the fixed viewer geometry. */
+int tg_gui_session_request_viewer_photo(unsigned long photo_id_hi,
+                                        unsigned long photo_id_lo,
+                                        unsigned long *source_w,
+                                        unsigned long *source_h);
+
+/* Stable on-disk cache name shared by the session and native window backend.
+   `large` selects photos/tgph<id>-l.jpg instead of the inline JPEG. */
+int tg_gui_session_photo_cache_path(char *path, unsigned long path_size,
+                                    unsigned long photo_id_hi,
+                                    unsigned long photo_id_lo, int large);
+
 /* Discard a cached JPEG that the renderer proved undecodable. This is the only
    permanent per-session photo rejection: transport failures remain retryable. */
 void tg_gui_session_photo_decode_failed(unsigned long photo_id_hi,
                                         unsigned long photo_id_lo);
+void tg_gui_session_photo_decode_failed_variant(unsigned long photo_id_hi,
+                                                unsigned long photo_id_lo,
+                                                int large);
 
 /* Upload progress + CANCEL hook: `completed`/`total` are parts; percentage is
    completed*100/total. Runs on the calling task after each confirmed part.

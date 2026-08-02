@@ -8,6 +8,9 @@ unless noted.
 ## [Unreleased]
 
 ### Added
+- The GUI now has a persistent `Settings > Inline photos` toggle. It defaults
+  to on; disabling it restores the lightweight text-only `[Photo]` bubbles
+  without starting background photo fetch or decode work.
 - A message can now be forwarded to Saved Messages from its GUI context menu.
   The TUI provides `/forward` for the latest message and `/forward <id>` for an
   explicit Telegram message ID. Forwarding uses the layer-214

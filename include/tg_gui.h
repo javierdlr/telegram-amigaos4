@@ -199,6 +199,7 @@ typedef struct tg_gui_state {
     int chat_scroll_to_sel; /* one-shot: next paint scrolls the list to selected_chat */
     int transcript_scroll; /* PIXELS scrolled up from the newest-pinned bottom (0 = newest) */
     int input_h;           /* composer box height (px), cached by the painter for the hit-test */
+    int inline_photos;     /* persistent GUI preference; default on */
     /* Scrollbar geometry the painter caches each frame for the event loop's
        knob-drag / track-click (only the painter has the backend to size the
        transcript). *_max == 0 means no bar / nothing to drag. */
@@ -275,6 +276,13 @@ typedef struct tg_gui_state {
     char reply_snippet[TG_GUI_REPLY_MAX];
     int msg_top[TG_GUI_MAX_MESSAGES];
     int msg_cached;
+    /* Clickable photo rectangle cached by the last paint. A rectangle is kept
+       even when inline photos are disabled, where it covers the [Photo] label
+       and opens the on-demand viewer without starting background work. */
+    int photo_x[TG_GUI_MAX_MESSAGES];
+    int photo_y[TG_GUI_MAX_MESSAGES];
+    int photo_w[TG_GUI_MAX_MESSAGES];
+    int photo_h[TG_GUI_MAX_MESSAGES];
     /* transcript area of the last paint (for the char-level hit test) */
     int tr_area_x;
     int tr_area_w;
@@ -380,8 +388,15 @@ int tg_gui_input_layout_height(const tg_gui_state *state,
 #define TG_GUI_HIT_REPLY_CANCEL (-6) /* the "Replying to ..." composer header */
 /* Transcript message pick: message i -> (TG_GUI_HIT_MESSAGE_BASE - i). */
 #define TG_GUI_HIT_MESSAGE_BASE (-100)
+/* Photo pick: message i -> (TG_GUI_HIT_PHOTO_BASE - i). */
+#define TG_GUI_HIT_PHOTO_BASE (-1000)
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
+
+/* Persistent inline-photo preference. Missing or malformed files mean ON;
+   save writes a short "on"/"off" value atomically through a sibling .tmp. */
+int tg_gui_inline_photos_load(const char *path);
+int tg_gui_inline_photos_save(const char *path, int enabled);
 
 /* Right-click context-menu geometry/items. MINIMUM box width: the real width
    is measured from the item labels when the menu opens (state->ctx_w, see

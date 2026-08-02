@@ -106,10 +106,9 @@ typedef struct tg_mtproto_document_meta {
     char file_name[TG_MTPROTO_DOC_NAME_MAX]; /* "" when no filename attr */
 } tg_mtproto_document_meta;
 
-/* Inline message photo (layer 214 Photo + selected PhotoSize). The parser keeps
-   only one downloadable representation: the size nearest the per-platform
-   display target that also fits the byte cap. A file_reference that does not
-   fit whole is rejected because a truncated reference is unusable. */
+/* Message photo (layer 214 Photo + selected PhotoSize). The parser keeps one
+   bounded inline representation and one larger viewer representation. They
+   share the Photo identity/reference; a truncated reference is never kept. */
 #define TG_MTPROTO_PHOTO_TYPE_MAX 8U
 typedef struct tg_mtproto_photo_meta {
     int has_photo; /* 0 = photoEmpty, no usable size, or absent */
@@ -124,6 +123,11 @@ typedef struct tg_mtproto_photo_meta {
     unsigned long width;
     unsigned long height;
     unsigned long size;
+    int has_large;
+    char large_thumb_type[TG_MTPROTO_PHOTO_TYPE_MAX];
+    unsigned long large_width;
+    unsigned long large_height;
+    unsigned long large_size;
 } tg_mtproto_photo_meta;
 
 /* Parses one bare Document (document#8fd4c4d8 / documentEmpty#36f8c871),

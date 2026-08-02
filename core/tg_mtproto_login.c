@@ -1594,6 +1594,21 @@ static tg_mtproto_tl_status tg_skip_video_size(tg_mtproto_tl_reader *reader);
 #define TG_MTPROTO_PHOTO_TARGET_EDGE 448UL
 #endif
 #endif
+
+#ifndef TG_MTPROTO_PHOTO_VIEWER_TARGET_EDGE
+#if defined(__m68k__)
+#define TG_MTPROTO_PHOTO_VIEWER_TARGET_EDGE 640UL
+#else
+#define TG_MTPROTO_PHOTO_VIEWER_TARGET_EDGE 1024UL
+#endif
+#endif
+#ifndef TG_MTPROTO_PHOTO_VIEWER_BYTES_MAX
+#if defined(__m68k__)
+#define TG_MTPROTO_PHOTO_VIEWER_BYTES_MAX (768UL * 1024UL)
+#else
+#define TG_MTPROTO_PHOTO_VIEWER_BYTES_MAX (2UL * 1024UL * 1024UL)
+#endif
+#endif
 #ifndef TG_MTPROTO_PHOTO_BYTES_MAX
 #if defined(__m68k__)
 #define TG_MTPROTO_PHOTO_BYTES_MAX (160UL * 1024UL)
@@ -1670,13 +1685,12 @@ static tg_mtproto_tl_status tg_read_photo_size_candidate(
     }
 }
 
-static int tg_photo_candidate_better(unsigned long edge, unsigned long best)
+static int tg_photo_candidate_better(unsigned long edge, unsigned long best,
+                                     unsigned long target)
 {
-    unsigned long target;
     unsigned long distance;
     unsigned long best_distance;
 
-    target = TG_MTPROTO_PHOTO_TARGET_EDGE;
     distance = edge > target ? edge - target : target - edge;
     best_distance = best > target ? best - target : target - best;
     if (distance != best_distance) {
@@ -1697,6 +1711,7 @@ tg_mtproto_tl_status tg_mtproto_read_photo(tg_mtproto_tl_reader *reader,
     unsigned long count;
     unsigned long i;
     unsigned long best_edge;
+    unsigned long best_large_edge;
 
     if (reader == 0 || out == 0) {
         return TG_MTPROTO_TL_INVALID_ARGUMENT;
@@ -1726,6 +1741,7 @@ tg_mtproto_tl_status tg_mtproto_read_photo(tg_mtproto_tl_reader *reader,
         out->file_reference_len = ref_len;
     }
     best_edge = 0UL;
+    best_large_edge = 0UL;
     for (i = 0UL; i < count; ++i) {
         char type[TG_MTPROTO_PHOTO_TYPE_MAX];
         unsigned long width;
@@ -1741,16 +1757,29 @@ tg_mtproto_tl_status tg_mtproto_read_photo(tg_mtproto_tl_reader *reader,
         }
         edge = width > height ? width : height;
         if (!downloadable || type[0] == '\0' || width == 0UL || height == 0UL ||
-            width > 8192UL || height > 8192UL ||
-            size == 0UL || size > TG_MTPROTO_PHOTO_BYTES_MAX ||
-            (best_edge != 0UL && !tg_photo_candidate_better(edge, best_edge))) {
+            width > 8192UL || height > 8192UL || size == 0UL) {
             continue;
         }
-        strcpy(out->thumb_type, type);
-        out->width = width;
-        out->height = height;
-        out->size = size;
-        best_edge = edge;
+        if (size <= TG_MTPROTO_PHOTO_BYTES_MAX &&
+            (best_edge == 0UL ||
+             tg_photo_candidate_better(edge, best_edge,
+                                       TG_MTPROTO_PHOTO_TARGET_EDGE))) {
+            strcpy(out->thumb_type, type);
+            out->width = width;
+            out->height = height;
+            out->size = size;
+            best_edge = edge;
+        }
+        if (size <= TG_MTPROTO_PHOTO_VIEWER_BYTES_MAX &&
+            (best_large_edge == 0UL ||
+             tg_photo_candidate_better(edge, best_large_edge,
+                                       TG_MTPROTO_PHOTO_VIEWER_TARGET_EDGE))) {
+            strcpy(out->large_thumb_type, type);
+            out->large_width = width;
+            out->large_height = height;
+            out->large_size = size;
+            best_large_edge = edge;
+        }
     }
     if ((flags & 2UL) != 0UL) { /* video_sizes:Vector<VideoSize> */
         if (tg_read_vector_count(reader, &count) != TG_MTPROTO_TL_OK ||
@@ -1768,6 +1797,9 @@ tg_mtproto_tl_status tg_mtproto_read_photo(tg_mtproto_tl_reader *reader,
     }
     out->has_photo = out->file_reference_len != 0UL &&
                      out->thumb_type[0] != '\0' && out->size != 0UL;
+    out->has_large = out->file_reference_len != 0UL &&
+                     out->large_thumb_type[0] != '\0' &&
+                     out->large_size != 0UL;
     return TG_MTPROTO_TL_OK;
 }
 
@@ -5492,7 +5524,7 @@ int tg_mtproto_login_self_test(void)
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 123UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
             &pw, TG_VECTOR_CONSTRUCTOR);
-        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 3UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 4UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
             &pw, 0x75c78e60UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "s");
@@ -5515,6 +5547,12 @@ int tg_mtproto_login_self_test(void)
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 2UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 120000UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 150000UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(
+            &pw, 0x75c78e60UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_write_string(&pw, "y");
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 800UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 500UL);
+        if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 500000UL);
         if (ps == TG_MTPROTO_TL_OK) ps = tg_mtproto_tl_write_u32(&pw, 4UL);
         if (ps != TG_MTPROTO_TL_OK) {
             puts("photo self-test: fixture build failed");
@@ -5525,6 +5563,9 @@ int tg_mtproto_login_self_test(void)
             pr.offset != pw.length || !photo.has_photo ||
             strcmp(photo.thumb_type, "x") != 0 || photo.width != 320UL ||
             photo.height != 200UL || photo.size != 150000UL ||
+            !photo.has_large || strcmp(photo.large_thumb_type, "y") != 0 ||
+            photo.large_width != 800UL || photo.large_height != 500UL ||
+            photo.large_size != 500000UL ||
             photo.dc_id != 4UL || photo.file_reference_len != 1UL ||
             photo.file_reference[0] != 0xfeU) {
             puts("photo self-test: Photo parse/selection mismatch");

@@ -39,6 +39,60 @@ void tg_gui_set_background_clear(int enabled)
     tg_gui_clear_background = enabled ? 1 : 0;
 }
 
+int tg_gui_inline_photos_load(const char *path)
+{
+    FILE *file;
+    char value[16];
+
+    if (path == 0 || path[0] == '\0') {
+        return 1;
+    }
+    file = fopen(path, "rb");
+    if (file == 0) {
+        return 1;
+    }
+    value[0] = '\0';
+    (void)fgets(value, sizeof(value), file);
+    fclose(file);
+    if ((value[0] == 'o' || value[0] == 'O') &&
+        (value[1] == 'f' || value[1] == 'F') &&
+        (value[2] == 'f' || value[2] == 'F')) {
+        return 0;
+    }
+    return 1;
+}
+
+int tg_gui_inline_photos_save(const char *path, int enabled)
+{
+    FILE *file;
+    char tmp[288];
+    unsigned long length;
+
+    if (path == 0 || path[0] == '\0') {
+        return 1;
+    }
+    length = (unsigned long)strlen(path);
+    if (length + 5UL >= sizeof(tmp)) {
+        return 1;
+    }
+    memcpy(tmp, path, length);
+    memcpy(tmp + length, ".tmp", 5UL);
+    file = fopen(tmp, "wb");
+    if (file == 0) {
+        return 1;
+    }
+    if (fputs(enabled ? "on\n" : "off\n", file) == EOF || fclose(file) != 0) {
+        (void)remove(tmp);
+        return 1;
+    }
+    (void)remove(path);
+    if (rename(tmp, path) != 0) {
+        (void)remove(tmp);
+        return 1;
+    }
+    return 0;
+}
+
 int tg_gui_photo_cache_choose_slot(const int *states,
                                    const unsigned char *visible,
                                    const unsigned long *last_use,
@@ -120,6 +174,7 @@ void tg_gui_demo_state(tg_gui_state *state)
     }
     memset(state, 0, sizeof(*state));
     state->theme = TG_GUI_THEME_DARK;
+    state->inline_photos = 1;
 
     tg_gui_set_chat(&state->chats[0], "Sviluppo AmigaIta",
                     "Tu: ottimo, la pausa-bozza ha fatto il suo", "09:20",
@@ -1098,7 +1153,7 @@ static void tg_gui_photo_geometry(const tg_gui_message *message,
 
     *out_w = 0;
     *out_h = 0;
-    if (message == 0 || !message->has_photo || !message->photo_ready ||
+    if (message == 0 || !message->has_photo ||
         message->photo_width == 0UL || message->photo_height == 0UL ||
         content_w <= 0) {
         return;
@@ -1167,7 +1222,8 @@ static int tg_gui_marked_width(tg_gui_backend *backend, const char *text,
 
 static void tg_gui_bubble_geometry(tg_gui_backend *backend,
                                    const tg_gui_message *message, int area_x,
-                                   int area_w, int lh, tg_gui_bubble_geom *geo)
+                                   int area_w, int lh, int inline_photos,
+                                   tg_gui_bubble_geom *geo)
 {
     int max_bubble_w;
     int widest;
@@ -1186,8 +1242,13 @@ static void tg_gui_bubble_geometry(tg_gui_backend *backend,
         max_bubble_w = (area_w > 2 * geo->pad) ? (area_w - 2 * geo->pad)
                                                : area_w;
     }
-    tg_gui_photo_geometry(message, max_bubble_w - (2 * geo->pad),
-                          &geo->photo_w, &geo->photo_h);
+    if (message->has_photo && !inline_photos) {
+        geo->photo_w = backend->text_width(backend, "[Photo]", 7UL);
+        geo->photo_h = lh;
+    } else {
+        tg_gui_photo_geometry(message, max_bubble_w - (2 * geo->pad),
+                              &geo->photo_w, &geo->photo_h);
+    }
     geo->photo_gap = geo->photo_h > 0 ? 4 : 0;
     if (message->photo_only && geo->photo_h > 0) {
         geo->line_count = 0; /* the downloaded image replaces "[Photo]" */
@@ -1249,7 +1310,8 @@ static void tg_gui_bubble_geometry(tg_gui_backend *backend,
 static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                const tg_gui_message *message, int area_x,
                                int area_w, int y, int lh, int top, int bottom,
-                               long sel_lo, long sel_hi)
+                               long sel_lo, long sel_hi, int inline_photos,
+                               tg_gui_rect *out_photo)
 {
     int style;
     unsigned long starts[TG_GUI_WRAP_MAX_LINES];
@@ -1280,7 +1342,8 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
     {
         tg_gui_bubble_geom geo;
 
-        tg_gui_bubble_geometry(backend, message, area_x, area_w, lh, &geo);
+        tg_gui_bubble_geometry(backend, message, area_x, area_w, lh,
+                               inline_photos, &geo);
         pad = geo.pad;
         line_count = geo.line_count;
         for (k = 0; k < line_count; ++k) {
@@ -1373,7 +1436,10 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                 line, bubble_w - (2 * pad));
         }
     }
-    if (photo_h > 0 && backend->photo_image != 0) {
+    if (out_photo != 0) {
+        *out_photo = tg_gui_make_rect(0, 0, 0, 0);
+    }
+    if (photo_h > 0) {
         tg_gui_rect photo_rect;
         tg_gui_rect clip;
         int drawn;
@@ -1381,12 +1447,18 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
         photo_rect = tg_gui_make_rect(bubble_x + pad,
                                       y + header_h + reply_h + 2,
                                       photo_w, photo_h);
+        if (out_photo != 0) {
+            *out_photo = photo_rect;
+        }
         clip = tg_gui_make_rect(area_x, top, area_w, bottom - top);
-        drawn = backend->photo_image(backend, message->photo_id_hi,
-                                     message->photo_id_lo,
-                                     message->photo_width,
-                                     message->photo_height,
-                                     photo_rect, clip);
+        drawn = 0;
+        if (inline_photos && backend->photo_image != 0) {
+            drawn = backend->photo_image(backend, message->photo_id_hi,
+                                         message->photo_id_lo,
+                                         message->photo_width,
+                                         message->photo_height,
+                                         photo_rect, clip);
+        }
         if (!drawn && photo_rect.y + lh >= top && photo_rect.y < bottom) {
             /* A deferred first decode (notably during NEWSIZE) must not leave
                an unexplained empty bubble. The next stable paint replaces
@@ -1483,7 +1555,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
    bottom of the transcript so a fresh send/receive is always visible. */
 static int tg_gui_message_height(tg_gui_backend *backend,
                                  const tg_gui_message *message, int area_w,
-                                 int lh)
+                                 int lh, int inline_photos)
 {
     tg_gui_bubble_geom geo;
     int has_time;
@@ -1492,7 +1564,8 @@ static int tg_gui_message_height(tg_gui_backend *backend,
     if (message->is_system) {
         return lh + 6;
     }
-    tg_gui_bubble_geometry(backend, message, 0, area_w, lh, &geo);
+    tg_gui_bubble_geometry(backend, message, 0, area_w, lh, inline_photos,
+                           &geo);
     has_time = (message->time[0] != '\0');
     /* The status line also shows for an own message's read-receipt mark even
        when it has no timestamp (the optimistic echo). */
@@ -1920,7 +1993,7 @@ static void tg_gui_paint_main(const tg_gui_state *state,
         total = 0;
         for (j = 0; j < state->message_count; ++j) {
             total += tg_gui_message_height(backend, &state->messages[j], area_w,
-                                           lh);
+                                           lh, state->inline_photos);
         }
         {
             int real_max = (total > avail) ? (total - avail) : 0;
@@ -2001,6 +2074,10 @@ static void tg_gui_paint_main(const tg_gui_state *state,
         }
     }
     ((tg_gui_state *)state)->msg_cached = state->message_count;
+    for (i = 0; i < TG_GUI_MAX_MESSAGES; ++i) {
+        ((tg_gui_state *)state)->photo_w[i] = 0;
+        ((tg_gui_state *)state)->photo_h[i] = 0;
+    }
     for (i = 0; i < state->message_count; ++i) {
         const tg_gui_message *message;
         int h;
@@ -2009,7 +2086,8 @@ static void tg_gui_paint_main(const tg_gui_state *state,
         /* Cache this row's top (renderer space, scroll already applied) for the
            click-to-reply hit-test; the bottom is the next row's top. */
         ((tg_gui_state *)state)->msg_top[i] = y;
-        h = tg_gui_message_height(backend, message, area_w, lh);
+        h = tg_gui_message_height(backend, message, area_w, lh,
+                                  state->inline_photos);
         /* Draw only messages intersecting the viewport; each part is clipped to
            [transcript_top, transcript_bottom] inside the bubble. */
         if (y + h > transcript_top && y < transcript_bottom) {
@@ -2040,6 +2118,7 @@ static void tg_gui_paint_main(const tg_gui_state *state,
             } else {
                 long sel_lo = -1;
                 long sel_hi = -1;
+                tg_gui_rect photo_rect;
 
                 if (state->sel_active && i == state->sel_msg) {
                     sel_lo = state->sel_a < state->sel_b ? state->sel_a
@@ -2055,9 +2134,16 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                         }
                     }
                 }
-                (void)tg_gui_paint_bubble(backend, message, area_x, area_w, y, lh,
-                                          transcript_top, transcript_bottom,
-                                          sel_lo, sel_hi);
+                (void)tg_gui_paint_bubble(
+                    backend, message, area_x, area_w, y, lh, transcript_top,
+                    transcript_bottom, sel_lo, sel_hi, state->inline_photos,
+                    &photo_rect);
+                if (photo_rect.w > 0 && photo_rect.h > 0) {
+                    st->photo_x[i] = photo_rect.x;
+                    st->photo_y[i] = photo_rect.y;
+                    st->photo_w[i] = photo_rect.w;
+                    st->photo_h[i] = photo_rect.h;
+                }
             }
         }
         y += h;
@@ -2144,11 +2230,11 @@ long tg_gui_transcript_char_at(const tg_gui_state *state,
     }
     message = &state->messages[msg_index];
     if (message->is_system || message->text[0] == '\0' ||
-        (message->photo_only && message->photo_ready)) {
+        (message->photo_only && message->has_photo)) {
         return -1;
     }
     tg_gui_bubble_geometry(backend, message, state->tr_area_x,
-                           state->tr_area_w, lh, &geo);
+                           state->tr_area_w, lh, state->inline_photos, &geo);
     ty = y - (state->msg_top[msg_index] + geo.header_h + geo.reply_h +
               geo.photo_h + geo.photo_gap);
     if (ty < 0) {
@@ -2352,6 +2438,15 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
 
         if (last > state->message_count) {
             last = state->message_count;
+        }
+        for (mi = last - 1; mi >= 0; --mi) {
+            if (state->messages[mi].has_photo && state->photo_w[mi] > 0 &&
+                state->photo_h[mi] > 0 && x >= state->photo_x[mi] &&
+                x < state->photo_x[mi] + state->photo_w[mi] &&
+                y >= state->photo_y[mi] &&
+                y < state->photo_y[mi] + state->photo_h[mi]) {
+                return TG_GUI_HIT_PHOTO_BASE - mi;
+            }
         }
         for (mi = last - 1; mi >= 0; --mi) {
             int top = state->msg_top[mi];
@@ -3208,6 +3303,58 @@ int tg_gui_self_test(void)
         return 2;
     }
     record.width = 480;
+
+    /* A photo is a first-class click target. With inline media disabled the
+       backend must receive no photo primitive at all, while the [Photo] label
+       keeps the same on-demand viewer hit target. */
+    {
+        tg_gui_record off_record;
+        int hit;
+
+        hit = tg_gui_hit_test(&state, 390, 320, 10,
+                              state.photo_x[1] + state.photo_w[1] / 2,
+                              state.photo_y[1] + state.photo_h[1] / 2);
+        if (hit != TG_GUI_HIT_PHOTO_BASE - 1) {
+            puts("gui self-test: inline photo hit-test mismatch");
+            return 2;
+        }
+        state.inline_photos = 0;
+        memset(&off_record, 0, sizeof(off_record));
+        off_record.width = 480;
+        off_record.height = 320;
+        off_record.min_x = off_record.width;
+        off_record.min_y = off_record.height;
+        backend.context = &off_record;
+        tg_gui_paint(&state, &backend);
+        hit = tg_gui_hit_test(&state, 480, 320, 10,
+                              state.photo_x[1] + state.photo_w[1] / 2,
+                              state.photo_y[1] + state.photo_h[1] / 2);
+        state.inline_photos = 1;
+        backend.context = &record;
+        if (off_record.photos != 0 || state.photo_w[1] <= 0 ||
+            state.photo_h[1] <= 0 || hit != TG_GUI_HIT_PHOTO_BASE - 1) {
+            puts("gui self-test: disabled inline photo did background work");
+            return 2;
+        }
+    }
+
+    /* Preference persistence defaults safely to ON and round-trips both
+       explicit values through the same helpers used by the native menu. */
+    {
+        const char *pref = "tg-gui-photos-selftest.txt";
+
+        (void)remove(pref);
+        if (!tg_gui_inline_photos_load(pref) ||
+            tg_gui_inline_photos_save(pref, 0) != 0 ||
+            tg_gui_inline_photos_load(pref) != 0 ||
+            tg_gui_inline_photos_save(pref, 1) != 0 ||
+            tg_gui_inline_photos_load(pref) != 1) {
+            (void)remove(pref);
+            puts("gui self-test: inline photo preference mismatch");
+            return 2;
+        }
+        (void)remove(pref);
+    }
 
     /* The "is typing" header line is a transient overlay (live-only, not in the
        demo); paint it once into a fresh recorder to keep that branch in bounds. */

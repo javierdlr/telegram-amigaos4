@@ -323,6 +323,7 @@ static int tg_gui_amiga_afa_text_compat(void)
 #define TG_MENU_RELOAD 11
 #define TG_MENU_DLDIR 12
 #define TG_MENU_SENDPHOTO 13
+#define TG_MENU_INLINEPHOTOS 14
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -1570,7 +1571,9 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
     if (slot == 0) {
         /* Paint is I/O-free: it only queues visible cache entries. INTUITICKS
            advance one decoder outside the paint and reveal completed bands. */
-        tg_gui_photo_request_offer(id_hi, id_lo, source_w, source_h);
+        if (tg_gui_session_request_inline_photo(id_hi, id_lo)) {
+            tg_gui_photo_request_offer(id_hi, id_lo, source_w, source_h);
+        }
         return 0;
     }
     tg_gui_photo_slot_touch(slot);
@@ -2967,6 +2970,9 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_ICONIFY },
     { NM_ITEM,  (STRPTR)"Own screen", 0, CHECKIT | MENUTOGGLE, 0,
       (APTR)TG_MENU_OWNSCREEN },
+    { NM_ITEM,  (STRPTR)"Settings", 0, 0, 0, 0 },
+    { NM_SUB,   (STRPTR)"Inline photos", 0, CHECKIT | MENUTOGGLE, 0,
+      (APTR)TG_MENU_INLINEPHOTOS },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
     { NM_TITLE, (STRPTR)"Edit", 0, 0, 0, 0 },
@@ -2978,6 +2984,29 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_PASTE },
     { NM_END,   0, 0, 0, 0, 0 }
 };
+
+static struct MenuItem *tg_gui_menu_find_userdata(struct Menu *menu, APTR data)
+{
+    struct Menu *m;
+
+    for (m = menu; m != 0; m = m->NextMenu) {
+        struct MenuItem *item;
+
+        for (item = m->FirstItem; item != 0; item = item->NextItem) {
+            struct MenuItem *sub;
+
+            if (GTMENUITEM_USERDATA(item) == data) {
+                return item;
+            }
+            for (sub = item->SubItem; sub != 0; sub = sub->NextItem) {
+                if (GTMENUITEM_USERDATA(sub) == data) {
+                    return sub;
+                }
+            }
+        }
+    }
+    return 0;
+}
 
 static const char tg_gui_about_text[] =
     "Telegram Amiga\n"
@@ -4406,16 +4435,20 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             menu = CreateMenusA(tg_gui_newmenu, 0);
             if (menu != 0 && LayoutMenusA(menu, vi, lmtags)) {
                 /* Reflect the current own-screen mode in the toggle's tick. */
-                if (want_own && menu->FirstItem != 0) {
-                    struct MenuItem *it2 = menu->FirstItem;
+                if (want_own) {
+                    struct MenuItem *it2 = tg_gui_menu_find_userdata(
+                        menu, (APTR)TG_MENU_OWNSCREEN);
 
-                    while (it2 != 0) {
-                        if (GTMENUITEM_USERDATA(it2) ==
-                            (APTR)TG_MENU_OWNSCREEN) {
-                            it2->Flags |= CHECKED;
-                            break;
-                        }
-                        it2 = it2->NextItem;
+                    if (it2 != 0) {
+                        it2->Flags |= CHECKED;
+                    }
+                }
+                if (state->inline_photos) {
+                    struct MenuItem *it2 = tg_gui_menu_find_userdata(
+                        menu, (APTR)TG_MENU_INLINEPHOTOS);
+
+                    if (it2 != 0) {
+                        it2->Flags |= CHECKED;
                     }
                 }
                 SetMenuStrip(ctx.window, menu);
@@ -5529,6 +5562,25 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         } else if (ud == (APTR)TG_MENU_DLDIR) {
                             tg_gui_window_pick_download_dir(state, ctx.window,
                                                             &backend);
+                        } else if (ud == (APTR)TG_MENU_INLINEPHOTOS) {
+                            state->inline_photos = !state->inline_photos;
+                            tg_gui_session_set_inline_photos(
+                                state->inline_photos);
+                            tg_gui_photo_slots_reset();
+                            if (tg_gui_inline_photos_save(
+                                    "data/telegram-photos.txt",
+                                    state->inline_photos) != 0) {
+                                tg_gui_window_copy(state->status,
+                                                   sizeof(state->status),
+                                                   "Could not save photo setting");
+                            } else {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    state->inline_photos
+                                        ? "Inline photos enabled"
+                                        : "Inline photos disabled");
+                            }
+                            tg_gui_window_paint(state, &backend);
                         } else if (ud == (APTR)TG_MENU_RELOAD) {
                             /* Re-page the dialog list on demand (start-up
                                no longer refetches). Blocking but bounded:
