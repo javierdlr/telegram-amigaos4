@@ -57,6 +57,8 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- Empty inline-photo preference files now fall back cleanly to the default
+  setting without relying on an unchecked read result.
 - Documents with a caption now keep the caption and append the downloadable
   file label on a new line instead of hiding the attachment name.
 - Inline-photo cache downloads no longer become permanently suppressed after a

@@ -52,7 +52,9 @@ int tg_gui_inline_photos_load(const char *path)
         return 1;
     }
     value[0] = '\0';
-    (void)fgets(value, sizeof(value), file);
+    if (fgets(value, sizeof(value), file) == 0) {
+        value[0] = '\0';
+    }
     fclose(file);
     if ((value[0] == 'o' || value[0] == 'O') &&
         (value[1] == 'f' || value[1] == 'F') &&
