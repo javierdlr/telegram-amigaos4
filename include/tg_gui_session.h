@@ -78,6 +78,10 @@ int tg_gui_session_photo_thumb_cache_path(char *path,
                                           unsigned long path_size,
                                           unsigned long photo_id_hi,
                                           unsigned long photo_id_lo);
+/* Versioned RGB888 canonical cache; `large` selects the viewer variant. */
+int tg_gui_session_photo_canonical_cache_path(
+    char *path, unsigned long path_size,
+    unsigned long photo_id_hi, unsigned long photo_id_lo, int large);
 
 /* Discard a cached JPEG that the renderer proved undecodable. This is the only
    permanent per-session photo rejection: transport failures remain retryable. */

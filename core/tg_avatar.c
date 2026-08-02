@@ -219,6 +219,150 @@ int tg_image_scale_rgb_bilinear(const unsigned char *src_rgb,
                                                dst_rgb, dw, dh);
 }
 
+#define TG_IMAGE_CANON_CACHE_HEADER 20U
+#define TG_IMAGE_CANON_CACHE_VERSION 1U
+#define TG_IMAGE_CANON_CACHE_RGB888 1U
+
+static void tg_image_cache_put_u32(unsigned char *p, unsigned long value)
+{
+    p[0] = (unsigned char)(value & 0xffUL);
+    p[1] = (unsigned char)((value >> 8) & 0xffUL);
+    p[2] = (unsigned char)((value >> 16) & 0xffUL);
+    p[3] = (unsigned char)((value >> 24) & 0xffUL);
+}
+
+static unsigned long tg_image_cache_get_u32(const unsigned char *p)
+{
+    return (unsigned long)p[0] |
+           ((unsigned long)p[1] << 8) |
+           ((unsigned long)p[2] << 16) |
+           ((unsigned long)p[3] << 24);
+}
+
+int tg_image_canonical_cache_prepare(FILE *file, int expected_w,
+                                     int expected_h,
+                                     unsigned long *payload_size)
+{
+    unsigned char header[TG_IMAGE_CANON_CACHE_HEADER];
+    unsigned long stored_w;
+    unsigned long stored_h;
+    unsigned long stored_size;
+    unsigned long expected_size;
+    long file_size;
+
+    if (file == 0 || expected_w <= 0 || expected_h <= 0 ||
+        expected_w > 4096 || expected_h > 4096 ||
+        payload_size == 0) {
+        return 1;
+    }
+    if (fseek(file, 0L, SEEK_SET) != 0 ||
+        fread(header, 1, sizeof(header), file) != sizeof(header)) {
+        return 1;
+    }
+    stored_w = tg_image_cache_get_u32(header + 8);
+    stored_h = tg_image_cache_get_u32(header + 12);
+    stored_size = tg_image_cache_get_u32(header + 16);
+    expected_size = (unsigned long)expected_w *
+                    (unsigned long)expected_h * 3UL;
+    if (header[0] != (unsigned char)'T' ||
+        header[1] != (unsigned char)'G' ||
+        header[2] != (unsigned char)'P' ||
+        header[3] != (unsigned char)'C' ||
+        header[4] != TG_IMAGE_CANON_CACHE_VERSION ||
+        header[5] != TG_IMAGE_CANON_CACHE_RGB888 ||
+        stored_w != (unsigned long)expected_w ||
+        stored_h != (unsigned long)expected_h ||
+        stored_size != expected_size) {
+        return 1;
+    }
+    if (fseek(file, 0L, SEEK_END) != 0) {
+        return 1;
+    }
+    file_size = ftell(file);
+    if (file_size < 0L ||
+        (unsigned long)file_size !=
+            (unsigned long)TG_IMAGE_CANON_CACHE_HEADER + stored_size ||
+        fseek(file, (long)TG_IMAGE_CANON_CACHE_HEADER, SEEK_SET) != 0) {
+        return 1;
+    }
+    *payload_size = stored_size;
+    return 0;
+}
+
+int tg_image_canonical_cache_write(const char *path,
+                                   const unsigned char *rgb,
+                                   int w, int h)
+{
+    unsigned char header[TG_IMAGE_CANON_CACHE_HEADER];
+    unsigned long payload_size;
+    char part_path[256];
+    FILE *file;
+    int ok;
+    int close_rc;
+
+    if (path == 0 || rgb == 0 || w <= 0 || h <= 0 ||
+        w > 4096 || h > 4096 ||
+        strlen(path) + 5U >= sizeof(part_path)) {
+        return 1;
+    }
+    payload_size = (unsigned long)w * (unsigned long)h * 3UL;
+    memset(header, 0, sizeof(header));
+    header[0] = (unsigned char)'T';
+    header[1] = (unsigned char)'G';
+    header[2] = (unsigned char)'P';
+    header[3] = (unsigned char)'C';
+    header[4] = TG_IMAGE_CANON_CACHE_VERSION;
+    header[5] = TG_IMAGE_CANON_CACHE_RGB888;
+    tg_image_cache_put_u32(header + 8, (unsigned long)w);
+    tg_image_cache_put_u32(header + 12, (unsigned long)h);
+    tg_image_cache_put_u32(header + 16, payload_size);
+    sprintf(part_path, "%s.tmp", path);
+    (void)remove(part_path);
+    file = fopen(part_path, "wb");
+    if (file == 0) {
+        return 1;
+    }
+    ok = fwrite(header, 1, sizeof(header), file) == sizeof(header) &&
+         fwrite(rgb, 1, payload_size, file) == payload_size;
+    close_rc = fclose(file);
+    if (close_rc != 0) {
+        ok = 0;
+    }
+    if (ok) {
+        (void)remove(path); /* AmigaDOS Rename does not replace a target. */
+        ok = rename(part_path, path) == 0;
+    }
+    if (!ok) {
+        (void)remove(part_path);
+        return 1;
+    }
+    return 0;
+}
+
+int tg_image_canonical_cache_read(const char *path,
+                                  unsigned char *rgb,
+                                  unsigned long rgb_cap,
+                                  int expected_w, int expected_h)
+{
+    FILE *file;
+    unsigned long payload_size;
+    int ok;
+
+    if (path == 0 || rgb == 0) {
+        return 1;
+    }
+    file = fopen(path, "rb");
+    if (file == 0) {
+        return 1;
+    }
+    ok = tg_image_canonical_cache_prepare(
+             file, expected_w, expected_h, &payload_size) == 0 &&
+         payload_size <= rgb_cap &&
+         fread(rgb, 1, payload_size, file) == payload_size;
+    fclose(file);
+    return ok ? 0 : 1;
+}
+
 int tg_avatar_decode_jpeg(const unsigned char *jpeg, unsigned long jpeg_len,
                           unsigned char *dst_rgb, int dw, int dh)
 {
@@ -700,6 +844,7 @@ int tg_avatar_self_test(void)
             0U, 255U, 0U,     255U, 255U, 255U
         };
         unsigned char bilinear_dst[3 * 3 * 3];
+        unsigned char cache_roundtrip[12];
         unsigned char rgb[3];
         unsigned char dithered[3];
 
@@ -724,6 +869,41 @@ int tg_avatar_self_test(void)
             puts("avatar self-test: bilinear photo scaling failed");
             return 2;
         }
+        (void)remove("tg-photo-cache-selftest.pgc");
+        if (tg_image_canonical_cache_write(
+                "tg-photo-cache-selftest.pgc", bilinear_src, 2, 2) != 0 ||
+            tg_image_canonical_cache_read(
+                "tg-photo-cache-selftest.pgc", cache_roundtrip,
+                sizeof(cache_roundtrip), 2, 2) != 0 ||
+            memcmp(cache_roundtrip, bilinear_src,
+                   sizeof(cache_roundtrip)) != 0) {
+            (void)remove("tg-photo-cache-selftest.pgc");
+            puts("avatar self-test: canonical cache roundtrip failed");
+            return 2;
+        }
+        {
+            FILE *bad;
+            int bad_ok;
+
+            bad = fopen("tg-photo-cache-selftest.pgc", "wb");
+            if (bad == 0) {
+                (void)remove("tg-photo-cache-selftest.pgc");
+                puts("avatar self-test: corrupt cache setup failed");
+                return 2;
+            }
+            bad_ok = fwrite("bad", 1, 3U, bad) == 3U;
+            if (fclose(bad) != 0) {
+                bad_ok = 0;
+            }
+            if (!bad_ok || tg_image_canonical_cache_read(
+                    "tg-photo-cache-selftest.pgc", cache_roundtrip,
+                    sizeof(cache_roundtrip), 2, 2) == 0) {
+                (void)remove("tg-photo-cache-selftest.pgc");
+                puts("avatar self-test: corrupt canonical cache accepted");
+                return 2;
+            }
+        }
+        (void)remove("tg-photo-cache-selftest.pgc");
         rgb[0] = 1U;
         rgb[1] = 128U;
         rgb[2] = 254U;

@@ -70,6 +70,20 @@ int tg_image_scale_rgb_bilinear(const unsigned char *src_rgb,
                                 unsigned char *dst_rgb,
                                 int dw, int dh);
 
+/* Versioned RGB888 canonical-photo cache. The file helper validates magic,
+   format, dimensions and exact payload size, leaving FILE positioned at the
+   first pixel so retro backends can read it in bounded chunks. */
+int tg_image_canonical_cache_prepare(FILE *file, int expected_w,
+                                     int expected_h,
+                                     unsigned long *payload_size);
+int tg_image_canonical_cache_write(const char *path,
+                                   const unsigned char *rgb,
+                                   int w, int h);
+int tg_image_canonical_cache_read(const char *path,
+                                  unsigned char *rgb,
+                                  unsigned long rgb_cap,
+                                  int expected_w, int expected_h);
+
 /* Apply the 4x4 ordered-dither offset used before palette matching. */
 void tg_image_ordered_dither_rgb(const unsigned char *rgb,
                                  int x, int y,

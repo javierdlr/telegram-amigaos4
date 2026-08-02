@@ -9948,6 +9948,38 @@ int tg_gui_session_photo_thumb_cache_path(char *path,
     return 0;
 }
 
+int tg_gui_session_photo_canonical_cache_path(
+    char *path, unsigned long path_size,
+    unsigned long id_hi, unsigned long id_lo, int large)
+{
+    if (path == 0 || path_size < 42UL || (id_hi == 0UL && id_lo == 0UL)) {
+        return 1;
+    }
+    sprintf(path, large ? "photos/tgph%08lx%08lx-l.pgc"
+                        : "photos/tgph%08lx%08lx.pgc",
+            id_hi, id_lo);
+    return 0;
+}
+
+static int tg_gui_photo_canonical_cache_exists(unsigned long id_hi,
+                                               unsigned long id_lo,
+                                               int large)
+{
+    char path[64];
+    FILE *probe;
+
+    if (tg_gui_session_photo_canonical_cache_path(
+            path, sizeof(path), id_hi, id_lo, large) != 0) {
+        return 0;
+    }
+    probe = fopen(path, "rb");
+    if (probe == 0) {
+        return 0;
+    }
+    fclose(probe);
+    return 1;
+}
+
 static int tg_gui_photo_thumb_cache_exists(unsigned long id_hi,
                                            unsigned long id_lo)
 {
@@ -10147,6 +10179,8 @@ static void tg_gui_photo_queue_offer(const tg_mtproto_photo_meta *source,
     }
     if (tg_gui_photo_cache_exists(entry.photo.id_hi, entry.photo.id_lo,
                                   entry.large) ||
+        tg_gui_photo_canonical_cache_exists(
+            entry.photo.id_hi, entry.photo.id_lo, entry.large) ||
         tg_gui_photo_was_tried(entry.photo.id_hi, entry.photo.id_lo,
                                entry.large) ||
         (tg_gui_photo_fetch.active &&
@@ -10207,7 +10241,8 @@ int tg_gui_session_request_inline_photo(unsigned long id_hi,
     if (!tg_gui_photo_inline_enabled) {
         return 0;
     }
-    full_ready = tg_gui_photo_cache_exists(id_hi, id_lo, 0);
+    full_ready = tg_gui_photo_cache_exists(id_hi, id_lo, 0) ||
+                 tg_gui_photo_canonical_cache_exists(id_hi, id_lo, 0);
     preview_ready = tg_gui_photo_thumb_cache_exists(id_hi, id_lo);
     photo = tg_gui_photo_catalog_find(id_hi, id_lo);
     if (!full_ready && photo != 0) {
@@ -10228,7 +10263,9 @@ int tg_gui_session_request_viewer_photo(unsigned long id_hi,
         /* A cached large JPEG remains useful after the bounded per-chat
            metadata catalog has rotated. Keep the caller's dimensions in that
            case: the viewer can still decode and fit the cached image. */
-        return tg_gui_photo_cache_exists(id_hi, id_lo, 1) ? 0 : 1;
+        return (tg_gui_photo_cache_exists(id_hi, id_lo, 1) ||
+                tg_gui_photo_canonical_cache_exists(id_hi, id_lo, 1))
+                   ? 0 : 1;
     }
     if (source_w != 0) {
         *source_w = photo->has_large ? photo->large_width : photo->width;
@@ -10236,7 +10273,8 @@ int tg_gui_session_request_viewer_photo(unsigned long id_hi,
     if (source_h != 0) {
         *source_h = photo->has_large ? photo->large_height : photo->height;
     }
-    if (!tg_gui_photo_cache_exists(id_hi, id_lo, 1)) {
+    if (!tg_gui_photo_cache_exists(id_hi, id_lo, 1) &&
+        !tg_gui_photo_canonical_cache_exists(id_hi, id_lo, 1)) {
         tg_gui_photo_queue_offer(photo, 1);
     }
     return 0;

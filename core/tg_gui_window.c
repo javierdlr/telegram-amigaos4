@@ -627,6 +627,7 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_VIEWER_DECODE_CAP 768
 #define TG_GUI_PHOTO_PREVIEW_CAP 128
 #define TG_GUI_PHOTO_VIEWER_PREVIEW_CAP 160
+#define TG_GUI_PHOTO_CACHE_READ_CHUNK (16UL * 1024UL)
 #else
 #define TG_GUI_PHOTO_SLOTS 6
 #define TG_GUI_PHOTO_JPEG_MAX (512UL * 1024UL)
@@ -641,6 +642,7 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_VIEWER_DECODE_CAP 1024
 #define TG_GUI_PHOTO_PREVIEW_CAP 192
 #define TG_GUI_PHOTO_VIEWER_PREVIEW_CAP 256
+#define TG_GUI_PHOTO_CACHE_READ_CHUNK (64UL * 1024UL)
 #endif
 #define TG_GUI_PHOTO_REPLAY_CAP TG_GUI_PHOTO_VIEWER_CANONICAL_CAP
 #define TG_GUI_PHOTO_REQUESTS 24
@@ -673,6 +675,11 @@ typedef struct tg_gui_photo_slot {
     int decode_h;
     int render_logged;
     unsigned long last_use;
+    FILE *canonical_file;
+    unsigned long canonical_size;
+    unsigned long canonical_loaded;
+    int canonical_large;
+    int canonical_from_disk;
     unsigned char *jpeg;
     unsigned long jpeg_len;
     tg_image_jpeg_decoder *decoder;
@@ -737,6 +744,9 @@ static void tg_gui_photo_slot_clear(tg_gui_photo_slot *slot)
 {
     if (slot == 0) {
         return;
+    }
+    if (slot->canonical_file != 0) {
+        fclose(slot->canonical_file);
     }
     tg_image_jpeg_decoder_destroy(slot->decoder);
     free(slot->jpeg);
@@ -1370,6 +1380,133 @@ static int tg_gui_photo_finish_quality_sequence(tg_gui_photo_slot *slot)
     return 1;
 }
 
+static void tg_gui_photo_canonical_load_abort(tg_gui_photo_slot *slot)
+{
+    unsigned long id_hi;
+    unsigned long id_lo;
+    char path[64];
+    int large;
+
+    if (slot == 0) {
+        return;
+    }
+    id_hi = slot->id_hi;
+    id_lo = slot->id_lo;
+    large = slot->canonical_large;
+    if (slot->canonical_file != 0) {
+        fclose(slot->canonical_file);
+        slot->canonical_file = 0;
+    }
+    if (tg_gui_session_photo_canonical_cache_path(
+            path, sizeof(path), id_hi, id_lo, large) == 0) {
+        (void)remove(path);
+    }
+    free(slot->stage_rgb);
+    slot->stage_rgb = 0;
+    free(slot->stage_pen);
+    slot->stage_pen = 0;
+    slot->stage_ready_rows = 0;
+    slot->stage_pen_rows = 0;
+    slot->decode_done = 0;
+    slot->decode_w = 0;
+    slot->decode_h = 0;
+    slot->canonical_size = 0UL;
+    slot->canonical_loaded = 0UL;
+    slot->canonical_from_disk = 0;
+    if (slot->preview_only && (slot->rgb != 0 || slot->pen != 0)) {
+        slot->state = 1;
+    } else {
+        tg_gui_photo_slot_clear(slot);
+        slot->id_hi = id_hi;
+        slot->id_lo = id_lo;
+    }
+    tg_gui_photo_diag("photo: canonical cache rejected");
+}
+
+static int tg_gui_photo_canonical_load_start(tg_gui_photo_slot *slot,
+                                             int width, int height,
+                                             int large)
+{
+    FILE *file;
+    unsigned long payload_size;
+    char path[64];
+
+    if (slot == 0 || width <= 0 || height <= 0 ||
+        (slot->state != 0 &&
+         !(slot->preview_only && slot->state == 1)) ||
+        tg_gui_session_photo_canonical_cache_path(
+            path, sizeof(path), slot->id_hi, slot->id_lo, large) != 0) {
+        return 0;
+    }
+    file = fopen(path, "rb");
+    if (file == 0) {
+        return 0;
+    }
+    if (tg_image_canonical_cache_prepare(
+            file, width, height, &payload_size) != 0) {
+        fclose(file);
+        (void)remove(path);
+        tg_gui_photo_diag("photo: stale canonical cache removed");
+        return 0;
+    }
+    free(slot->stage_rgb);
+    slot->stage_rgb = (unsigned char *)malloc((size_t)payload_size);
+    if (slot->stage_rgb == 0) {
+        fclose(file);
+        tg_gui_photo_diag("photo: canonical cache wait (no memory)");
+        return 0;
+    }
+    free(slot->stage_pen);
+    slot->stage_pen = 0;
+    slot->stage_pen_rows = 0;
+    slot->stage_ready_rows = 0;
+    slot->decode_done = 0;
+    slot->decode_w = width;
+    slot->decode_h = height;
+    slot->canonical_file = file;
+    slot->canonical_size = payload_size;
+    slot->canonical_loaded = 0UL;
+    slot->canonical_large = large ? 1 : 0;
+    slot->canonical_from_disk = 1;
+    slot->pass_scale = 0;
+    slot->final_scale = 0;
+    slot->state = 2;
+    tg_gui_photo_diag(large
+        ? "photo: viewer canonical cache load begin"
+        : "photo: canonical cache load begin");
+    return 1;
+}
+
+static int tg_gui_photo_canonical_load_tick(tg_gui_photo_slot *slot)
+{
+    unsigned long remain;
+    unsigned long chunk;
+    unsigned long got;
+
+    if (slot == 0 || slot->canonical_file == 0 || slot->stage_rgb == 0 ||
+        slot->canonical_loaded > slot->canonical_size) {
+        return -1;
+    }
+    remain = slot->canonical_size - slot->canonical_loaded;
+    chunk = remain > TG_GUI_PHOTO_CACHE_READ_CHUNK
+        ? TG_GUI_PHOTO_CACHE_READ_CHUNK : remain;
+    got = (unsigned long)fread(
+        slot->stage_rgb + slot->canonical_loaded, 1, (size_t)chunk,
+        slot->canonical_file);
+    if (got != chunk) {
+        return -1;
+    }
+    slot->canonical_loaded += got;
+    if (slot->canonical_loaded < slot->canonical_size) {
+        return 0;
+    }
+    fclose(slot->canonical_file);
+    slot->canonical_file = 0;
+    slot->stage_ready_rows = slot->decode_h;
+    slot->decode_done = 1;
+    return 1;
+}
+
 /* Publish a complete pass atomically. The previous quality remains drawable
    while entropy decode and pen mapping prepare the next hidden frame. */
 static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
@@ -1384,6 +1521,25 @@ static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
 
     if (ctx == 0 || slot == 0 || slot->stage_rgb == 0) {
         return 0;
+    }
+    next_scale = tg_gui_photo_next_quality_scale(slot);
+    if (next_scale == TG_IMAGE_JPEG_SCALE_AUTO &&
+        !slot->canonical_from_disk) {
+        char cache_path[64];
+
+        if (tg_gui_session_photo_canonical_cache_path(
+                cache_path, sizeof(cache_path), slot->id_hi, slot->id_lo,
+                viewer_scope) == 0) {
+            if (tg_image_canonical_cache_write(
+                    cache_path, slot->stage_rgb,
+                    slot->decode_w, slot->decode_h) == 0) {
+                tg_gui_photo_diag(viewer_scope
+                    ? "photo: viewer canonical cache saved"
+                    : "photo: canonical cache saved");
+            } else {
+                tg_gui_photo_diag("photo: canonical cache write failed");
+            }
+        }
     }
     if (ctx->photo_truecolor) {
         free(slot->rgb);
@@ -1411,6 +1567,9 @@ static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
     slot->w = slot->decode_w;
     slot->h = slot->decode_h;
     slot->preview_only = 0;
+    slot->canonical_from_disk = 0;
+    slot->canonical_size = 0UL;
+    slot->canonical_loaded = 0UL;
     slot->stage_ready_rows = 0;
     slot->stage_pen_rows = 0;
     slot->decode_done = 0;
@@ -1420,7 +1579,6 @@ static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
                 viewer_scope ? "viewer " : "", 1 << slot->pass_scale);
         tg_gui_log(line);
     }
-    next_scale = tg_gui_photo_next_quality_scale(slot);
     if (next_scale != TG_IMAGE_JPEG_SCALE_AUTO) {
         actual_scale = TG_IMAGE_JPEG_SCALE_AUTO;
         if (tg_gui_photo_begin_quality_pass(slot, decode_cap, next_scale,
@@ -1485,6 +1643,16 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
         }
         return 0;
     }
+    if (slot->canonical_file != 0) {
+        step_rc = tg_gui_photo_canonical_load_tick(slot);
+        if (step_rc < 0) {
+            tg_gui_photo_canonical_load_abort(slot);
+            return 1;
+        }
+        if (step_rc == 0) {
+            return 0;
+        }
+    }
     if (slot->decoder != 0) {
         ready_rows = slot->stage_ready_rows;
         step_rc = tg_image_jpeg_decoder_step(
@@ -1547,7 +1715,7 @@ static void tg_gui_photo_decode_reject(tg_gui_photo_slot *slot, int decode_rc)
         slot->decode_done = 0;
         slot->decode_w = 0;
         slot->decode_h = 0;
-        slot->state = slot->pen != 0 ? 1 : 2;
+        slot->state = 1;
         return;
     }
     tg_gui_photo_slot_clear(slot);
@@ -1654,23 +1822,37 @@ static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
         tg_gui_photo_diag("photo: decode fail geometry");
         return 0;
     }
+    slot = tg_gui_photo_slot_find(request.id_hi, request.id_lo);
+    if (slot != 0 && slot->preview_only && slot->state != 1) {
+        tg_gui_photo_request_offer(request.id_hi, request.id_lo,
+                                   request.source_w, request.source_h);
+        return 0;
+    }
+    if (slot == 0) {
+        slot = tg_gui_photo_slot_claim(request.id_hi, request.id_lo);
+    }
+    if (slot == 0) {
+        tg_gui_photo_request_offer(request.id_hi, request.id_lo,
+                                   request.source_w, request.source_h);
+        return 0;
+    }
+    if (tg_gui_photo_canonical_load_start(
+            slot, canonical_w, canonical_h, 0)) {
+        return 1;
+    }
     sprintf(path, "photos/tgph%08lx%08lx.jpg", request.id_hi, request.id_lo);
     f = fopen(path, "rb");
     if (f == 0 || fseek(f, 0L, SEEK_END) != 0) {
         if (f != 0) {
             fclose(f);
         }
-        slot = tg_gui_photo_slot_find(request.id_hi, request.id_lo);
         preview_ready = 0;
-        if (slot == 0) {
-            slot = tg_gui_photo_slot_claim(request.id_hi, request.id_lo);
-            if (slot != 0) {
-                preview_ready = tg_gui_photo_preview_start(
-                    ctx, slot, request.source_w, request.source_h,
-                    TG_GUI_PHOTO_PREVIEW_CAP, 0);
-                if (!preview_ready) {
-                    tg_gui_photo_slot_clear(slot);
-                }
+        if (slot->state == 0) {
+            preview_ready = tg_gui_photo_preview_start(
+                ctx, slot, request.source_w, request.source_h,
+                TG_GUI_PHOTO_PREVIEW_CAP, 0);
+            if (!preview_ready) {
+                tg_gui_photo_slot_clear(slot);
             }
         }
         tg_gui_photo_diag("photo: decode wait cache missing");
@@ -1683,31 +1865,18 @@ static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
         tg_gui_photo_diag("photo: decode fail cache size");
         return 0;
     }
-    slot = tg_gui_photo_slot_claim(request.id_hi, request.id_lo);
-    if (slot == 0) {
-        fclose(f);
-        tg_gui_photo_request_offer(request.id_hi, request.id_lo,
-                                   request.source_w, request.source_h);
-        return 0;
-    }
-    if (slot->preview_only && slot->state != 1) {
-        fclose(f);
-        tg_gui_photo_request_offer(request.id_hi, request.id_lo,
-                                   request.source_w, request.source_h);
-        return 0;
-    }
     slot->jpeg = (unsigned char *)malloc((size_t)flen);
     if (slot->jpeg == 0) {
         fclose(f);
         tg_gui_photo_diag("photo: decode wait (no memory)");
-        tg_gui_photo_slot_clear(slot);
         return 0;
     }
     got = (unsigned long)fread(slot->jpeg, 1, (size_t)flen, f);
     fclose(f);
     if (got != (unsigned long)flen) {
         tg_gui_photo_diag("photo: decode wait cache read");
-        tg_gui_photo_slot_clear(slot);
+        free(slot->jpeg);
+        slot->jpeg = 0;
         return 0;
     }
     slot->jpeg_len = got;
@@ -5021,7 +5190,7 @@ static void tg_gui_photo_viewer_reject(tg_gui_photo_viewer *viewer,
         viewer->slot.decode_done = 0;
         viewer->slot.decode_w = 0;
         viewer->slot.decode_h = 0;
-        viewer->slot.state = viewer->slot.pen != 0 ? 1 : 2;
+        viewer->slot.state = 1;
         return;
     }
     tg_gui_photo_slot_clear(&viewer->slot);
@@ -5045,6 +5214,17 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
          !(viewer->slot.preview_only && viewer->slot.state == 1)) ||
         (viewer->slot.id_hi == 0UL && viewer->slot.id_lo == 0UL)) {
         return 0;
+    }
+    canonical_w = canonical_h = 0;
+    if (tg_image_canonical_size(viewer->source_w, viewer->source_h,
+                                TG_GUI_PHOTO_VIEWER_CANONICAL_CAP,
+                                &canonical_w, &canonical_h) != 0) {
+        tg_gui_photo_diag("photo: viewer cache geometry failed");
+        return 0;
+    }
+    if (tg_gui_photo_canonical_load_start(
+            &viewer->slot, canonical_w, canonical_h, 1)) {
+        return 1;
     }
     if (tg_gui_session_photo_cache_path(
             path, sizeof(path), viewer->slot.id_hi,
@@ -5079,14 +5259,6 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
         fseek(file, 0L, SEEK_SET) != 0) {
         fclose(file);
         tg_gui_photo_viewer_reject(viewer, 2, 1);
-        return 0;
-    }
-    canonical_w = canonical_h = 0;
-    if (tg_image_canonical_size(viewer->source_w, viewer->source_h,
-                                TG_GUI_PHOTO_VIEWER_CANONICAL_CAP,
-                                &canonical_w, &canonical_h) != 0) {
-        fclose(file);
-        tg_gui_photo_viewer_reject(viewer, 3, 0);
         return 0;
     }
     viewer->slot.jpeg = (unsigned char *)malloc((size_t)flen);
@@ -5137,7 +5309,9 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
         return 0;
     }
     slot = &viewer->slot;
-    if (slot->state == 0 && !tg_gui_photo_viewer_decode_start(viewer)) {
+    if ((slot->state == 0 ||
+         (slot->preview_only && slot->state == 1)) &&
+        !tg_gui_photo_viewer_decode_start(viewer)) {
         return 0;
     }
     if (slot->state != 2) {
