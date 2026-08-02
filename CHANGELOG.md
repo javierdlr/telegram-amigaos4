@@ -45,6 +45,10 @@ unless noted.
 - Non-68k targets now select an approximately 800-pixel inline Telegram source
   within a 1 MiB cap. Final-pass upscales use bilinear filtering, while coarse
   preview passes and ordinary downscales retain the bounded fast path.
+- MorphOS RTG screens now keep photos in RGB888 and replay them directly to the
+  CyberGraphX window after the off-screen frame blit when its friend bitmap is
+  not a CGX target. The runtime-checked pen-grid fallback remains available for
+  paletted screens and incompatible drivers.
 - Live resize now paints only the window background while intermediate sizes
   are arriving. On AfA_OS it also clears the current client area at the first
   size event, so the system's opaque resize stretches only blank background;

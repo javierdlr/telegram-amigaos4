@@ -367,6 +367,19 @@ static const tg_gui_rgb tg_gui_avatar_rgb[TG_GUI_AVATAR_COLORS] = {
     {0x2c, 0x7c, 0xb8}  /* blue */
 };
 
+#define TG_GUI_PHOTO_DIRECT_OPS 24
+
+struct tg_gui_photo_slot;
+
+typedef struct tg_gui_photo_direct_op {
+    struct tg_gui_photo_slot *slot;
+    tg_gui_rect rect;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+} tg_gui_photo_direct_op;
+
 typedef struct tg_gui_amiga_ctx {
     struct Window *window;
     struct RastPort *rport;
@@ -389,10 +402,17 @@ typedef struct tg_gui_amiga_ctx {
     int bitmap_text_compat;  /* AfA_OS Text() cannot target this off-screen RP */
     int photo_truecolor;      /* optional cybergraphics RGB888 row replay */
     int photo_cgx_checked;    /* destination bitmap passed the RGB write/read test */
+    int photo_cgx_usable;
+    int photo_window_cgx_checked;
+    int photo_window_cgx_usable;
     int photo_cgx_failed;     /* permanent pen fallback for this window session */
     int photo_viewer_scope;   /* fallback must not mutate transcript cache slots */
     int photo_resize_active;  /* no photo cache/replay work while buffer geometry moves */
     int photo_dither;         /* TG_GUI_PHOTO_DITHER_* for the pen-grid path */
+    tg_gui_photo_direct_op photo_direct_ops[TG_GUI_PHOTO_DIRECT_OPS];
+    int photo_direct_count;
+    int photo_direct_logged;
+    int photo_direct_report; /* 1 pass / -1 fallback; log only outside layer lock */
     unsigned int afa_profile_paints; /* bounded --gui-live-debug paint samples */
 } tg_gui_amiga_ctx;
 
@@ -2005,6 +2025,7 @@ static void tg_gui_photo_queue_pen_fallback(tg_gui_amiga_ctx *ctx)
     }
     ctx->photo_truecolor = 0;
     ctx->photo_cgx_failed = 1;
+    ctx->photo_direct_count = 0;
     if (ctx->photo_viewer_scope) {
         return;
     }
@@ -2019,91 +2040,195 @@ static void tg_gui_photo_queue_pen_fallback(tg_gui_amiga_ctx *ctx)
 }
 
 /* A cybergraphics library can be present while the layerless friend bitmap is
-   not a CyberGraphX bitmap. Prove the actual destination once before relying
-   on RGB888 replay: write two known pixels and read them back. The test uses
-   tolerant primary-channel checks so 15/16-bit RTG formats also pass. */
+   not a CyberGraphX bitmap. Track the buffer and the real window separately:
+   MorphOS commonly rejects the friend bitmap while accepting the window RP. */
 #if defined(TG_GUI_HAVE_CYBERGRAPHICS)
-static int tg_gui_photo_cgx_self_check(tg_gui_amiga_ctx *ctx, int x, int y)
+static int tg_gui_photo_cgx_target_possible(struct RastPort *rport)
+{
+    return rport != 0 && rport->BitMap != 0 && CyberGfxBase != 0 &&
+           GetCyberMapAttr(rport->BitMap, CYBRMATTR_ISCYBERGFX) != 0UL &&
+           GetBitMapAttr(rport->BitMap, BMA_DEPTH) > 8UL;
+}
+
+static int tg_gui_photo_cgx_self_check(tg_gui_amiga_ctx *ctx,
+                                       struct RastPort *target,
+                                       int origin_x, int origin_y,
+                                       int x, int y)
 {
     unsigned char expected[6] = { 255U, 0U, 0U, 0U, 255U, 0U };
     unsigned char actual[6];
+    int is_window;
+    int *checked;
+    int *usable;
+    int test_x;
+    int test_y;
 
     if (ctx == 0 || ctx->photo_cgx_failed || !ctx->photo_truecolor ||
-        ctx->rport == 0 || ctx->rport->BitMap == 0 || CyberGfxBase == 0) {
+        target == 0 || target->BitMap == 0 || CyberGfxBase == 0) {
         return 0;
     }
-    if (ctx->photo_cgx_checked) {
-        return 1;
+    is_window = ctx->window != 0 && target == ctx->window->RPort;
+    checked = is_window ? &ctx->photo_window_cgx_checked
+                        : &ctx->photo_cgx_checked;
+    usable = is_window ? &ctx->photo_window_cgx_usable
+                       : &ctx->photo_cgx_usable;
+    if (*checked) {
+        return *usable;
     }
-    ctx->photo_cgx_checked = 1;
+    *checked = 1;
+    *usable = 0;
+    if (!tg_gui_photo_cgx_target_possible(target) ||
+        ctx->inner_w < 2 || ctx->inner_h < 1) {
+        return 0;
+    }
+    test_x = x;
+    test_y = y;
+    if (test_x < 0) {
+        test_x = 0;
+    } else if (test_x + 1 >= ctx->inner_w) {
+        test_x = ctx->inner_w - 2;
+    }
+    if (test_y < 0) {
+        test_y = 0;
+    } else if (test_y >= ctx->inner_h) {
+        test_y = ctx->inner_h - 1;
+    }
     memset(actual, 0, sizeof(actual));
-    if (GetCyberMapAttr(ctx->rport->BitMap, CYBRMATTR_ISCYBERGFX) == 0UL ||
-        WritePixelArray(expected, 0, 0, 6, ctx->rport,
-                        (UWORD)(ctx->origin_x + x),
-                        (UWORD)(ctx->origin_y + y), 2, 1,
+    if (WritePixelArray(expected, 0, 0, 6, target,
+                        (UWORD)(origin_x + test_x),
+                        (UWORD)(origin_y + test_y), 2, 1,
                         RECTFMT_RGB) == 0UL ||
-        ReadPixelArray(actual, 0, 0, 6, ctx->rport,
-                       (UWORD)(ctx->origin_x + x),
-                       (UWORD)(ctx->origin_y + y), 2, 1,
+        ReadPixelArray(actual, 0, 0, 6, target,
+                       (UWORD)(origin_x + test_x),
+                       (UWORD)(origin_y + test_y), 2, 1,
                        RECTFMT_RGB) == 0UL ||
         actual[0] < 200U || actual[1] > 55U || actual[2] > 55U ||
         actual[3] > 55U || actual[4] < 200U || actual[5] > 55U) {
-        tg_gui_photo_diag("photo: cgx self-check failed, pen fallback");
-        tg_gui_photo_queue_pen_fallback(ctx);
+        if (is_window) {
+            ctx->photo_direct_report = -1;
+        } else {
+            tg_gui_photo_diag("photo: buffer cgx self-check failed");
+        }
         return 0;
     }
-    tg_gui_photo_diag("photo: cgx self-check passed");
+    *usable = 1;
+    if (is_window) {
+        if (ctx->photo_direct_report == 0) {
+            ctx->photo_direct_report = 1;
+        }
+    } else {
+        tg_gui_photo_diag("photo: buffer cgx self-check passed");
+    }
     return 1;
 }
 #endif
 
 /* Replay canonical RGB888 through cybergraphics one scaled row at a time.
    Horizontal/vertical nearest scaling is CPU-cheap and never touches JPEG or
-   the pen allocator. A zero return lets the caller use the pen-grid fallback. */
-static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
-                                       const tg_gui_photo_slot *slot,
-                                       tg_gui_rect rect,
-                                       int x0, int y0, int x1, int y1)
+   the pen allocator. The target can be either the friend bitmap or the real
+   window RastPort. */
+static int tg_gui_photo_draw_truecolor_target(
+    tg_gui_amiga_ctx *ctx, struct RastPort *target,
+    int origin_x, int origin_y, const tg_gui_photo_slot *slot,
+    tg_gui_rect rect, int x0, int y0, int x1, int y1)
 {
 #if defined(TG_GUI_HAVE_CYBERGRAPHICS)
     static unsigned char row[TG_GUI_PHOTO_REPLAY_CAP * 3];
-    int width;
     int y;
 
     if (!ctx->photo_truecolor || slot->rgb == 0 || CyberGfxBase == 0 ||
-        !tg_gui_photo_cgx_self_check(ctx, x0, y0)) {
+        !tg_gui_photo_cgx_self_check(ctx, target, origin_x, origin_y,
+                                     x0, y0)) {
         return 0;
     }
-    width = x1 - x0;
-    if (width <= 0 || width > TG_GUI_PHOTO_REPLAY_CAP) {
+    if (x1 <= x0) {
         return 0;
     }
     for (y = y0; y < y1; ++y) {
         int sy;
-        int x;
+        int chunk_x;
 
         sy = ((y - rect.y) * slot->h) / rect.h;
-        for (x = 0; x < width; ++x) {
-            int sx;
-            const unsigned char *src;
+        for (chunk_x = x0; chunk_x < x1;
+             chunk_x += TG_GUI_PHOTO_REPLAY_CAP) {
+            int width;
+            int x;
 
-            sx = (((x0 + x) - rect.x) * slot->w) / rect.w;
-            src = slot->rgb +
-                  (((unsigned long)sy * (unsigned long)slot->w +
-                    (unsigned long)sx) * 3UL);
-            row[x * 3] = src[0];
-            row[x * 3 + 1] = src[1];
-            row[x * 3 + 2] = src[2];
-        }
-        if (WritePixelArray(row, 0, 0, (UWORD)(width * 3), ctx->rport,
-                            (UWORD)(ctx->origin_x + x0),
-                            (UWORD)(ctx->origin_y + y),
-                            (UWORD)width, 1, RECTFMT_RGB) == 0UL) {
-            return 0;
+            width = x1 - chunk_x;
+            if (width > TG_GUI_PHOTO_REPLAY_CAP) {
+                width = TG_GUI_PHOTO_REPLAY_CAP;
+            }
+            for (x = 0; x < width; ++x) {
+                int sx;
+                const unsigned char *src;
+
+                sx = (((chunk_x + x) - rect.x) * slot->w) / rect.w;
+                src = slot->rgb +
+                      (((unsigned long)sy * (unsigned long)slot->w +
+                        (unsigned long)sx) * 3UL);
+                row[x * 3] = src[0];
+                row[x * 3 + 1] = src[1];
+                row[x * 3 + 2] = src[2];
+            }
+            if (WritePixelArray(
+                    row, 0, 0, (UWORD)(width * 3), target,
+                    (UWORD)(origin_x + chunk_x),
+                    (UWORD)(origin_y + y),
+                    (UWORD)width, 1, RECTFMT_RGB) == 0UL) {
+                return 0;
+            }
         }
         if (tg_gui_profile_active) {
             ++tg_gui_profile_photo_rgb_rows;
         }
+    }
+    return 1;
+#else
+    (void)ctx;
+    (void)target;
+    (void)origin_x;
+    (void)origin_y;
+    (void)slot;
+    (void)rect;
+    (void)x0;
+    (void)y0;
+    (void)x1;
+    (void)y1;
+    return 0;
+#endif
+}
+
+static void tg_gui_photo_direct_begin(tg_gui_amiga_ctx *ctx)
+{
+    if (ctx != 0) {
+        ctx->photo_direct_count = 0;
+    }
+}
+
+static int tg_gui_photo_direct_queue(tg_gui_amiga_ctx *ctx,
+                                     tg_gui_photo_slot *slot,
+                                     tg_gui_rect rect,
+                                     int x0, int y0, int x1, int y1)
+{
+#if defined(TG_GUI_HAVE_CYBERGRAPHICS)
+    tg_gui_photo_direct_op *op;
+
+    if (ctx == 0 || slot == 0 || ctx->window == 0 ||
+        ctx->rport == ctx->window->RPort ||
+        ctx->photo_direct_count >= TG_GUI_PHOTO_DIRECT_OPS ||
+        !tg_gui_photo_cgx_target_possible(ctx->window->RPort)) {
+        return 0;
+    }
+    op = &ctx->photo_direct_ops[ctx->photo_direct_count++];
+    op->slot = slot;
+    op->rect = rect;
+    op->x0 = x0;
+    op->y0 = y0;
+    op->x1 = x1;
+    op->y1 = y1;
+    if (!ctx->photo_direct_logged) {
+        tg_gui_photo_diag("photo: window cgx path");
+        ctx->photo_direct_logged = 1;
     }
     return 1;
 #else
@@ -2116,6 +2241,98 @@ static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
     (void)y1;
     return 0;
 #endif
+}
+
+/* A full off-screen paint records the RGB photo rectangles when its friend
+   bitmap is not CGX. Replay only the rectangles touched by the following
+   window blit; the layer/BeginRefresh lock is owned by the caller. */
+static int tg_gui_photo_direct_replay(tg_gui_amiga_ctx *ctx,
+                                      int dirty_x, int dirty_y,
+                                      int dirty_w, int dirty_h)
+{
+#if defined(TG_GUI_HAVE_CYBERGRAPHICS)
+    int i;
+    int any;
+
+    if (ctx == 0 || ctx->window == 0 || ctx->photo_direct_count <= 0 ||
+        dirty_w <= 0 || dirty_h <= 0) {
+        return 1;
+    }
+    any = 0;
+    for (i = 0; i < ctx->photo_direct_count; ++i) {
+        tg_gui_photo_direct_op *op = &ctx->photo_direct_ops[i];
+
+        if (op->x1 > dirty_x && op->x0 < dirty_x + dirty_w &&
+            op->y1 > dirty_y && op->y0 < dirty_y + dirty_h) {
+            any = 1;
+            break;
+        }
+    }
+    if (!any) {
+        return 1;
+    }
+    /* BltBitMapRastPort can still own the destination after returning. */
+    WaitBlit();
+    for (i = 0; i < ctx->photo_direct_count; ++i) {
+        tg_gui_photo_direct_op *op = &ctx->photo_direct_ops[i];
+        tg_gui_photo_slot *slot = op->slot;
+
+        if (op->x1 <= dirty_x || op->x0 >= dirty_x + dirty_w ||
+            op->y1 <= dirty_y || op->y0 >= dirty_y + dirty_h) {
+            continue;
+        }
+        if (slot == 0 || slot->rgb == 0 || slot->state <= 0 ||
+            !tg_gui_photo_draw_truecolor_target(
+                ctx, ctx->window->RPort, ctx->origin_x, ctx->origin_y,
+                slot, op->rect, op->x0, op->y0, op->x1, op->y1)) {
+            ctx->photo_direct_report = -1;
+            tg_gui_photo_queue_pen_fallback(ctx);
+            if (ctx->photo_viewer_scope && slot != 0 && slot->rgb != 0 &&
+                slot->pen == 0) {
+                slot->state = 2;
+                slot->render_logged = 0;
+            }
+            return 0;
+        }
+    }
+    return 1;
+#else
+    (void)ctx;
+    (void)dirty_x;
+    (void)dirty_y;
+    (void)dirty_w;
+    (void)dirty_h;
+    return 1;
+#endif
+}
+
+static void tg_gui_photo_direct_report(tg_gui_amiga_ctx *ctx)
+{
+    int report;
+
+    if (ctx == 0) {
+        return;
+    }
+    report = ctx->photo_direct_report;
+    ctx->photo_direct_report = 0;
+    if (report < 0) {
+        tg_gui_photo_diag("photo: window cgx replay failed, pen fallback");
+    } else if (report > 0) {
+        tg_gui_photo_diag("photo: window cgx self-check passed");
+    }
+}
+
+static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
+                                       tg_gui_photo_slot *slot,
+                                       tg_gui_rect rect,
+                                       int x0, int y0, int x1, int y1)
+{
+    if (tg_gui_photo_draw_truecolor_target(
+            ctx, ctx->rport, ctx->origin_x, ctx->origin_y,
+            slot, rect, x0, y0, x1, y1)) {
+        return 1;
+    }
+    return tg_gui_photo_direct_queue(ctx, slot, rect, x0, y0, x1, y1);
 }
 
 /* Replay one complete canonical quality pass into a clipped rectangle. The
@@ -2169,7 +2386,11 @@ static int tg_gui_photo_draw_slot(tg_gui_amiga_ctx *ctx,
         if (!ctx->photo_cgx_failed) {
             /* A later driver failure gets the same permanent portable path as
                a failed self-check. Never quantize inside paint. */
-            tg_gui_photo_diag("photo: cgx replay failed, pen fallback");
+            if (ctx->window != 0 && ctx->rport == ctx->window->RPort) {
+                ctx->photo_direct_report = -1;
+            } else {
+                tg_gui_photo_diag("photo: cgx replay failed, pen fallback");
+            }
             tg_gui_photo_queue_pen_fallback(ctx);
         }
         /* The viewer slot is outside the transcript cache array. Queue its own
@@ -2850,6 +3071,7 @@ static void tg_gui_amiga_buffer_alloc(tg_gui_amiga_ctx *ctx)
     ctx->buf_ok = 1;
     if (!ctx->photo_cgx_failed) {
         ctx->photo_cgx_checked = 0;
+        ctx->photo_cgx_usable = 0;
     }
 }
 
@@ -2874,6 +3096,7 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         return;
     }
     tg_gui_photo_frame_begin();
+    tg_gui_photo_direct_begin(c);
     layer = c->rport->Layer;
     if (c->buf_ok && c->buf_bm != 0 &&
         c->buf_w == c->inner_w && c->buf_h == c->inner_h) {
@@ -2944,9 +3167,12 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         }
         BltBitMapRastPort(c->buf_bm, 0, 0, c->rport, saved_ox, saved_oy,
                           c->inner_w, c->inner_h, 0xC0);
+        (void)tg_gui_photo_direct_replay(c, 0, 0,
+                                         c->inner_w, c->inner_h);
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
+        tg_gui_photo_direct_report(c);
         if (profile_paint) {
             char line[160];
             unsigned long render_ticks;
@@ -2994,6 +3220,7 @@ static void tg_gui_window_paint(const tg_gui_state *state,
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
+        tg_gui_photo_direct_report(c);
         if (!first_logged) {
             tg_gui_log("paint1: direct render done");
             first_logged = 1;
@@ -3067,9 +3294,12 @@ static void tg_gui_window_paint_caret(const tg_gui_state *state,
         BltBitMapRastPort(c->buf_bm, blit_x, blit_y, c->rport,
                           saved_ox + blit_x, saved_oy + blit_y,
                           blit_w, blit_h, 0xC0);
+        (void)tg_gui_photo_direct_replay(c, blit_x, blit_y,
+                                         blit_w, blit_h);
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
+        tg_gui_photo_direct_report(c);
     } else {
         if (layer != 0) {
             LockLayerRom(layer);
@@ -3078,6 +3308,7 @@ static void tg_gui_window_paint_caret(const tg_gui_state *state,
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
+        tg_gui_photo_direct_report(c);
     }
 }
 
@@ -4944,6 +5175,7 @@ static void tg_gui_photo_viewer_paint(tg_gui_photo_viewer *viewer)
         saved_rport = ctx->rport;
         saved_ox = ctx->origin_x;
         saved_oy = ctx->origin_y;
+        tg_gui_photo_direct_begin(ctx);
         ctx->rport = &ctx->buf_rp;
         ctx->origin_x = 0;
         ctx->origin_y = 0;
@@ -4957,9 +5189,12 @@ static void tg_gui_photo_viewer_paint(tg_gui_photo_viewer *viewer)
         BltBitMapRastPort(ctx->buf_bm, 0, 0, ctx->rport,
                           ctx->origin_x, ctx->origin_y,
                           ctx->inner_w, ctx->inner_h, 0xC0);
+        (void)tg_gui_photo_direct_replay(ctx, 0, 0,
+                                         ctx->inner_w, ctx->inner_h);
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
+        tg_gui_photo_direct_report(ctx);
     } else {
         if (layer != 0) {
             LockLayerRom(layer);
@@ -4968,6 +5203,7 @@ static void tg_gui_photo_viewer_paint(tg_gui_photo_viewer *viewer)
         if (layer != 0) {
             UnlockLayerRom(layer);
         }
+        tg_gui_photo_direct_report(ctx);
     }
 }
 
@@ -4986,10 +5222,13 @@ static void tg_gui_photo_viewer_refresh(tg_gui_photo_viewer *viewer)
         BltBitMapRastPort(ctx->buf_bm, 0, 0, ctx->rport,
                           ctx->origin_x, ctx->origin_y,
                           ctx->inner_w, ctx->inner_h, 0xC0);
+        (void)tg_gui_photo_direct_replay(ctx, 0, 0,
+                                         ctx->inner_w, ctx->inner_h);
     } else {
         tg_gui_photo_viewer_render_target(viewer);
     }
     EndRefresh(ctx->window, TRUE);
+    tg_gui_photo_direct_report(ctx);
 }
 
 static void tg_gui_photo_viewer_close(tg_gui_photo_viewer *viewer)
@@ -5662,16 +5901,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         tg_gui_av_share_d = tg_gui_av_rich ? 48L : 192L;
         ctx.photo_truecolor =
             tg_gui_av_rich && tg_gui_amiga_open_cybergraphics();
-#if defined(__MORPHOS__) || defined(__MORPHOS)
-        /* MorphOS field logs prove that fetch and JPEG decode complete while
-           RGB888 writes to the layerless friend bitmap leave it unchanged.
-           The avatar pen-grid path is already proven on the same systems. */
-        if (ctx.photo_truecolor) {
-            tg_gui_photo_diag("photo: MorphOS pen fallback active");
-            ctx.photo_truecolor = 0;
-            ctx.photo_cgx_failed = 1;
-        }
-#endif
         if (ctx.photo_truecolor) {
             tg_gui_log("window: RGB888 inline-photo replay active");
         }
@@ -6995,6 +7224,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     BltBitMapRastPort(ctx.buf_bm, 0, 0, ctx.rport,
                                       ctx.origin_x, ctx.origin_y,
                                       ctx.inner_w, ctx.inner_h, 0xC0);
+                    (void)tg_gui_photo_direct_replay(
+                        &ctx, 0, 0, ctx.inner_w, ctx.inner_h);
                 } else if (!resize_pending) {
                     tg_gui_photo_frame_begin();
                     tg_gui_paint(state, &backend);
@@ -7009,6 +7240,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                              ctx.origin_y + ctx.inner_h - 1);
                 }
                 EndRefresh(ctx.window, TRUE);
+                tg_gui_photo_direct_report(&ctx);
             } else if (msg_class == IDCMP_INTUITICKS) {
                 if (state->mode != TG_GUI_MODE_CHAT) {
                     /* A login screen owns the keyboard: blink the caret (~2 Hz);
