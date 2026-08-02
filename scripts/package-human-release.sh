@@ -71,8 +71,8 @@ fill_platform_text() {
 - A few MB of free RAM. No ixemul.library and no AmiSSL are needed."
         notes_en="Notes for AmigaOS 3.x
 ---------------------
-- Photo messages use a small bounded thumbnail and render inline. Until a
-  thumbnail is ready, or if it cannot be downloaded, the [Photo] label remains.
+- Photo messages show an instant blurred preview from the message itself, then
+  refine from a small bounded download. Decoded pixels are cached for reopen.
 - The cloud-password (2FA) step is heavy on a 68k (PBKDF2) and can take a while.
 - First login: the DH key exchange is heavy on a 68k, so the first start
   takes a while (it happens once -- the session is saved afterwards).
@@ -85,8 +85,8 @@ fill_platform_text() {
 - Qualche MB di RAM libera. Non servono ixemul.library ne' AmiSSL."
         notes_it="Note per AmigaOS 3.x
 --------------------
-- Le foto nei messaggi usano un'anteprima piccola e limitata e appaiono nella
-  conversazione. Finche' non e' pronta, o se il download fallisce, resta [Photo].
+- Le foto mostrano subito l'anteprima sfocata inclusa nel messaggio, poi si
+  rifiniscono con un download limitato. I pixel decodificati restano in cache.
 - Il passo della password cloud (2FA) e' pesante su 68k (PBKDF2) e puo' metterci
   un po'.
 - Primo accesso: lo scambio di chiavi DH e' pesante su 68k, quindi il primo
@@ -151,8 +151,9 @@ no ixemul, no AmiSSL. Two clients, one engine:
 Quick start: copy this drawer to a WRITABLE volume, then double-click
 TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
 
-Highlights in this build: inline message photos, a larger progressive viewer on
-click, an optional lightweight text-only photo mode, and native JPEG photo
+Highlights in this build: message photos appear first as an instant blurred
+preview, refine progressively, and reuse a decoded-pixel cache when reopened;
+a larger viewer, an optional lightweight text-only mode, and native JPEG photo
 uploads; one-click forwarding to Saved Messages and a destination picker for
 other chats; hidden chats available in local search; and non-blocking file
 transfers up to $upload_limit. Downloads pipeline their chunks and work across
@@ -231,9 +232,11 @@ Using the GUI
 - Chat-list avatars show each peer's real profile picture: a blurred preview
   appears as soon as the chat list loads, and it turns crisp shortly after you
   open that chat (the photo is cached in the avatars/ drawer).
-- Photos sent in a conversation appear inside their message bubble. A small
-  per-platform thumbnail is cached in the photos/ drawer; [Photo] remains as a
-  safe fallback while it loads or when Telegram cannot supply it.
+- Photos sent in a conversation appear inside their message bubble. The blurred
+  preview embedded in the message appears without a network request, then the
+  downloaded image replaces it through progressively sharper passes. JPEGs and
+  decoded RGB pixels are cached in photos/, so a viewed chat reopens without
+  repeating the JPEG decode. [Photo] remains the safe fallback on failure.
 - Click a photo to open a fixed-size viewer with a larger copy. It appears first
   as one complete coarse image, then refines through sharper quality passes;
   the same window is reused. The larger cache has a -l.jpg suffix in photos/.
@@ -243,7 +246,9 @@ Using the GUI
   that image in the viewer. The choice is remembered for the next run.
 - "Settings > Photo dithering" controls pen-grid photo quality: Full is the
   default, Light uses a gentler pattern, and Off uses direct colour matching.
-  This mainly helps MorphOS and paletted screens; truecolour replay is unchanged.
+  It affects paletted screens only. Compatible MorphOS, AmigaOS 4 and AROS RTG
+  screens use truecolour pixels and fall back to the pen path automatically if
+  their graphics driver rejects it.
 - To send a JPEG as a Telegram photo, use "Send photo..." in the Telegram menu
   (Amiga+P). Dropping a .jpg/.jpeg on the GUI asks Photo, File or Cancel; ESC
   also cancels. A photo over 10 MiB is preserved and sent as a document instead.
@@ -382,9 +387,11 @@ Usare la GUI
 - Gli avatar della lista chat mostrano la vera foto profilo: un'anteprima
   sfocata appare subito col caricamento della lista, e diventa nitida poco dopo
   che apri quella chat (la foto viene salvata nel cassetto avatars/).
-- Le foto inviate in conversazione appaiono dentro la loro bolla. Una piccola
-  anteprima adatta alla piattaforma viene salvata in photos/; [Photo] resta come
-  ripiego durante il caricamento o se Telegram non la rende disponibile.
+- Le foto inviate in conversazione appaiono dentro la loro bolla. L'anteprima
+  sfocata inclusa nel messaggio compare senza richieste di rete, poi viene
+  sostituita da passate sempre piu' nitide. JPEG e pixel RGB decodificati sono
+  salvati in photos/, quindi riaprire una chat gia' vista non ripete il decode.
+  [Photo] resta il ripiego se Telegram non rende disponibile l'immagine.
 - Clicca una foto per aprire un viewer a dimensione fissa con una copia piu'
   grande. Appare subito intera e sgranata, poi si rifinisce con passate sempre
   piu' nitide; la stessa finestra viene riutilizzata. La copia grande in
@@ -395,8 +402,9 @@ Usare la GUI
   solo quella immagine nel viewer. La scelta resta memorizzata al riavvio.
 - "Settings > Photo dithering" regola la resa delle foto a penne: Full e' il
   valore predefinito, Light usa una trama piu' leggera e Off usa i colori
-  diretti. E' utile soprattutto su MorphOS e schermi a palette; il truecolor
-  non cambia.
+  diretti. Vale solo sugli schermi a palette. Gli schermi RTG compatibili di
+  MorphOS, AmigaOS 4 e AROS usano pixel truecolor e tornano automaticamente
+  alle penne se il driver non accetta quel percorso.
 - Per inviare un JPEG come vera foto Telegram usa "Send photo..." nel menu
   Telegram (Amiga+P). Trascinando un .jpg/.jpeg sulla GUI puoi scegliere Photo,
   File o Cancel; anche ESC annulla. Oltre 10 MiB viene inviato come file.
@@ -587,7 +595,8 @@ WHAT CAN I ACTUALLY DO WITH IT?
 Read and send messages in private chats, groups and channels. Download a
 received file (right-click -> Download) or send one from disk, up to
 $upload_limit on this build, including files over 10 MiB.
-Photos render inline from a bounded cached thumbnail; click one for a larger
+Photos appear immediately as blurred previews, refine from a bounded download
+and reuse decoded pixels from disk when reopened. Click one for a larger
 progressive viewer, or disable inline loading on a slower machine and open only
 the images you choose. Forward one message to Saved Messages in a click, or
 choose another destination through chat search.
