@@ -298,10 +298,10 @@ static int tg_image_jpeg_out(JDEC *jd, void *bitmap, JRECT *rect)
     return 1;
 }
 
-tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
+tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale(
     const unsigned char *jpeg, unsigned long jpeg_len,
     unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
-    int *decode_rc)
+    int requested_scale, int *actual_scale, int *decode_rc)
 {
     tg_image_jpeg_decoder *decoder;
     JRESULT jr;
@@ -312,8 +312,12 @@ tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
     if (decode_rc != 0) {
         *decode_rc = (int)JDR_PAR;
     }
+    if (actual_scale != 0) {
+        *actual_scale = TG_IMAGE_JPEG_SCALE_AUTO;
+    }
     if (jpeg == 0 || jpeg_len == 0UL || dst_rgb == 0 || dw <= 0 || dh <= 0 ||
-        source_edge_cap <= 0 || source_edge_cap > 1024) {
+        source_edge_cap <= 0 || source_edge_cap > 1024 ||
+        requested_scale < TG_IMAGE_JPEG_SCALE_AUTO || requested_scale > 3) {
         return 0;
     }
     decoder = (tg_image_jpeg_decoder *)calloc(1, sizeof(*decoder));
@@ -346,7 +350,9 @@ tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
         return 0;
     }
     sw = sh = 0U;
-    for (scale = 0U; scale <= 3U; ++scale) {
+    scale = requested_scale == TG_IMAGE_JPEG_SCALE_AUTO
+        ? 0U : (unsigned int)requested_scale;
+    for (; scale <= 3U; ++scale) {
         unsigned int div;
         unsigned int cap_w;
         unsigned int cap_h;
@@ -359,6 +365,10 @@ tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
             cap_h <= (unsigned int)source_edge_cap) {
             sw = (unsigned int)decoder->jd.width >> scale;
             sh = (unsigned int)decoder->jd.height >> scale;
+            break;
+        }
+        if (requested_scale != TG_IMAGE_JPEG_SCALE_AUTO) {
+            scale = 4U;
             break;
         }
     }
@@ -382,7 +392,20 @@ tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
     if (decode_rc != 0) {
         *decode_rc = (int)JDR_OK;
     }
+    if (actual_scale != 0) {
+        *actual_scale = (int)scale;
+    }
     return decoder;
+}
+
+tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
+    const unsigned char *jpeg, unsigned long jpeg_len,
+    unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
+    int *decode_rc)
+{
+    return tg_image_jpeg_decoder_begin_scale(
+        jpeg, jpeg_len, dst_rgb, dw, dh, source_edge_cap,
+        TG_IMAGE_JPEG_SCALE_AUTO, 0, decode_rc);
 }
 
 int tg_image_jpeg_decoder_step(tg_image_jpeg_decoder *decoder,
@@ -656,6 +679,7 @@ int tg_avatar_self_test(void)
     {
         static unsigned char progressive[32 * 32 * 3];
         static unsigned char complete[32 * 32 * 3];
+        static unsigned char quality[32 * 32 * 3];
         tg_image_jpeg_decoder *decoder;
         int ready_rows;
         int previous_rows;
@@ -695,6 +719,39 @@ int tg_avatar_self_test(void)
             memcmp(progressive, complete, sizeof(progressive)) != 0) {
             puts("avatar self-test: progressive JPEG result mismatch");
             return 2;
+        }
+        /* The GUI's browser-style quality sequence must converge byte-for-byte
+           to the ordinary finest-scale decode. Every pass is still sliced. */
+        {
+            static const int pass_scale[3] = { 3, 2, 0 };
+            int pass;
+
+            memset(quality, 0, sizeof(quality));
+            for (pass = 0; pass < 3; ++pass) {
+                int actual_scale;
+
+                decoder = tg_image_jpeg_decoder_begin_scale(
+                    tg_progress_jpeg, sizeof(tg_progress_jpeg), quality,
+                    32, 32, 64, pass_scale[pass], &actual_scale, &decode_rc);
+                if (decoder == 0 || actual_scale != pass_scale[pass]) {
+                    tg_image_jpeg_decoder_destroy(decoder);
+                    puts("avatar self-test: quality pass begin failed");
+                    return 2;
+                }
+                do {
+                    step_rc = tg_image_jpeg_decoder_step(
+                        decoder, 1U, &ready_rows, &decode_rc);
+                } while (step_rc == 0);
+                tg_image_jpeg_decoder_destroy(decoder);
+                if (step_rc != 1) {
+                    puts("avatar self-test: quality pass decode failed");
+                    return 2;
+                }
+            }
+            if (memcmp(quality, complete, sizeof(quality)) != 0) {
+                puts("avatar self-test: quality passes do not converge");
+                return 2;
+            }
         }
     }
     puts("avatar self-test: ok (template 623 bytes, patch h/w, FFD9 tail)");

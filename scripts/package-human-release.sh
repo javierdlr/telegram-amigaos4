@@ -234,9 +234,9 @@ Using the GUI
 - Photos sent in a conversation appear inside their message bubble. A small
   per-platform thumbnail is cached in the photos/ drawer; [Photo] remains as a
   safe fallback while it loads or when Telegram cannot supply it.
-- Click a photo to open a fixed-size viewer with a larger copy. It fills from
-  top to bottom while decoding and reuses the same window for the next photo.
-  The larger cached file has a -l.jpg suffix in photos/.
+- Click a photo to open a fixed-size viewer with a larger copy. It appears first
+  as one complete coarse image, then refines through sharper quality passes;
+  the same window is reused. The larger cache has a -l.jpg suffix in photos/.
 - On a slower machine, uncheck "Settings > Inline photos" in the Telegram menu.
   The conversation returns to lightweight [Photo] labels and does no background
   photo fetch or decode work. Click an individual [Photo] label to load only
@@ -386,9 +386,9 @@ Usare la GUI
   anteprima adatta alla piattaforma viene salvata in photos/; [Photo] resta come
   ripiego durante il caricamento o se Telegram non la rende disponibile.
 - Clicca una foto per aprire un viewer a dimensione fissa con una copia piu'
-  grande. L'immagine si completa dall'alto verso il basso e la stessa finestra
-  viene riutilizzata per la foto successiva. La copia grande in photos/ ha il
-  suffisso -l.jpg.
+  grande. Appare subito intera e sgranata, poi si rifinisce con passate sempre
+  piu' nitide; la stessa finestra viene riutilizzata. La copia grande in
+  photos/ ha il suffisso -l.jpg.
 - Su una macchina lenta togli la spunta da "Settings > Inline photos" nel menu
   Telegram. La conversazione torna alle leggere etichette [Photo] e non avvia
   download o decodifiche in background. Clicca una singola [Photo] per caricare

@@ -656,9 +656,14 @@ typedef struct tg_gui_photo_slot {
     int w;
     int h;
     int state; /* 0 free, 1 complete, 2 decode/map in progress, -1 rejected */
-    int ready_rows;
-    int pen_rows;
-    int decode_done;
+    int ready_rows;       /* displayed RGB rows: either 0 or h */
+    int pen_rows;         /* displayed pen rows: either 0 or h */
+    int stage_ready_rows; /* current hidden quality pass */
+    int stage_pen_rows;
+    int decode_done;      /* current hidden pass entropy is complete */
+    int quality_done;     /* final pass was committed */
+    int pass_scale;
+    int final_scale;
     int render_logged;
     unsigned long last_use;
     unsigned char *jpeg;
@@ -666,6 +671,8 @@ typedef struct tg_gui_photo_slot {
     tg_image_jpeg_decoder *decoder;
     unsigned char *pen;
     unsigned char *rgb;
+    unsigned char *stage_pen;
+    unsigned char *stage_rgb;
 } tg_gui_photo_slot;
 
 typedef struct tg_gui_photo_request {
@@ -728,6 +735,8 @@ static void tg_gui_photo_slot_clear(tg_gui_photo_slot *slot)
     free(slot->jpeg);
     free(slot->pen);
     free(slot->rgb);
+    free(slot->stage_pen);
+    free(slot->stage_rgb);
     memset(slot, 0, sizeof(*slot));
 }
 
@@ -1207,30 +1216,38 @@ static void tg_gui_photo_request_offer(unsigned long id_hi,
 }
 
 static int tg_gui_photo_map_pen_rows(tg_gui_amiga_ctx *ctx,
-                                     tg_gui_photo_slot *slot, int max_rows)
+                                     tg_gui_photo_slot *slot,
+                                     const unsigned char *rgb,
+                                     unsigned char **pen_grid,
+                                     int ready_rows,
+                                     int *mapped_rows,
+                                     int max_rows)
 {
     int end_row;
     int y;
 
-    if (slot == 0 || slot->rgb == 0 || slot->w <= 0 || slot->h <= 0 ||
-        max_rows <= 0) {
+    if (slot == 0 || rgb == 0 || pen_grid == 0 || mapped_rows == 0 ||
+        slot->w <= 0 || slot->h <= 0 || max_rows <= 0) {
         return 0;
     }
-    if (slot->pen == 0) {
+    if (*pen_grid == 0) {
         unsigned long pixels;
 
         pixels = (unsigned long)slot->w * (unsigned long)slot->h;
-        slot->pen = (unsigned char *)malloc((size_t)pixels);
-        if (slot->pen == 0) {
+        *pen_grid = (unsigned char *)malloc((size_t)pixels);
+        if (*pen_grid == 0) {
             tg_gui_photo_diag("photo: pen map wait (no memory)");
             return 0;
         }
     }
-    end_row = slot->ready_rows;
-    if (end_row > slot->pen_rows + max_rows) {
-        end_row = slot->pen_rows + max_rows;
+    end_row = ready_rows;
+    if (end_row > slot->h) {
+        end_row = slot->h;
     }
-    for (y = slot->pen_rows; y < end_row; ++y) {
+    if (end_row > *mapped_rows + max_rows) {
+        end_row = *mapped_rows + max_rows;
+    }
+    for (y = *mapped_rows; y < end_row; ++y) {
         int x;
 
         for (x = 0; x < slot->w; ++x) {
@@ -1238,19 +1255,234 @@ static int tg_gui_photo_map_pen_rows(tg_gui_amiga_ctx *ctx,
 
             p = tg_gui_photo_pen_for(
                 ctx,
-                slot->rgb + ((((unsigned long)y * (unsigned long)slot->w) +
-                              (unsigned long)x) * 3UL), x, y);
+                rgb + ((((unsigned long)y * (unsigned long)slot->w) +
+                        (unsigned long)x) * 3UL), x, y);
             if (p == -1) {
                 tg_gui_photo_diag("photo: pen map fail");
                 return 0;
             }
-            slot->pen[(unsigned long)y * (unsigned long)slot->w +
-                      (unsigned long)x] = (unsigned char)p;
+            (*pen_grid)[(unsigned long)y * (unsigned long)slot->w +
+                        (unsigned long)x] = (unsigned char)p;
         }
     }
-    if (end_row > slot->pen_rows) {
-        slot->pen_rows = end_row;
+    if (end_row > *mapped_rows) {
+        *mapped_rows = end_row;
         return 1;
+    }
+    return 0;
+}
+
+static int tg_gui_photo_next_quality_scale(const tg_gui_photo_slot *slot)
+{
+    if (slot == 0 || slot->pass_scale <= slot->final_scale) {
+        return TG_IMAGE_JPEG_SCALE_AUTO;
+    }
+    if (slot->pass_scale == 3 && slot->final_scale < 2) {
+        return 2; /* 1/8 -> 1/4 before the finest useful scale */
+    }
+    return slot->final_scale;
+}
+
+static int tg_gui_photo_begin_quality_pass(tg_gui_photo_slot *slot,
+                                           int decode_cap,
+                                           int requested_scale,
+                                           int *actual_scale,
+                                           int *decode_rc)
+{
+    unsigned long pixels;
+
+    if (slot == 0 || slot->jpeg == 0 || slot->w <= 0 || slot->h <= 0) {
+        return 0;
+    }
+    pixels = (unsigned long)slot->w * (unsigned long)slot->h;
+    free(slot->stage_pen);
+    slot->stage_pen = 0;
+    slot->stage_pen_rows = 0;
+    slot->stage_ready_rows = 0;
+    slot->decode_done = 0;
+    if (slot->stage_rgb == 0) {
+        slot->stage_rgb = (unsigned char *)calloc((size_t)pixels, 3U);
+    } else {
+        memset(slot->stage_rgb, 0, (size_t)pixels * 3U);
+    }
+    if (slot->stage_rgb == 0) {
+        if (decode_rc != 0) {
+            *decode_rc = 2;
+        }
+        return 0;
+    }
+    slot->decoder = tg_image_jpeg_decoder_begin_scale(
+        slot->jpeg, slot->jpeg_len, slot->stage_rgb,
+        slot->w, slot->h, decode_cap, requested_scale,
+        actual_scale, decode_rc);
+    return slot->decoder != 0;
+}
+
+static int tg_gui_photo_begin_quality_sequence(tg_gui_photo_slot *slot,
+                                               int decode_cap,
+                                               int *decode_rc)
+{
+    int actual_scale;
+
+    actual_scale = TG_IMAGE_JPEG_SCALE_AUTO;
+    if (!tg_gui_photo_begin_quality_pass(
+            slot, decode_cap, TG_IMAGE_JPEG_SCALE_AUTO,
+            &actual_scale, decode_rc)) {
+        return 0;
+    }
+    slot->final_scale = actual_scale;
+    slot->pass_scale = actual_scale;
+    if (actual_scale < 3) {
+        tg_image_jpeg_decoder_destroy(slot->decoder);
+        slot->decoder = 0;
+        if (!tg_gui_photo_begin_quality_pass(slot, decode_cap, 3,
+                                             &actual_scale, decode_rc)) {
+            return 0;
+        }
+        slot->pass_scale = actual_scale;
+    }
+    return 1;
+}
+
+static int tg_gui_photo_finish_quality_sequence(tg_gui_photo_slot *slot)
+{
+    if (slot == 0) {
+        return 0;
+    }
+    slot->quality_done = 1;
+    slot->state = 1;
+    free(slot->jpeg);
+    slot->jpeg = 0;
+    slot->jpeg_len = 0UL;
+    return 1;
+}
+
+/* Publish a complete pass atomically. The previous quality remains drawable
+   while entropy decode and pen mapping prepare the next hidden frame. */
+static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
+                                            tg_gui_photo_slot *slot,
+                                            int decode_cap,
+                                            int viewer_scope)
+{
+    int next_scale;
+    int actual_scale;
+    int decode_rc;
+    char line[80];
+
+    if (ctx == 0 || slot == 0 || slot->stage_rgb == 0) {
+        return 0;
+    }
+    if (ctx->photo_truecolor) {
+        free(slot->rgb);
+        slot->rgb = slot->stage_rgb;
+        slot->stage_rgb = 0;
+        slot->ready_rows = slot->h;
+        free(slot->pen);
+        slot->pen = 0;
+        slot->pen_rows = 0;
+    } else {
+        if (slot->stage_pen == 0 || slot->stage_pen_rows < slot->h) {
+            return 0;
+        }
+        free(slot->pen);
+        slot->pen = slot->stage_pen;
+        slot->stage_pen = 0;
+        slot->pen_rows = slot->h;
+        free(slot->rgb);
+        slot->rgb = 0;
+        slot->ready_rows = 0;
+        free(slot->stage_rgb);
+        slot->stage_rgb = 0;
+    }
+    slot->stage_ready_rows = 0;
+    slot->stage_pen_rows = 0;
+    slot->decode_done = 0;
+    slot->render_logged = 0;
+    if (tg_gui_log_is_enabled()) {
+        sprintf(line, "photo: %squality pass 1/%d",
+                viewer_scope ? "viewer " : "", 1 << slot->pass_scale);
+        tg_gui_log(line);
+    }
+    next_scale = tg_gui_photo_next_quality_scale(slot);
+    if (next_scale != TG_IMAGE_JPEG_SCALE_AUTO) {
+        actual_scale = TG_IMAGE_JPEG_SCALE_AUTO;
+        if (tg_gui_photo_begin_quality_pass(slot, decode_cap, next_scale,
+                                            &actual_scale, &decode_rc)) {
+            slot->pass_scale = actual_scale;
+            slot->state = 2;
+            return 1;
+        }
+        tg_gui_photo_diag(viewer_scope
+            ? "photo: viewer detail pass skipped"
+            : "photo: detail pass skipped");
+    }
+    tg_gui_photo_finish_quality_sequence(slot);
+    tg_gui_photo_diag(viewer_scope
+        ? "photo: viewer decode done"
+        : "photo: decode done");
+    return 1;
+}
+
+/* Advance one hidden quality pass. A positive return means a whole frame was
+   published, zero means more bounded work is pending, and -1 is JPEG failure. */
+static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
+                                     tg_gui_photo_slot *slot,
+                                     unsigned int mcu_budget,
+                                     int pen_row_budget,
+                                     int decode_cap,
+                                     int viewer_scope,
+                                     int *decode_rc)
+{
+    int ready_rows;
+    int step_rc;
+
+    if (ctx == 0 || slot == 0 || mcu_budget == 0U || pen_row_budget <= 0) {
+        return 0;
+    }
+    /* CyberGraphX may fail its runtime self-check after the coarse RGB pass.
+       Convert that already visible pass fully before exposing any pen rows. */
+    if (!ctx->photo_truecolor && slot->rgb != 0 &&
+        slot->pen_rows < slot->h) {
+        (void)tg_gui_photo_map_pen_rows(
+            ctx, slot, slot->rgb, &slot->pen, slot->h,
+            &slot->pen_rows, pen_row_budget);
+        if (slot->pen_rows >= slot->h) {
+            free(slot->rgb);
+            slot->rgb = 0;
+            slot->ready_rows = 0;
+            slot->render_logged = 0;
+            if (slot->quality_done) {
+                slot->state = 1;
+            }
+            return 1;
+        }
+        return 0;
+    }
+    if (slot->decoder != 0) {
+        ready_rows = slot->stage_ready_rows;
+        step_rc = tg_image_jpeg_decoder_step(
+            slot->decoder, mcu_budget, &ready_rows, decode_rc);
+        if (step_rc < 0) {
+            return -1;
+        }
+        slot->stage_ready_rows = ready_rows;
+        if (step_rc == 1) {
+            tg_image_jpeg_decoder_destroy(slot->decoder);
+            slot->decoder = 0;
+            slot->stage_ready_rows = slot->h;
+            slot->decode_done = 1;
+        }
+    }
+    if (slot->decode_done && !ctx->photo_truecolor) {
+        (void)tg_gui_photo_map_pen_rows(
+            ctx, slot, slot->stage_rgb, &slot->stage_pen,
+            slot->stage_ready_rows, &slot->stage_pen_rows,
+            pen_row_budget);
+    }
+    if (slot->decode_done &&
+        (ctx->photo_truecolor || slot->stage_pen_rows >= slot->h)) {
+        return tg_gui_photo_commit_quality_pass(
+            ctx, slot, decode_cap, viewer_scope);
     }
     return 0;
 }
@@ -1285,7 +1517,6 @@ static int tg_gui_photo_decode_start(void)
     char path[64];
     long flen;
     unsigned long got;
-    unsigned long pixels;
     int canonical_w;
     int canonical_h;
     int decode_rc;
@@ -1329,10 +1560,8 @@ static int tg_gui_photo_decode_start(void)
                                    request.source_w, request.source_h);
         return 0;
     }
-    pixels = (unsigned long)canonical_w * (unsigned long)canonical_h;
     slot->jpeg = (unsigned char *)malloc((size_t)flen);
-    slot->rgb = (unsigned char *)calloc((size_t)pixels, 3U);
-    if (slot->jpeg == 0 || slot->rgb == 0) {
+    if (slot->jpeg == 0) {
         fclose(f);
         tg_gui_photo_diag("photo: decode wait (no memory)");
         tg_gui_photo_slot_clear(slot);
@@ -1349,25 +1578,24 @@ static int tg_gui_photo_decode_start(void)
     slot->w = canonical_w;
     slot->h = canonical_h;
     slot->state = 2;
-    slot->decoder = tg_image_jpeg_decoder_begin(
-        slot->jpeg, slot->jpeg_len, slot->rgb, slot->w, slot->h,
-        TG_GUI_PHOTO_DECODE_CAP, &decode_rc);
-    if (slot->decoder == 0) {
+    if (!tg_gui_photo_begin_quality_sequence(
+            slot, TG_GUI_PHOTO_DECODE_CAP, &decode_rc)) {
         tg_gui_photo_decode_reject(slot, decode_rc);
         return 0;
     }
     if (tg_gui_log_is_enabled()) {
         char line[80];
 
-        sprintf(line, "photo: decode begin %dx%d", slot->w, slot->h);
+        sprintf(line, "photo: decode begin %dx%d at 1/%d",
+                slot->w, slot->h, 1 << slot->pass_scale);
         tg_gui_log(line);
     }
     return 1;
 }
 
 /* One bounded idle slice. JPEG entropy work and palette mapping both live
-   here, never inside paint or NEWSIZE. A return of 1 means a new top-down band
-   became drawable (or a failure changed the placeholder state). */
+   here, never inside paint or NEWSIZE. A return of 1 means a complete quality
+   pass became drawable (or a failure changed the placeholder state). */
 static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
                                     unsigned int mcu_budget,
                                     int pen_row_budget)
@@ -1378,9 +1606,7 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
     int best_priority;
     int request_priority;
     int started;
-    int old_rows;
     int decode_rc;
-    int step_rc;
     int changed;
 
     if (ctx == 0 || ctx->photo_resize_active || mcu_budget == 0U ||
@@ -1447,52 +1673,12 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
     if (slot == 0) {
         return 0;
     }
-    old_rows = ctx->photo_truecolor ? slot->ready_rows : slot->pen_rows;
-    if (slot->decoder != 0) {
-        int ready_rows;
-
-        ready_rows = slot->ready_rows;
-        step_rc = tg_image_jpeg_decoder_step(
-            slot->decoder, mcu_budget,
-            &ready_rows, &decode_rc);
-        if (step_rc < 0) {
-            tg_gui_photo_decode_reject(slot, decode_rc);
-            return 1;
-        }
-        slot->ready_rows = ready_rows;
-        if (step_rc == 1) {
-            tg_image_jpeg_decoder_destroy(slot->decoder);
-            slot->decoder = 0;
-            free(slot->jpeg);
-            slot->jpeg = 0;
-            slot->jpeg_len = 0UL;
-            slot->decode_done = 1;
-        }
-    }
-    changed = 0;
-    if (!ctx->photo_truecolor) {
-        changed = tg_gui_photo_map_pen_rows(ctx, slot, pen_row_budget);
-    }
-    if (slot->decode_done &&
-        (ctx->photo_truecolor || slot->pen_rows >= slot->h)) {
-        slot->state = 1;
-        if (!ctx->photo_truecolor) {
-            free(slot->rgb);
-            slot->rgb = 0;
-        }
-        tg_gui_photo_diag("photo: decode done");
-        changed = 1;
-    }
-    if ((ctx->photo_truecolor ? slot->ready_rows : slot->pen_rows) > old_rows) {
-        if (tg_gui_log_is_enabled()) {
-            char line[64];
-
-            sprintf(line, "photo: decode band %d/%d",
-                    ctx->photo_truecolor ? slot->ready_rows : slot->pen_rows,
-                    slot->h);
-            tg_gui_log(line);
-        }
-        changed = 1;
+    changed = tg_gui_photo_quality_tick(
+        ctx, slot, mcu_budget, pen_row_budget,
+        TG_GUI_PHOTO_DECODE_CAP, 0, &decode_rc);
+    if (changed < 0) {
+        tg_gui_photo_decode_reject(slot, decode_rc);
+        return 1;
     }
     return changed;
 }
@@ -1619,9 +1805,9 @@ static int tg_gui_photo_draw_truecolor(tg_gui_amiga_ctx *ctx,
 #endif
 }
 
-/* Replay any canonical slot into a clipped rectangle. The transcript and the
-   popup viewer share this exact path, including progressive rows and the
-   runtime CyberGraphX fallback, but keep separate slot ownership. */
+/* Replay one complete canonical quality pass into a clipped rectangle. The
+   transcript and popup viewer share this path and runtime CGX fallback, but
+   keep separate slot ownership. Hidden decode buffers never reach paint. */
 static int tg_gui_photo_draw_slot(tg_gui_amiga_ctx *ctx,
                                   tg_gui_photo_slot *slot,
                                   tg_gui_rect rect,
@@ -1632,11 +1818,17 @@ static int tg_gui_photo_draw_slot(tg_gui_amiga_ctx *ctx,
     int x1;
     int y1;
     int y;
+    int display_ready;
 
     if (ctx == 0 || slot == 0 || rect.w <= 0 || rect.h <= 0 ||
         tg_gui_av_cmap == 0 || ctx->photo_resize_active || slot->state < 0 ||
-        slot->w <= 0 || slot->h <= 0 ||
-        (ctx->photo_truecolor ? slot->ready_rows : slot->pen_rows) <= 0) {
+        slot->w <= 0 || slot->h <= 0) {
+        return 0;
+    }
+    display_ready = ctx->photo_truecolor
+        ? slot->rgb != 0 && slot->ready_rows >= slot->h
+        : slot->pen != 0 && slot->pen_rows >= slot->h;
+    if (!display_ready) {
         return 0;
     }
     x0 = rect.x > clip.x ? rect.x : clip.x;
@@ -1648,23 +1840,6 @@ static int tg_gui_photo_draw_slot(tg_gui_amiga_ctx *ctx,
     y1 = rect.y + rect.h;
     if (y1 > clip.y + clip.h) {
         y1 = clip.y + clip.h;
-    }
-    if (x1 <= x0 || y1 <= y0) {
-        return 0;
-    }
-    {
-        int available_rows;
-        int ready_bottom;
-
-        available_rows = ctx->photo_truecolor ? slot->ready_rows
-                                              : slot->pen_rows;
-        ready_bottom = rect.y +
-            (int)(((unsigned long)available_rows * (unsigned long)rect.h +
-                   (unsigned long)slot->h - 1UL) /
-                  (unsigned long)slot->h);
-        if (y1 > ready_bottom) {
-            y1 = ready_bottom;
-        }
     }
     if (x1 <= x0 || y1 <= y0) {
         return 0;
@@ -1750,7 +1925,7 @@ static int tg_gui_amiga_photo_image(tg_gui_backend *backend,
     slot = tg_gui_photo_slot_find(id_hi, id_lo);
     if (slot == 0) {
         /* Paint is I/O-free: it only queues visible cache entries. INTUITICKS
-           advance one decoder outside the paint and reveal completed bands. */
+           advance hidden quality passes and publish only complete frames. */
         if (tg_gui_session_request_inline_photo(id_hi, id_lo)) {
             tg_gui_photo_request_offer(id_hi, id_lo, source_w, source_h);
         }
@@ -4672,7 +4847,6 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
     char path[64];
     long flen;
     unsigned long got;
-    unsigned long pixels;
     int canonical_w;
     int canonical_h;
     int decode_rc;
@@ -4715,10 +4889,8 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
         tg_gui_photo_viewer_reject(viewer, 3, 0);
         return 0;
     }
-    pixels = (unsigned long)canonical_w * (unsigned long)canonical_h;
     viewer->slot.jpeg = (unsigned char *)malloc((size_t)flen);
-    viewer->slot.rgb = (unsigned char *)calloc((size_t)pixels, 3U);
-    if (viewer->slot.jpeg == 0 || viewer->slot.rgb == 0) {
+    if (viewer->slot.jpeg == 0) {
         fclose(file);
         tg_gui_photo_viewer_reject(viewer, 4, 0);
         return 0;
@@ -4733,15 +4905,18 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
     viewer->slot.w = canonical_w;
     viewer->slot.h = canonical_h;
     viewer->slot.state = 2;
-    viewer->slot.decoder = tg_image_jpeg_decoder_begin(
-        viewer->slot.jpeg, viewer->slot.jpeg_len, viewer->slot.rgb,
-        viewer->slot.w, viewer->slot.h, TG_GUI_PHOTO_VIEWER_DECODE_CAP,
-        &decode_rc);
-    if (viewer->slot.decoder == 0) {
+    if (!tg_gui_photo_begin_quality_sequence(
+            &viewer->slot, TG_GUI_PHOTO_VIEWER_DECODE_CAP, &decode_rc)) {
         tg_gui_photo_viewer_reject(viewer, decode_rc, 1);
         return 0;
     }
-    tg_gui_photo_diag("photo: viewer decode begin");
+    if (tg_gui_log_is_enabled()) {
+        char line[72];
+
+        sprintf(line, "photo: viewer decode begin at 1/%d",
+                1 << viewer->slot.pass_scale);
+        tg_gui_log(line);
+    }
     return 1;
 }
 
@@ -4751,10 +4926,7 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
                                            int *used_turn)
 {
     tg_gui_photo_slot *slot;
-    int old_rows;
-    int ready_rows;
     int decode_rc;
-    int step_rc;
     int changed;
 
     if (used_turn != 0) {
@@ -4774,52 +4946,12 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
     if (used_turn != 0) {
         *used_turn = 1;
     }
-    old_rows = viewer->ctx.photo_truecolor ? slot->ready_rows : slot->pen_rows;
-    if (slot->decoder != 0) {
-        ready_rows = slot->ready_rows;
-        step_rc = tg_image_jpeg_decoder_step(slot->decoder, mcu_budget,
-                                             &ready_rows, &decode_rc);
-        if (step_rc < 0) {
-            tg_gui_photo_viewer_reject(viewer, decode_rc, 1);
-            return 1;
-        }
-        slot->ready_rows = ready_rows;
-        if (step_rc == 1) {
-            tg_image_jpeg_decoder_destroy(slot->decoder);
-            slot->decoder = 0;
-            free(slot->jpeg);
-            slot->jpeg = 0;
-            slot->jpeg_len = 0UL;
-            slot->decode_done = 1;
-        }
-    }
-    changed = 0;
-    if (!viewer->ctx.photo_truecolor) {
-        changed = tg_gui_photo_map_pen_rows(&viewer->ctx, slot,
-                                            pen_row_budget);
-    }
-    if (slot->decode_done &&
-        (viewer->ctx.photo_truecolor || slot->pen_rows >= slot->h)) {
-        slot->state = 1;
-        if (!viewer->ctx.photo_truecolor) {
-            free(slot->rgb);
-            slot->rgb = 0;
-        }
-        tg_gui_photo_diag("photo: viewer decode done");
-        changed = 1;
-    }
-    if ((viewer->ctx.photo_truecolor ? slot->ready_rows : slot->pen_rows) >
-        old_rows) {
-        if (tg_gui_log_is_enabled()) {
-            char line[72];
-
-            sprintf(line, "photo: viewer decode band %d/%d",
-                    viewer->ctx.photo_truecolor ? slot->ready_rows
-                                                : slot->pen_rows,
-                    slot->h);
-            tg_gui_log(line);
-        }
-        changed = 1;
+    changed = tg_gui_photo_quality_tick(
+        &viewer->ctx, slot, mcu_budget, pen_row_budget,
+        TG_GUI_PHOTO_VIEWER_DECODE_CAP, 1, &decode_rc);
+    if (changed < 0) {
+        tg_gui_photo_viewer_reject(viewer, decode_rc, 1);
+        return 1;
     }
     return changed;
 }

@@ -44,8 +44,9 @@ unless noted.
   use ordered dithering, and larger bounded thumbnails improve detail without
   making repaints depend on image size.
 - Inline JPEG decoding now advances in bounded idle slices outside the paint
-  path. Completed bands appear progressively from top to bottom, while input,
-  scrolling and resize events always take priority over image work.
+  path using browser-style quality passes: a complete coarse 1/8 image appears
+  first, then 1/4 and final detail replace it atomically. Input, scrolling and
+  resize events keep priority, and incomplete bands never enter a paint.
 - The AfA_OS compatibility renderer now composes complete bitmap-font runs in
   memory and submits one `BltTemplate` per run instead of one per glyph. Native
   text rendering on systems without AfA_OS is unchanged.

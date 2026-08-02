@@ -34,13 +34,20 @@ int tg_image_decode_jpeg_scaled(const unsigned char *jpeg,
 
 /* Resumable variant used by the GUI. The input JPEG and destination RGB buffer
    must remain valid until destroy. Each step decodes at most max_mcus and
-   returns 0=more, 1=done, -1=error. ready_rows grows monotonically, allowing
-   the caller to repaint completed top-down bands between steps. */
+   returns 0=more, 1=done, -1=error. ready_rows grows monotonically; the GUI
+   keeps this staging output hidden until a complete quality pass is ready. */
 typedef struct tg_image_jpeg_decoder tg_image_jpeg_decoder;
+#define TG_IMAGE_JPEG_SCALE_AUTO (-1)
 tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin(
     const unsigned char *jpeg, unsigned long jpeg_len,
     unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
     int *decode_rc);
+/* Explicit tjpgd scale variant: 0=full, 1=1/2, 2=1/4, 3=1/8, -1=the finest
+   scale that fits source_edge_cap. actual_scale receives the selected value. */
+tg_image_jpeg_decoder *tg_image_jpeg_decoder_begin_scale(
+    const unsigned char *jpeg, unsigned long jpeg_len,
+    unsigned char *dst_rgb, int dw, int dh, int source_edge_cap,
+    int requested_scale, int *actual_scale, int *decode_rc);
 int tg_image_jpeg_decoder_step(tg_image_jpeg_decoder *decoder,
                                unsigned int max_mcus,
                                int *ready_rows,
