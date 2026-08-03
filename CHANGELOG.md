@@ -77,6 +77,9 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- Final photo-quality upscales now derive fixed-point coordinates without a
+  32-bit overflow, preventing large images from repeating rows or tiles when
+  the detailed frame replaces a stripped or coarse preview.
 - Background photo work can no longer wait forever behind continuous window
   events or an inactive window. The heartbeat now advances it, visible failed
   fetches are re-queued, and a clicked viewer photo has queue priority.

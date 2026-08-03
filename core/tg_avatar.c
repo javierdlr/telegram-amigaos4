@@ -144,44 +144,78 @@ static int tg_avatar_out(JDEC *jd, void *bitmap, JRECT *rect)
     return 1;
 }
 
+static void tg_image_scale_axis(unsigned int pos,
+                                unsigned int dst_size,
+                                unsigned int src_size,
+                                int *index0,
+                                int *index1,
+                                unsigned long *fraction)
+{
+    unsigned long numerator;
+    unsigned long denominator;
+    unsigned long whole;
+    unsigned long remainder;
+
+    numerator = 0UL;
+    denominator = 1UL;
+    if (dst_size > 1U && src_size > 1U) {
+        numerator = (unsigned long)pos * (unsigned long)(src_size - 1U);
+        denominator = (unsigned long)(dst_size - 1U);
+    }
+    whole = numerator / denominator;
+    remainder = numerator % denominator;
+    *index0 = (int)whole;
+    if (index1 != 0) {
+        *index1 = *index0 + 1 < (int)src_size ? *index0 + 1 : *index0;
+    }
+    *fraction = (remainder * 65536UL) / denominator;
+}
+
 static int tg_image_scale_rgb_bilinear_stride(
     const unsigned char *src_rgb, int sw, int sh, int src_stride,
     unsigned char *dst_rgb, int dw, int dh)
 {
+    int *x_index;
+    unsigned short *x_fraction;
     int y;
+    int x;
 
     if (src_rgb == 0 || dst_rgb == 0 || sw <= 0 || sh <= 0 ||
-        src_stride < sw || dw <= 0 || dh <= 0) {
+        src_stride < sw || dw <= 0 || dh <= 0 ||
+        sw > 65535 || sh > 65535 || dw > 65535 || dh > 65535) {
         return 1;
     }
+    x_index = (int *)malloc((size_t)dw * sizeof(*x_index));
+    x_fraction =
+        (unsigned short *)malloc((size_t)dw * sizeof(*x_fraction));
+    if (x_index == 0 || x_fraction == 0) {
+        free(x_index);
+        free(x_fraction);
+        return 1;
+    }
+    for (x = 0; x < dw; ++x) {
+        unsigned long fx;
+
+        tg_image_scale_axis((unsigned int)x, (unsigned int)dw,
+                            (unsigned int)sw, &x_index[x], 0, &fx);
+        x_fraction[x] = (unsigned short)fx;
+    }
     for (y = 0; y < dh; ++y) {
-        unsigned long fy_pos;
         unsigned long fy;
         int y0;
         int y1;
-        int x;
 
-        fy_pos = (dh > 1 && sh > 1)
-            ? ((unsigned long)y * (unsigned long)(sh - 1) * 65536UL) /
-                  (unsigned long)(dh - 1)
-            : 0UL;
-        y0 = (int)(fy_pos >> 16);
-        fy = fy_pos & 0xffffUL;
-        y1 = y0 + 1 < sh ? y0 + 1 : y0;
+        tg_image_scale_axis((unsigned int)y, (unsigned int)dh,
+                            (unsigned int)sh, &y0, &y1, &fy);
         for (x = 0; x < dw; ++x) {
-            unsigned long fx_pos;
-            unsigned long fx;
             int x0;
             int x1;
+            unsigned long fx;
             int c;
 
-            fx_pos = (dw > 1 && sw > 1)
-                ? ((unsigned long)x * (unsigned long)(sw - 1) * 65536UL) /
-                      (unsigned long)(dw - 1)
-                : 0UL;
-            x0 = (int)(fx_pos >> 16);
-            fx = fx_pos & 0xffffUL;
+            x0 = x_index[x];
             x1 = x0 + 1 < sw ? x0 + 1 : x0;
+            fx = (unsigned long)x_fraction[x];
             for (c = 0; c < 3; ++c) {
                 unsigned long top;
                 unsigned long bottom;
@@ -207,6 +241,8 @@ static int tg_image_scale_rgb_bilinear_stride(
             }
         }
     }
+    free(x_index);
+    free(x_fraction);
     return 0;
 }
 
@@ -865,6 +901,100 @@ int tg_avatar_decode_stripped(const unsigned char *stripped,
     return tg_avatar_decode_jpeg(jpeg, jpeg_len, dst_rgb, dw, dh);
 }
 
+static unsigned long tg_avatar_self_test_hash(const unsigned char *data,
+                                               unsigned long size)
+{
+    unsigned long hash;
+    unsigned long i;
+
+    hash = 2166136261UL;
+    for (i = 0UL; i < size; ++i) {
+        hash ^= (unsigned long)data[i];
+        hash = (hash * 16777619UL) & 0xffffffffUL;
+    }
+    return hash;
+}
+
+/* Model the GUI's stripped/1:8/1:4/final frame transitions with deliberately
+   unrelated source widths. Each complete RGB frame and its palette replay use
+   the same published stride before the next pass replaces it. */
+static int tg_avatar_photo_transition_self_test(void)
+{
+    static const int source_w[4] = { 37, 71, 137, 263 };
+    static const int source_h[4] = { 5, 7, 9, 11 };
+    static const unsigned long rgb_golden[4] = {
+        0x7d063e38UL, 0x3c081814UL, 0xa69e00eaUL, 0x17b7af36UL
+    };
+    static const unsigned long pen_golden[4] = {
+        0x20b4f0ceUL, 0xfc660737UL, 0x69e80bf5UL, 0xf72baeaaUL
+    };
+    static unsigned char source[263 * 11 * 3];
+    static unsigned char frame[449 * 19 * 3];
+    static unsigned char rgb_replay[113 * 13 * 3];
+    static unsigned char pen_replay[113 * 13];
+    int pass;
+
+    for (pass = 0; pass < 4; ++pass) {
+        int y;
+        int replay_at;
+        int pen_at;
+
+        for (y = 0; y < source_h[pass]; ++y) {
+            int x;
+
+            for (x = 0; x < source_w[pass]; ++x) {
+                unsigned long at;
+
+                at = ((unsigned long)y * (unsigned long)source_w[pass] +
+                      (unsigned long)x) * 3UL;
+                source[at] = (unsigned char)(x * 17 + y * 3 + pass * 29);
+                source[at + 1UL] =
+                    (unsigned char)(x * 5 + y * 19 + pass * 31);
+                source[at + 2UL] =
+                    (unsigned char)(x * 11 + y * 7 + pass * 13);
+            }
+        }
+        if (tg_image_scale_rgb_bilinear(
+                source, source_w[pass], source_h[pass],
+                frame, 449, 19) != 0) {
+            return 0;
+        }
+        replay_at = 0;
+        pen_at = 0;
+        for (y = 0; y < 13; ++y) {
+            int sy;
+            int x;
+
+            sy = (y * 19) / 13;
+            for (x = 0; x < 113; ++x) {
+                int sx;
+                unsigned long at;
+                unsigned char r;
+                unsigned char g;
+                unsigned char b;
+
+                sx = (x * 449) / 113;
+                at = ((unsigned long)sy * 449UL + (unsigned long)sx) * 3UL;
+                r = frame[at];
+                g = frame[at + 1UL];
+                b = frame[at + 2UL];
+                rgb_replay[replay_at++] = r;
+                rgb_replay[replay_at++] = g;
+                rgb_replay[replay_at++] = b;
+                pen_replay[pen_at++] = (unsigned char)(
+                    (r & 0xe0U) | ((g >> 3) & 0x1cU) | (b >> 6));
+            }
+        }
+        if (tg_avatar_self_test_hash(
+                rgb_replay, (unsigned long)replay_at) != rgb_golden[pass] ||
+            tg_avatar_self_test_hash(
+                pen_replay, (unsigned long)pen_at) != pen_golden[pass]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int tg_avatar_self_test(void)
 {
 #include "tg_photo_test_fixture.inc"
@@ -900,6 +1030,11 @@ int tg_avatar_self_test(void)
     static const unsigned char probe[] = { 0x01, 0x08, 0x08, 0xaa, 0xbb };
     unsigned char out[900];
     unsigned long out_len;
+
+    if (!tg_avatar_photo_transition_self_test()) {
+        puts("avatar self-test: photo pass stride transition failed");
+        return 2;
+    }
 
     /* template invariants (byte-exact from tdesktop/Telethon) */
     if (sizeof(tg_avatar_jpeg_header) != 623 ||
