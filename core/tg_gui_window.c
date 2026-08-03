@@ -101,6 +101,7 @@ typedef struct timerequest tg_gui_timereq;
 /* Heartbeat period: half the fastest watch cadence so a poll window is never
    missed by more than one beat. */
 #define TG_GUI_HEARTBEAT_SECS 2UL
+#define TG_GUI_PHOTO_FAST_WAKE_US 150000UL
 #include <intuition/screens.h>
 #include <libraries/gadtools.h>
 #include <graphics/gfx.h>
@@ -287,6 +288,14 @@ static int tg_gui_amiga_open_core_libs(void)
     }
 #endif
     return 1;
+}
+
+static void tg_gui_timer_arm(tg_gui_timereq *request, int fast)
+{
+    TG_GUI_TR_NODE(request).io_Command = TR_ADDREQUEST;
+    TG_GUI_TR_SECS(request) = fast ? 0UL : TG_GUI_HEARTBEAT_SECS;
+    TG_GUI_TR_MICRO(request) = fast ? TG_GUI_PHOTO_FAST_WAKE_US : 0UL;
+    SendIO((struct IORequest *)request);
 }
 
 /* AfA_OS 4.8 replaces both graphics and diskfont internals. Their combined
@@ -638,10 +647,9 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_JPEG_MAX (192UL * 1024UL)
 #define TG_GUI_PHOTO_CANONICAL_CAP 256
 #define TG_GUI_PHOTO_DECODE_CAP 512
-#define TG_GUI_PHOTO_MCUS_PER_TICK 4U
-#define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 4
-#define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 12U
-#define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 12
+#define TG_GUI_PHOTO_WORK_MIN 4UL
+#define TG_GUI_PHOTO_WORK_INITIAL 12UL
+#define TG_GUI_PHOTO_WORK_MAX 256UL
 #define TG_GUI_PHOTO_MAX_DEFER_TICKS 6
 #define TG_GUI_PHOTO_FORCE_QUEUED_EVENTS 0
 #define TG_GUI_PHOTO_VIEWER_JPEG_MAX (768UL * 1024UL)
@@ -649,16 +657,17 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_VIEWER_DECODE_CAP 768
 #define TG_GUI_PHOTO_PREVIEW_CAP 128
 #define TG_GUI_PHOTO_VIEWER_PREVIEW_CAP 160
-#define TG_GUI_PHOTO_CACHE_READ_CHUNK (16UL * 1024UL)
+#define TG_GUI_PHOTO_CACHE_MIN (16UL * 1024UL)
+#define TG_GUI_PHOTO_CACHE_INITIAL (16UL * 1024UL)
+#define TG_GUI_PHOTO_CACHE_MAX (1024UL * 1024UL)
 #else
 #define TG_GUI_PHOTO_SLOTS 6
 #define TG_GUI_PHOTO_JPEG_MAX (1024UL * 1024UL)
 #define TG_GUI_PHOTO_CANONICAL_CAP 448
 #define TG_GUI_PHOTO_DECODE_CAP 768
-#define TG_GUI_PHOTO_MCUS_PER_TICK 64U
-#define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 64
-#define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 192U
-#define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 192
+#define TG_GUI_PHOTO_WORK_MIN 64UL
+#define TG_GUI_PHOTO_WORK_INITIAL 192UL
+#define TG_GUI_PHOTO_WORK_MAX 1024UL
 #define TG_GUI_PHOTO_MAX_DEFER_TICKS 1
 #define TG_GUI_PHOTO_FORCE_QUEUED_EVENTS 1
 #define TG_GUI_PHOTO_VIEWER_JPEG_MAX (2UL * 1024UL * 1024UL)
@@ -666,11 +675,19 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_VIEWER_DECODE_CAP 1024
 #define TG_GUI_PHOTO_PREVIEW_CAP 192
 #define TG_GUI_PHOTO_VIEWER_PREVIEW_CAP 256
-#define TG_GUI_PHOTO_CACHE_READ_CHUNK (384UL * 1024UL)
+#define TG_GUI_PHOTO_CACHE_MIN (384UL * 1024UL)
+#define TG_GUI_PHOTO_CACHE_INITIAL (384UL * 1024UL)
+#define TG_GUI_PHOTO_CACHE_MAX (3UL * 1024UL * 1024UL)
 #endif
 #define TG_GUI_PHOTO_REPLAY_CAP TG_GUI_PHOTO_VIEWER_CANONICAL_CAP
 #define TG_GUI_PHOTO_REQUESTS 24
 #define TG_GUI_PHOTO_VISIBLE_MAX 24
+#define TG_GUI_PHOTO_PACE_TARGET_MS 120UL
+#define TG_GUI_PHOTO_LOCAL_STEPS_MAX 32
+
+#define TG_GUI_PHOTO_WORK_NONE 0
+#define TG_GUI_PHOTO_WORK_DECODE 1
+#define TG_GUI_PHOTO_WORK_CACHE 2
 
 #define TG_GUI_PHOTO_SCOPE_INLINE 0
 #define TG_GUI_PHOTO_SCOPE_VIEWER 1
@@ -749,6 +766,41 @@ static void tg_gui_photo_diag(const char *message)
 {
     if (tg_gui_log_is_enabled()) {
         tg_gui_log(message);
+    }
+}
+
+/* DateStamp is available on every native lane and has 20 ms granularity on
+   standard systems. Unsigned subtraction keeps short intervals correct across
+   midnight and the 32-bit millisecond wrap. */
+static unsigned long tg_gui_photo_now_ms(void)
+{
+    struct DateStamp stamp;
+    unsigned long minutes;
+
+    DateStamp(&stamp);
+    minutes = (unsigned long)stamp.ds_Days * 24UL * 60UL +
+              (unsigned long)stamp.ds_Minute;
+    return minutes * 60UL * 1000UL +
+           ((unsigned long)stamp.ds_Tick * 1000UL) /
+               (unsigned long)TICKS_PER_SECOND;
+}
+
+static unsigned long tg_gui_photo_elapsed_ms(unsigned long start,
+                                             unsigned long end)
+{
+    return end - start;
+}
+
+static void tg_gui_photo_pace_observe_log(tg_gui_photo_pace *pace,
+                                          unsigned long elapsed_ms)
+{
+    if (tg_gui_photo_pace_observe(pace, elapsed_ms) &&
+        tg_gui_log_is_enabled()) {
+        char line[80];
+
+        sprintf(line, "photo: pace budget %lu (slice %lums)",
+                pace->budget, elapsed_ms);
+        tg_gui_log(line);
     }
 }
 
@@ -1566,19 +1618,19 @@ static int tg_gui_photo_canonical_load_start(tg_gui_photo_slot *slot,
     return 1;
 }
 
-static int tg_gui_photo_canonical_load_tick(tg_gui_photo_slot *slot)
+static int tg_gui_photo_canonical_load_tick(tg_gui_photo_slot *slot,
+                                            unsigned long cache_budget)
 {
     unsigned long remain;
     unsigned long chunk;
     unsigned long got;
 
     if (slot == 0 || slot->canonical_file == 0 || slot->stage_rgb == 0 ||
-        slot->canonical_loaded > slot->canonical_size) {
+        slot->canonical_loaded > slot->canonical_size || cache_budget == 0UL) {
         return -1;
     }
     remain = slot->canonical_size - slot->canonical_loaded;
-    chunk = remain > TG_GUI_PHOTO_CACHE_READ_CHUNK
-        ? TG_GUI_PHOTO_CACHE_READ_CHUNK : remain;
+    chunk = remain > cache_budget ? cache_budget : remain;
     got = (unsigned long)fread(
         slot->stage_rgb + slot->canonical_loaded, 1, (size_t)chunk,
         slot->canonical_file);
@@ -1700,15 +1752,20 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
                                      tg_gui_photo_slot *slot,
                                      unsigned int mcu_budget,
                                      int pen_row_budget,
+                                     unsigned long cache_budget,
                                      int decode_cap,
                                      int viewer_scope,
-                                     int *decode_rc)
+                                     int *decode_rc,
+                                     int *work_kind)
 {
     int ready_rows;
     int step_rc;
 
     int scope;
 
+    if (work_kind != 0) {
+        *work_kind = TG_GUI_PHOTO_WORK_NONE;
+    }
     scope = viewer_scope ? TG_GUI_PHOTO_SCOPE_VIEWER
                          : TG_GUI_PHOTO_SCOPE_INLINE;
     if (ctx == 0 || slot == 0 || mcu_budget == 0U || pen_row_budget <= 0 ||
@@ -1721,6 +1778,9 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
         slot->pen_rows < slot->h) {
         int display_pen_budget;
 
+        if (work_kind != 0) {
+            *work_kind = TG_GUI_PHOTO_WORK_DECODE;
+        }
         display_pen_budget = pen_row_budget;
         if (slot->preview_only && display_pen_budget < slot->h) {
             /* The stripped frame is deliberately small: map it in one idle
@@ -1746,7 +1806,10 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
         return 0;
     }
     if (slot->canonical_file != 0) {
-        step_rc = tg_gui_photo_canonical_load_tick(slot);
+        if (work_kind != 0) {
+            *work_kind = TG_GUI_PHOTO_WORK_CACHE;
+        }
+        step_rc = tg_gui_photo_canonical_load_tick(slot, cache_budget);
         if (step_rc < 0) {
             tg_gui_photo_canonical_load_abort(slot);
             return 1;
@@ -1756,6 +1819,9 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
         }
     }
     if (slot->decoder != 0) {
+        if (work_kind != 0) {
+            *work_kind = TG_GUI_PHOTO_WORK_DECODE;
+        }
         ready_rows = slot->stage_ready_rows;
         step_rc = tg_image_jpeg_decoder_step(
             slot->decoder, mcu_budget, &ready_rows, decode_rc);
@@ -1771,6 +1837,9 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
         }
     }
     if (slot->decode_done && !ctx->photo_truecolor) {
+        if (work_kind != 0 && *work_kind == TG_GUI_PHOTO_WORK_NONE) {
+            *work_kind = TG_GUI_PHOTO_WORK_DECODE;
+        }
         (void)tg_gui_photo_map_pen_rows(
             ctx, slot, slot->stage_rgb,
             slot->decode_w, slot->decode_h, &slot->stage_pen,
@@ -2109,7 +2178,10 @@ static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
    pass became drawable (or a failure changed the placeholder state). */
 static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
                                     unsigned int mcu_budget,
-                                    int pen_row_budget)
+                                    int pen_row_budget,
+                                    unsigned long cache_budget,
+                                    int *used_turn,
+                                    int *work_kind)
 {
     tg_gui_photo_slot *slot;
     tg_gui_photo_slot *offscreen_active;
@@ -2118,6 +2190,12 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
     int decode_rc;
     int changed;
 
+    if (used_turn != 0) {
+        *used_turn = 0;
+    }
+    if (work_kind != 0) {
+        *work_kind = TG_GUI_PHOTO_WORK_NONE;
+    }
     if (ctx == 0 || ctx->photo_resize_active || mcu_budget == 0U ||
         pen_row_budget <= 0) {
         return 0;
@@ -2171,9 +2249,12 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
         !tg_gui_photo_pipeline_owns(slot, TG_GUI_PHOTO_SCOPE_INLINE)) {
         return 0;
     }
+    if (used_turn != 0) {
+        *used_turn = 1;
+    }
     changed = tg_gui_photo_quality_tick(
-        ctx, slot, mcu_budget, pen_row_budget,
-        TG_GUI_PHOTO_DECODE_CAP, 0, &decode_rc);
+        ctx, slot, mcu_budget, pen_row_budget, cache_budget,
+        TG_GUI_PHOTO_DECODE_CAP, 0, &decode_rc, work_kind);
     if (changed < 0) {
         tg_gui_photo_decode_reject(slot, decode_rc);
         return 1;
@@ -5734,7 +5815,9 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
 static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
                                            unsigned int mcu_budget,
                                            int pen_row_budget,
-                                           int *used_turn)
+                                           unsigned long cache_budget,
+                                           int *used_turn,
+                                           int *work_kind)
 {
     tg_gui_photo_slot *slot;
     tg_gui_photo_slot *owner;
@@ -5743,6 +5826,9 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
 
     if (used_turn != 0) {
         *used_turn = 0;
+    }
+    if (work_kind != 0) {
+        *work_kind = TG_GUI_PHOTO_WORK_NONE;
     }
     if (viewer == 0 || viewer->ctx.window == 0 ||
         viewer->ctx.photo_resize_active) {
@@ -5774,8 +5860,8 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
         *used_turn = 1;
     }
     changed = tg_gui_photo_quality_tick(
-        &viewer->ctx, slot, mcu_budget, pen_row_budget,
-        TG_GUI_PHOTO_VIEWER_DECODE_CAP, 1, &decode_rc);
+        &viewer->ctx, slot, mcu_budget, pen_row_budget, cache_budget,
+        TG_GUI_PHOTO_VIEWER_DECODE_CAP, 1, &decode_rc, work_kind);
     if (changed < 0) {
         tg_gui_photo_viewer_reject(viewer, decode_rc, 1);
         return 1;
@@ -5864,6 +5950,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     tg_gui_timereq *timer_req = 0;
     int timer_ok = 0;
     int timer_pending = 0;
+    int timer_fast = 0;
     int caret_ticks;
     time_t xfer_mark;          /* rate window start (transfer progress) */
     unsigned long xfer_bytes;  /* bytes at xfer_mark */
@@ -5898,11 +5985,13 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     time_t last_session_poll;
     time_t last_receive_drain;
     time_t last_key_time;
-    time_t last_interactive_time;
     int resize_pending;
     int resize_settle_ticks;
     int photo_defer_ticks;
     int photo_stall_reason;
+    int photo_fast_wake;
+    tg_gui_photo_pace photo_decode_pace;
+    tg_gui_photo_pace photo_cache_pace;
 
     if (state == 0) {
         return 2;
@@ -6269,7 +6358,17 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     resize_settle_ticks = 0;
     photo_defer_ticks = 0;
     photo_stall_reason = TG_GUI_PHOTO_STALL_NONE;
-    last_interactive_time = time(0);
+    photo_fast_wake = 0;
+    tg_gui_photo_pace_init(&photo_decode_pace,
+                           TG_GUI_PHOTO_WORK_MIN,
+                           TG_GUI_PHOTO_WORK_INITIAL,
+                           TG_GUI_PHOTO_WORK_MAX,
+                           TG_GUI_PHOTO_PACE_TARGET_MS);
+    tg_gui_photo_pace_init(&photo_cache_pace,
+                           TG_GUI_PHOTO_CACHE_MIN,
+                           TG_GUI_PHOTO_CACHE_INITIAL,
+                           TG_GUI_PHOTO_CACHE_MAX,
+                           TG_GUI_PHOTO_PACE_TARGET_MS);
     /* Live-reception heartbeat. INTUITICKS are delivered ONLY to the ACTIVE
        window, so with the window deactivated the loop slept in Wait() and the
        network poll never ran -- incoming messages stalled until the user came
@@ -6287,10 +6386,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         OpenDevice((CONST_STRPTR)"timer.device", UNIT_VBLANK,
                    (struct IORequest *)timer_req, 0) == 0) {
         timer_ok = 1;
-        TG_GUI_TR_NODE(timer_req).io_Command = TR_ADDREQUEST;
-        TG_GUI_TR_SECS(timer_req) = TG_GUI_HEARTBEAT_SECS;
-        TG_GUI_TR_MICRO(timer_req) = 0;
-        SendIO((struct IORequest *)timer_req);
+        tg_gui_timer_arm(timer_req, 0);
         timer_pending = 1;
     }
     while (!done) {
@@ -6346,9 +6442,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         }
         tg_gui_photo_viewer_drain(&viewer, &photo_tick,
                                   &interactive_event);
-        if (interactive_event) {
-            last_interactive_time = time(0);
-        }
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
             ULONG msg_class;
@@ -6375,7 +6468,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             } else {
                 /* Any real queued event wins over background image work. */
                 interactive_event = 1;
-                last_interactive_time = time(0);
             }
             /* Feed REAL user input (keys, clicks, pointer motion) into the
                platform entropy ring -- the DRBG absorbs it on every generate.
@@ -8616,31 +8708,70 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             session_dirty = 1;
             viewer_dirty = 1;
         }
-        /* Decode only on an idle tick, after every queued GUI event was handled.
-           A key, wheel, pointer move or NEWSIZE wins this turn; the decoder
-           resumes from the same MCU on the next tick. */
+        /* Decode only on a permitted background turn. The budget begins at the
+           old conservative slice and adapts from measured DateStamp time. A
+           fast target may drain several local cache/decode stages inside the
+           same ~120 ms envelope; queued input still stops the loop immediately. */
         if (photo_background_turn) {
-            unsigned int mcu_budget = TG_GUI_PHOTO_MCUS_PER_TICK;
-            int pen_row_budget = TG_GUI_PHOTO_PEN_ROWS_PER_TICK;
-            int viewer_used = 0;
-            time_t photo_now = time(0);
+            unsigned long turn_start;
+            int local_steps;
 
-            if (photo_now != (time_t)-1 &&
-                last_interactive_time != (time_t)-1 &&
-                photo_now > last_interactive_time &&
-                (unsigned long)(photo_now - last_interactive_time) > 1UL) {
-                mcu_budget = TG_GUI_PHOTO_IDLE_MCUS_PER_TICK;
-                pen_row_budget = TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK;
-            }
-            if (tg_gui_photo_viewer_decode_tick(
-                    &viewer, mcu_budget, pen_row_budget, &viewer_used)) {
-                viewer_dirty = 1;
-            }
-            if (!viewer_used &&
-                tg_gui_photo_decode_tick(&ctx, mcu_budget,
-                                         pen_row_budget)) {
-                session_dirty = 1;
-            }
+            turn_start = tg_gui_photo_now_ms();
+            local_steps = 0;
+            do {
+                unsigned long slice_start;
+                unsigned long slice_end;
+                unsigned long slice_ms;
+                unsigned long work_budget;
+                unsigned long cache_budget;
+                int viewer_used;
+                int inline_used;
+                int work_kind;
+
+                work_budget = photo_decode_pace.budget;
+                cache_budget = photo_cache_pace.budget;
+                viewer_used = 0;
+                inline_used = 0;
+                work_kind = TG_GUI_PHOTO_WORK_NONE;
+                slice_start = tg_gui_photo_now_ms();
+                if (tg_gui_photo_viewer_decode_tick(
+                        &viewer, (unsigned int)work_budget,
+                        (int)work_budget, cache_budget,
+                        &viewer_used, &work_kind)) {
+                    viewer_dirty = 1;
+                }
+                if (!viewer_used &&
+                    tg_gui_photo_decode_tick(
+                        &ctx, (unsigned int)work_budget,
+                        (int)work_budget, cache_budget,
+                        &inline_used, &work_kind)) {
+                    session_dirty = 1;
+                }
+                if (!viewer_used && !inline_used) {
+                    break;
+                }
+                slice_end = tg_gui_photo_now_ms();
+                slice_ms = tg_gui_photo_elapsed_ms(slice_start, slice_end);
+                if (work_kind == TG_GUI_PHOTO_WORK_CACHE) {
+                    tg_gui_photo_pace_observe_log(&photo_cache_pace, slice_ms);
+                    photo_fast_wake =
+                        photo_cache_pace.budget > photo_cache_pace.minimum ||
+                        slice_ms < photo_cache_pace.target_ms;
+                } else if (work_kind == TG_GUI_PHOTO_WORK_DECODE) {
+                    tg_gui_photo_pace_observe_log(&photo_decode_pace, slice_ms);
+                    photo_fast_wake =
+                        photo_decode_pace.budget > photo_decode_pace.minimum ||
+                        slice_ms < photo_decode_pace.target_ms;
+                }
+                ++local_steps;
+                if (!tg_gui_photo_decode_pending(&viewer) ||
+                    tg_gui_window_user_events_pending(&ctx, &viewer)) {
+                    break;
+                }
+            } while (local_steps < TG_GUI_PHOTO_LOCAL_STEPS_MAX &&
+                     tg_gui_photo_elapsed_ms(turn_start,
+                                             tg_gui_photo_now_ms()) <
+                         TG_GUI_PHOTO_PACE_TARGET_MS);
         }
         /* Load-older paging: a scroll-up reached the top of the transcript. "Top"
            INCLUDES the case where the whole backlog FITS the window (sb_tr_max==0,
@@ -8675,8 +8806,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             }
         }
         /* Heartbeat fired? Run the SAME poll the INTUITICKS path runs (same
-           cadence guard via last_session_poll, same composing-idle deferral),
-           then re-arm. This is what keeps reception alive while the window is
+           cadence guard via last_session_poll, same composing-idle deferral).
+           The scheduler below re-arms it at the heartbeat or photo-work rate.
+           This is what keeps reception alive while the window is
            inactive; when it is active the shared time guard prevents any
            double-polling. */
         if (timer_ok && timer_pending &&
@@ -8717,11 +8849,6 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                 }
             }
-            TG_GUI_TR_NODE(timer_req).io_Command = TR_ADDREQUEST;
-            TG_GUI_TR_SECS(timer_req) = TG_GUI_HEARTBEAT_SECS;
-            TG_GUI_TR_MICRO(timer_req) = 0;
-            SendIO((struct IORequest *)timer_req);
-            timer_pending = 1;
         }
         if (session_dirty || scroll_dirty) {
             tg_gui_window_paint(state, &backend);
@@ -8752,6 +8879,30 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             older_exhausted = 0;
             older_cooldown = 0;
             prev_selected = state->selected_chat;
+        }
+        /* Fast measured slices keep a 150 ms wake while local photo work is
+           pending. Once a slow machine settles at the conservative floor, or
+           the queue empties, return to the original two-second heartbeat. */
+        if (timer_ok) {
+            int photo_pending_now;
+            int want_fast_timer;
+
+            photo_pending_now = tg_gui_session_photo_pending() ||
+                                tg_gui_photo_decode_pending(&viewer);
+            if (!photo_pending_now) {
+                photo_fast_wake = 0;
+            }
+            want_fast_timer = photo_pending_now && photo_fast_wake;
+            if (timer_pending && timer_fast != want_fast_timer) {
+                AbortIO((struct IORequest *)timer_req);
+                (void)WaitIO((struct IORequest *)timer_req);
+                timer_pending = 0;
+            }
+            if (!timer_pending) {
+                tg_gui_timer_arm(timer_req, want_fast_timer);
+                timer_pending = 1;
+                timer_fast = want_fast_timer;
+            }
         }
     }
 

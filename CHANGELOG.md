@@ -38,6 +38,11 @@ unless noted.
   photos above 10 MiB are sent as documents with explicit status feedback.
 
 ### Changed
+- Photo decode and canonical-cache reads now size their idle slices from
+  measured execution time instead of a fixed CPU-family assumption. Slow 68k
+  machines retain the conservative floor, while fast 68k accelerators ramp up
+  toward a roughly 120 ms work budget and use a short wake cadence until the
+  visible photo queue is drained.
 - Non-68k photo scheduling now starts bounded background work without waiting
   behind a continuous pointer-event stream, advances larger JPEG and palette
   slices, and loads normal canonical RGB frames in about two chunks. The

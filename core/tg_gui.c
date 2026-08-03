@@ -223,6 +223,62 @@ void tg_gui_photo_decode_gate_release(tg_gui_photo_decode_gate *gate,
     }
 }
 
+void tg_gui_photo_pace_init(tg_gui_photo_pace *pace,
+                            unsigned long minimum,
+                            unsigned long initial,
+                            unsigned long maximum,
+                            unsigned long target_ms)
+{
+    if (pace == 0) {
+        return;
+    }
+    if (minimum == 0UL) {
+        minimum = 1UL;
+    }
+    if (maximum < minimum) {
+        maximum = minimum;
+    }
+    if (initial < minimum) {
+        initial = minimum;
+    } else if (initial > maximum) {
+        initial = maximum;
+    }
+    pace->minimum = minimum;
+    pace->maximum = maximum;
+    pace->budget = initial;
+    pace->target_ms = target_ms != 0UL ? target_ms : 1UL;
+}
+
+int tg_gui_photo_pace_observe(tg_gui_photo_pace *pace,
+                              unsigned long elapsed_ms)
+{
+    unsigned long next;
+
+    if (pace == 0 || pace->minimum == 0UL ||
+        pace->maximum < pace->minimum || pace->target_ms == 0UL) {
+        return 0;
+    }
+    next = pace->budget;
+    if (elapsed_ms < (pace->target_ms + 1UL) / 2UL &&
+        next < pace->maximum) {
+        if (next > pace->maximum / 2UL) {
+            next = pace->maximum;
+        } else {
+            next *= 2UL;
+        }
+    } else if (elapsed_ms > pace->target_ms && next > pace->minimum) {
+        next /= 2UL;
+        if (next < pace->minimum) {
+            next = pace->minimum;
+        }
+    }
+    if (next == pace->budget) {
+        return 0;
+    }
+    pace->budget = next;
+    return 1;
+}
+
 int tg_gui_photo_preview_prepare_all(int count,
                                      tg_gui_photo_preview_prepare_fn prepare,
                                      void *context)
@@ -3384,6 +3440,55 @@ int tg_gui_self_test(void)
             return 2;
         }
         tg_gui_photo_decode_gate_release(&gate, &token_b);
+    }
+    /* The real scheduler measures DateStamp ticks. Drive the same controller
+       with deterministic samples here: a fast machine reaches the cap, a slow
+       one returns to the historical minimum, and changing slice widths cannot
+       change the produced bytes. */
+    {
+        tg_gui_photo_pace fast;
+        tg_gui_photo_pace slow;
+        unsigned char source[257];
+        unsigned char adaptive[257];
+        unsigned char direct[257];
+        unsigned long at;
+        unsigned long i;
+
+        tg_gui_photo_pace_init(&fast, 4UL, 12UL, 256UL, 120UL);
+        for (i = 0UL; i < 8UL; ++i) {
+            (void)tg_gui_photo_pace_observe(&fast, 20UL);
+        }
+        tg_gui_photo_pace_init(&slow, 4UL, 12UL, 256UL, 120UL);
+        for (i = 0UL; i < 4UL; ++i) {
+            (void)tg_gui_photo_pace_observe(&slow, 180UL);
+        }
+        if (fast.budget != fast.maximum || slow.budget != slow.minimum) {
+            puts("gui self-test: adaptive photo pace did not converge");
+            return 2;
+        }
+        for (i = 0UL; i < sizeof(source); ++i) {
+            source[i] = (unsigned char)((i * 37UL + 11UL) & 255UL);
+            direct[i] = (unsigned char)(source[i] ^ 0x5aU);
+        }
+        memset(adaptive, 0, sizeof(adaptive));
+        tg_gui_photo_pace_init(&fast, 4UL, 4UL, 64UL, 120UL);
+        at = 0UL;
+        while (at < sizeof(source)) {
+            unsigned long count = fast.budget;
+
+            if (count > sizeof(source) - at) {
+                count = sizeof(source) - at;
+            }
+            for (i = 0UL; i < count; ++i) {
+                adaptive[at + i] = (unsigned char)(source[at + i] ^ 0x5aU);
+            }
+            at += count;
+            (void)tg_gui_photo_pace_observe(&fast, 20UL);
+        }
+        if (memcmp(adaptive, direct, sizeof(direct)) != 0) {
+            puts("gui self-test: adaptive photo slices changed output");
+            return 2;
+        }
     }
     /* Newlines split into real lines (recording backend, wide max_width so
        only the '\n' breaks apply): "a\nbc\n\nd" -> a / bc / (blank) / d. */

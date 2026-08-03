@@ -527,6 +527,27 @@ int tg_gui_photo_decode_gate_owns(const tg_gui_photo_decode_gate *gate,
 void tg_gui_photo_decode_gate_release(tg_gui_photo_decode_gate *gate,
                                       const void *owner);
 
+/* Adaptive budget used by the native photo scheduler. The minimum is the
+   conservative slow-machine slice; observations may grow or shrink the current
+   budget without ever moving that floor. Kept portable so host CI can drive it
+   with a fake clock. */
+typedef struct tg_gui_photo_pace {
+    unsigned long minimum;
+    unsigned long maximum;
+    unsigned long budget;
+    unsigned long target_ms;
+} tg_gui_photo_pace;
+
+void tg_gui_photo_pace_init(tg_gui_photo_pace *pace,
+                            unsigned long minimum,
+                            unsigned long initial,
+                            unsigned long maximum,
+                            unsigned long target_ms);
+/* Returns nonzero only when the budget changed. Fast slices grow it, slices
+   above the target shrink it; values remain clamped to [minimum, maximum]. */
+int tg_gui_photo_pace_observe(tg_gui_photo_pace *pace,
+                              unsigned long elapsed_ms);
+
 /* Runs the cheap stripped-preview tier for every queued item before the
    serialized network/quality tier starts. The callback returns nonzero when
    that item has a drawable preview. Public so host CI exercises the exact
