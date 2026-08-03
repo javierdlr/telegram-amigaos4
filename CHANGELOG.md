@@ -38,6 +38,10 @@ unless noted.
   photos above 10 MiB are sent as documents with explicit status feedback.
 
 ### Changed
+- Non-68k photo scheduling now starts bounded background work without waiting
+  behind a continuous pointer-event stream, advances larger JPEG and palette
+  slices, and loads normal canonical RGB frames in about two chunks. The
+  conservative m68k pacing remains unchanged.
 - Final canonical photo frames are now cached atomically as versioned RGB888
   files beside their JPEGs. Reopening a viewed chat can load the exact pixels
   in bounded idle chunks without decoding JPEG again; corrupt or stale cache

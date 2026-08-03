@@ -642,6 +642,8 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 4
 #define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 12U
 #define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 12
+#define TG_GUI_PHOTO_MAX_DEFER_TICKS 6
+#define TG_GUI_PHOTO_FORCE_QUEUED_EVENTS 0
 #define TG_GUI_PHOTO_VIEWER_JPEG_MAX (768UL * 1024UL)
 #define TG_GUI_PHOTO_VIEWER_CANONICAL_CAP 512
 #define TG_GUI_PHOTO_VIEWER_DECODE_CAP 768
@@ -653,21 +655,22 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_JPEG_MAX (1024UL * 1024UL)
 #define TG_GUI_PHOTO_CANONICAL_CAP 448
 #define TG_GUI_PHOTO_DECODE_CAP 768
-#define TG_GUI_PHOTO_MCUS_PER_TICK 16U
-#define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 16
-#define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 48U
-#define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 48
+#define TG_GUI_PHOTO_MCUS_PER_TICK 64U
+#define TG_GUI_PHOTO_PEN_ROWS_PER_TICK 64
+#define TG_GUI_PHOTO_IDLE_MCUS_PER_TICK 192U
+#define TG_GUI_PHOTO_IDLE_PEN_ROWS_PER_TICK 192
+#define TG_GUI_PHOTO_MAX_DEFER_TICKS 1
+#define TG_GUI_PHOTO_FORCE_QUEUED_EVENTS 1
 #define TG_GUI_PHOTO_VIEWER_JPEG_MAX (2UL * 1024UL * 1024UL)
 #define TG_GUI_PHOTO_VIEWER_CANONICAL_CAP 768
 #define TG_GUI_PHOTO_VIEWER_DECODE_CAP 1024
 #define TG_GUI_PHOTO_PREVIEW_CAP 192
 #define TG_GUI_PHOTO_VIEWER_PREVIEW_CAP 256
-#define TG_GUI_PHOTO_CACHE_READ_CHUNK (64UL * 1024UL)
+#define TG_GUI_PHOTO_CACHE_READ_CHUNK (384UL * 1024UL)
 #endif
 #define TG_GUI_PHOTO_REPLAY_CAP TG_GUI_PHOTO_VIEWER_CANONICAL_CAP
 #define TG_GUI_PHOTO_REQUESTS 24
 #define TG_GUI_PHOTO_VISIBLE_MAX 24
-#define TG_GUI_PHOTO_MAX_DEFER_TICKS 6
 
 #define TG_GUI_PHOTO_SCOPE_INLINE 0
 #define TG_GUI_PHOTO_SCOPE_VIEWER 1
@@ -8536,8 +8539,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         }
         /* Re-offer visible placeholders before deciding whether work exists.
            This heals a transient network failure without waiting for an
-           unrelated repaint. Continuous input may defer six photo ticks, then
-           one small slice runs after the queued events have been drained. */
+           unrelated repaint. m68k keeps its conservative input deferral;
+           faster targets run a full bounded slice immediately even under a
+           continuous VNC pointer stream. */
         if (photo_tick) {
             int pending;
             int events_pending;
@@ -8576,10 +8580,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     reason = TG_GUI_PHOTO_STALL_INTERACTIVE;
                 }
                 if (reason == TG_GUI_PHOTO_STALL_NONE ||
-                    (reason == TG_GUI_PHOTO_STALL_INTERACTIVE &&
+                    ((reason == TG_GUI_PHOTO_STALL_INTERACTIVE ||
+                      (TG_GUI_PHOTO_FORCE_QUEUED_EVENTS &&
+                       reason == TG_GUI_PHOTO_STALL_QUEUED_EVENT)) &&
                      photo_defer_ticks >=
                          TG_GUI_PHOTO_MAX_DEFER_TICKS - 1)) {
-                    if (reason == TG_GUI_PHOTO_STALL_INTERACTIVE &&
+                    if (photo_defer_ticks > 0 &&
+                        (reason == TG_GUI_PHOTO_STALL_INTERACTIVE ||
+                         reason == TG_GUI_PHOTO_STALL_QUEUED_EVENT) &&
                         photo_stall_reason != reason) {
                         tg_gui_photo_stall_diag(reason);
                     }
