@@ -77,6 +77,10 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- Photo source selection now prefers baseline JPEG sizes that the bundled
+  decoder supports. If a downloaded size is rejected, the client retries a
+  smaller untried baseline size instead of rejecting the whole photo for the
+  rest of the session; transcript and viewer use the same bounded fallback.
 - Final photo-quality upscales now derive fixed-point coordinates without a
   32-bit overflow, preventing large images from repeating rows or tiles when
   the detailed frame replaces a stripped or coarse preview.

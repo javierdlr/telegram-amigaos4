@@ -110,6 +110,15 @@ typedef struct tg_mtproto_document_meta {
    bounded inline representation and one larger viewer representation. They
    share the Photo identity/reference; a truncated reference is never kept. */
 #define TG_MTPROTO_PHOTO_TYPE_MAX 8U
+#define TG_MTPROTO_PHOTO_VARIANT_MAX 8U
+typedef struct tg_mtproto_photo_variant {
+    char type[TG_MTPROTO_PHOTO_TYPE_MAX];
+    unsigned long width;
+    unsigned long height;
+    unsigned long size;
+    unsigned char progressive;
+} tg_mtproto_photo_variant;
+
 typedef struct tg_mtproto_photo_meta {
     int has_photo; /* 0 = photoEmpty, no usable size, or absent */
     unsigned long id_hi;
@@ -128,6 +137,8 @@ typedef struct tg_mtproto_photo_meta {
     unsigned long large_width;
     unsigned long large_height;
     unsigned long large_size;
+    unsigned long variant_count;
+    tg_mtproto_photo_variant variants[TG_MTPROTO_PHOTO_VARIANT_MAX];
     unsigned long stripped_len;
     unsigned char stripped[TG_MTPROTO_STRIPPED_MAX];
 } tg_mtproto_photo_meta;

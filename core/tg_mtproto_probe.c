@@ -9873,7 +9873,15 @@ int tg_mtproto_chat_render_self_test(void)
 typedef struct tg_gui_photo_queue_entry {
     tg_mtproto_photo_meta photo;
     int large;
+    int progressive_skipped;
 } tg_gui_photo_queue_entry;
+
+typedef struct tg_gui_photo_cache_variant {
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned char large;
+    char type[TG_MTPROTO_PHOTO_TYPE_MAX];
+} tg_gui_photo_cache_variant;
 
 typedef struct tg_gui_photo_fetch_state {
     int active;
@@ -9896,12 +9904,19 @@ static int tg_gui_photo_queue_count;
 static unsigned long tg_gui_photo_tried_hi[TG_GUI_PHOTO_TRIED_MAX];
 static unsigned long tg_gui_photo_tried_lo[TG_GUI_PHOTO_TRIED_MAX];
 static unsigned char tg_gui_photo_tried_large[TG_GUI_PHOTO_TRIED_MAX];
+static char tg_gui_photo_tried_type[TG_GUI_PHOTO_TRIED_MAX]
+                                     [TG_MTPROTO_PHOTO_TYPE_MAX];
 static int tg_gui_photo_tried_count;
+static tg_gui_photo_cache_variant
+    tg_gui_photo_cache_variants[TG_GUI_PHOTO_TRIED_MAX];
+static int tg_gui_photo_cache_variant_count;
 static tg_mtproto_photo_meta tg_gui_photo_catalog[TG_GUI_PHOTO_CATALOG_MAX];
 static int tg_gui_photo_catalog_count;
 static int tg_gui_photo_inline_enabled = 1;
 static tg_gui_photo_fetch_state tg_gui_photo_fetch;
 static int tg_gui_photo_queue_pop(tg_gui_photo_queue_entry *entry);
+static tg_mtproto_photo_meta *tg_gui_photo_catalog_find(
+    unsigned long id_hi, unsigned long id_lo);
 
 static void tg_gui_photo_log(const char *message)
 {
@@ -10057,14 +10072,18 @@ static int tg_gui_photo_cache_exists(unsigned long id_hi, unsigned long id_lo,
 }
 
 static int tg_gui_photo_was_tried(unsigned long id_hi, unsigned long id_lo,
-                                  int large)
+                                  int large, const char *type)
 {
     int i;
 
+    if (type == 0 || type[0] == '\0') {
+        return 0;
+    }
     for (i = 0; i < tg_gui_photo_tried_count; ++i) {
         if (tg_gui_photo_tried_hi[i] == id_hi &&
             tg_gui_photo_tried_lo[i] == id_lo &&
-            tg_gui_photo_tried_large[i] == (unsigned char)(large ? 1 : 0)) {
+            tg_gui_photo_tried_large[i] == (unsigned char)(large ? 1 : 0) &&
+            strcmp(tg_gui_photo_tried_type[i], type) == 0) {
             return 1;
         }
     }
@@ -10072,11 +10091,13 @@ static int tg_gui_photo_was_tried(unsigned long id_hi, unsigned long id_lo,
 }
 
 static void tg_gui_photo_remember_tried(unsigned long id_hi,
-                                        unsigned long id_lo, int large)
+                                        unsigned long id_lo, int large,
+                                        const char *type)
 {
     int at;
 
-    if (tg_gui_photo_was_tried(id_hi, id_lo, large)) {
+    if (type == 0 || type[0] == '\0' ||
+        tg_gui_photo_was_tried(id_hi, id_lo, large, type)) {
         return;
     }
     at = tg_gui_photo_tried_count;
@@ -10087,6 +10108,8 @@ static void tg_gui_photo_remember_tried(unsigned long id_hi,
             tg_gui_photo_tried_hi[i - 1] = tg_gui_photo_tried_hi[i];
             tg_gui_photo_tried_lo[i - 1] = tg_gui_photo_tried_lo[i];
             tg_gui_photo_tried_large[i - 1] = tg_gui_photo_tried_large[i];
+            strcpy(tg_gui_photo_tried_type[i - 1],
+                   tg_gui_photo_tried_type[i]);
         }
         at = TG_GUI_PHOTO_TRIED_MAX - 1;
     } else {
@@ -10095,6 +10118,207 @@ static void tg_gui_photo_remember_tried(unsigned long id_hi,
     tg_gui_photo_tried_hi[at] = id_hi;
     tg_gui_photo_tried_lo[at] = id_lo;
     tg_gui_photo_tried_large[at] = (unsigned char)(large ? 1 : 0);
+    strcpy(tg_gui_photo_tried_type[at], type);
+}
+
+static void tg_gui_photo_cache_variant_remember(unsigned long id_hi,
+                                                unsigned long id_lo,
+                                                int large,
+                                                const char *type)
+{
+    int i;
+    int at;
+
+    if (type == 0 || type[0] == '\0') {
+        return;
+    }
+    for (i = 0; i < tg_gui_photo_cache_variant_count; ++i) {
+        if (tg_gui_photo_cache_variants[i].id_hi == id_hi &&
+            tg_gui_photo_cache_variants[i].id_lo == id_lo &&
+            tg_gui_photo_cache_variants[i].large ==
+                (unsigned char)(large ? 1 : 0)) {
+            strcpy(tg_gui_photo_cache_variants[i].type, type);
+            return;
+        }
+    }
+    at = tg_gui_photo_cache_variant_count;
+    if (at >= TG_GUI_PHOTO_TRIED_MAX) {
+        for (i = 1; i < TG_GUI_PHOTO_TRIED_MAX; ++i) {
+            tg_gui_photo_cache_variants[i - 1] =
+                tg_gui_photo_cache_variants[i];
+        }
+        at = TG_GUI_PHOTO_TRIED_MAX - 1;
+    } else {
+        ++tg_gui_photo_cache_variant_count;
+    }
+    tg_gui_photo_cache_variants[at].id_hi = id_hi;
+    tg_gui_photo_cache_variants[at].id_lo = id_lo;
+    tg_gui_photo_cache_variants[at].large =
+        (unsigned char)(large ? 1 : 0);
+    strcpy(tg_gui_photo_cache_variants[at].type, type);
+}
+
+static int tg_gui_photo_cache_variant_forget(unsigned long id_hi,
+                                             unsigned long id_lo,
+                                             int large, char *type,
+                                             unsigned long type_size)
+{
+    int i;
+    int j;
+
+    if (type != 0 && type_size != 0UL) {
+        type[0] = '\0';
+    }
+    for (i = 0; i < tg_gui_photo_cache_variant_count; ++i) {
+        if (tg_gui_photo_cache_variants[i].id_hi == id_hi &&
+            tg_gui_photo_cache_variants[i].id_lo == id_lo &&
+            tg_gui_photo_cache_variants[i].large ==
+                (unsigned char)(large ? 1 : 0)) {
+            if (type != 0 && type_size != 0UL) {
+                strncpy(type, tg_gui_photo_cache_variants[i].type,
+                        type_size - 1UL);
+                type[type_size - 1UL] = '\0';
+            }
+            for (j = i + 1; j < tg_gui_photo_cache_variant_count; ++j) {
+                tg_gui_photo_cache_variants[j - 1] =
+                    tg_gui_photo_cache_variants[j];
+            }
+            --tg_gui_photo_cache_variant_count;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int tg_gui_photo_prepare_queue_entry(
+    const tg_mtproto_photo_meta *source, int large,
+    tg_gui_photo_queue_entry *entry)
+{
+    unsigned long current_edge;
+    unsigned long current_size;
+    unsigned long best_edge;
+    unsigned long i;
+    const tg_mtproto_photo_variant *best;
+    int selected_progressive;
+
+    if (source == 0 || entry == 0 || !source->has_photo) {
+        return 0;
+    }
+    memset(entry, 0, sizeof(*entry));
+    entry->photo = *source;
+    entry->large = large ? 1 : 0;
+    if (entry->large && source->has_large) {
+        strcpy(entry->photo.thumb_type, source->large_thumb_type);
+        entry->photo.width = source->large_width;
+        entry->photo.height = source->large_height;
+        entry->photo.size = source->large_size;
+    }
+    if (entry->photo.thumb_type[0] == '\0' || entry->photo.width == 0UL ||
+        entry->photo.height == 0UL || entry->photo.size == 0UL) {
+        return 0;
+    }
+    selected_progressive = 0;
+    for (i = 0UL; i < source->variant_count; ++i) {
+        if (strcmp(source->variants[i].type, entry->photo.thumb_type) == 0) {
+            selected_progressive = source->variants[i].progressive != 0U;
+        } else if (source->variants[i].progressive) {
+            entry->progressive_skipped = 1;
+        }
+    }
+    if (!tg_gui_photo_was_tried(entry->photo.id_hi, entry->photo.id_lo,
+                                entry->large, entry->photo.thumb_type)) {
+        return 1;
+    }
+
+    /* A rejected source falls back only toward smaller baseline files. This
+       preserves the platform byte bound of the parser's primary choice while
+       avoiding another format that the baseline-only decoder cannot read. */
+    current_edge = entry->photo.width > entry->photo.height
+                       ? entry->photo.width : entry->photo.height;
+    current_size = entry->photo.size;
+    best = 0;
+    best_edge = 0UL;
+    for (i = 0UL; i < source->variant_count; ++i) {
+        const tg_mtproto_photo_variant *variant;
+        unsigned long edge;
+
+        variant = &source->variants[i];
+        edge = variant->width > variant->height
+                   ? variant->width : variant->height;
+        if (variant->progressive || variant->type[0] == '\0' ||
+            edge == 0UL || edge >= current_edge ||
+            variant->size == 0UL || variant->size > current_size ||
+            tg_gui_photo_was_tried(source->id_hi, source->id_lo,
+                                   entry->large, variant->type)) {
+            continue;
+        }
+        if (best == 0 || edge > best_edge ||
+            (edge == best_edge && variant->size < best->size)) {
+            best = variant;
+            best_edge = edge;
+        }
+    }
+    if (best == 0) {
+        return 0;
+    }
+    strcpy(entry->photo.thumb_type, best->type);
+    entry->photo.width = best->width;
+    entry->photo.height = best->height;
+    entry->photo.size = best->size;
+    entry->progressive_skipped = selected_progressive ||
+                                 entry->progressive_skipped;
+    return 1;
+}
+
+static int tg_gui_photo_queue_insert(const tg_gui_photo_queue_entry *source)
+{
+    tg_gui_photo_queue_entry entry;
+    int i;
+
+    if (source == 0) {
+        return 0;
+    }
+    entry = *source;
+    if (tg_gui_photo_cache_exists(entry.photo.id_hi, entry.photo.id_lo,
+                                  entry.large) ||
+        tg_gui_photo_canonical_cache_exists(
+            entry.photo.id_hi, entry.photo.id_lo, entry.large) ||
+        (tg_gui_photo_fetch.active &&
+         tg_gui_photo_fetch.large == entry.large &&
+         tg_gui_photo_fetch.photo.id_hi == entry.photo.id_hi &&
+         tg_gui_photo_fetch.photo.id_lo == entry.photo.id_lo)) {
+        return 0;
+    }
+    for (i = 0; i < tg_gui_photo_queue_count; ++i) {
+        if (tg_gui_photo_queue[i].large == entry.large &&
+            tg_gui_photo_queue[i].photo.id_hi == entry.photo.id_hi &&
+            tg_gui_photo_queue[i].photo.id_lo == entry.photo.id_lo) {
+            int j;
+
+            for (j = i + 1; j < tg_gui_photo_queue_count; ++j) {
+                tg_gui_photo_queue[j - 1] = tg_gui_photo_queue[j];
+            }
+            tg_gui_photo_queue[tg_gui_photo_queue_count - 1] = entry;
+            return 1;
+        }
+    }
+    if (tg_gui_photo_queue_count >= TG_GUI_PHOTO_QUEUE_MAX) {
+        int drop;
+
+        drop = 0;
+        for (i = 0; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
+            if (!tg_gui_photo_queue[i].large) {
+                drop = i;
+                break;
+            }
+        }
+        for (i = drop + 1; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
+            tg_gui_photo_queue[i - 1] = tg_gui_photo_queue[i];
+        }
+        tg_gui_photo_queue_count = TG_GUI_PHOTO_QUEUE_MAX - 1;
+    }
+    tg_gui_photo_queue[tg_gui_photo_queue_count++] = entry;
+    return 1;
 }
 
 void tg_gui_session_photo_decode_failed_variant(unsigned long id_hi,
@@ -10102,6 +10326,10 @@ void tg_gui_session_photo_decode_failed_variant(unsigned long id_hi,
                                                 int large)
 {
     char path[64];
+    char failed_type[TG_MTPROTO_PHOTO_TYPE_MAX];
+    tg_mtproto_photo_meta *photo;
+    tg_gui_photo_queue_entry fallback;
+    int known_type;
 
     if (id_hi == 0UL && id_lo == 0UL) {
         return;
@@ -10111,8 +10339,24 @@ void tg_gui_session_photo_decode_failed_variant(unsigned long id_hi,
         return;
     }
     (void)remove(path);
-    tg_gui_photo_remember_tried(id_hi, id_lo, large);
-    tg_gui_photo_log("photo: decode reject; cache removed");
+    known_type = tg_gui_photo_cache_variant_forget(
+        id_hi, id_lo, large, failed_type, sizeof(failed_type));
+    if (known_type) {
+        tg_gui_photo_remember_tried(id_hi, id_lo, large, failed_type);
+    }
+    photo = tg_gui_photo_catalog_find(id_hi, id_lo);
+    if (photo != 0 &&
+        tg_gui_photo_prepare_queue_entry(photo, large, &fallback) &&
+        tg_gui_photo_queue_insert(&fallback)) {
+        char line[80];
+
+        sprintf(line, known_type ? "photo: decode reject; fallback %s"
+                                 : "photo: old cache rejected; retry %s",
+                fallback.photo.thumb_type);
+        tg_gui_photo_log(line);
+    } else {
+        tg_gui_photo_log("photo: decode reject; baseline sizes exhausted");
+    }
 }
 
 void tg_gui_session_photo_decode_failed(unsigned long id_hi,
@@ -10158,72 +10402,19 @@ static void tg_gui_photo_catalog_offer(const tg_mtproto_photo_meta *photo)
     tg_gui_photo_catalog[tg_gui_photo_catalog_count++] = *photo;
 }
 
-static void tg_gui_photo_queue_offer(const tg_mtproto_photo_meta *source,
-                                     int large)
+static int tg_gui_photo_queue_offer(const tg_mtproto_photo_meta *source,
+                                    int large)
 {
     tg_gui_photo_queue_entry entry;
-    int i;
 
     if (source == 0 || !source->has_photo ||
         (!large && !tg_gui_photo_inline_enabled)) {
-        return;
+        return 0;
     }
-    memset(&entry, 0, sizeof(entry));
-    entry.photo = *source;
-    entry.large = large ? 1 : 0;
-    if (entry.large && source->has_large) {
-        strcpy(entry.photo.thumb_type, source->large_thumb_type);
-        entry.photo.width = source->large_width;
-        entry.photo.height = source->large_height;
-        entry.photo.size = source->large_size;
+    if (!tg_gui_photo_prepare_queue_entry(source, large, &entry)) {
+        return 0;
     }
-    if (tg_gui_photo_cache_exists(entry.photo.id_hi, entry.photo.id_lo,
-                                  entry.large) ||
-        tg_gui_photo_canonical_cache_exists(
-            entry.photo.id_hi, entry.photo.id_lo, entry.large) ||
-        tg_gui_photo_was_tried(entry.photo.id_hi, entry.photo.id_lo,
-                               entry.large) ||
-        (tg_gui_photo_fetch.active &&
-         tg_gui_photo_fetch.large == entry.large &&
-         tg_gui_photo_fetch.photo.id_hi == entry.photo.id_hi &&
-         tg_gui_photo_fetch.photo.id_lo == entry.photo.id_lo)) {
-        return;
-    }
-    for (i = 0; i < tg_gui_photo_queue_count; ++i) {
-        if (tg_gui_photo_queue[i].large == entry.large &&
-            tg_gui_photo_queue[i].photo.id_hi == entry.photo.id_hi &&
-            tg_gui_photo_queue[i].photo.id_lo == entry.photo.id_lo) {
-            int j;
-
-            /* Refresh the file_reference and move viewer demand to the newest
-               end. Inline paints cannot then leave a clicked photo behind a
-               full screen of thumbnail requests. */
-            for (j = i + 1; j < tg_gui_photo_queue_count; ++j) {
-                tg_gui_photo_queue[j - 1] = tg_gui_photo_queue[j];
-            }
-            tg_gui_photo_queue[tg_gui_photo_queue_count - 1] = entry;
-            return;
-        }
-    }
-    if (tg_gui_photo_queue_count >= TG_GUI_PHOTO_QUEUE_MAX) {
-        int drop;
-
-        /* Preserve foreground viewer requests whenever an inline entry can be
-           evicted instead. There is one viewer, but a rapid photo switch can
-           briefly leave more than one large request in this bounded queue. */
-        drop = 0;
-        for (i = 0; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
-            if (!tg_gui_photo_queue[i].large) {
-                drop = i;
-                break;
-            }
-        }
-        for (i = drop + 1; i < TG_GUI_PHOTO_QUEUE_MAX; ++i) {
-            tg_gui_photo_queue[i - 1] = tg_gui_photo_queue[i];
-        }
-        tg_gui_photo_queue_count = TG_GUI_PHOTO_QUEUE_MAX - 1;
-    }
-    tg_gui_photo_queue[tg_gui_photo_queue_count++] = entry;
+    return tg_gui_photo_queue_insert(&entry);
 }
 
 int tg_gui_session_photo_pending(void)
@@ -10327,6 +10518,7 @@ static void tg_gui_photo_queue_reset(void)
     memset(&tg_gui_photo_fetch, 0, sizeof(tg_gui_photo_fetch));
     tg_gui_photo_queue_count = 0;
     tg_gui_photo_tried_count = 0;
+    tg_gui_photo_cache_variant_count = 0;
     tg_gui_photo_catalog_count = 0;
 }
 
@@ -13638,6 +13830,7 @@ int tg_mtproto_probe_self_test(void)
             photo.has_photo = 1;
             photo.id_hi = 0xf0090000UL;
             photo.id_lo = (unsigned long)i + 1UL;
+            strcpy(photo.thumb_type, "m");
             photo.width = photo.height = 64UL;
             photo.size = 1024UL;
             tg_gui_photo_queue_offer(&photo, 0);
@@ -13646,6 +13839,7 @@ int tg_mtproto_probe_self_test(void)
         photo.has_photo = 1;
         photo.id_hi = 0xf0090001UL;
         photo.id_lo = 1UL;
+        strcpy(photo.thumb_type, "m");
         photo.width = photo.height = 64UL;
         photo.size = 1024UL;
         photo.has_large = 1;
@@ -13667,6 +13861,132 @@ int tg_mtproto_probe_self_test(void)
             !tg_gui_photo_queue_pop(&next) || !next.large) {
             tg_gui_photo_queue_reset();
             puts("probe self-test: viewer photo queue priority wrong");
+            return 2;
+        }
+        tg_gui_photo_queue_reset();
+    }
+
+    /* Unsupported/corrupt sources are remembered by exact size type. A mixed
+       catalog keeps the baseline primary, then walks smaller baseline sizes;
+       a progressive-only photo exhausts cleanly without poisoning another id. */
+    {
+        tg_mtproto_photo_meta photo;
+        tg_gui_photo_queue_entry next;
+
+        tg_gui_photo_queue_reset();
+        tg_gui_photo_inline_enabled = 1;
+        memset(&photo, 0, sizeof(photo));
+        photo.has_photo = 1;
+        photo.id_hi = 0xf0091000UL;
+        photo.id_lo = 1UL;
+        strcpy(photo.thumb_type, "y");
+        photo.width = 1280UL;
+        photo.height = 800UL;
+        photo.size = 900000UL;
+        photo.has_large = 1;
+        strcpy(photo.large_thumb_type, "y");
+        photo.large_width = photo.width;
+        photo.large_height = photo.height;
+        photo.large_size = photo.size;
+        photo.variant_count = 4UL;
+        strcpy(photo.variants[0].type, "s");
+        photo.variants[0].width = 80UL;
+        photo.variants[0].height = 50UL;
+        photo.variants[0].size = 10000UL;
+        strcpy(photo.variants[1].type, "m");
+        photo.variants[1].width = 320UL;
+        photo.variants[1].height = 200UL;
+        photo.variants[1].size = 50000UL;
+        strcpy(photo.variants[2].type, "x");
+        photo.variants[2].width = 800UL;
+        photo.variants[2].height = 500UL;
+        photo.variants[2].size = 500000UL;
+        photo.variants[2].progressive = 1U;
+        strcpy(photo.variants[3].type, "y");
+        photo.variants[3].width = photo.width;
+        photo.variants[3].height = photo.height;
+        photo.variants[3].size = photo.size;
+        tg_gui_photo_catalog_offer(&photo);
+        if (!tg_gui_photo_queue_offer(&photo, 0) ||
+            !tg_gui_photo_queue_pop(&next) ||
+            strcmp(next.photo.thumb_type, "y") != 0 ||
+            !next.progressive_skipped) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: baseline photo primary wrong");
+            return 2;
+        }
+        tg_gui_photo_cache_variant_remember(photo.id_hi, photo.id_lo, 0,
+                                            next.photo.thumb_type);
+        tg_gui_session_photo_decode_failed(photo.id_hi, photo.id_lo);
+        if (!tg_gui_photo_queue_pop(&next) ||
+            strcmp(next.photo.thumb_type, "m") != 0) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: baseline photo first fallback wrong");
+            return 2;
+        }
+        tg_gui_photo_cache_variant_remember(photo.id_hi, photo.id_lo, 0,
+                                            next.photo.thumb_type);
+        tg_gui_session_photo_decode_failed(photo.id_hi, photo.id_lo);
+        if (!tg_gui_photo_queue_pop(&next) ||
+            strcmp(next.photo.thumb_type, "s") != 0) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: baseline photo second fallback wrong");
+            return 2;
+        }
+        tg_gui_photo_cache_variant_remember(photo.id_hi, photo.id_lo, 0,
+                                            next.photo.thumb_type);
+        tg_gui_session_photo_decode_failed(photo.id_hi, photo.id_lo);
+        if (tg_gui_session_photo_pending()) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: exhausted baseline photo was requeued");
+            return 2;
+        }
+        if (!tg_gui_photo_queue_offer(&photo, 1) ||
+            !tg_gui_photo_queue_pop(&next) || !next.large ||
+            strcmp(next.photo.thumb_type, "y") != 0) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: viewer baseline primary wrong");
+            return 2;
+        }
+        tg_gui_photo_cache_variant_remember(photo.id_hi, photo.id_lo, 1,
+                                            next.photo.thumb_type);
+        tg_gui_session_photo_decode_failed_variant(photo.id_hi, photo.id_lo,
+                                                   1);
+        if (!tg_gui_photo_queue_pop(&next) || !next.large ||
+            strcmp(next.photo.thumb_type, "m") != 0) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: viewer baseline fallback wrong");
+            return 2;
+        }
+
+        memset(&photo, 0, sizeof(photo));
+        photo.has_photo = 1;
+        photo.id_hi = 0xf0091001UL;
+        photo.id_lo = 1UL;
+        strcpy(photo.thumb_type, "x");
+        photo.width = 800UL;
+        photo.height = 500UL;
+        photo.size = 500000UL;
+        photo.variant_count = 1UL;
+        strcpy(photo.variants[0].type, "x");
+        photo.variants[0].width = photo.width;
+        photo.variants[0].height = photo.height;
+        photo.variants[0].size = photo.size;
+        photo.variants[0].progressive = 1U;
+        tg_gui_photo_catalog_offer(&photo);
+        if (!tg_gui_photo_queue_offer(&photo, 0) ||
+            !tg_gui_photo_queue_pop(&next) ||
+            strcmp(next.photo.thumb_type, "x") != 0) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: progressive-only primary missing");
+            return 2;
+        }
+        tg_gui_photo_cache_variant_remember(photo.id_hi, photo.id_lo, 0,
+                                            next.photo.thumb_type);
+        tg_gui_session_photo_decode_failed(photo.id_hi, photo.id_lo);
+        if (tg_gui_session_photo_pending()) {
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: progressive-only photo did not exhaust");
             return 2;
         }
         tg_gui_photo_queue_reset();
@@ -17019,6 +17339,9 @@ static int tg_gui_photo_finish(int success, const char *reason)
             tg_gui_photo_log("photo: fetch fail");
         }
     } else {
+        tg_gui_photo_cache_variant_remember(
+            id_hi, id_lo, tg_gui_photo_fetch.large,
+            tg_gui_photo_fetch.photo.thumb_type);
         if (tg_gui_photo_fetch.large) {
             dirty = 1;
             tg_gui_photo_log("photo: viewer fetch done");
@@ -17075,7 +17398,8 @@ static int tg_gui_photo_begin(FILE *stream)
             !tg_gui_photo_cache_exists(entry.photo.id_hi, entry.photo.id_lo,
                                        entry.large) &&
             !tg_gui_photo_was_tried(entry.photo.id_hi, entry.photo.id_lo,
-                                    entry.large)) {
+                                    entry.large,
+                                    entry.photo.thumb_type)) {
             found = 1;
             break;
         }
@@ -17111,6 +17435,13 @@ static int tg_gui_photo_begin(FILE *stream)
         tg_gui_photo_fetch.need_dc = entry.photo.dc_id;
     }
     tg_gui_photo_fetch.active = 1;
+    if (entry.progressive_skipped && tg_gui_log_is_enabled()) {
+        char line[80];
+
+        sprintf(line, "photo: progressive size skipped, fallback %s",
+                entry.photo.thumb_type);
+        tg_gui_log(line);
+    }
     tg_gui_photo_log_progress(entry.large ? "viewer fetch begin" : "fetch begin",
                               0UL, entry.photo.size);
     return 1;
