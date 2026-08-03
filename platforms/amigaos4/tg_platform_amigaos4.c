@@ -33,6 +33,7 @@
                                  explicit iface->ReadEClock() call */
 #include <dos/dosextens.h>
 #include <dos/dostags.h> /* SYS_Input/SYS_Output for the URL opener */
+#include <exec/tasks.h>
 #include <exec/exectags.h> /* ASOT_*/ASOIOR_* for AllocSysObject (PR #10) */
 #include <proto/dos.h>
 #include <proto/exec.h>
@@ -94,6 +95,31 @@ const char *tg_platform_name(void)
 const char *tg_platform_default_data_dir(void)
 {
     return "PROGDIR:";
+}
+
+int tg_platform_run_with_safe_stack(tg_platform_entry_fn entry,
+                                    int argc, char **argv)
+{
+#if defined(__amigaos4__)
+    struct Task *task;
+    unsigned long current_size;
+
+    /* AmigaOS 4 officially honours the $STACK cookie before main(). Avoid a
+       manual PPC StackSwap here: if a non-standard launcher ignores the
+       cookie, fail visibly rather than entering the GUI on unsafe bounds. */
+    task = FindTask(0);
+    if (task != 0 && task->tc_SPUpper != 0 && task->tc_SPLower != 0) {
+        current_size = (unsigned long)((unsigned char *)task->tc_SPUpper -
+                                       (unsigned char *)task->tc_SPLower);
+        if (current_size < TG_PLATFORM_SAFE_STACK_MIN) {
+            fprintf(stderr,
+                    "Telegram Amiga needs a 1 MiB stack; current stack is %lu bytes.\n",
+                    current_size);
+            return 20;
+        }
+    }
+#endif
+    return entry(argc, argv);
 }
 
 unsigned long tg_platform_local_epoch(void)

@@ -20,6 +20,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Build host binary
         run: make -f Makefile.host all
+      - name: Minimum stack cookie contract
+        run: strings build/host/TelegramAmiga | grep -F '$STACK:1048576' >/dev/null
       - name: MTProto self-test (TL / crypto / SRP / session)
         run: ./build/host/TelegramAmiga --mtproto-self-test
       - name: GUI layout self-test

@@ -66,6 +66,10 @@ $(TARGET): $(SRC) include/tg_app.h include/tg_bot.h include/tg_config.h include/
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(LDSTART) -o "$@" $(SRC) $(LDLIBS)
 	$(OBJCOPY) -R .got "$@"
 	printf '\013' | dd of="$@" bs=1 seek=8 conv=notrunc 2>/dev/null
+	@strings "$@" | grep -F '$$STACK:1048576' >/dev/null || { \
+		echo "ERROR: $@ is missing the 1 MiB AmigaDOS stack cookie" >&2; \
+		rm -f "$@"; exit 1; \
+	}
 
 clean:
 	rm -f "$(TARGET)"

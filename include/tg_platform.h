@@ -9,6 +9,21 @@
 #include "tg_net.h"
 #include "tg_tls.h"
 
+#define TG_PLATFORM_SAFE_STACK_SIZE 1048576UL
+#define TG_PLATFORM_SAFE_STACK_MIN 819200UL
+#define TG_PLATFORM_SAFE_STACK_COOKIE "$STACK:1048576"
+
+typedef int (*tg_platform_entry_fn)(int argc, char **argv);
+
+/**
+ * Runs the application entry point with enough stack for the GUI, crypto and
+ * large MTProto reply parsers. Amiga runtimes with a native minimum-stack
+ * mechanism validate it here; AROS can fall back to NewStackSwap(). Hosts pass
+ * straight through.
+ */
+int tg_platform_run_with_safe_stack(tg_platform_entry_fn entry,
+                                    int argc, char **argv);
+
 /**
  * Returns the human-readable platform name.
  *

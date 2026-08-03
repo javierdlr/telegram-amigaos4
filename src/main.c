@@ -19,6 +19,15 @@ static const char tg_amiga_ver_tag[] =
     "$VER: TelegramAmiga " TG_VERSION " (" TG_VERSION_DATE ")";
 #include "tg_platform.h"
 
+/* AmigaDOS scans this application-level cookie before entering main(). Keep it
+   in the shared entry module so OS3, OS4 and both AROS binaries cannot drift.
+   It is inert in the host test binary, where CI can still prove it survived
+   linking. MorphOS additionally needs its PPC-specific __stack declaration. */
+#if defined(__GNUC__)
+__attribute__((used))
+#endif
+static const char tg_amiga_stack_cookie[] = TG_PLATFORM_SAFE_STACK_COOKIE;
+
 
 /* Scan the WBStartup arg names for "TUI" (case-insensitive). Amiga-only; the
    host build has no Workbench and returns 0. Defensive: any null -> GUI. */
@@ -70,7 +79,7 @@ static int tg_main_finish(int result)
     return result;
 }
 
-int main(int argc, char **argv)
+static int tg_main_body(int argc, char **argv)
 {
     /*
      * Workbench launch (icon double-click): the Amiga C runtimes (clib2 on
@@ -184,4 +193,9 @@ int main(int argc, char **argv)
         }
     }
     return tg_main_finish(tg_app_run(argc, argv));
+}
+
+int main(int argc, char **argv)
+{
+    return tg_platform_run_with_safe_stack(tg_main_body, argc, argv);
 }

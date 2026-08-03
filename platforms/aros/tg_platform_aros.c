@@ -23,6 +23,8 @@
 
 #if defined(__AROS__)
 #include <exec/libraries.h>
+#include <exec/memory.h>
+#include <exec/tasks.h>
 #include <dos/dosextens.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
@@ -56,6 +58,22 @@ struct Library *SocketBase = 0;
 #include "tg_platform.h"
 #include "tg_mtproto_crypto.h"
 
+#if defined(__AROS__)
+struct tg_aros_stack_context {
+    tg_platform_entry_fn entry;
+    int argc;
+    char **argv;
+};
+
+static IPTR tg_aros_stack_entry(IPTR context_value)
+{
+    struct tg_aros_stack_context *ctx;
+
+    ctx = (struct tg_aros_stack_context *)context_value;
+    return (IPTR)ctx->entry(ctx->argc, ctx->argv);
+}
+#endif
+
 const char *tg_platform_name(void)
 {
     return "AROS";
@@ -64,6 +82,55 @@ const char *tg_platform_name(void)
 const char *tg_platform_default_data_dir(void)
 {
     return "PROGDIR:";
+}
+
+int tg_platform_run_with_safe_stack(tg_platform_entry_fn entry,
+                                    int argc, char **argv)
+{
+#if defined(__AROS__)
+    struct tg_aros_stack_context context;
+    struct Task *task;
+    unsigned long current_size;
+    APTR stack_memory;
+    struct StackSwapStruct stack;
+    struct StackSwapArgs args;
+    IPTR result;
+
+    task = FindTask(0);
+    if (task == 0 || task->tc_SPUpper == 0 || task->tc_SPLower == 0) {
+        return entry(argc, argv);
+    }
+    current_size = (unsigned long)((UBYTE *)task->tc_SPUpper -
+                                   (UBYTE *)task->tc_SPLower);
+    if (current_size >= TG_PLATFORM_SAFE_STACK_MIN) {
+        return entry(argc, argv);
+    }
+
+    stack_memory = AllocVec(TG_PLATFORM_SAFE_STACK_SIZE,
+                            MEMF_PUBLIC | MEMF_CLEAR);
+    if (stack_memory == 0) {
+        fprintf(stderr,
+                "Telegram Amiga: not enough memory for the required 1 MiB stack.\n");
+        return 20;
+    }
+
+    memset(&stack, 0, sizeof(stack));
+    memset(&args, 0, sizeof(args));
+    context.entry = entry;
+    context.argc = argc;
+    context.argv = argv;
+    stack.stk_Lower = stack_memory;
+    stack.stk_Upper = (UBYTE *)stack_memory + TG_PLATFORM_SAFE_STACK_SIZE;
+    stack.stk_Pointer = (UBYTE *)stack.stk_Upper - sizeof(IPTR);
+    args.Args[0] = (IPTR)&context;
+    fprintf(stderr, "stack: swapped %lu -> %lu\n", current_size,
+            (unsigned long)TG_PLATFORM_SAFE_STACK_SIZE);
+    result = NewStackSwap(&stack, (LONG_FUNC)tg_aros_stack_entry, &args);
+    FreeVec(stack_memory);
+    return (int)result;
+#else
+    return entry(argc, argv);
+#endif
 }
 
 unsigned long tg_platform_local_epoch(void)

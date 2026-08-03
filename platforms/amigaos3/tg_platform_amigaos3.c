@@ -104,8 +104,6 @@ struct Library *SocketBase = 0;
 
 static int tg_amigaos3_amissl_initialized = 0;
 
-const char stack_size[] = "$STACK:1048576";
-
 static int tg_amigaos3_amissl_init(char *error_buffer,
                                    unsigned long error_buffer_size);
 #endif
@@ -114,13 +112,6 @@ static int tg_amigaos3_amissl_init(char *error_buffer,
 /* bsdsocket.library base used by the proto/socket.h inlines (no ixemul to
    provide BSD sockets). Opened in tg_amigaos3_socket_open(). */
 struct Library *SocketBase = 0;
-/* Embed a big stack cookie so the binary gets a real stack on EVERY launch
-   path -- double-clicked icon, IconX script, or a bare shell -- not just when
-   the launcher's "Stack 1048576" applies. Matched to that launcher value and
-   to MorphOS's __stack: the GUI's wrapped-line arrays, the DH/PBKDF2 crypto
-   and the file-transfer parsers all want headroom, and 256 KB tripped a
-   low-stack warning on a real machine. 1 MB is trivial on the 8 MB box. */
-const char stack_size[] = "$STACK:1048576";
 #endif
 
 const char *tg_platform_name(void)
@@ -131,6 +122,28 @@ const char *tg_platform_name(void)
 const char *tg_platform_default_data_dir(void)
 {
     return "PROGDIR:";
+}
+
+int tg_platform_run_with_safe_stack(tg_platform_entry_fn entry,
+                                    int argc, char **argv)
+{
+#if defined(__amigaos3__)
+    struct Task *task;
+    unsigned long current_size;
+
+    task = FindTask(0);
+    if (task != 0 && task->tc_SPUpper != 0 && task->tc_SPLower != 0) {
+        current_size = (unsigned long)((unsigned char *)task->tc_SPUpper -
+                                       (unsigned char *)task->tc_SPLower);
+        if (current_size < TG_PLATFORM_SAFE_STACK_MIN) {
+            fprintf(stderr,
+                    "Telegram Amiga needs a 1 MiB stack; current stack is %lu bytes.\n",
+                    current_size);
+            return 20;
+        }
+    }
+#endif
+    return entry(argc, argv);
 }
 
 unsigned long tg_platform_local_epoch(void)

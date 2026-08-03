@@ -662,6 +662,15 @@ package_one() {
         *) echo "Unknown expected type: $expected" >&2; exit 1 ;;
     esac
 
+    case "$expected" in
+        amigaos4|aros-i386|aros-x86_64)
+            if ! strings "$binary" | grep -F '$STACK:1048576' >/dev/null; then
+                echo "ERROR $platform: binary lacks the 1 MiB AmigaDOS stack cookie." >&2
+                exit 1
+            fi
+            ;;
+    esac
+
     # Staleness guard: a binary OLDER than the sources means a forgotten rebuild
     # -- exactly how 0.0.2 shipped the previous OS4 binary. Override: ALLOW_STALE=1.
     if [ -z "${ALLOW_STALE:-}" ]; then

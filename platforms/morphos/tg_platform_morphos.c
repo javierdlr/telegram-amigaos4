@@ -87,6 +87,15 @@ const char *tg_platform_default_data_dir(void)
     return "PROGDIR:";
 }
 
+int tg_platform_run_with_safe_stack(tg_platform_entry_fn entry,
+                                    int argc, char **argv)
+{
+    /* libnix applies the 1 MiB PPC __stack override before main(). The classic
+       Task bounds describe the separate 68k stack, so they must not be used to
+       reject an otherwise safe MorphOS process here. */
+    return entry(argc, argv);
+}
+
 unsigned long tg_platform_local_epoch(void)
 {
     struct DateStamp ds;

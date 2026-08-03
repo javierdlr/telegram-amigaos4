@@ -51,6 +51,10 @@ all: $(TARGET)
 $(TARGET): $(OBJ)
 	mkdir -p $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)
+	@strings "$@" | grep -F '$$STACK:1048576' >/dev/null || { \
+		echo "ERROR: $@ is missing the 1 MiB AmigaDOS stack cookie" >&2; \
+		rm -f "$@"; exit 1; \
+	}
 
 HDRS_ALL := $(wildcard include/*.h) $(wildcard third_party/*/*.h)
 $(OBJ_DIR)/%.o: %.c $(HEADERS) $(HDRS_ALL)

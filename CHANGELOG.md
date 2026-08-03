@@ -77,6 +77,9 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- Shell launches now carry the same 1 MiB minimum-stack contract as Workbench
+  icons. AROS also swaps to a private safe stack when a launcher supplies less;
+  OS3 and OS4 reject unsafe bounds instead of entering the stack-heavy GUI.
 - Photo source selection now prefers baseline JPEG sizes that the bundled
   decoder supports. If a downloaded size is rejected, the client retries a
   smaller untried baseline size instead of rejecting the whole photo for the
