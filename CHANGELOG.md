@@ -81,6 +81,9 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- Local five-lane test packaging now creates AROS media only with Rock Ridge
+  plus Joliet, verifies the executable inside every archive and ISO, rejects
+  reused volume labels and keeps the macOS hybrid path limited to AmigaOS 4.
 - Progressive transcript photos and the photo viewer now share one
   owner-checked decode pipeline. Back-to-back fetch completions remain queued
   until the current image commits, preventing one photo from being repeated or
