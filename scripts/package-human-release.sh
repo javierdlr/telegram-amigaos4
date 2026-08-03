@@ -821,7 +821,13 @@ if [ "$AMINET" = "1" ] && [ -f "$AMINET_ROOT/TelegramAmiga-OS4.lha" ]; then
         printf 'url:%s\n' "$REPO_URL"
         printf 'category:network/chat\n'
         printf 'requirements:AmigaOS 4.x with its TCP/IP stack\n'
-        printf 'license:MIT\n'
+        # license must be one of THEIR values (help/help_submit.txt):
+        # Other APL BSD Commercial Emailware Freeware GPL LGPL MPL
+        # "Public domain" Shareware -- MIT is not in the list, so: Other.
+        # replaces is REQUIRED when updating an existing entry (0.0.8 failed
+        # validation on both, 2026-07-31; 0.0.7 passed only because it was new).
+        printf 'license:Other\n'
+        printf 'replaces:network/chat/telegramamiga.lha\n'
         printf 'distribute:yes\n'
         printf 'minosversion:4.0\n'
         printf 'hend:\n\n'
