@@ -8,6 +8,11 @@ unless noted.
 ## [Unreleased]
 
 ### Added
+- `Settings` now includes a persistent photo-cache limit (10, 50 or 200 MiB,
+  or Unlimited; default 50 MiB) and a confirmed `Clear photo cache` action.
+  The client catalogs `photos/` incrementally during idle time, prunes the
+  oldest files without evicting photos currently on screen, and never touches
+  the separate avatar cache.
 - Photo messages now use Telegram's embedded stripped thumbnail as an instant
   blurred preview while the bounded network image is fetched and refined. The
   tiny preview is cached separately, works in the transcript and viewer, and

@@ -57,6 +57,11 @@ int tg_gui_session_photo_pending(void);
    for a visible photo; 2 means the complete JPEG is cached, 1 means only its
    stripped preview is cached, and 0 means work is queued or disabled. */
 void tg_gui_session_set_inline_photos(int enabled);
+/* Pause automatic photo cache traffic while the native cache manager removes
+   files. Existing message metadata remains so visible photos can be requeued
+   when finish() resumes the pipeline. */
+void tg_gui_session_photo_cache_clear_prepare(void);
+void tg_gui_session_photo_cache_clear_finish(void);
 int tg_gui_session_request_inline_photo(unsigned long photo_id_hi,
                                         unsigned long photo_id_lo);
 

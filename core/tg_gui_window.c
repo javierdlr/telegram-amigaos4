@@ -116,6 +116,16 @@ typedef struct timerequest tg_gui_timereq;
 #include <proto/gadtools.h>
 #include <proto/dos.h>
 
+/* OS4 keeps the FileInfoBlock API behind explicit OBSOLETE* interface
+   entries; the classic lanes still expose the original names directly. */
+#if defined(__amigaos4__)
+#define TG_GUI_DOS_EXAMINE(lock, fib) OBSOLETEExamine((lock), (fib))
+#define TG_GUI_DOS_EXNEXT(lock, fib) OBSOLETEExNext((lock), (fib))
+#else
+#define TG_GUI_DOS_EXAMINE(lock, fib) Examine((lock), (fib))
+#define TG_GUI_DOS_EXNEXT(lock, fib) ExNext((lock), (fib))
+#endif
+
 /* The modern lanes ship cybergraphics.library headers as part of their SDK.
    Use it opportunistically for RGB888 photo rows on RTG screens. The classic
    OS3 toolchain deliberately remains header/dependency-free and keeps the
@@ -336,6 +346,11 @@ static int tg_gui_amiga_afa_text_compat(void)
 #define TG_MENU_DITHER_FULL 15
 #define TG_MENU_DITHER_LIGHT 16
 #define TG_MENU_DITHER_OFF 17
+#define TG_MENU_CACHE_10 18
+#define TG_MENU_CACHE_50 19
+#define TG_MENU_CACHE_200 20
+#define TG_MENU_CACHE_UNLIMITED 21
+#define TG_MENU_CACHE_CLEAR 22
 
 /* Dark-theme palette: one RGB triplet per pen role and per avatar tint. The
    backend resolves the renderer's pen indices to obtained pens here; a future
@@ -684,6 +699,9 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_VISIBLE_MAX 24
 #define TG_GUI_PHOTO_PACE_TARGET_MS 120UL
 #define TG_GUI_PHOTO_LOCAL_STEPS_MAX 32
+#define TG_GUI_PHOTO_CACHE_SCAN_PER_TICK 16
+#define TG_GUI_PHOTO_CACHE_DELETE_PER_TICK 8
+#define TG_GUI_PHOTO_CACHE_NAME_MAX 108
 
 #define TG_GUI_PHOTO_WORK_NONE 0
 #define TG_GUI_PHOTO_WORK_DECODE 1
@@ -761,6 +779,9 @@ static int tg_gui_photo_request_count;
 static tg_gui_photo_visible tg_gui_photo_visible_ids[TG_GUI_PHOTO_VISIBLE_MAX];
 static int tg_gui_photo_visible_count;
 static tg_gui_photo_decode_gate tg_gui_photo_decode_pipeline;
+
+static void tg_gui_window_copy(char *dest, unsigned long size,
+                               const char *src);
 
 static void tg_gui_photo_diag(const char *message)
 {
@@ -1217,6 +1238,674 @@ static int tg_gui_photo_visible_mark(unsigned long id_hi,
     return priority;
 }
 
+/* The disk cache is catalogued once, incrementally, after the GUI starts. The
+   policy array is portable and host-tested; filenames/Telegram ids live in a
+   parallel native array so pruning can use the exact same planner without a
+   second full-sized copy on memory-constrained machines. */
+typedef struct tg_gui_photo_cache_meta {
+    char name[TG_GUI_PHOTO_CACHE_NAME_MAX];
+    unsigned long id_hi;
+    unsigned long id_lo;
+    unsigned char delete_failures;
+} tg_gui_photo_cache_meta;
+
+typedef struct tg_gui_photo_cache_manager {
+    BPTR directory;
+    struct FileInfoBlock fib;
+    tg_gui_photo_cache_item *items;
+    tg_gui_photo_cache_meta *meta;
+    int count;
+    int capacity;
+    int active;
+    int scan_complete;
+    int scan_failed;
+    int prune_pending;
+    int clear_pending;
+    unsigned long long limit_bytes;
+    unsigned long long total_bytes;
+    unsigned long clear_files;
+    unsigned long long clear_bytes;
+} tg_gui_photo_cache_manager;
+
+static tg_gui_photo_cache_manager tg_gui_photo_disk_cache;
+
+static int tg_gui_photo_cache_hex8(const char *text, unsigned long *value)
+{
+    unsigned long out;
+    int i;
+
+    if (text == 0 || value == 0) {
+        return 0;
+    }
+    out = 0UL;
+    for (i = 0; i < 8; ++i) {
+        unsigned long digit;
+        char c;
+
+        c = text[i];
+        if (c >= '0' && c <= '9') {
+            digit = (unsigned long)(c - '0');
+        } else if (c >= 'a' && c <= 'f') {
+            digit = (unsigned long)(c - 'a' + 10);
+        } else if (c >= 'A' && c <= 'F') {
+            digit = (unsigned long)(c - 'A' + 10);
+        } else {
+            return 0;
+        }
+        out = (out << 4) | digit;
+    }
+    *value = out;
+    return 1;
+}
+
+static void tg_gui_photo_cache_parse_id(const char *name,
+                                        unsigned long *id_hi,
+                                        unsigned long *id_lo)
+{
+    unsigned long hi;
+    unsigned long lo;
+
+    if (id_hi != 0) {
+        *id_hi = 0UL;
+    }
+    if (id_lo != 0) {
+        *id_lo = 0UL;
+    }
+    if (name == 0 || strlen(name) < 20UL ||
+        strncmp(name, "tgph", 4UL) != 0 ||
+        !tg_gui_photo_cache_hex8(name + 4, &hi) ||
+        !tg_gui_photo_cache_hex8(name + 12, &lo)) {
+        return;
+    }
+    if (id_hi != 0) {
+        *id_hi = hi;
+    }
+    if (id_lo != 0) {
+        *id_lo = lo;
+    }
+}
+
+static const char *tg_gui_photo_cache_basename(const char *path)
+{
+    const char *base;
+    const char *p;
+
+    base = path;
+    if (path == 0) {
+        return "";
+    }
+    for (p = path; *p != '\0'; ++p) {
+        if (*p == '/' || *p == ':') {
+            base = p + 1;
+        }
+    }
+    return base;
+}
+
+static int tg_gui_photo_cache_find(const char *name)
+{
+    int i;
+
+    for (i = 0; i < tg_gui_photo_disk_cache.count; ++i) {
+        if (strcmp(tg_gui_photo_disk_cache.meta[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int tg_gui_photo_cache_reserve(int need)
+{
+    tg_gui_photo_cache_item *new_items;
+    tg_gui_photo_cache_meta *new_meta;
+    int capacity;
+
+    if (need <= tg_gui_photo_disk_cache.capacity) {
+        return 1;
+    }
+    capacity = tg_gui_photo_disk_cache.capacity > 0
+                   ? tg_gui_photo_disk_cache.capacity * 2 : 32;
+    while (capacity < need) {
+        capacity *= 2;
+    }
+    new_items = (tg_gui_photo_cache_item *)malloc(
+        (size_t)capacity * sizeof(*new_items));
+    new_meta = (tg_gui_photo_cache_meta *)malloc(
+        (size_t)capacity * sizeof(*new_meta));
+    if (new_items == 0 || new_meta == 0) {
+        free(new_items);
+        free(new_meta);
+        return 0;
+    }
+    if (tg_gui_photo_disk_cache.count > 0) {
+        memcpy(new_items, tg_gui_photo_disk_cache.items,
+               (size_t)tg_gui_photo_disk_cache.count * sizeof(*new_items));
+        memcpy(new_meta, tg_gui_photo_disk_cache.meta,
+               (size_t)tg_gui_photo_disk_cache.count * sizeof(*new_meta));
+    }
+    free(tg_gui_photo_disk_cache.items);
+    free(tg_gui_photo_disk_cache.meta);
+    tg_gui_photo_disk_cache.items = new_items;
+    tg_gui_photo_disk_cache.meta = new_meta;
+    tg_gui_photo_disk_cache.capacity = capacity;
+    return 1;
+}
+
+static int tg_gui_photo_cache_upsert(const char *name, unsigned long bytes,
+                                     const struct DateStamp *stamp)
+{
+    int at;
+    tg_gui_photo_cache_item *item;
+    tg_gui_photo_cache_meta *meta;
+
+    if (name == 0 || name[0] == '\0' ||
+        strlen(name) >= TG_GUI_PHOTO_CACHE_NAME_MAX) {
+        return 0;
+    }
+    at = tg_gui_photo_cache_find(name);
+    if (at < 0) {
+        if (!tg_gui_photo_cache_reserve(tg_gui_photo_disk_cache.count + 1)) {
+            return 0;
+        }
+        at = tg_gui_photo_disk_cache.count++;
+        memset(&tg_gui_photo_disk_cache.items[at], 0,
+               sizeof(tg_gui_photo_disk_cache.items[at]));
+        memset(&tg_gui_photo_disk_cache.meta[at], 0,
+               sizeof(tg_gui_photo_disk_cache.meta[at]));
+        strcpy(tg_gui_photo_disk_cache.meta[at].name, name);
+        tg_gui_photo_cache_parse_id(
+            name, &tg_gui_photo_disk_cache.meta[at].id_hi,
+            &tg_gui_photo_disk_cache.meta[at].id_lo);
+    } else if (tg_gui_photo_disk_cache.items[at].bytes <=
+               tg_gui_photo_disk_cache.total_bytes) {
+        tg_gui_photo_disk_cache.total_bytes -=
+            (unsigned long long)tg_gui_photo_disk_cache.items[at].bytes;
+    } else {
+        tg_gui_photo_disk_cache.total_bytes = 0ULL;
+    }
+    item = &tg_gui_photo_disk_cache.items[at];
+    meta = &tg_gui_photo_disk_cache.meta[at];
+    item->bytes = bytes;
+    item->days = stamp != 0 ? (unsigned long)stamp->ds_Days : 0UL;
+    item->minutes = stamp != 0 ? (unsigned long)stamp->ds_Minute : 0UL;
+    item->ticks = stamp != 0 ? (unsigned long)stamp->ds_Tick : 0UL;
+    item->protected_entry = 0;
+    item->remove = 0;
+    meta->delete_failures = 0;
+    tg_gui_photo_disk_cache.total_bytes += (unsigned long long)bytes;
+    if (tg_gui_photo_disk_cache.scan_complete &&
+        tg_gui_photo_disk_cache.limit_bytes != 0ULL &&
+        tg_gui_photo_disk_cache.total_bytes >
+            tg_gui_photo_disk_cache.limit_bytes) {
+        tg_gui_photo_disk_cache.prune_pending = 1;
+    }
+    return 1;
+}
+
+static void tg_gui_photo_cache_remove_at(int at)
+{
+    if (at < 0 || at >= tg_gui_photo_disk_cache.count) {
+        return;
+    }
+    if (tg_gui_photo_disk_cache.items[at].bytes <=
+        tg_gui_photo_disk_cache.total_bytes) {
+        tg_gui_photo_disk_cache.total_bytes -=
+            (unsigned long long)tg_gui_photo_disk_cache.items[at].bytes;
+    } else {
+        tg_gui_photo_disk_cache.total_bytes = 0ULL;
+    }
+    if (at + 1 < tg_gui_photo_disk_cache.count) {
+        memmove(&tg_gui_photo_disk_cache.items[at],
+                &tg_gui_photo_disk_cache.items[at + 1],
+                (size_t)(tg_gui_photo_disk_cache.count - at - 1) *
+                    sizeof(tg_gui_photo_disk_cache.items[0]));
+        memmove(&tg_gui_photo_disk_cache.meta[at],
+                &tg_gui_photo_disk_cache.meta[at + 1],
+                (size_t)(tg_gui_photo_disk_cache.count - at - 1) *
+                    sizeof(tg_gui_photo_disk_cache.meta[0]));
+    }
+    --tg_gui_photo_disk_cache.count;
+}
+
+static void tg_gui_photo_cache_scan_finish(void)
+{
+    if (tg_gui_photo_disk_cache.directory != (BPTR)0) {
+        UnLock(tg_gui_photo_disk_cache.directory);
+        tg_gui_photo_disk_cache.directory = (BPTR)0;
+    }
+    tg_gui_photo_disk_cache.scan_complete = 1;
+    if (!tg_gui_photo_disk_cache.scan_failed &&
+        tg_gui_photo_disk_cache.limit_bytes != 0ULL &&
+        tg_gui_photo_disk_cache.total_bytes >
+            tg_gui_photo_disk_cache.limit_bytes) {
+        tg_gui_photo_disk_cache.prune_pending = 1;
+    }
+    if (tg_gui_log_is_enabled()) {
+        char line[96];
+
+        sprintf(line, "photo cache: scan done files=%d MB=%lu%s",
+                tg_gui_photo_disk_cache.count,
+                (unsigned long)(tg_gui_photo_disk_cache.total_bytes /
+                                (1024ULL * 1024ULL)),
+                tg_gui_photo_disk_cache.scan_failed ? " incomplete" : "");
+        tg_gui_log(line);
+    }
+}
+
+static void tg_gui_photo_cache_begin(unsigned long limit_mb)
+{
+    memset(&tg_gui_photo_disk_cache, 0, sizeof(tg_gui_photo_disk_cache));
+    tg_gui_photo_disk_cache.active = 1;
+    tg_gui_photo_disk_cache.limit_bytes =
+        limit_mb == TG_GUI_PHOTO_CACHE_UNLIMITED_MB
+            ? 0ULL
+            : (unsigned long long)limit_mb * 1024ULL * 1024ULL;
+    tg_gui_photo_disk_cache.directory =
+        Lock((CONST_STRPTR)"photos", ACCESS_READ);
+    if (tg_gui_photo_disk_cache.directory == (BPTR)0) {
+        tg_gui_photo_cache_scan_finish();
+    } else if (!TG_GUI_DOS_EXAMINE(tg_gui_photo_disk_cache.directory,
+                                   &tg_gui_photo_disk_cache.fib) ||
+               tg_gui_photo_disk_cache.fib.fib_DirEntryType < 0) {
+        tg_gui_photo_disk_cache.scan_failed = 1;
+        tg_gui_photo_cache_scan_finish();
+    }
+}
+
+static void tg_gui_photo_cache_end(void)
+{
+    if (tg_gui_photo_disk_cache.clear_pending) {
+        tg_gui_session_photo_cache_clear_finish();
+    }
+    if (tg_gui_photo_disk_cache.directory != (BPTR)0) {
+        UnLock(tg_gui_photo_disk_cache.directory);
+    }
+    free(tg_gui_photo_disk_cache.items);
+    free(tg_gui_photo_disk_cache.meta);
+    memset(&tg_gui_photo_disk_cache, 0, sizeof(tg_gui_photo_disk_cache));
+}
+
+void tg_gui_window_photo_cache_file_changed(const char *path)
+{
+    BPTR lock;
+    struct FileInfoBlock fib;
+    const char *name;
+
+    if (!tg_gui_photo_disk_cache.active || path == 0) {
+        return;
+    }
+    lock = Lock((CONST_STRPTR)path, ACCESS_READ);
+    if (lock == (BPTR)0) {
+        tg_gui_window_photo_cache_file_removed(path);
+        return;
+    }
+    memset(&fib, 0, sizeof(fib));
+    if (TG_GUI_DOS_EXAMINE(lock, &fib) && fib.fib_DirEntryType < 0) {
+        name = tg_gui_photo_cache_basename(path);
+        (void)tg_gui_photo_cache_upsert(
+            name, fib.fib_Size > 0 ? (unsigned long)fib.fib_Size : 0UL,
+            &fib.fib_Date);
+    }
+    UnLock(lock);
+}
+
+void tg_gui_window_photo_cache_file_removed(const char *path)
+{
+    int at;
+
+    if (!tg_gui_photo_disk_cache.active || path == 0) {
+        return;
+    }
+    at = tg_gui_photo_cache_find(tg_gui_photo_cache_basename(path));
+    if (at >= 0) {
+        tg_gui_photo_cache_remove_at(at);
+    }
+}
+
+static void tg_gui_photo_cache_visibility_changed(void)
+{
+    if (tg_gui_photo_disk_cache.active &&
+        tg_gui_photo_disk_cache.scan_complete &&
+        !tg_gui_photo_disk_cache.scan_failed &&
+        !tg_gui_photo_disk_cache.clear_pending &&
+        tg_gui_photo_disk_cache.limit_bytes != 0ULL &&
+        tg_gui_photo_disk_cache.total_bytes >
+            tg_gui_photo_disk_cache.limit_bytes) {
+        tg_gui_photo_disk_cache.prune_pending = 1;
+    }
+}
+
+static int tg_gui_photo_cache_pending(void)
+{
+    return tg_gui_photo_disk_cache.active &&
+           (!tg_gui_photo_disk_cache.scan_complete ||
+            tg_gui_photo_disk_cache.prune_pending ||
+            tg_gui_photo_disk_cache.clear_pending);
+}
+
+static void tg_gui_photo_cache_update_protection(
+    const tg_gui_photo_viewer *viewer)
+{
+    int i;
+
+    for (i = 0; i < tg_gui_photo_disk_cache.count; ++i) {
+        tg_gui_photo_cache_meta *meta;
+        int protect;
+
+        meta = &tg_gui_photo_disk_cache.meta[i];
+        protect = meta->delete_failures >= 3U;
+        if (!protect && (meta->id_hi != 0UL || meta->id_lo != 0UL)) {
+            protect = tg_gui_photo_visible_priority(meta->id_hi,
+                                                    meta->id_lo) >= 0;
+            if (!protect && viewer != 0 && viewer->ctx.window != 0) {
+                protect = viewer->slot.id_hi == meta->id_hi &&
+                          viewer->slot.id_lo == meta->id_lo;
+            }
+        }
+        tg_gui_photo_disk_cache.items[i].protected_entry = protect;
+    }
+}
+
+static int tg_gui_photo_cache_delete_entry(int at)
+{
+    char path[144];
+
+    if (at < 0 || at >= tg_gui_photo_disk_cache.count) {
+        return 0;
+    }
+    sprintf(path, "photos/%s", tg_gui_photo_disk_cache.meta[at].name);
+    if (remove(path) == 0) {
+        return 1;
+    }
+    /* A file may have disappeared outside the client after the one startup
+       scan. Treat that as already removed instead of retaining stale bytes. */
+    {
+        FILE *probe;
+
+        probe = fopen(path, "rb");
+        if (probe == 0) {
+            return 1;
+        }
+        fclose(probe);
+    }
+    if (tg_gui_photo_disk_cache.meta[at].delete_failures < 255U) {
+        ++tg_gui_photo_disk_cache.meta[at].delete_failures;
+    }
+    return 0;
+}
+
+static int tg_gui_photo_cache_scan_tick(void)
+{
+    int steps;
+
+    if (tg_gui_photo_disk_cache.scan_complete) {
+        return 0;
+    }
+    steps = 0;
+    while (steps < TG_GUI_PHOTO_CACHE_SCAN_PER_TICK) {
+        if (!TG_GUI_DOS_EXNEXT(tg_gui_photo_disk_cache.directory,
+                               &tg_gui_photo_disk_cache.fib)) {
+            tg_gui_photo_cache_scan_finish();
+            break;
+        }
+        if (tg_gui_photo_disk_cache.fib.fib_DirEntryType < 0 &&
+            !tg_gui_photo_cache_upsert(
+                (const char *)tg_gui_photo_disk_cache.fib.fib_FileName,
+                tg_gui_photo_disk_cache.fib.fib_Size > 0
+                    ? (unsigned long)tg_gui_photo_disk_cache.fib.fib_Size
+                    : 0UL,
+                &tg_gui_photo_disk_cache.fib.fib_Date)) {
+            tg_gui_photo_disk_cache.scan_failed = 1;
+            tg_gui_photo_cache_scan_finish();
+            break;
+        }
+        ++steps;
+    }
+    return steps > 0;
+}
+
+static int tg_gui_photo_cache_prune_tick(const tg_gui_photo_viewer *viewer)
+{
+    unsigned long planned;
+    int deleted;
+    int i;
+
+    if (!tg_gui_photo_disk_cache.scan_complete ||
+        !tg_gui_photo_disk_cache.prune_pending ||
+        tg_gui_photo_disk_cache.clear_pending) {
+        return 0;
+    }
+    tg_gui_photo_cache_update_protection(viewer);
+    (void)tg_gui_photo_cache_prune_plan(
+        tg_gui_photo_disk_cache.items, tg_gui_photo_disk_cache.count,
+        tg_gui_photo_disk_cache.limit_bytes,
+        TG_GUI_PHOTO_CACHE_DELETE_PER_TICK, &planned);
+    if (planned == 0UL) {
+        tg_gui_photo_disk_cache.prune_pending = 0;
+        return 0;
+    }
+    deleted = 0;
+    i = 0;
+    while (i < tg_gui_photo_disk_cache.count &&
+           deleted < TG_GUI_PHOTO_CACHE_DELETE_PER_TICK) {
+        if (!tg_gui_photo_disk_cache.items[i].remove) {
+            ++i;
+            continue;
+        }
+        if (tg_gui_photo_cache_delete_entry(i)) {
+            tg_gui_photo_cache_remove_at(i);
+            ++deleted;
+        } else {
+            tg_gui_photo_disk_cache.items[i].remove = 0;
+            ++i;
+        }
+    }
+    tg_gui_photo_disk_cache.prune_pending =
+        tg_gui_photo_disk_cache.limit_bytes != 0ULL &&
+        tg_gui_photo_disk_cache.total_bytes >
+            tg_gui_photo_disk_cache.limit_bytes;
+    return deleted > 0;
+}
+
+static void tg_gui_photo_cache_cancel_slot_work(tg_gui_photo_slot *slot,
+                                                int keep_frame)
+{
+    int has_frame;
+
+    if (slot == 0) {
+        return;
+    }
+    has_frame = slot->w > 0 && slot->h > 0 &&
+                ((slot->rgb != 0 && slot->ready_rows >= slot->h) ||
+                 (slot->pen != 0 && slot->pen_rows >= slot->h));
+    if (!keep_frame || !has_frame) {
+        tg_gui_photo_slot_clear(slot);
+        return;
+    }
+    if (slot->canonical_file != 0) {
+        fclose(slot->canonical_file);
+        slot->canonical_file = 0;
+    }
+    tg_image_jpeg_decoder_destroy(slot->decoder);
+    slot->decoder = 0;
+    free(slot->jpeg);
+    slot->jpeg = 0;
+    slot->jpeg_len = 0UL;
+    free(slot->stage_pen);
+    slot->stage_pen = 0;
+    free(slot->stage_rgb);
+    slot->stage_rgb = 0;
+    slot->stage_ready_rows = 0;
+    slot->stage_pen_rows = 0;
+    slot->decode_done = 0;
+    slot->canonical_size = 0UL;
+    slot->canonical_loaded = 0UL;
+    slot->canonical_from_disk = 0;
+    slot->state = 1;
+    tg_gui_photo_pipeline_release(slot);
+}
+
+static void tg_gui_photo_cache_prepare_slots_for_clear(
+    tg_gui_photo_viewer *viewer)
+{
+    int i;
+
+    for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
+        tg_gui_photo_slot *slot;
+        int visible;
+
+        slot = &tg_gui_photo_slots[i];
+        visible = slot->state != 0 &&
+                  tg_gui_photo_visible_priority(slot->id_hi,
+                                                slot->id_lo) >= 0;
+        if (!visible) {
+            tg_gui_photo_slot_clear(slot);
+        } else if (slot->state == 2) {
+            tg_gui_photo_cache_cancel_slot_work(slot, 1);
+        }
+    }
+    tg_gui_photo_request_count = 0;
+    if (viewer != 0 && viewer->ctx.window != 0 && viewer->slot.state == 2) {
+        unsigned long id_hi;
+        unsigned long id_lo;
+
+        id_hi = viewer->slot.id_hi;
+        id_lo = viewer->slot.id_lo;
+        tg_gui_photo_cache_cancel_slot_work(&viewer->slot, 1);
+        if (viewer->slot.state == 0) {
+            viewer->slot.id_hi = id_hi;
+            viewer->slot.id_lo = id_lo;
+        }
+    }
+    tg_gui_photo_decode_gate_reset(&tg_gui_photo_decode_pipeline);
+}
+
+static void tg_gui_photo_cache_request_clear(tg_gui_state *state,
+                                             tg_gui_photo_viewer *viewer)
+{
+    int i;
+
+    if (!tg_gui_photo_disk_cache.active ||
+        tg_gui_photo_disk_cache.clear_pending) {
+        return;
+    }
+    tg_gui_session_photo_cache_clear_prepare();
+    tg_gui_photo_cache_prepare_slots_for_clear(viewer);
+    for (i = 0; i < tg_gui_photo_disk_cache.count; ++i) {
+        tg_gui_photo_disk_cache.meta[i].delete_failures = 0;
+    }
+    tg_gui_photo_disk_cache.clear_pending = 1;
+    tg_gui_photo_disk_cache.prune_pending = 0;
+    tg_gui_photo_disk_cache.clear_files = 0UL;
+    tg_gui_photo_disk_cache.clear_bytes = 0ULL;
+    tg_gui_window_copy(state->status, sizeof(state->status),
+                       "Clearing photo cache...");
+}
+
+static int tg_gui_photo_cache_clear_tick(tg_gui_state *state)
+{
+    int deleted;
+    int i;
+    int retryable;
+
+    if (!tg_gui_photo_disk_cache.clear_pending ||
+        !tg_gui_photo_disk_cache.scan_complete) {
+        return 0;
+    }
+    deleted = 0;
+    i = 0;
+    while (i < tg_gui_photo_disk_cache.count &&
+           deleted < TG_GUI_PHOTO_CACHE_DELETE_PER_TICK) {
+        unsigned long bytes;
+
+        bytes = tg_gui_photo_disk_cache.items[i].bytes;
+        if (tg_gui_photo_cache_delete_entry(i)) {
+            ++tg_gui_photo_disk_cache.clear_files;
+            tg_gui_photo_disk_cache.clear_bytes +=
+                (unsigned long long)bytes;
+            tg_gui_photo_cache_remove_at(i);
+            ++deleted;
+        } else {
+            ++i;
+        }
+    }
+    retryable = 0;
+    for (i = 0; i < tg_gui_photo_disk_cache.count; ++i) {
+        if (tg_gui_photo_disk_cache.meta[i].delete_failures < 3U) {
+            retryable = 1;
+            break;
+        }
+    }
+    if (tg_gui_photo_disk_cache.count == 0 || !retryable) {
+        char line[64];
+
+        if (tg_gui_photo_disk_cache.scan_failed) {
+            strcpy(line, "Photo cache clear incomplete: directory scan failed");
+        } else if (tg_gui_photo_disk_cache.count == 0) {
+            unsigned long mb;
+            unsigned long tenth;
+            unsigned long long remain;
+
+            mb = (unsigned long)(tg_gui_photo_disk_cache.clear_bytes /
+                                 (1024ULL * 1024ULL));
+            remain = tg_gui_photo_disk_cache.clear_bytes %
+                     (1024ULL * 1024ULL);
+            tenth = (unsigned long)((remain * 10ULL + 512ULL * 1024ULL) /
+                                    (1024ULL * 1024ULL));
+            if (tenth >= 10UL) {
+                ++mb;
+                tenth = 0UL;
+            }
+            sprintf(line, "Photo cache cleared: %lu files, %lu.%lu MB",
+                    tg_gui_photo_disk_cache.clear_files, mb, tenth);
+        } else {
+            sprintf(line, "Photo cache clear incomplete: %d files busy",
+                    tg_gui_photo_disk_cache.count);
+        }
+        tg_gui_window_copy(state->status, sizeof(state->status), line);
+        tg_gui_photo_disk_cache.clear_pending = 0;
+        tg_gui_photo_disk_cache.prune_pending =
+            !tg_gui_photo_disk_cache.scan_failed &&
+            tg_gui_photo_disk_cache.limit_bytes != 0ULL &&
+            tg_gui_photo_disk_cache.total_bytes >
+                tg_gui_photo_disk_cache.limit_bytes;
+        tg_gui_session_photo_cache_clear_finish();
+        return 1;
+    }
+    return 0;
+}
+
+static int tg_gui_photo_cache_maintenance_tick(
+    tg_gui_state *state, const tg_gui_photo_viewer *viewer)
+{
+    int status_changed;
+
+    status_changed = 0;
+    if (!tg_gui_photo_disk_cache.scan_complete) {
+        (void)tg_gui_photo_cache_scan_tick();
+    }
+    if (tg_gui_photo_disk_cache.clear_pending) {
+        status_changed = tg_gui_photo_cache_clear_tick(state);
+    } else {
+        (void)tg_gui_photo_cache_prune_tick(viewer);
+    }
+    return status_changed;
+}
+
+static void tg_gui_photo_cache_set_limit(unsigned long limit_mb)
+{
+    tg_gui_photo_disk_cache.limit_bytes =
+        limit_mb == TG_GUI_PHOTO_CACHE_UNLIMITED_MB
+            ? 0ULL
+            : (unsigned long long)limit_mb * 1024ULL * 1024ULL;
+    tg_gui_photo_disk_cache.prune_pending =
+        tg_gui_photo_disk_cache.scan_complete &&
+        !tg_gui_photo_disk_cache.scan_failed &&
+        tg_gui_photo_disk_cache.limit_bytes != 0ULL &&
+        tg_gui_photo_disk_cache.total_bytes >
+            tg_gui_photo_disk_cache.limit_bytes;
+}
+
 /* A transient fetch failure clears the session queue but must not leave the
    already painted placeholder inert forever. Re-offer current viewport demand
    on later photo ticks; duplicate/active/cache checks keep this O(visible). */
@@ -1540,6 +2229,7 @@ static void tg_gui_photo_canonical_load_abort(tg_gui_photo_slot *slot)
     if (tg_gui_session_photo_canonical_cache_path(
             path, sizeof(path), id_hi, id_lo, large) == 0) {
         (void)remove(path);
+        tg_gui_window_photo_cache_file_removed(path);
     }
     free(slot->stage_rgb);
     slot->stage_rgb = 0;
@@ -1587,6 +2277,7 @@ static int tg_gui_photo_canonical_load_start(tg_gui_photo_slot *slot,
             file, width, height, &payload_size) != 0) {
         fclose(file);
         (void)remove(path);
+        tg_gui_window_photo_cache_file_removed(path);
         tg_gui_photo_diag("photo: stale canonical cache removed");
         return 0;
     }
@@ -1679,10 +2370,15 @@ static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
             if (tg_image_canonical_cache_write(
                     cache_path, slot->stage_rgb,
                     slot->decode_w, slot->decode_h) == 0) {
+                tg_gui_window_photo_cache_file_changed(cache_path);
                 tg_gui_photo_diag(viewer_scope
                     ? "photo: viewer canonical cache saved"
                     : "photo: canonical cache saved");
             } else {
+                /* The writer may already have removed an older target before
+                   its final rename failed. Re-stat so the byte catalog follows
+                   the filesystem in both failure modes. */
+                tg_gui_window_photo_cache_file_changed(cache_path);
                 tg_gui_photo_diag("photo: canonical cache write failed");
             }
         }
@@ -1931,6 +2627,7 @@ static int tg_gui_photo_preview_start(tg_gui_amiga_ctx *ctx,
         fseek(file, 0L, SEEK_SET) != 0) {
         fclose(file);
         (void)remove(path);
+        tg_gui_window_photo_cache_file_removed(path);
         return 0;
     }
     got = (unsigned long)fread(jpeg, 1, (size_t)flen, file);
@@ -1938,6 +2635,7 @@ static int tg_gui_photo_preview_start(tg_gui_amiga_ctx *ctx,
     if (got != (unsigned long)flen ||
         tg_image_canonical_size(source_w, source_h, edge_cap, &w, &h) != 0) {
         (void)remove(path);
+        tg_gui_window_photo_cache_file_removed(path);
         return 0;
     }
     pixels = (unsigned long)w * (unsigned long)h;
@@ -1948,6 +2646,7 @@ static int tg_gui_photo_preview_start(tg_gui_amiga_ctx *ctx,
     if (tg_avatar_decode_jpeg(jpeg, got, rgb, w, h) != 0) {
         free(rgb);
         (void)remove(path);
+        tg_gui_window_photo_cache_file_removed(path);
         tg_gui_photo_diag("photo: stripped preview decode failed");
         return 0;
     }
@@ -3472,6 +4171,7 @@ static void tg_gui_window_paint(const tg_gui_state *state,
             first_logged = 1;
         }
     }
+    tg_gui_photo_cache_visibility_changed();
 }
 
 /* Caret-only blink repaint. With the buffer, re-render just the focused strip
@@ -4085,6 +4785,16 @@ static struct NewMenu tg_gui_newmenu[] = {
       CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_LIGHT },
     { NM_SUB,   (STRPTR)"Photo dithering: Off", 0,
       CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_OFF },
+    { NM_SUB,   (STRPTR)"Photo cache limit: 10 MB", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_10 },
+    { NM_SUB,   (STRPTR)"Photo cache limit: 50 MB", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_50 },
+    { NM_SUB,   (STRPTR)"Photo cache limit: 200 MB", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_200 },
+    { NM_SUB,   (STRPTR)"Photo cache limit: Unlimited", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_UNLIMITED },
+    { NM_SUB,   (STRPTR)"Clear photo cache...", 0, 0, 0,
+      (APTR)TG_MENU_CACHE_CLEAR },
     { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
     { NM_TITLE, (STRPTR)"Edit", 0, 0, 0, 0 },
@@ -4132,6 +4842,32 @@ static void tg_gui_menu_set_photo_dither(struct Menu *menu, int dither)
     selected = dither == TG_GUI_PHOTO_DITHER_LIGHT ? 1 :
                dither == TG_GUI_PHOTO_DITHER_OFF ? 2 : 0;
     for (i = 0; i < 3; ++i) {
+        struct MenuItem *item;
+
+        item = tg_gui_menu_find_userdata(menu, ids[i]);
+        if (item != 0) {
+            if (i == selected) {
+                item->Flags |= CHECKED;
+            } else {
+                item->Flags &= (UWORD)~CHECKED;
+            }
+        }
+    }
+}
+
+static void tg_gui_menu_set_photo_cache_limit(struct Menu *menu,
+                                               unsigned long limit_mb)
+{
+    static APTR const ids[4] = {
+        (APTR)TG_MENU_CACHE_10, (APTR)TG_MENU_CACHE_50,
+        (APTR)TG_MENU_CACHE_200, (APTR)TG_MENU_CACHE_UNLIMITED
+    };
+    int selected;
+    int i;
+
+    selected = limit_mb == 10UL ? 0 : limit_mb == 200UL ? 2 :
+               limit_mb == TG_GUI_PHOTO_CACHE_UNLIMITED_MB ? 3 : 1;
+    for (i = 0; i < 4; ++i) {
         struct MenuItem *item;
 
         item = tg_gui_menu_find_userdata(menu, ids[i]);
@@ -4297,6 +5033,21 @@ static int tg_gui_amiga_confirm_delete(struct Window *win)
     es.es_TextFormat = (STRPTR)"Delete this message for everyone?";
     es.es_GadgetFormat = (STRPTR)"Delete|Cancel";
     return (int)tg_gui_amiga_easyreq_args(win, &es);
+}
+
+/* Cache clear is destructive only for reproducible thumbnails/canonical files;
+   ESC maps to No through the same requester loop used by JPEG drop choices. */
+static int tg_gui_amiga_confirm_clear_photo_cache(struct Window *win)
+{
+    struct EasyStruct es;
+
+    es.es_StructSize = (ULONG)sizeof(struct EasyStruct);
+    es.es_Flags = 0UL;
+    es.es_Title = (STRPTR)"Clear photo cache";
+    es.es_TextFormat =
+        (STRPTR)"Delete downloaded photos?\n\nAvatars are not affected.";
+    es.es_GadgetFormat = (STRPTR)"Yes|No";
+    return (int)tg_gui_amiga_easyreq_cancel_args(win, &es);
 }
 
 /* A JPEG dropped on the window is ambiguous: Telegram can preserve it as a
@@ -6243,6 +6994,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     }
                 }
                 tg_gui_menu_set_photo_dither(menu, state->photo_dither);
+                tg_gui_menu_set_photo_cache_limit(
+                    menu, state->photo_cache_limit_mb);
                 SetMenuStrip(ctx.window, menu);
             }
         }
@@ -7388,7 +8141,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             if (tg_gui_photo_preferences_save(
                                     "data/telegram-photos.txt",
                                     state->inline_photos,
-                                    state->photo_dither) != 0) {
+                                    state->photo_dither,
+                                    state->photo_cache_limit_mb) != 0) {
                                 tg_gui_window_copy(state->status,
                                                    sizeof(state->status),
                                                    "Could not save photo setting");
@@ -7429,7 +8183,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             if (tg_gui_photo_preferences_save(
                                     "data/telegram-photos.txt",
                                     state->inline_photos,
-                                    state->photo_dither) != 0) {
+                                    state->photo_dither,
+                                    state->photo_cache_limit_mb) != 0) {
                                 tg_gui_window_copy(
                                     state->status, sizeof(state->status),
                                     "Could not save photo setting");
@@ -7445,6 +8200,52 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                               : "Photo dithering: Full");
                             }
                             tg_gui_window_paint(state, &backend);
+                        } else if (ud == (APTR)TG_MENU_CACHE_10 ||
+                                   ud == (APTR)TG_MENU_CACHE_50 ||
+                                   ud == (APTR)TG_MENU_CACHE_200 ||
+                                   ud == (APTR)TG_MENU_CACHE_UNLIMITED) {
+                            state->photo_cache_limit_mb =
+                                ud == (APTR)TG_MENU_CACHE_10 ? 10UL :
+                                ud == (APTR)TG_MENU_CACHE_200 ? 200UL :
+                                ud == (APTR)TG_MENU_CACHE_UNLIMITED
+                                    ? TG_GUI_PHOTO_CACHE_UNLIMITED_MB : 50UL;
+                            tg_gui_photo_cache_set_limit(
+                                state->photo_cache_limit_mb);
+                            tg_gui_menu_set_photo_cache_limit(
+                                menu, state->photo_cache_limit_mb);
+                            if (tg_gui_photo_preferences_save(
+                                    "data/telegram-photos.txt",
+                                    state->inline_photos,
+                                    state->photo_dither,
+                                    state->photo_cache_limit_mb) != 0) {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Could not save photo setting");
+                            } else if (state->photo_cache_limit_mb ==
+                                       TG_GUI_PHOTO_CACHE_UNLIMITED_MB) {
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status),
+                                    "Photo cache limit: Unlimited");
+                            } else {
+                                char line[48];
+
+                                sprintf(line, "Photo cache limit: %lu MB",
+                                        state->photo_cache_limit_mb);
+                                tg_gui_window_copy(
+                                    state->status, sizeof(state->status), line);
+                            }
+                            if (tg_gui_photo_cache_pending()) {
+                                photo_fast_wake = 1;
+                            }
+                            tg_gui_window_paint(state, &backend);
+                        } else if (ud == (APTR)TG_MENU_CACHE_CLEAR) {
+                            if (tg_gui_amiga_confirm_clear_photo_cache(
+                                    ctx.window) == 1) {
+                                tg_gui_photo_cache_request_clear(
+                                    state, &viewer);
+                                photo_fast_wake = 1;
+                                tg_gui_window_paint(state, &backend);
+                            }
                         } else if (ud == (APTR)TG_MENU_RELOAD) {
                             /* Re-page the dialog list on demand (start-up
                                no longer refetches). Blocking but bounded:
@@ -8656,7 +9457,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 }
             }
             pending = tg_gui_session_photo_pending() ||
-                      tg_gui_photo_decode_pending(&viewer);
+                      tg_gui_photo_decode_pending(&viewer) ||
+                      tg_gui_photo_cache_pending();
             events_pending = tg_gui_window_user_events_pending(&ctx, &viewer);
             reason = TG_GUI_PHOTO_STALL_NONE;
             if (pending && !done) {
@@ -8704,6 +9506,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         /* Explicit user transfers still win. Otherwise move one bounded cache
            chunk per permitted background turn. */
         if (photo_background_turn &&
+            tg_gui_photo_cache_maintenance_tick(state, &viewer)) {
+            session_dirty = 1;
+        }
+        if (photo_background_turn &&
+            !tg_gui_photo_disk_cache.clear_pending &&
             tg_gui_session_photo_step(stdout)) {
             session_dirty = 1;
             viewer_dirty = 1;
@@ -8712,7 +9519,8 @@ static int tg_gui_run_window_once(tg_gui_state *state)
            old conservative slice and adapts from measured DateStamp time. A
            fast target may drain several local cache/decode stages inside the
            same ~120 ms envelope; queued input still stops the loop immediately. */
-        if (photo_background_turn) {
+        if (photo_background_turn &&
+            !tg_gui_photo_disk_cache.clear_pending) {
             unsigned long turn_start;
             int local_steps;
 
@@ -8888,11 +9696,13 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             int want_fast_timer;
 
             photo_pending_now = tg_gui_session_photo_pending() ||
-                                tg_gui_photo_decode_pending(&viewer);
+                                tg_gui_photo_decode_pending(&viewer) ||
+                                tg_gui_photo_cache_pending();
             if (!photo_pending_now) {
                 photo_fast_wake = 0;
             }
-            want_fast_timer = photo_pending_now && photo_fast_wake;
+            want_fast_timer = tg_gui_photo_cache_pending() ||
+                              (photo_pending_now && photo_fast_wake);
             if (timer_pending && timer_fast != want_fast_timer) {
                 AbortIO((struct IORequest *)timer_req);
                 (void)WaitIO((struct IORequest *)timer_req);
@@ -9068,6 +9878,16 @@ out:
 
 int tg_gui_run_window(tg_gui_state *state)
 {
+    if (state == 0) {
+        return 2;
+    }
+    if (state->photo_cache_limit_mb != TG_GUI_PHOTO_CACHE_UNLIMITED_MB &&
+        state->photo_cache_limit_mb != 10UL &&
+        state->photo_cache_limit_mb != 50UL &&
+        state->photo_cache_limit_mb != 200UL) {
+        state->photo_cache_limit_mb = TG_GUI_PHOTO_CACHE_DEFAULT_MB;
+    }
+    tg_gui_photo_cache_begin(state->photo_cache_limit_mb);
     for (;;) {
         int rc = tg_gui_run_window_once(state);
 
@@ -9075,9 +9895,11 @@ int tg_gui_run_window(tg_gui_state *state)
             continue; /* own-screen toggle: reopen immediately, no AppIcon */
         }
         if (rc != 2) {
+            tg_gui_photo_cache_end();
             return rc;
         }
         if (!tg_gui_window_iconify_wait()) {
+            tg_gui_photo_cache_end();
             return 0; /* AppIcon failed or Ctrl-C: a clean quit */
         }
         /* Double-click: fall through and reopen the window fresh. */
@@ -9098,6 +9920,16 @@ void tg_gui_window_avatar_invalidate(unsigned long id_hi, unsigned long id_lo)
 {
     (void)id_hi; /* no native window: nothing cached to drop */
     (void)id_lo;
+}
+
+void tg_gui_window_photo_cache_file_changed(const char *path)
+{
+    (void)path;
+}
+
+void tg_gui_window_photo_cache_file_removed(const char *path)
+{
+    (void)path;
 }
 
 #endif

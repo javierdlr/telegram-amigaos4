@@ -13,7 +13,9 @@
 #include "tg_gui_session.h" /* tg_gui_log: crash-safe first-paint trail */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* Enough wrapped lines to render a full TG_GUI_MSG_TEXT_MAX message at a narrow
    bubble width. starts[]/lengths[] are stack arrays (~lines * 16 B per paint),
@@ -54,16 +56,44 @@ static int tg_gui_photo_dither_parse(const char *value)
     return TG_GUI_PHOTO_DITHER_FULL;
 }
 
+static unsigned long tg_gui_photo_cache_limit_parse(const char *value)
+{
+    unsigned long parsed;
+    const char *tail;
+
+    if (value != 0 && strncmp(value, "unlimited", 9UL) == 0 &&
+        (value[9] == '\0' || value[9] == '\r' || value[9] == '\n')) {
+        return TG_GUI_PHOTO_CACHE_UNLIMITED_MB;
+    }
+    parsed = 0UL;
+    tail = value;
+    while (tail != 0 && *tail >= '0' && *tail <= '9') {
+        parsed = parsed * 10UL + (unsigned long)(*tail - '0');
+        ++tail;
+    }
+    if (tail == value ||
+        (tail != 0 && *tail != '\0' && *tail != '\r' && *tail != '\n')) {
+        return TG_GUI_PHOTO_CACHE_DEFAULT_MB;
+    }
+    if (parsed == 10UL || parsed == 50UL || parsed == 200UL) {
+        return parsed;
+    }
+    return TG_GUI_PHOTO_CACHE_DEFAULT_MB;
+}
+
 void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
-                                   int *photo_dither)
+                                   int *photo_dither,
+                                   unsigned long *photo_cache_limit_mb)
 {
     FILE *file;
     char value[64];
     int enabled;
     int dither;
+    unsigned long cache_limit;
 
     enabled = 1;
     dither = TG_GUI_PHOTO_DITHER_FULL;
+    cache_limit = TG_GUI_PHOTO_CACHE_DEFAULT_MB;
     file = (path != 0 && path[0] != '\0') ? fopen(path, "rb") : 0;
     if (file != 0) {
         value[0] = '\0';
@@ -76,6 +106,8 @@ void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
         while (fgets(value, sizeof(value), file) != 0) {
             if (strncmp(value, "dither=", 7UL) == 0) {
                 dither = tg_gui_photo_dither_parse(value + 7);
+            } else if (strncmp(value, "cache_limit=", 12UL) == 0) {
+                cache_limit = tg_gui_photo_cache_limit_parse(value + 12);
             }
         }
         fclose(file);
@@ -86,15 +118,20 @@ void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
     if (photo_dither != 0) {
         *photo_dither = dither;
     }
+    if (photo_cache_limit_mb != 0) {
+        *photo_cache_limit_mb = cache_limit;
+    }
 }
 
 int tg_gui_photo_preferences_save(const char *path, int inline_photos,
-                                  int photo_dither)
+                                  int photo_dither,
+                                  unsigned long photo_cache_limit_mb)
 {
     FILE *file;
     char tmp[288];
     unsigned long length;
     const char *dither;
+    char cache_limit[32];
     int failed;
 
     if (path == 0 || path[0] == '\0') {
@@ -112,9 +149,16 @@ int tg_gui_photo_preferences_save(const char *path, int inline_photos,
     }
     dither = photo_dither == TG_GUI_PHOTO_DITHER_LIGHT ? "light" :
               photo_dither == TG_GUI_PHOTO_DITHER_OFF ? "off" : "full";
+    if (photo_cache_limit_mb == TG_GUI_PHOTO_CACHE_UNLIMITED_MB) {
+        strcpy(cache_limit, "unlimited");
+    } else {
+        sprintf(cache_limit, "%lu", photo_cache_limit_mb);
+    }
     failed = fputs(inline_photos ? "on\n" : "off\n", file) == EOF ||
              fputs("dither=", file) == EOF || fputs(dither, file) == EOF ||
-             fputc('\n', file) == EOF;
+             fputc('\n', file) == EOF ||
+             fputs("cache_limit=", file) == EOF ||
+             fputs(cache_limit, file) == EOF || fputc('\n', file) == EOF;
     if (fclose(file) != 0) {
         failed = 1;
     }
@@ -134,16 +178,123 @@ int tg_gui_inline_photos_load(const char *path)
 {
     int enabled;
 
-    tg_gui_photo_preferences_load(path, &enabled, 0);
+    tg_gui_photo_preferences_load(path, &enabled, 0, 0);
     return enabled;
 }
 
 int tg_gui_inline_photos_save(const char *path, int enabled)
 {
     int dither;
+    unsigned long cache_limit;
 
-    tg_gui_photo_preferences_load(path, 0, &dither);
-    return tg_gui_photo_preferences_save(path, enabled, dither);
+    tg_gui_photo_preferences_load(path, 0, &dither, &cache_limit);
+    return tg_gui_photo_preferences_save(path, enabled, dither, cache_limit);
+}
+
+static int tg_gui_photo_cache_older(const tg_gui_photo_cache_item *a,
+                                    const tg_gui_photo_cache_item *b)
+{
+    if (a->days != b->days) {
+        return a->days < b->days;
+    }
+    if (a->minutes != b->minutes) {
+        return a->minutes < b->minutes;
+    }
+    return a->ticks < b->ticks;
+}
+
+unsigned long long tg_gui_photo_cache_prune_plan(
+    tg_gui_photo_cache_item *items, int count,
+    unsigned long long limit_bytes,
+    unsigned long max_remove,
+    unsigned long *remove_count)
+{
+    unsigned long long total;
+    unsigned long planned;
+    int i;
+
+    total = 0ULL;
+    planned = 0UL;
+    if (remove_count != 0) {
+        *remove_count = 0UL;
+    }
+    if (items == 0 || count <= 0) {
+        return 0ULL;
+    }
+    for (i = 0; i < count; ++i) {
+        items[i].remove = 0;
+        total += (unsigned long long)items[i].bytes;
+    }
+    if (limit_bytes == 0ULL) {
+        return total;
+    }
+    while (total > limit_bytes &&
+           (max_remove == 0UL || planned < max_remove)) {
+        int oldest;
+
+        oldest = -1;
+        for (i = 0; i < count; ++i) {
+            if (items[i].remove || items[i].protected_entry) {
+                continue;
+            }
+            if (oldest < 0 ||
+                tg_gui_photo_cache_older(&items[i], &items[oldest])) {
+                oldest = i;
+            }
+        }
+        if (oldest < 0) {
+            break;
+        }
+        items[oldest].remove = 1;
+        total = (unsigned long long)items[oldest].bytes > total
+                    ? 0ULL : total - (unsigned long long)items[oldest].bytes;
+        ++planned;
+    }
+    if (remove_count != 0) {
+        *remove_count = planned;
+    }
+    return total;
+}
+
+int tg_gui_photo_cache_clear_files(const char *const *paths, int count,
+                                   unsigned long *removed_files,
+                                   unsigned long *removed_bytes)
+{
+    unsigned long files;
+    unsigned long bytes;
+    int failures;
+    int i;
+
+    files = 0UL;
+    bytes = 0UL;
+    failures = 0;
+    if (paths == 0 || count < 0) {
+        return 1;
+    }
+    for (i = 0; i < count; ++i) {
+        struct stat info;
+        unsigned long size;
+
+        if (paths[i] == 0 || paths[i][0] == '\0') {
+            ++failures;
+            continue;
+        }
+        size = stat(paths[i], &info) == 0 && info.st_size > 0
+                   ? (unsigned long)info.st_size : 0UL;
+        if (remove(paths[i]) == 0) {
+            ++files;
+            bytes += size;
+        } else {
+            ++failures;
+        }
+    }
+    if (removed_files != 0) {
+        *removed_files = files;
+    }
+    if (removed_bytes != 0) {
+        *removed_bytes = bytes;
+    }
+    return failures;
 }
 
 int tg_gui_photo_cache_choose_slot(const int *states,
@@ -367,6 +518,7 @@ void tg_gui_demo_state(tg_gui_state *state)
     state->theme = TG_GUI_THEME_DARK;
     state->inline_photos = 1;
     state->photo_dither = TG_GUI_PHOTO_DITHER_FULL;
+    state->photo_cache_limit_mb = TG_GUI_PHOTO_CACHE_DEFAULT_MB;
 
     tg_gui_set_chat(&state->chats[0], "Sviluppo AmigaIta",
                     "Tu: ottimo, la pausa-bozza ha fatto il suo", "09:20",
@@ -3650,18 +3802,21 @@ int tg_gui_self_test(void)
         FILE *file;
         int enabled;
         int dither;
+        unsigned long cache_limit;
 
         (void)remove(pref);
-        tg_gui_photo_preferences_load(pref, &enabled, &dither);
+        tg_gui_photo_preferences_load(pref, &enabled, &dither, &cache_limit);
         if (!enabled || dither != TG_GUI_PHOTO_DITHER_FULL ||
+            cache_limit != TG_GUI_PHOTO_CACHE_DEFAULT_MB ||
             tg_gui_photo_preferences_save(
-                pref, 0, TG_GUI_PHOTO_DITHER_LIGHT) != 0) {
+                pref, 0, TG_GUI_PHOTO_DITHER_LIGHT, 200UL) != 0) {
             (void)remove(pref);
             puts("gui self-test: photo preference default/save mismatch");
             return 2;
         }
-        tg_gui_photo_preferences_load(pref, &enabled, &dither);
-        if (enabled || dither != TG_GUI_PHOTO_DITHER_LIGHT) {
+        tg_gui_photo_preferences_load(pref, &enabled, &dither, &cache_limit);
+        if (enabled || dither != TG_GUI_PHOTO_DITHER_LIGHT ||
+            cache_limit != 200UL) {
             (void)remove(pref);
             puts("gui self-test: photo preference round-trip mismatch");
             return 2;
@@ -3681,13 +3836,121 @@ int tg_gui_self_test(void)
             puts("gui self-test: old photo preference fixture failed");
             return 2;
         }
-        tg_gui_photo_preferences_load(pref, &enabled, &dither);
-        if (!enabled || dither != TG_GUI_PHOTO_DITHER_FULL) {
+        tg_gui_photo_preferences_load(pref, &enabled, &dither, &cache_limit);
+        if (!enabled || dither != TG_GUI_PHOTO_DITHER_FULL ||
+            cache_limit != TG_GUI_PHOTO_CACHE_DEFAULT_MB) {
             (void)remove(pref);
             puts("gui self-test: old photo preference compatibility failed");
             return 2;
         }
         (void)remove(pref);
+    }
+
+    /* Disk-cache policy is portable: protected visible photos survive even
+       when older, and the oldest unprotected entries are selected first. */
+    {
+        tg_gui_photo_cache_item items[4];
+        unsigned long remove_count;
+        unsigned long long remain;
+
+        memset(items, 0, sizeof(items));
+        items[0].bytes = 6UL;
+        items[0].days = 1UL;
+        items[0].protected_entry = 1;
+        items[1].bytes = 7UL;
+        items[1].days = 2UL;
+        items[2].bytes = 8UL;
+        items[2].days = 3UL;
+        items[3].bytes = 9UL;
+        items[3].days = 4UL;
+        remain = tg_gui_photo_cache_prune_plan(
+            items, 4, 17UL, 0UL, &remove_count);
+        if (remain != 15ULL || remove_count != 2UL || items[0].remove ||
+            !items[1].remove || !items[2].remove || items[3].remove) {
+            puts("gui self-test: photo cache prune policy mismatch");
+            return 2;
+        }
+
+        memset(items, 0, sizeof(items));
+        items[0].bytes = 3000000000UL;
+        items[0].days = 1UL;
+        items[1].bytes = 3000000000UL;
+        items[1].days = 2UL;
+        remain = tg_gui_photo_cache_prune_plan(
+            items, 2, 4000000000ULL, 0UL, &remove_count);
+        if (remain != 3000000000ULL || remove_count != 1UL ||
+            !items[0].remove || items[1].remove) {
+            puts("gui self-test: large photo cache total overflow");
+            return 2;
+        }
+
+        memset(items, 0, sizeof(items));
+        items[0].bytes = 6UL;
+        items[0].days = 1UL;
+        items[1].bytes = 7UL;
+        items[1].days = 2UL;
+        items[2].bytes = 8UL;
+        items[2].days = 3UL;
+        remain = tg_gui_photo_cache_prune_plan(
+            items, 3, 5ULL, 1UL, &remove_count);
+        if (remain != 15ULL || remove_count != 1UL ||
+            !items[0].remove || items[1].remove || items[2].remove) {
+            puts("gui self-test: photo cache prune tick was not bounded");
+            return 2;
+        }
+    }
+
+    /* Clear uses real files in an isolated host-side fixture and reports the
+       bytes it actually removed, not an optimistic catalog count. */
+    {
+        const char *dir = "tg-gui-photo-cache-selftest";
+        const char *paths[2];
+        FILE *file;
+        unsigned long removed_files;
+        unsigned long removed_bytes;
+        int i;
+
+        paths[0] = "tg-gui-photo-cache-selftest/a.jpg";
+        paths[1] = "tg-gui-photo-cache-selftest/b.pgc";
+        (void)mkdir(dir, 0777);
+        for (i = 0; i < 2; ++i) {
+            int n;
+            int size = i == 0 ? 11 : 23;
+
+            file = fopen(paths[i], "wb");
+            if (file == 0) {
+                (void)remove(paths[0]);
+                (void)remove(paths[1]);
+                (void)remove(dir);
+                puts("gui self-test: photo cache fixture open failed");
+                return 2;
+            }
+            for (n = 0; n < size; ++n) {
+                (void)fputc(n, file);
+            }
+            if (fclose(file) != 0) {
+                (void)remove(paths[0]);
+                (void)remove(paths[1]);
+                (void)remove(dir);
+                puts("gui self-test: photo cache fixture write failed");
+                return 2;
+            }
+        }
+        file = 0;
+        if (tg_gui_photo_cache_clear_files(
+                paths, 2, &removed_files, &removed_bytes) != 0 ||
+            removed_files != 2UL || removed_bytes != 34UL ||
+            (file = fopen(paths[0], "rb")) != 0) {
+            if (file != 0) {
+                fclose(file);
+            }
+            (void)remove(paths[0]);
+            (void)remove(paths[1]);
+            (void)remove(dir);
+            puts("gui self-test: photo cache clear mismatch");
+            return 2;
+        }
+        (void)remove(dir);
     }
 
     /* The "is typing" header line is a transient overlay (live-only, not in the

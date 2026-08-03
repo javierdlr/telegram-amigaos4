@@ -249,6 +249,11 @@ Using the GUI
   It affects paletted screens only. Compatible MorphOS, AmigaOS 4 and AROS RTG
   screens use truecolour pixels and fall back to the pen path automatically if
   their graphics driver rejects it.
+- "Settings > Photo cache limit" keeps photos/ bounded at 10, 50 or 200 MB
+  (50 MB by default); Unlimited is available when disk space is not a concern.
+  Old files are removed during idle time, while photos currently on screen stay
+  available. "Clear photo cache..." asks for confirmation, deletes only
+  photos/ (never avatars/) and keeps already displayed photos on screen.
 - To send a JPEG as a Telegram photo, use "Send photo..." in the Telegram menu
   (Amiga+P). Dropping a .jpg/.jpeg on the GUI asks Photo, File or Cancel; ESC
   also cancels. A photo over 10 MiB is preserved and sent as a document instead.
@@ -405,6 +410,11 @@ Usare la GUI
   diretti. Vale solo sugli schermi a palette. Gli schermi RTG compatibili di
   MorphOS, AmigaOS 4 e AROS usano pixel truecolor e tornano automaticamente
   alle penne se il driver non accetta quel percorso.
+- "Settings > Photo cache limit" mantiene photos/ entro 10, 50 o 200 MB
+  (50 MB predefiniti); Unlimited e' disponibile quando lo spazio disco non e'
+  un problema. I file piu' vecchi vengono rimossi durante i momenti inattivi,
+  mentre le foto gia' visibili restano a schermo. "Clear photo cache..." chiede
+  conferma, svuota solo photos/ (mai avatars/) e conserva le immagini mostrate.
 - Per inviare un JPEG come vera foto Telegram usa "Send photo..." nel menu
   Telegram (Amiga+P). Trascinando un .jpg/.jpeg sulla GUI puoi scegliere Photo,
   File o Cancel; anche ESC annulla. Oltre 10 MiB viene inviato come file.

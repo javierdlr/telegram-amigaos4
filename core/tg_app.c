@@ -4021,7 +4021,8 @@ int tg_app_run(int argc, char **argv)
         gui.theme = TG_GUI_THEME_DARK;
         tg_gui_photo_preferences_load("data/telegram-photos.txt",
                                       &gui.inline_photos,
-                                      &gui.photo_dither);
+                                      &gui.photo_dither,
+                                      &gui.photo_cache_limit_mb);
         gui.selected_msg = -1; /* no transcript row highlighted at start */
         if (config.run_gui_live_debug) {
             tg_gui_log_enable();
@@ -4119,6 +4120,7 @@ int tg_app_run(int argc, char **argv)
         gui.theme = TG_GUI_THEME_DARK;
         gui.inline_photos = 1;
         gui.photo_dither = TG_GUI_PHOTO_DITHER_FULL;
+        gui.photo_cache_limit_mb = TG_GUI_PHOTO_CACHE_DEFAULT_MB;
         rc = tg_gui_session_open(config.mtproto_auth_api_file,
                                  config.mtproto_auth_file,
                                  config.gui_chats_cache_file, &gui, stdout);
@@ -4150,6 +4152,7 @@ int tg_app_run(int argc, char **argv)
         gui.theme = TG_GUI_THEME_DARK;
         gui.inline_photos = 1;
         gui.photo_dither = TG_GUI_PHOTO_DITHER_FULL;
+        gui.photo_cache_limit_mb = TG_GUI_PHOTO_CACHE_DEFAULT_MB;
         missing = 0;
         /* --gui-chats-live: pull a fresh chat list from the network into the
            cache first (best-effort -- on failure we still open the window over

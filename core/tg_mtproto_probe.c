@@ -9913,6 +9913,7 @@ static int tg_gui_photo_cache_variant_count;
 static tg_mtproto_photo_meta tg_gui_photo_catalog[TG_GUI_PHOTO_CATALOG_MAX];
 static int tg_gui_photo_catalog_count;
 static int tg_gui_photo_inline_enabled = 1;
+static int tg_gui_photo_cache_paused;
 static tg_gui_photo_fetch_state tg_gui_photo_fetch;
 static int tg_gui_photo_queue_pop(tg_gui_photo_queue_entry *entry);
 static tg_mtproto_photo_meta *tg_gui_photo_catalog_find(
@@ -10046,9 +10047,13 @@ static void tg_gui_photo_store_stripped(const tg_mtproto_photo_meta *photo)
     if (ok) {
         (void)remove(path); /* AmigaDOS Rename does not replace a target. */
         ok = rename(part_path, path) == 0;
+        if (ok) {
+            tg_gui_window_photo_cache_file_changed(path);
+        }
     }
     if (!ok) {
         (void)remove(part_path);
+        tg_gui_window_photo_cache_file_changed(path);
         tg_gui_photo_log("photo: stripped preview cache write failed");
     }
 }
@@ -10339,6 +10344,7 @@ void tg_gui_session_photo_decode_failed_variant(unsigned long id_hi,
         return;
     }
     (void)remove(path);
+    tg_gui_window_photo_cache_file_removed(path);
     known_type = tg_gui_photo_cache_variant_forget(
         id_hi, id_lo, large, failed_type, sizeof(failed_type));
     if (known_type) {
@@ -10407,7 +10413,7 @@ static int tg_gui_photo_queue_offer(const tg_mtproto_photo_meta *source,
 {
     tg_gui_photo_queue_entry entry;
 
-    if (source == 0 || !source->has_photo ||
+    if (source == 0 || !source->has_photo || tg_gui_photo_cache_paused ||
         (!large && !tg_gui_photo_inline_enabled)) {
         return 0;
     }
@@ -10419,7 +10425,8 @@ static int tg_gui_photo_queue_offer(const tg_mtproto_photo_meta *source,
 
 int tg_gui_session_photo_pending(void)
 {
-    return tg_gui_photo_fetch.active || tg_gui_photo_queue_count > 0;
+    return !tg_gui_photo_cache_paused &&
+           (tg_gui_photo_fetch.active || tg_gui_photo_queue_count > 0);
 }
 
 int tg_gui_session_request_inline_photo(unsigned long id_hi,
@@ -10493,6 +10500,8 @@ void tg_gui_session_set_inline_photos(int enabled)
         }
         if (tg_gui_photo_fetch.part_path[0] != '\0') {
             (void)remove(tg_gui_photo_fetch.part_path);
+            tg_gui_window_photo_cache_file_removed(
+                tg_gui_photo_fetch.part_path);
         }
         if (tg_gui_photo_fetch.quiet != 0) {
             tg_mtproto_close_quiet_stream(tg_gui_photo_fetch.quiet,
@@ -10500,6 +10509,32 @@ void tg_gui_session_set_inline_photos(int enabled)
         }
         memset(&tg_gui_photo_fetch, 0, sizeof(tg_gui_photo_fetch));
     }
+}
+
+void tg_gui_session_photo_cache_clear_prepare(void)
+{
+    tg_gui_photo_cache_paused = 1;
+    if (tg_gui_photo_fetch.out != 0) {
+        fclose(tg_gui_photo_fetch.out);
+        tg_gui_photo_fetch.out = 0;
+    }
+    if (tg_gui_photo_fetch.part_path[0] != '\0') {
+        (void)remove(tg_gui_photo_fetch.part_path);
+        tg_gui_window_photo_cache_file_removed(tg_gui_photo_fetch.part_path);
+    }
+    if (tg_gui_photo_fetch.quiet != 0) {
+        tg_mtproto_close_quiet_stream(tg_gui_photo_fetch.quiet,
+                                      tg_gui_photo_fetch.stream);
+    }
+    memset(&tg_gui_photo_fetch, 0, sizeof(tg_gui_photo_fetch));
+    tg_gui_photo_queue_count = 0;
+    tg_gui_photo_tried_count = 0;
+    tg_gui_photo_cache_variant_count = 0;
+}
+
+void tg_gui_session_photo_cache_clear_finish(void)
+{
+    tg_gui_photo_cache_paused = 0;
 }
 
 static void tg_gui_photo_queue_reset(void)
@@ -10510,6 +10545,7 @@ static void tg_gui_photo_queue_reset(void)
     }
     if (tg_gui_photo_fetch.part_path[0] != '\0') {
         (void)remove(tg_gui_photo_fetch.part_path);
+        tg_gui_window_photo_cache_file_removed(tg_gui_photo_fetch.part_path);
     }
     if (tg_gui_photo_fetch.quiet != 0) {
         tg_mtproto_close_quiet_stream(tg_gui_photo_fetch.quiet,
@@ -10520,6 +10556,7 @@ static void tg_gui_photo_queue_reset(void)
     tg_gui_photo_tried_count = 0;
     tg_gui_photo_cache_variant_count = 0;
     tg_gui_photo_catalog_count = 0;
+    tg_gui_photo_cache_paused = 0;
 }
 
 static int tg_mtproto_auth_print_history_text_peer_on_context(
@@ -17326,10 +17363,17 @@ static int tg_gui_photo_finish(int success, const char *reason)
                    tg_gui_photo_fetch.path) != 0) {
             success = 0;
             reason = "cache rename";
+        } else {
+            tg_gui_window_photo_cache_file_changed(tg_gui_photo_fetch.path);
         }
     }
     if (!success) {
         (void)remove(tg_gui_photo_fetch.part_path);
+        tg_gui_window_photo_cache_file_removed(
+            tg_gui_photo_fetch.part_path);
+        if (tg_gui_photo_fetch.path[0] != '\0') {
+            tg_gui_window_photo_cache_file_changed(tg_gui_photo_fetch.path);
+        }
         if (reason != 0) {
             char line[96];
 
@@ -17460,7 +17504,7 @@ int tg_gui_session_photo_step(FILE *stream)
     int rc;
     int dirty;
 
-    if (!tg_gui_session_state.open || stream == 0 ||
+    if (tg_gui_photo_cache_paused || !tg_gui_session_state.open || stream == 0 ||
         tg_gui_session_transfer_busy()) {
         return 0;
     }

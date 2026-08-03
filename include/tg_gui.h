@@ -207,6 +207,7 @@ typedef struct tg_gui_state {
     int input_h;           /* composer box height (px), cached by the painter for the hit-test */
     int inline_photos;     /* persistent GUI preference; default on */
     int photo_dither;      /* TG_GUI_PHOTO_DITHER_*; default full */
+    unsigned long photo_cache_limit_mb; /* 0 unlimited; default 50 MiB */
     /* Scrollbar geometry the painter caches each frame for the event loop's
        knob-drag / track-click (only the painter has the backend to size the
        transcript). *_max == 0 means no bar / nothing to drag. */
@@ -402,14 +403,49 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
 
 /* Persistent photo preferences. The first line remains exactly "on"/"off"
    so older builds can read files written by newer ones; newer keys follow as
-   key=value lines. Missing or malformed values use ON + FULL dithering. */
+   key=value lines. Missing or malformed values use ON + FULL dithering and a
+   50 MiB photo-cache limit. A zero cache limit means unlimited. */
+#define TG_GUI_PHOTO_CACHE_DEFAULT_MB 50UL
+#define TG_GUI_PHOTO_CACHE_UNLIMITED_MB 0UL
 void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
-                                   int *photo_dither);
+                                   int *photo_dither,
+                                   unsigned long *photo_cache_limit_mb);
 int tg_gui_photo_preferences_save(const char *path, int inline_photos,
-                                  int photo_dither);
+                                  int photo_dither,
+                                  unsigned long photo_cache_limit_mb);
 /* Compatibility wrappers for callers interested only in the first line. */
 int tg_gui_inline_photos_load(const char *path);
 int tg_gui_inline_photos_save(const char *path, int enabled);
+
+/* Portable policy used by the native incremental disk-cache manager. DateStamp
+   fields are kept separate so host self-tests exercise the same oldest-first
+   ordering as AmigaDOS without depending on native headers. */
+typedef struct tg_gui_photo_cache_item {
+    unsigned long bytes;
+    unsigned long days;
+    unsigned long minutes;
+    unsigned long ticks;
+    int protected_entry;
+    int remove;
+} tg_gui_photo_cache_item;
+
+/* Marks oldest unprotected entries until total bytes fit `limit_bytes` or
+   max_remove entries have been selected. A zero limit means unlimited and a
+   zero max_remove means no selection cap. Returns planned remaining bytes. */
+unsigned long long tg_gui_photo_cache_prune_plan(
+    tg_gui_photo_cache_item *items, int count,
+    unsigned long long limit_bytes,
+    unsigned long max_remove,
+    unsigned long *remove_count);
+/* Removes an explicit list and reports only successfully removed files/bytes.
+   The native manager uses the same semantics incrementally between UI ticks. */
+int tg_gui_photo_cache_clear_files(const char *const *paths, int count,
+                                   unsigned long *removed_files,
+                                   unsigned long *removed_bytes);
+
+/* Native cache-manager notifications. Host builds provide harmless stubs. */
+void tg_gui_window_photo_cache_file_changed(const char *path);
+void tg_gui_window_photo_cache_file_removed(const char *path);
 
 /* Right-click context-menu geometry/items. MINIMUM box width: the real width
    is measured from the item labels when the menu opens (state->ctx_w, see
