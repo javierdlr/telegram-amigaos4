@@ -177,6 +177,52 @@ int tg_gui_photo_cache_choose_slot(const int *states,
     return best;
 }
 
+void tg_gui_photo_decode_gate_reset(tg_gui_photo_decode_gate *gate)
+{
+    if (gate != 0) {
+        memset(gate, 0, sizeof(*gate));
+    }
+}
+
+int tg_gui_photo_decode_gate_acquire(tg_gui_photo_decode_gate *gate,
+                                     const void *owner,
+                                     unsigned long id_hi,
+                                     unsigned long id_lo,
+                                     int scope)
+{
+    if (gate == 0 || owner == 0) {
+        return 0;
+    }
+    if (gate->owner != 0) {
+        return tg_gui_photo_decode_gate_owns(
+            gate, owner, id_hi, id_lo, scope);
+    }
+    gate->owner = owner;
+    gate->id_hi = id_hi;
+    gate->id_lo = id_lo;
+    gate->scope = scope;
+    return 1;
+}
+
+int tg_gui_photo_decode_gate_owns(const tg_gui_photo_decode_gate *gate,
+                                  const void *owner,
+                                  unsigned long id_hi,
+                                  unsigned long id_lo,
+                                  int scope)
+{
+    return gate != 0 && owner != 0 && gate->owner == owner &&
+           gate->id_hi == id_hi && gate->id_lo == id_lo &&
+           gate->scope == scope;
+}
+
+void tg_gui_photo_decode_gate_release(tg_gui_photo_decode_gate *gate,
+                                      const void *owner)
+{
+    if (gate != 0 && owner != 0 && gate->owner == owner) {
+        tg_gui_photo_decode_gate_reset(gate);
+    }
+}
+
 int tg_gui_photo_preview_prepare_all(int count,
                                      tg_gui_photo_preview_prepare_fn prepare,
                                      void *context)
@@ -3297,6 +3343,47 @@ int tg_gui_self_test(void)
                 return 2;
             }
         }
+    }
+    /* Two cache fetches may complete back-to-back, but only the current owner
+       may decode and publish. Different patterns make an accidental cross-slot
+       commit visible instead of merely checking a busy flag. */
+    {
+        tg_gui_photo_decode_gate gate;
+        unsigned char source_a[7] = { 1U, 3U, 5U, 7U, 9U, 11U, 13U };
+        unsigned char source_b[7] = { 2U, 4U, 6U, 8U, 10U, 12U, 14U };
+        unsigned char slot_a[7];
+        unsigned char slot_b[7];
+        int token_a = 1;
+        int token_b = 2;
+
+        memset(slot_a, 0, sizeof(slot_a));
+        memset(slot_b, 0, sizeof(slot_b));
+        tg_gui_photo_decode_gate_reset(&gate);
+        if (!tg_gui_photo_decode_gate_acquire(
+                &gate, &token_a, 0x11111111UL, 0x01010101UL, 0) ||
+            tg_gui_photo_decode_gate_acquire(
+                &gate, &token_b, 0x22222222UL, 0x02020202UL, 0)) {
+            puts("gui self-test: photo decoders overlapped");
+            return 2;
+        }
+        memcpy(slot_a, source_a, sizeof(slot_a));
+        if (memcmp(slot_b, source_b, sizeof(slot_b)) == 0) {
+            puts("gui self-test: queued photo committed early");
+            return 2;
+        }
+        tg_gui_photo_decode_gate_release(&gate, &token_a);
+        if (!tg_gui_photo_decode_gate_acquire(
+                &gate, &token_b, 0x22222222UL, 0x02020202UL, 0)) {
+            puts("gui self-test: queued photo did not acquire decoder");
+            return 2;
+        }
+        memcpy(slot_b, source_b, sizeof(slot_b));
+        if (memcmp(slot_a, source_a, sizeof(slot_a)) != 0 ||
+            memcmp(slot_b, source_b, sizeof(slot_b)) != 0) {
+            puts("gui self-test: photo decoder committed to wrong slot");
+            return 2;
+        }
+        tg_gui_photo_decode_gate_release(&gate, &token_b);
     }
     /* Newlines split into real lines (recording backend, wide max_width so
        only the '\n' breaks apply): "a\nbc\n\nd" -> a / bc / (blank) / d. */

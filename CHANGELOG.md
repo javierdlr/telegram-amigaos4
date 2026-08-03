@@ -77,6 +77,10 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- Progressive transcript photos and the photo viewer now share one
+  owner-checked decode pipeline. Back-to-back fetch completions remain queued
+  until the current image commits, preventing one photo from being repeated or
+  split across another message bubble on fast targets.
 - Shell launches now carry the same 1 MiB minimum-stack contract as Workbench
   icons. AROS also swaps to a private safe stack when a launcher supplies less;
   OS3 and OS4 reject unsafe bounds instead of entering the stack-heavy GUI.

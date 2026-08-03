@@ -669,6 +669,9 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_VISIBLE_MAX 24
 #define TG_GUI_PHOTO_MAX_DEFER_TICKS 6
 
+#define TG_GUI_PHOTO_SCOPE_INLINE 0
+#define TG_GUI_PHOTO_SCOPE_VIEWER 1
+
 #define TG_GUI_PHOTO_STALL_NONE 0
 #define TG_GUI_PHOTO_STALL_INTERACTIVE 1
 #define TG_GUI_PHOTO_STALL_RESIZE 2
@@ -737,12 +740,47 @@ static tg_gui_photo_request tg_gui_photo_requests[TG_GUI_PHOTO_REQUESTS];
 static int tg_gui_photo_request_count;
 static tg_gui_photo_visible tg_gui_photo_visible_ids[TG_GUI_PHOTO_VISIBLE_MAX];
 static int tg_gui_photo_visible_count;
+static tg_gui_photo_decode_gate tg_gui_photo_decode_pipeline;
 
 static void tg_gui_photo_diag(const char *message)
 {
     if (tg_gui_log_is_enabled()) {
         tg_gui_log(message);
     }
+}
+
+static int tg_gui_photo_pipeline_acquire(tg_gui_photo_slot *slot, int scope)
+{
+    return slot != 0 && tg_gui_photo_decode_gate_acquire(
+        &tg_gui_photo_decode_pipeline, slot, slot->id_hi, slot->id_lo, scope);
+}
+
+static int tg_gui_photo_pipeline_owns(const tg_gui_photo_slot *slot, int scope)
+{
+    return slot != 0 && tg_gui_photo_decode_gate_owns(
+        &tg_gui_photo_decode_pipeline, slot, slot->id_hi, slot->id_lo, scope);
+}
+
+static tg_gui_photo_slot *tg_gui_photo_pipeline_owner(int scope)
+{
+    tg_gui_photo_slot *slot;
+
+    if (tg_gui_photo_decode_pipeline.owner == 0 ||
+        tg_gui_photo_decode_pipeline.scope != scope) {
+        return 0;
+    }
+    slot = (tg_gui_photo_slot *)tg_gui_photo_decode_pipeline.owner;
+    if (!tg_gui_photo_pipeline_owns(slot, scope)) {
+        tg_gui_photo_diag("photo: decode owner mismatch");
+        tg_gui_photo_decode_gate_reset(&tg_gui_photo_decode_pipeline);
+        return 0;
+    }
+    return slot;
+}
+
+static void tg_gui_photo_pipeline_release(tg_gui_photo_slot *slot)
+{
+    tg_gui_photo_decode_gate_release(&tg_gui_photo_decode_pipeline, slot);
 }
 
 static void tg_gui_photo_stall_diag(int reason)
@@ -765,6 +803,7 @@ static void tg_gui_photo_slot_clear(tg_gui_photo_slot *slot)
     if (slot == 0) {
         return;
     }
+    tg_gui_photo_pipeline_release(slot);
     if (slot->canonical_file != 0) {
         fclose(slot->canonical_file);
     }
@@ -787,6 +826,7 @@ static void tg_gui_photo_slots_reset(void)
     tg_gui_photo_use_clock = 0UL;
     tg_gui_photo_request_count = 0;
     tg_gui_photo_visible_count = 0;
+    tg_gui_photo_decode_gate_reset(&tg_gui_photo_decode_pipeline);
 }
 
 static void tg_gui_av_reset(void)
@@ -1255,6 +1295,19 @@ static void tg_gui_photo_request_offer(unsigned long id_hi,
     ++tg_gui_photo_request_count;
 }
 
+static void tg_gui_photo_request_remove_first(void)
+{
+    int i;
+
+    if (tg_gui_photo_request_count <= 0) {
+        return;
+    }
+    for (i = 1; i < tg_gui_photo_request_count; ++i) {
+        tg_gui_photo_requests[i - 1] = tg_gui_photo_requests[i];
+    }
+    --tg_gui_photo_request_count;
+}
+
 static int tg_gui_photo_map_pen_rows(tg_gui_amiga_ctx *ctx,
                                      tg_gui_photo_slot *slot,
                                      const unsigned char *rgb,
@@ -1393,9 +1446,14 @@ static int tg_gui_photo_begin_quality_sequence(tg_gui_photo_slot *slot,
     return 1;
 }
 
-static int tg_gui_photo_finish_quality_sequence(tg_gui_photo_slot *slot)
+static int tg_gui_photo_finish_quality_sequence(tg_gui_photo_slot *slot,
+                                                int viewer_scope)
 {
-    if (slot == 0) {
+    int scope;
+
+    scope = viewer_scope ? TG_GUI_PHOTO_SCOPE_VIEWER
+                         : TG_GUI_PHOTO_SCOPE_INLINE;
+    if (slot == 0 || !tg_gui_photo_pipeline_owns(slot, scope)) {
         return 0;
     }
     slot->quality_done = 1;
@@ -1403,6 +1461,7 @@ static int tg_gui_photo_finish_quality_sequence(tg_gui_photo_slot *slot)
     free(slot->jpeg);
     slot->jpeg = 0;
     slot->jpeg_len = 0UL;
+    tg_gui_photo_pipeline_release(slot);
     return 1;
 }
 
@@ -1441,6 +1500,7 @@ static void tg_gui_photo_canonical_load_abort(tg_gui_photo_slot *slot)
     slot->canonical_from_disk = 0;
     if (slot->preview_only && (slot->rgb != 0 || slot->pen != 0)) {
         slot->state = 1;
+        tg_gui_photo_pipeline_release(slot);
     } else {
         tg_gui_photo_slot_clear(slot);
         slot->id_hi = id_hi;
@@ -1545,7 +1605,12 @@ static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
     int decode_rc;
     char line[80];
 
-    if (ctx == 0 || slot == 0 || slot->stage_rgb == 0) {
+    int scope;
+
+    scope = viewer_scope ? TG_GUI_PHOTO_SCOPE_VIEWER
+                         : TG_GUI_PHOTO_SCOPE_INLINE;
+    if (ctx == 0 || slot == 0 || slot->stage_rgb == 0 ||
+        !tg_gui_photo_pipeline_owns(slot, scope)) {
         return 0;
     }
     next_scale = tg_gui_photo_next_quality_scale(slot);
@@ -1619,7 +1684,7 @@ static int tg_gui_photo_commit_quality_pass(tg_gui_amiga_ctx *ctx,
             ? "photo: viewer detail pass skipped"
             : "photo: detail pass skipped");
     }
-    tg_gui_photo_finish_quality_sequence(slot);
+    tg_gui_photo_finish_quality_sequence(slot, viewer_scope);
     tg_gui_photo_diag(viewer_scope
         ? "photo: viewer decode done"
         : "photo: decode done");
@@ -1639,7 +1704,12 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
     int ready_rows;
     int step_rc;
 
-    if (ctx == 0 || slot == 0 || mcu_budget == 0U || pen_row_budget <= 0) {
+    int scope;
+
+    scope = viewer_scope ? TG_GUI_PHOTO_SCOPE_VIEWER
+                         : TG_GUI_PHOTO_SCOPE_INLINE;
+    if (ctx == 0 || slot == 0 || mcu_budget == 0U || pen_row_budget <= 0 ||
+        !tg_gui_photo_pipeline_owns(slot, scope)) {
         return 0;
     }
     /* CyberGraphX may fail its runtime self-check after the coarse RGB pass.
@@ -1666,6 +1736,7 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
             slot->render_logged = 0;
             if (slot->quality_done || slot->preview_only) {
                 slot->state = 1;
+                tg_gui_photo_pipeline_release(slot);
             }
             return 1;
         }
@@ -1744,6 +1815,7 @@ static void tg_gui_photo_decode_reject(tg_gui_photo_slot *slot, int decode_rc)
         slot->decode_w = 0;
         slot->decode_h = 0;
         slot->state = 1;
+        tg_gui_photo_pipeline_release(slot);
         return;
     }
     tg_gui_photo_slot_clear(slot);
@@ -1932,37 +2004,33 @@ static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
     int canonical_h;
     int decode_rc;
     int preview_ready;
-    int i;
-
-    if (tg_gui_photo_request_count <= 0) {
+    if (tg_gui_photo_request_count <= 0 ||
+        tg_gui_photo_decode_pipeline.owner != 0) {
         return 0;
     }
     request = tg_gui_photo_requests[0];
-    for (i = 1; i < tg_gui_photo_request_count; ++i) {
-        tg_gui_photo_requests[i - 1] = tg_gui_photo_requests[i];
-    }
-    --tg_gui_photo_request_count;
     canonical_w = canonical_h = 0;
     if (tg_image_canonical_size(request.source_w, request.source_h,
                                 TG_GUI_PHOTO_CANONICAL_CAP,
                                 &canonical_w, &canonical_h) != 0) {
+        tg_gui_photo_request_remove_first();
         tg_gui_photo_diag("photo: decode fail geometry");
         return 0;
     }
     slot = tg_gui_photo_slot_find(request.id_hi, request.id_lo);
     if (slot != 0 && slot->preview_only && slot->state != 1) {
-        tg_gui_photo_request_offer(request.id_hi, request.id_lo,
-                                   request.source_w, request.source_h);
         return 0;
     }
     if (slot == 0) {
         slot = tg_gui_photo_slot_claim(request.id_hi, request.id_lo);
     }
     if (slot == 0) {
-        tg_gui_photo_request_offer(request.id_hi, request.id_lo,
-                                   request.source_w, request.source_h);
         return 0;
     }
+    if (!tg_gui_photo_pipeline_acquire(slot, TG_GUI_PHOTO_SCOPE_INLINE)) {
+        return 0;
+    }
+    tg_gui_photo_request_remove_first();
     if (tg_gui_photo_canonical_load_start(
             slot, canonical_w, canonical_h, 0)) {
         return 1;
@@ -1983,6 +2051,7 @@ static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
             }
         }
         tg_gui_photo_diag("photo: decode wait cache missing");
+        tg_gui_photo_pipeline_release(slot);
         return preview_ready;
     }
     flen = ftell(f);
@@ -1990,12 +2059,16 @@ static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
         fseek(f, 0L, SEEK_SET) != 0) {
         fclose(f);
         tg_gui_photo_diag("photo: decode fail cache size");
+        tg_gui_photo_pipeline_release(slot);
         return 0;
     }
     slot->jpeg = (unsigned char *)malloc((size_t)flen);
     if (slot->jpeg == 0) {
         fclose(f);
         tg_gui_photo_diag("photo: decode wait (no memory)");
+        tg_gui_photo_pipeline_release(slot);
+        tg_gui_photo_request_offer(request.id_hi, request.id_lo,
+                                   request.source_w, request.source_h);
         return 0;
     }
     got = (unsigned long)fread(slot->jpeg, 1, (size_t)flen, f);
@@ -2004,6 +2077,9 @@ static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
         tg_gui_photo_diag("photo: decode wait cache read");
         free(slot->jpeg);
         slot->jpeg = 0;
+        tg_gui_photo_pipeline_release(slot);
+        tg_gui_photo_request_offer(request.id_hi, request.id_lo,
+                                   request.source_w, request.source_h);
         return 0;
     }
     slot->jpeg_len = got;
@@ -2036,8 +2112,6 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
     tg_gui_photo_slot *offscreen_active;
     int i;
     int best_priority;
-    int request_priority;
-    int started;
     int decode_rc;
     int changed;
 
@@ -2045,48 +2119,18 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
         pen_row_budget <= 0) {
         return 0;
     }
-    slot = 0;
-    offscreen_active = 0;
-    best_priority = TG_GUI_PHOTO_VISIBLE_MAX + 1;
-    for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
-        if (tg_gui_photo_slots[i].state == 2) {
-            int priority;
-
-            priority = tg_gui_photo_visible_priority(
-                tg_gui_photo_slots[i].id_hi, tg_gui_photo_slots[i].id_lo);
-            if (priority >= 0 && priority < best_priority) {
-                slot = &tg_gui_photo_slots[i];
-                best_priority = priority;
-            } else if (priority < 0 &&
-                       (offscreen_active == 0 ||
-                        tg_gui_photo_slots[i].last_use <
-                            offscreen_active->last_use)) {
-                offscreen_active = &tg_gui_photo_slots[i];
-            }
-        }
+    slot = tg_gui_photo_pipeline_owner(TG_GUI_PHOTO_SCOPE_INLINE);
+    if (tg_gui_photo_decode_pipeline.owner != 0 && slot == 0) {
+        /* The viewer owns the shared quality pipe. Inline requests stay queued
+           until its complete frame has committed. */
+        return 0;
     }
-    request_priority = tg_gui_photo_request_count > 0
-        ? tg_gui_photo_visible_priority(tg_gui_photo_requests[0].id_hi,
-                                        tg_gui_photo_requests[0].id_lo)
-        : -1;
-    started = 0;
-    /* A newly exposed photo may outrank a lower visible partial decode after
-       scrolling. Start it when a normal cache slot is available; only one
-       decoder still receives CPU work below. */
-    if (request_priority >= 0 &&
-        (slot == 0 || request_priority < best_priority)) {
-        started = tg_gui_photo_decode_start(ctx);
-    }
-    if (slot == 0 && !started && tg_gui_photo_request_count > 0 &&
-        offscreen_active != 0) {
-        /* If every cache slot is tied up by partial work that has scrolled out
-           of view, abandon the oldest one. Its JPEG remains on disk and a
-           future visible paint will queue it again from the beginning. */
-        tg_gui_photo_slot_clear(offscreen_active);
-        (void)tg_gui_photo_decode_start(ctx);
-    }
-    if (slot == 0 || request_priority >= 0) {
+    if (slot != 0 && slot->state != 2) {
+        tg_gui_photo_pipeline_release(slot);
         slot = 0;
+    }
+    if (slot == 0) {
+        offscreen_active = 0;
         best_priority = TG_GUI_PHOTO_VISIBLE_MAX + 1;
         for (i = 0; i < TG_GUI_PHOTO_SLOTS; ++i) {
             if (tg_gui_photo_slots[i].state == 2) {
@@ -2098,11 +2142,30 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
                 if (priority >= 0 && priority < best_priority) {
                     slot = &tg_gui_photo_slots[i];
                     best_priority = priority;
+                } else if (priority < 0 &&
+                           (offscreen_active == 0 ||
+                            tg_gui_photo_slots[i].last_use <
+                                offscreen_active->last_use)) {
+                    offscreen_active = &tg_gui_photo_slots[i];
                 }
             }
         }
+        if (slot == 0) {
+            slot = offscreen_active;
+        }
+        if (slot != 0 &&
+            !tg_gui_photo_pipeline_acquire(slot, TG_GUI_PHOTO_SCOPE_INLINE)) {
+            return 0;
+        }
     }
-    if (slot == 0) {
+    if (slot == 0 && tg_gui_photo_request_count > 0) {
+        if (!tg_gui_photo_decode_start(ctx)) {
+            return 0;
+        }
+        slot = tg_gui_photo_pipeline_owner(TG_GUI_PHOTO_SCOPE_INLINE);
+    }
+    if (slot == 0 || slot->state != 2 ||
+        !tg_gui_photo_pipeline_owns(slot, TG_GUI_PHOTO_SCOPE_INLINE)) {
         return 0;
     }
     changed = tg_gui_photo_quality_tick(
@@ -5557,6 +5620,7 @@ static void tg_gui_photo_viewer_reject(tg_gui_photo_viewer *viewer,
         viewer->slot.decode_w = 0;
         viewer->slot.decode_h = 0;
         viewer->slot.state = 1;
+        tg_gui_photo_pipeline_release(&viewer->slot);
         return;
     }
     tg_gui_photo_slot_clear(&viewer->slot);
@@ -5588,6 +5652,10 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
         tg_gui_photo_diag("photo: viewer cache geometry failed");
         return 0;
     }
+    if (!tg_gui_photo_pipeline_acquire(
+            &viewer->slot, TG_GUI_PHOTO_SCOPE_VIEWER)) {
+        return 0;
+    }
     if (tg_gui_photo_canonical_load_start(
             &viewer->slot, canonical_w, canonical_h, 1)) {
         return 1;
@@ -5595,6 +5663,7 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
     if (tg_gui_session_photo_cache_path(
             path, sizeof(path), viewer->slot.id_hi,
             viewer->slot.id_lo, 1) != 0) {
+        tg_gui_photo_pipeline_release(&viewer->slot);
         return 0;
     }
     file = fopen(path, "rb");
@@ -5613,6 +5682,7 @@ static int tg_gui_photo_viewer_decode_start(tg_gui_photo_viewer *viewer)
                 viewer->source_w, viewer->source_h,
                 TG_GUI_PHOTO_VIEWER_PREVIEW_CAP, 1);
         }
+        tg_gui_photo_pipeline_release(&viewer->slot);
         return preview_ready; /* foreground fetch is still in progress */
     }
     if (fseek(file, 0L, SEEK_END) != 0) {
@@ -5664,6 +5734,7 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
                                            int *used_turn)
 {
     tg_gui_photo_slot *slot;
+    tg_gui_photo_slot *owner;
     int decode_rc;
     int changed;
 
@@ -5675,12 +5746,25 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
         return 0;
     }
     slot = &viewer->slot;
-    if ((slot->state == 0 ||
-         (slot->preview_only && slot->state == 1)) &&
-        !tg_gui_photo_viewer_decode_start(viewer)) {
+    owner = tg_gui_photo_pipeline_owner(TG_GUI_PHOTO_SCOPE_VIEWER);
+    if (tg_gui_photo_decode_pipeline.owner != 0 && owner != slot) {
         return 0;
     }
-    if (slot->state != 2) {
+    if (owner == 0) {
+        if (slot->state == 2) {
+            if (!tg_gui_photo_pipeline_acquire(
+                    slot, TG_GUI_PHOTO_SCOPE_VIEWER)) {
+                return 0;
+            }
+        } else if ((slot->state == 0 ||
+                    (slot->preview_only && slot->state == 1)) &&
+                   !tg_gui_photo_viewer_decode_start(viewer)) {
+            return 0;
+        }
+        owner = tg_gui_photo_pipeline_owner(TG_GUI_PHOTO_SCOPE_VIEWER);
+    }
+    if (owner != slot || slot->state != 2 ||
+        !tg_gui_photo_pipeline_owns(slot, TG_GUI_PHOTO_SCOPE_VIEWER)) {
         return 0;
     }
     if (used_turn != 0) {

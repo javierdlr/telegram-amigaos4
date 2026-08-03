@@ -502,6 +502,31 @@ int tg_gui_photo_cache_choose_slot(const int *states,
                                    const unsigned long *last_use,
                                    int count);
 
+/* One JPEG-quality pipeline is shared by transcript photos and the viewer.
+   The owner token and Telegram photo id travel together so a queued fetch can
+   never advance or commit another slot's decoder. Public for the host self-test
+   and used unchanged by the native window backend. */
+typedef struct tg_gui_photo_decode_gate {
+    const void *owner;
+    unsigned long id_hi;
+    unsigned long id_lo;
+    int scope;
+} tg_gui_photo_decode_gate;
+
+void tg_gui_photo_decode_gate_reset(tg_gui_photo_decode_gate *gate);
+int tg_gui_photo_decode_gate_acquire(tg_gui_photo_decode_gate *gate,
+                                     const void *owner,
+                                     unsigned long id_hi,
+                                     unsigned long id_lo,
+                                     int scope);
+int tg_gui_photo_decode_gate_owns(const tg_gui_photo_decode_gate *gate,
+                                  const void *owner,
+                                  unsigned long id_hi,
+                                  unsigned long id_lo,
+                                  int scope);
+void tg_gui_photo_decode_gate_release(tg_gui_photo_decode_gate *gate,
+                                      const void *owner);
+
 /* Runs the cheap stripped-preview tier for every queued item before the
    serialized network/quality tier starts. The callback returns nonzero when
    that item has a drawable preview. Public so host CI exercises the exact
