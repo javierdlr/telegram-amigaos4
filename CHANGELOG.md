@@ -80,6 +80,9 @@ unless noted.
 - Final photo-quality upscales now derive fixed-point coordinates without a
   32-bit overflow, preventing large images from repeating rows or tiles when
   the detailed frame replaces a stripped or coarse preview.
+- Every visible stripped photo preview is now prepared before serialized
+  network and quality work begins, so later photos and the on-demand viewer no
+  longer remain grey while an earlier image is being refined.
 - Background photo work can no longer wait forever behind continuous window
   events or an inactive window. The heartbeat now advances it, visible failed
   fetches are re-queued, and a clicked viewer photo has queue priority.

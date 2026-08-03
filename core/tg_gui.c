@@ -177,6 +177,42 @@ int tg_gui_photo_cache_choose_slot(const int *states,
     return best;
 }
 
+int tg_gui_photo_preview_prepare_all(int count,
+                                     tg_gui_photo_preview_prepare_fn prepare,
+                                     void *context)
+{
+    int i;
+    int ready;
+
+    if (count <= 0 || prepare == 0) {
+        return 0;
+    }
+    ready = 0;
+    for (i = 0; i < count; ++i) {
+        if (prepare(context, i)) {
+            ++ready;
+        }
+    }
+    return ready;
+}
+
+typedef struct tg_gui_photo_preview_test {
+    unsigned char preview_only[6];
+    int quality_commits;
+} tg_gui_photo_preview_test;
+
+static int tg_gui_photo_preview_test_prepare(void *context, int index)
+{
+    tg_gui_photo_preview_test *test;
+
+    test = (tg_gui_photo_preview_test *)context;
+    if (test == 0 || index < 0 || index >= 6 || test->quality_commits != 0) {
+        return 0;
+    }
+    test->preview_only[index] = 1U;
+    return 1;
+}
+
 static void tg_gui_copy(char *dest, unsigned long size, const char *src)
 {
     unsigned long i;
@@ -3237,6 +3273,29 @@ int tg_gui_self_test(void)
         if (tg_gui_photo_cache_choose_slot(states, visible, used, 4) != 2) {
             puts("gui self-test: photo cache did not prefer a free slot");
             return 2;
+        }
+    }
+    /* Pass zero is independent from the one-at-a-time quality decoder: every
+       requested slot must become a stripped preview before the first quality
+       commit is allowed to run. */
+    {
+        tg_gui_photo_preview_test previews;
+        int ready;
+        int i;
+
+        memset(&previews, 0, sizeof(previews));
+        ready = tg_gui_photo_preview_prepare_all(
+            6, tg_gui_photo_preview_test_prepare, &previews);
+        previews.quality_commits = 1;
+        if (ready != 6) {
+            puts("gui self-test: stripped previews remained serialized");
+            return 2;
+        }
+        for (i = 0; i < 6; ++i) {
+            if (!previews.preview_only[i]) {
+                puts("gui self-test: stripped preview tier incomplete");
+                return 2;
+            }
         }
     }
     /* Newlines split into real lines (recording backend, wide max_width so

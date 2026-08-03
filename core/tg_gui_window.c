@@ -1821,6 +1821,105 @@ static int tg_gui_photo_preview_start(tg_gui_amiga_ctx *ctx,
     return 1;
 }
 
+static int tg_gui_photo_preview_ensure(tg_gui_amiga_ctx *ctx,
+                                       tg_gui_photo_slot *slot,
+                                       unsigned long source_w,
+                                       unsigned long source_h,
+                                       int edge_cap,
+                                       int viewer_scope,
+                                       int *changed)
+{
+    if (changed != 0) {
+        *changed = 0;
+    }
+    if (ctx == 0 || slot == 0) {
+        return 0;
+    }
+    if (slot->state == 0) {
+        if (!tg_gui_photo_preview_start(
+                ctx, slot, source_w, source_h, edge_cap, viewer_scope)) {
+            return 0;
+        }
+        if (changed != 0) {
+            *changed = 1;
+        }
+    }
+    if (!slot->preview_only) {
+        return 0;
+    }
+    if (!ctx->photo_truecolor && slot->rgb != 0 &&
+        slot->pen_rows < slot->h) {
+        (void)tg_gui_photo_map_pen_rows(
+            ctx, slot, slot->rgb, slot->w, slot->h,
+            &slot->pen, slot->h, &slot->pen_rows, slot->h);
+        if (slot->pen_rows >= slot->h) {
+            free(slot->rgb);
+            slot->rgb = 0;
+            slot->ready_rows = 0;
+            slot->state = 1;
+            slot->render_logged = 0;
+            if (changed != 0) {
+                *changed = 1;
+            }
+        }
+    }
+    return ctx->photo_truecolor
+        ? slot->state == 1 && slot->rgb != 0 && slot->ready_rows >= slot->h
+        : slot->state == 1 && slot->pen != 0 && slot->pen_rows >= slot->h;
+}
+
+typedef struct tg_gui_photo_preview_drain {
+    tg_gui_amiga_ctx *ctx;
+    int changed;
+} tg_gui_photo_preview_drain;
+
+static int tg_gui_photo_preview_prepare_request(void *context, int index)
+{
+    tg_gui_photo_preview_drain *drain;
+    tg_gui_photo_request *request;
+    tg_gui_photo_slot *slot;
+    int changed;
+    int ready;
+
+    drain = (tg_gui_photo_preview_drain *)context;
+    if (drain == 0 || drain->ctx == 0 || index < 0 ||
+        index >= tg_gui_photo_request_count) {
+        return 0;
+    }
+    request = &tg_gui_photo_requests[index];
+    slot = tg_gui_photo_slot_find(request->id_hi, request->id_lo);
+    if (slot == 0) {
+        slot = tg_gui_photo_slot_claim(request->id_hi, request->id_lo);
+    }
+    if (slot == 0) {
+        return 0;
+    }
+    changed = 0;
+    ready = tg_gui_photo_preview_ensure(
+        drain->ctx, slot, request->source_w, request->source_h,
+        TG_GUI_PHOTO_PREVIEW_CAP, 0, &changed);
+    if (changed) {
+        drain->changed = 1;
+    }
+    return ready;
+}
+
+static int tg_gui_photo_preview_drain_visible(tg_gui_amiga_ctx *ctx)
+{
+    tg_gui_photo_preview_drain drain;
+
+    if (ctx == 0 || ctx->photo_resize_active ||
+        tg_gui_photo_request_count <= 0) {
+        return 0;
+    }
+    drain.ctx = ctx;
+    drain.changed = 0;
+    (void)tg_gui_photo_preview_prepare_all(
+        tg_gui_photo_request_count,
+        tg_gui_photo_preview_prepare_request, &drain);
+    return drain.changed;
+}
+
 static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
 {
     tg_gui_photo_request request;
@@ -5364,6 +5463,21 @@ static int tg_gui_photo_viewer_open_window(tg_gui_photo_viewer *viewer,
     return 0;
 }
 
+static int tg_gui_photo_viewer_prepare_preview(tg_gui_photo_viewer *viewer)
+{
+    int changed;
+
+    if (viewer == 0 ||
+        (viewer->slot.id_hi == 0UL && viewer->slot.id_lo == 0UL)) {
+        return 0;
+    }
+    changed = 0;
+    (void)tg_gui_photo_preview_ensure(
+        &viewer->ctx, &viewer->slot, viewer->source_w, viewer->source_h,
+        TG_GUI_PHOTO_VIEWER_PREVIEW_CAP, 1, &changed);
+    return changed;
+}
+
 static int tg_gui_photo_viewer_show(tg_gui_photo_viewer *viewer,
                                     const tg_gui_amiga_ctx *main_ctx,
                                     const tg_gui_message *message)
@@ -5390,6 +5504,11 @@ static int tg_gui_photo_viewer_show(tg_gui_photo_viewer *viewer,
             &viewer->source_w, &viewer->source_h) != 0) {
         return 1;
     }
+    /* Pass zero is local and tiny. Prepare it before opening/painting the
+       viewer, even when inline photos are disabled and quality work is queued. */
+    viewer->ctx.photo_truecolor = main_ctx->photo_truecolor;
+    viewer->ctx.photo_dither = main_ctx->photo_dither;
+    (void)tg_gui_photo_viewer_prepare_preview(viewer);
     if (viewer->ctx.window == 0 &&
         tg_gui_photo_viewer_open_window(viewer, main_ctx) != 0) {
         return 1;
@@ -8341,6 +8460,21 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             int reason;
 
             tg_gui_photo_reoffer_visible();
+            /* Stripped thumbnails are the cheap pass zero, not part of the
+               serialized network/JPEG-quality pipe. Drain every visible one
+               before choosing whether this tick may spend a background turn. */
+            if (!resize_pending && !ctx.photo_resize_active) {
+                if (tg_gui_photo_preview_drain_visible(&ctx)) {
+                    /* Publish the whole preview tier before a cache/network
+                       step can block this event-loop turn. The repaint rebuilds
+                       the request list for the quality tier below. */
+                    tg_gui_window_paint(state, &backend);
+                }
+                if (tg_gui_photo_viewer_prepare_preview(&viewer) &&
+                    viewer.ctx.window != 0) {
+                    tg_gui_photo_viewer_paint(&viewer);
+                }
+            }
             pending = tg_gui_session_photo_pending() ||
                       tg_gui_photo_decode_pending(&viewer);
             events_pending = tg_gui_window_user_events_pending(&ctx, &viewer);

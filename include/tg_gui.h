@@ -502,6 +502,15 @@ int tg_gui_photo_cache_choose_slot(const int *states,
                                    const unsigned long *last_use,
                                    int count);
 
+/* Runs the cheap stripped-preview tier for every queued item before the
+   serialized network/quality tier starts. The callback returns nonzero when
+   that item has a drawable preview. Public so host CI exercises the exact
+   all-items scheduling rule used by the native window backend. */
+typedef int (*tg_gui_photo_preview_prepare_fn)(void *context, int index);
+int tg_gui_photo_preview_prepare_all(int count,
+                                     tg_gui_photo_preview_prepare_fn prepare,
+                                     void *context);
+
 /* Maps a cursor Y (window-inner-relative) to a drag-and-drop INSERT-BEFORE target
    in [0, chat_count] for the sidebar list (chat_count == drop at the end). Uses
    the same search_h/row_h/chat_scroll geometry the painter uses, rounded to the
