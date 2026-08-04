@@ -7,6 +7,9 @@ unless noted.
 
 ## [Unreleased]
 
+- Temporary quiet-log files no longer litter the program drawer: they live
+  in T: and are cleaned up at startup and exit.
+
 ### Added
 - Photo messages now offer `Save photo as...` from their context menu whether
   inline display is enabled or not. The fixed-size viewer exposes the same
