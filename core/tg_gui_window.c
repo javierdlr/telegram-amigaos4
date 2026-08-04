@@ -185,9 +185,12 @@ static __inline ULONG tg_gui_cgx_get_map_attr(struct BitMap *bitmap,
     register struct BitMap *a0 __asm("a0") = bitmap;
     register ULONG d0 __asm("d0") = tag;
 
+    /* d0/d1/a0/a1 are ABI scratch: the callee may trash them, so every one
+       used as an argument must be in-out or the compiler will reuse a dead
+       register after the call. */
     __asm __volatile("jsr a6@(-0x60)"
-                     : "+r"(d0)
-                     : "r"(a6), "r"(a0)
+                     : "+r"(d0), "+r"(a0)
+                     : "r"(a6)
                      : "d1", "a1", "cc", "memory");
     return d0;
 }
@@ -210,8 +213,8 @@ static __inline ULONG tg_gui_cgx_read_pixel_array(
     register ULONG d7 __asm("d7") = format;
 
     __asm __volatile("jsr a6@(-0x78)"
-                     : "+r"(d0)
-                     : "r"(a6), "r"(a0), "r"(d1), "r"(d2), "r"(a1),
+                     : "+r"(d0), "+r"(d1), "+r"(a0), "+r"(a1)
+                     : "r"(a6), "r"(d2),
                        "r"(d3), "r"(d4), "r"(d5), "r"(d6), "r"(d7)
                      : "cc", "memory");
     return d0;
@@ -235,8 +238,8 @@ static __inline ULONG tg_gui_cgx_write_pixel_array(
     register ULONG d7 __asm("d7") = format;
 
     __asm __volatile("jsr a6@(-0x7e)"
-                     : "+r"(d0)
-                     : "r"(a6), "r"(a0), "r"(d1), "r"(d2), "r"(a1),
+                     : "+r"(d0), "+r"(d1), "+r"(a0), "+r"(a1)
+                     : "r"(a6), "r"(d2),
                        "r"(d3), "r"(d4), "r"(d5), "r"(d6), "r"(d7)
                      : "cc", "memory");
     return d0;
