@@ -790,6 +790,7 @@ static int tg_gui_av_rich = 0;        /* seed: cube+greys vs greys only */
 #define TG_GUI_PHOTO_WORK_NONE 0
 #define TG_GUI_PHOTO_WORK_DECODE 1
 #define TG_GUI_PHOTO_WORK_CACHE 2
+#define TG_GUI_PHOTO_WORK_REPLAY 3
 
 #define TG_GUI_PHOTO_SCOPE_INLINE 0
 #define TG_GUI_PHOTO_SCOPE_VIEWER 1
@@ -896,15 +897,16 @@ static unsigned long tg_gui_photo_elapsed_ms(unsigned long start,
     return end - start;
 }
 
-static void tg_gui_photo_pace_observe_log(tg_gui_photo_pace *pace,
+static void tg_gui_photo_pace_observe_log(const char *phase,
+                                          tg_gui_photo_pace *pace,
                                           unsigned long elapsed_ms)
 {
     if (tg_gui_photo_pace_observe(pace, elapsed_ms) &&
         tg_gui_log_is_enabled()) {
-        char line[80];
+        char line[96];
 
-        sprintf(line, "photo: pace budget %lu (slice %lums)",
-                pace->budget, elapsed_ms);
+        sprintf(line, "photo: pace %s budget %lu (slice %lums)",
+                phase != 0 ? phase : "unknown", pace->budget, elapsed_ms);
         tg_gui_log(line);
     }
 }
@@ -2559,7 +2561,7 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
         int display_pen_budget;
 
         if (work_kind != 0) {
-            *work_kind = TG_GUI_PHOTO_WORK_DECODE;
+            *work_kind = TG_GUI_PHOTO_WORK_REPLAY;
         }
         display_pen_budget = pen_row_budget;
         if (slot->preview_only && display_pen_budget < slot->h) {
@@ -2597,6 +2599,9 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
         if (step_rc == 0) {
             return 0;
         }
+        /* Publish/map on a separate measured turn. A completed disk read must
+           never make the replay controller look like cache I/O, or vice versa. */
+        return 0;
     }
     if (slot->decoder != 0) {
         if (work_kind != 0) {
@@ -2615,10 +2620,13 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
             slot->stage_ready_rows = slot->decode_h;
             slot->decode_done = 1;
         }
+        /* Mapping and atomic publish have their own pace controller. Even a
+           decoder that completed this slice yields before either cost. */
+        return 0;
     }
     if (slot->decode_done && !ctx->photo_truecolor) {
-        if (work_kind != 0 && *work_kind == TG_GUI_PHOTO_WORK_NONE) {
-            *work_kind = TG_GUI_PHOTO_WORK_DECODE;
+        if (work_kind != 0) {
+            *work_kind = TG_GUI_PHOTO_WORK_REPLAY;
         }
         (void)tg_gui_photo_map_pen_rows(
             ctx, slot, slot->stage_rgb,
@@ -2629,6 +2637,9 @@ static int tg_gui_photo_quality_tick(tg_gui_amiga_ctx *ctx,
     if (slot->decode_done &&
         (ctx->photo_truecolor ||
          slot->stage_pen_rows >= slot->decode_h)) {
+        if (work_kind != 0) {
+            *work_kind = TG_GUI_PHOTO_WORK_REPLAY;
+        }
         return tg_gui_photo_commit_quality_pass(
             ctx, slot, decode_cap, viewer_scope);
     }
@@ -2956,9 +2967,10 @@ static int tg_gui_photo_decode_start(tg_gui_amiga_ctx *ctx)
     return 1;
 }
 
-/* One bounded idle slice. JPEG entropy work and palette mapping both live
-   here, never inside paint or NEWSIZE. A return of 1 means a complete quality
-   pass became drawable (or a failure changed the placeholder state). */
+/* One bounded idle slice. JPEG entropy, cache I/O and palette replay all stay
+   outside paint/NEWSIZE and are reported as distinct work kinds. A return of
+   1 means a complete quality pass became drawable (or a failure changed the
+   placeholder state). */
 static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
                                     unsigned int mcu_budget,
                                     int pen_row_budget,
@@ -3027,6 +3039,17 @@ static int tg_gui_photo_decode_tick(tg_gui_amiga_ctx *ctx,
             return 0;
         }
         slot = tg_gui_photo_pipeline_owner(TG_GUI_PHOTO_SCOPE_INLINE);
+        if (slot != 0) {
+            if (used_turn != 0) {
+                *used_turn = 1;
+            }
+            if (work_kind != 0) {
+                *work_kind = TG_GUI_PHOTO_WORK_CACHE;
+            }
+        }
+        /* File open/read and decoder setup are a cache/setup turn. Entropy
+           work begins on the next local step and gets an uncontaminated time. */
+        return 0;
     }
     if (slot == 0 || slot->state != 2 ||
         !tg_gui_photo_pipeline_owns(slot, TG_GUI_PHOTO_SCOPE_INLINE)) {
@@ -6659,6 +6682,7 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
     tg_gui_photo_slot *owner;
     int decode_rc;
     int changed;
+    int started;
 
     if (used_turn != 0) {
         *used_turn = 0;
@@ -6671,6 +6695,7 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
         return 0;
     }
     slot = &viewer->slot;
+    started = 0;
     owner = tg_gui_photo_pipeline_owner(TG_GUI_PHOTO_SCOPE_VIEWER);
     if (tg_gui_photo_decode_pipeline.owner != 0 && owner != slot) {
         return 0;
@@ -6681,10 +6706,12 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
                     slot, TG_GUI_PHOTO_SCOPE_VIEWER)) {
                 return 0;
             }
-        } else if ((slot->state == 0 ||
-                    (slot->preview_only && slot->state == 1)) &&
-                   !tg_gui_photo_viewer_decode_start(viewer)) {
-            return 0;
+        } else if (slot->state == 0 ||
+                   (slot->preview_only && slot->state == 1)) {
+            if (!tg_gui_photo_viewer_decode_start(viewer)) {
+                return 0;
+            }
+            started = 1;
         }
         owner = tg_gui_photo_pipeline_owner(TG_GUI_PHOTO_SCOPE_VIEWER);
     }
@@ -6694,6 +6721,12 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
     }
     if (used_turn != 0) {
         *used_turn = 1;
+    }
+    if (started) {
+        if (work_kind != 0) {
+            *work_kind = TG_GUI_PHOTO_WORK_CACHE;
+        }
+        return 0;
     }
     changed = tg_gui_photo_quality_tick(
         &viewer->ctx, slot, mcu_budget, pen_row_budget, cache_budget,
@@ -6828,6 +6861,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     int photo_fast_wake;
     tg_gui_photo_pace photo_decode_pace;
     tg_gui_photo_pace photo_cache_pace;
+    tg_gui_photo_pace photo_replay_pace;
 
     if (state == 0) {
         return 2;
@@ -7206,6 +7240,11 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                            TG_GUI_PHOTO_CACHE_MIN,
                            TG_GUI_PHOTO_CACHE_INITIAL,
                            TG_GUI_PHOTO_CACHE_MAX,
+                           TG_GUI_PHOTO_PACE_TARGET_MS);
+    tg_gui_photo_pace_init(&photo_replay_pace,
+                           TG_GUI_PHOTO_WORK_MIN,
+                           TG_GUI_PHOTO_WORK_INITIAL,
+                           TG_GUI_PHOTO_WORK_MAX,
                            TG_GUI_PHOTO_PACE_TARGET_MS);
     /* Live-reception heartbeat. INTUITICKS are delivered ONLY to the ACTIVE
        window, so with the window deactivated the loop slept in Wait() and the
@@ -9629,14 +9668,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 slice_start = tg_gui_photo_now_ms();
                 if (tg_gui_photo_viewer_decode_tick(
                         &viewer, (unsigned int)work_budget,
-                        (int)work_budget, cache_budget,
+                        (int)photo_replay_pace.budget, cache_budget,
                         &viewer_used, &work_kind)) {
                     viewer_dirty = 1;
                 }
                 if (!viewer_used &&
                     tg_gui_photo_decode_tick(
                         &ctx, (unsigned int)work_budget,
-                        (int)work_budget, cache_budget,
+                        (int)photo_replay_pace.budget, cache_budget,
                         &inline_used, &work_kind)) {
                     session_dirty = 1;
                 }
@@ -9646,15 +9685,23 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 slice_end = tg_gui_photo_now_ms();
                 slice_ms = tg_gui_photo_elapsed_ms(slice_start, slice_end);
                 if (work_kind == TG_GUI_PHOTO_WORK_CACHE) {
-                    tg_gui_photo_pace_observe_log(&photo_cache_pace, slice_ms);
+                    tg_gui_photo_pace_observe_log(
+                        "cache", &photo_cache_pace, slice_ms);
                     photo_fast_wake =
                         photo_cache_pace.budget > photo_cache_pace.minimum ||
                         slice_ms < photo_cache_pace.target_ms;
                 } else if (work_kind == TG_GUI_PHOTO_WORK_DECODE) {
-                    tg_gui_photo_pace_observe_log(&photo_decode_pace, slice_ms);
+                    tg_gui_photo_pace_observe_log(
+                        "decode", &photo_decode_pace, slice_ms);
                     photo_fast_wake =
                         photo_decode_pace.budget > photo_decode_pace.minimum ||
                         slice_ms < photo_decode_pace.target_ms;
+                } else if (work_kind == TG_GUI_PHOTO_WORK_REPLAY) {
+                    tg_gui_photo_pace_observe_log(
+                        "replay", &photo_replay_pace, slice_ms);
+                    photo_fast_wake =
+                        photo_replay_pace.budget > photo_replay_pace.minimum ||
+                        slice_ms < photo_replay_pace.target_ms;
                 }
                 ++local_steps;
                 if (!tg_gui_photo_decode_pending(&viewer) ||

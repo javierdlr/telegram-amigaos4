@@ -3600,6 +3600,8 @@ int tg_gui_self_test(void)
     {
         tg_gui_photo_pace fast;
         tg_gui_photo_pace slow;
+        tg_gui_photo_pace decode;
+        tg_gui_photo_pace replay;
         unsigned char source[257];
         unsigned char adaptive[257];
         unsigned char direct[257];
@@ -3616,6 +3618,19 @@ int tg_gui_self_test(void)
         }
         if (fast.budget != fast.maximum || slow.budget != slow.minimum) {
             puts("gui self-test: adaptive photo pace did not converge");
+            return 2;
+        }
+        /* A slow pen replay used to be charged to the decoder and pinned its
+           budget to the floor. Independent clocks must let fast entropy work
+           accelerate even while replay remains expensive. */
+        tg_gui_photo_pace_init(&decode, 4UL, 12UL, 256UL, 120UL);
+        tg_gui_photo_pace_init(&replay, 4UL, 12UL, 256UL, 120UL);
+        for (i = 0UL; i < 5UL; ++i) {
+            (void)tg_gui_photo_pace_observe(&decode, 20UL);
+            (void)tg_gui_photo_pace_observe(&replay, 240UL);
+        }
+        if (decode.budget <= 12UL || replay.budget != replay.minimum) {
+            puts("gui self-test: photo cost centres contaminated pacing");
             return 2;
         }
         for (i = 0UL; i < sizeof(source); ++i) {

@@ -52,6 +52,10 @@ unless noted.
   machines retain the conservative floor, while fast 68k accelerators ramp up
   toward a roughly 120 ms work budget and use a short wake cadence until the
   visible photo queue is drained.
+- JPEG decode, canonical-cache reads and photo replay now keep independent
+  measured budgets. Slow palette mapping can no longer throttle entropy decode
+  on accelerated 68k systems, and diagnostics identify the cost centre for
+  every pacing adjustment.
 - Non-68k photo scheduling now starts bounded background work without waiting
   behind a continuous pointer-event stream, advances larger JPEG and palette
   slices, and loads normal canonical RGB frames in about two chunks. The
