@@ -127,11 +127,17 @@ typedef struct timerequest tg_gui_timereq;
 #endif
 
 /* The modern lanes ship cybergraphics.library headers as part of their SDK.
-   Use it opportunistically for RGB888 photo rows on RTG screens. The classic
-   OS3 toolchain deliberately remains header/dependency-free and keeps the
-   canonical pen-grid fallback. */
-#if defined(__amigaos4__) || defined(__MORPHOS__) || defined(__MORPHOS) || \
-    defined(__AROS__)
+   Classic OS3 deliberately stays vendor-header-free, but uses the same
+   optional RGB888 path through the documented m68k library vectors below. */
+#if defined(__amigaos3__)
+#define TG_GUI_HAVE_CYBERGRAPHICS 1
+#define TG_GUI_CGX_CLASSIC_RUNTIME 1
+#define CYBERGFXNAME "cybergraphics.library"
+#define CYBRMATTR_DEPTH 0x80000007UL
+#define CYBRMATTR_ISCYBERGFX 0x80000008UL
+#define RECTFMT_RGB 0UL
+#elif defined(__amigaos4__) || defined(__MORPHOS__) || \
+    defined(__MORPHOS) || defined(__AROS__)
 #include <cybergraphx/cybergraphics.h>
 #include <proto/cybergraphics.h>
 #define TG_GUI_HAVE_CYBERGRAPHICS 1
@@ -163,8 +169,82 @@ struct Library *GadToolsBase = 0;
 
 #if defined(TG_GUI_HAVE_CYBERGRAPHICS)
 struct Library *CyberGfxBase = 0;
+static int tg_gui_cgx_open_attempted;
 #if defined(__amigaos4__)
 struct CyberGfxIFace *ICyberGfx = 0;
+#endif
+
+#if defined(TG_GUI_CGX_CLASSIC_RUNTIME)
+/* CGraphX-DevKit FD/inline ABI, verified from the official developer archive:
+   GetCyberMapAttr -0x60 (a0,d0), ReadPixelArray -0x78 and
+   WritePixelArray -0x7e (a0,d0,d1,d2,a1,d3,d4,d5,d6,d7). */
+static __inline ULONG tg_gui_cgx_get_map_attr(struct BitMap *bitmap,
+                                               ULONG tag)
+{
+    register void *a6 __asm("a6") = CyberGfxBase;
+    register struct BitMap *a0 __asm("a0") = bitmap;
+    register ULONG d0 __asm("d0") = tag;
+
+    __asm __volatile("jsr a6@(-0x60)"
+                     : "+r"(d0)
+                     : "r"(a6), "r"(a0)
+                     : "d1", "a1", "cc", "memory");
+    return d0;
+}
+
+static __inline ULONG tg_gui_cgx_read_pixel_array(
+    APTR pixels, UWORD src_x, UWORD src_y, UWORD modulo,
+    struct RastPort *rport, UWORD dst_x, UWORD dst_y,
+    UWORD width, UWORD height, UBYTE format)
+{
+    register void *a6 __asm("a6") = CyberGfxBase;
+    register APTR a0 __asm("a0") = pixels;
+    register ULONG d0 __asm("d0") = src_x;
+    register ULONG d1 __asm("d1") = src_y;
+    register ULONG d2 __asm("d2") = modulo;
+    register struct RastPort *a1 __asm("a1") = rport;
+    register ULONG d3 __asm("d3") = dst_x;
+    register ULONG d4 __asm("d4") = dst_y;
+    register ULONG d5 __asm("d5") = width;
+    register ULONG d6 __asm("d6") = height;
+    register ULONG d7 __asm("d7") = format;
+
+    __asm __volatile("jsr a6@(-0x78)"
+                     : "+r"(d0)
+                     : "r"(a6), "r"(a0), "r"(d1), "r"(d2), "r"(a1),
+                       "r"(d3), "r"(d4), "r"(d5), "r"(d6), "r"(d7)
+                     : "cc", "memory");
+    return d0;
+}
+
+static __inline ULONG tg_gui_cgx_write_pixel_array(
+    APTR pixels, UWORD src_x, UWORD src_y, UWORD modulo,
+    struct RastPort *rport, UWORD dst_x, UWORD dst_y,
+    UWORD width, UWORD height, UBYTE format)
+{
+    register void *a6 __asm("a6") = CyberGfxBase;
+    register APTR a0 __asm("a0") = pixels;
+    register ULONG d0 __asm("d0") = src_x;
+    register ULONG d1 __asm("d1") = src_y;
+    register ULONG d2 __asm("d2") = modulo;
+    register struct RastPort *a1 __asm("a1") = rport;
+    register ULONG d3 __asm("d3") = dst_x;
+    register ULONG d4 __asm("d4") = dst_y;
+    register ULONG d5 __asm("d5") = width;
+    register ULONG d6 __asm("d6") = height;
+    register ULONG d7 __asm("d7") = format;
+
+    __asm __volatile("jsr a6@(-0x7e)"
+                     : "+r"(d0)
+                     : "r"(a6), "r"(a0), "r"(d1), "r"(d2), "r"(a1),
+                       "r"(d3), "r"(d4), "r"(d5), "r"(d6), "r"(d7)
+                     : "cc", "memory");
+    return d0;
+}
+#else
+#define tg_gui_cgx_get_map_attr GetCyberMapAttr
+#define tg_gui_cgx_read_pixel_array ReadPixelArray
+#define tg_gui_cgx_write_pixel_array WritePixelArray
 #endif
 
 static int tg_gui_amiga_open_cybergraphics(void)
@@ -172,6 +252,10 @@ static int tg_gui_amiga_open_cybergraphics(void)
     if (CyberGfxBase != 0) {
         return 1;
     }
+    if (tg_gui_cgx_open_attempted) {
+        return 0;
+    }
+    tg_gui_cgx_open_attempted = 1;
     CyberGfxBase = OpenLibrary((CONST_STRPTR)CYBERGFXNAME, 40);
 #if defined(__amigaos4__)
     if (CyberGfxBase != 0) {
@@ -2991,8 +3075,9 @@ static void tg_gui_photo_queue_pen_fallback(tg_gui_amiga_ctx *ctx)
 static int tg_gui_photo_cgx_target_possible(struct RastPort *rport)
 {
     return rport != 0 && rport->BitMap != 0 && CyberGfxBase != 0 &&
-           GetCyberMapAttr(rport->BitMap, CYBRMATTR_ISCYBERGFX) != 0UL &&
-           GetBitMapAttr(rport->BitMap, BMA_DEPTH) > 8UL;
+           tg_gui_cgx_get_map_attr(
+               rport->BitMap, CYBRMATTR_ISCYBERGFX) != 0UL &&
+           tg_gui_cgx_get_map_attr(rport->BitMap, CYBRMATTR_DEPTH) > 8UL;
 }
 
 static int tg_gui_photo_cgx_self_check(tg_gui_amiga_ctx *ctx,
@@ -3039,14 +3124,14 @@ static int tg_gui_photo_cgx_self_check(tg_gui_amiga_ctx *ctx,
         test_y = ctx->inner_h - 1;
     }
     memset(actual, 0, sizeof(actual));
-    if (WritePixelArray(expected, 0, 0, 6, target,
-                        (UWORD)(origin_x + test_x),
-                        (UWORD)(origin_y + test_y), 2, 1,
-                        RECTFMT_RGB) == 0UL ||
-        ReadPixelArray(actual, 0, 0, 6, target,
-                       (UWORD)(origin_x + test_x),
-                       (UWORD)(origin_y + test_y), 2, 1,
-                       RECTFMT_RGB) == 0UL ||
+    if (tg_gui_cgx_write_pixel_array(
+            expected, 0, 0, 6, target,
+            (UWORD)(origin_x + test_x), (UWORD)(origin_y + test_y),
+            2, 1, RECTFMT_RGB) == 0UL ||
+        tg_gui_cgx_read_pixel_array(
+            actual, 0, 0, 6, target,
+            (UWORD)(origin_x + test_x), (UWORD)(origin_y + test_y),
+            2, 1, RECTFMT_RGB) == 0UL ||
         actual[0] < 200U || actual[1] > 55U || actual[2] > 55U ||
         actual[3] > 55U || actual[4] < 200U || actual[5] > 55U) {
         if (is_window) {
@@ -3115,7 +3200,7 @@ static int tg_gui_photo_draw_truecolor_target(
                 row[x * 3 + 1] = src[1];
                 row[x * 3 + 2] = src[2];
             }
-            if (WritePixelArray(
+            if (tg_gui_cgx_write_pixel_array(
                     row, 0, 0, (UWORD)(width * 3), target,
                     (UWORD)(origin_x + chunk_x),
                     (UWORD)(origin_y + y),

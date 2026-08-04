@@ -43,6 +43,10 @@ unless noted.
   photos above 10 MiB are sent as documents with explicit status feedback.
 
 ### Changed
+- AmigaOS 3.x now discovers `cybergraphics.library` at runtime and sends
+  inline-photo and viewer RGB888 rows directly to compatible true-colour RTG
+  screens. AGA and systems without a validated CyberGraphX target keep the
+  existing zero-dependency pen-grid renderer.
 - Photo decode and canonical-cache reads now size their idle slices from
   measured execution time instead of a fixed CPU-family assumption. Slow 68k
   machines retain the conservative floor, while fast 68k accelerators ramp up
