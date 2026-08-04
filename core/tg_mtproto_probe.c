@@ -218,6 +218,7 @@ static int tg_mtproto_auth_check_password_text(const char *host,
 
 static FILE *tg_mtproto_open_quiet_stream(FILE *fallback);
 static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback);
+static void tg_mtproto_quiet_tmp_sweep(void);
 static void tg_mtproto_replay_quiet_stream(FILE *quiet, FILE *fallback);
 
 static int tg_mtproto_production_endpoint_for_dc(unsigned long dc_id,
@@ -8861,6 +8862,71 @@ static int tg_mtproto_gui_fetch_group_members(
 #endif
 }
 
+/* On the Amiga lanes tmpfile() is NOT anonymous: clib2/newlib create a real
+   "tmpNNNNNN" file in the CURRENT DIRECTORY and AmigaDOS cannot delete an
+   open file, so every quiet query left a dropping in the program drawer
+   (field report 2026-08-04: a drawer flooded with tmp* files). Quiet streams
+   now live in T: (the standard RAM-backed temp assign, same home as the
+   search cache), one slot per nesting level, swept at first use and when the
+   context closes. The host keeps the POSIX tmpfile(), which really is
+   anonymous. */
+#if defined(__amigaos3__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
+    defined(__MORPHOS) || defined(__AROS__)
+#define TG_MTPROTO_QUIET_TMP_SLOTS 8
+static int tg_mtproto_quiet_depth;
+
+static void tg_mtproto_quiet_tmp_name(char *out, int slot)
+{
+    sprintf(out, "T:tg-quiet-%d.tmp", slot);
+}
+
+static void tg_mtproto_quiet_tmp_sweep(void)
+{
+    char name[32];
+    int i;
+
+    for (i = 0; i < TG_MTPROTO_QUIET_TMP_SLOTS; ++i) {
+        tg_mtproto_quiet_tmp_name(name, i);
+        (void)remove(name);
+    }
+}
+
+static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
+{
+    static int swept;
+    char name[32];
+    FILE *quiet;
+
+    if (!swept) {
+        swept = 1;
+        tg_mtproto_quiet_tmp_sweep();
+    }
+    if (tg_mtproto_quiet_depth >= TG_MTPROTO_QUIET_TMP_SLOTS) {
+        return fallback;
+    }
+    tg_mtproto_quiet_tmp_name(name, tg_mtproto_quiet_depth);
+    quiet = fopen(name, "w+b"); /* w+ truncates any stale slot content */
+    if (quiet == 0) {
+        return fallback;
+    }
+    ++tg_mtproto_quiet_depth;
+    return quiet;
+}
+
+static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback)
+{
+    char name[32];
+
+    if (quiet != 0 && quiet != fallback) {
+        fclose(quiet);
+        if (tg_mtproto_quiet_depth > 0) {
+            --tg_mtproto_quiet_depth;
+            tg_mtproto_quiet_tmp_name(name, tg_mtproto_quiet_depth);
+            (void)remove(name);
+        }
+    }
+}
+#else
 static FILE *tg_mtproto_open_quiet_stream(FILE *fallback)
 {
     FILE *quiet;
@@ -8878,6 +8944,11 @@ static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback)
         fclose(quiet);
     }
 }
+
+static void tg_mtproto_quiet_tmp_sweep(void)
+{
+}
+#endif
 
 static void tg_mtproto_replay_quiet_stream(FILE *quiet, FILE *fallback)
 {
@@ -18601,6 +18672,7 @@ void tg_gui_session_close(void)
     }
     tg_gui_foreign_dc = 0UL;
     tg_gui_foreign_imported = 0;
+    tg_mtproto_quiet_tmp_sweep(); /* leave no quiet-stream slot behind in T: */
     tg_gui_log("close: context closed");
 #if defined(__MORPHOS__) || defined(__MORPHOS)
     /* Let the bsdsocket stack drive the just-closed connection from FIN-WAIT to
