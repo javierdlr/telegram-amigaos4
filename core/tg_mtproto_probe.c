@@ -9874,6 +9874,7 @@ typedef struct tg_gui_photo_queue_entry {
     tg_mtproto_photo_meta photo;
     int large;
     int progressive_skipped;
+    int require_jpeg; /* Save-as must bypass an already-decoded .pgc cache. */
 } tg_gui_photo_queue_entry;
 
 typedef struct tg_gui_photo_cache_variant {
@@ -10286,13 +10287,16 @@ static int tg_gui_photo_queue_insert(const tg_gui_photo_queue_entry *source)
     entry = *source;
     if (tg_gui_photo_cache_exists(entry.photo.id_hi, entry.photo.id_lo,
                                   entry.large) ||
-        tg_gui_photo_canonical_cache_exists(
-            entry.photo.id_hi, entry.photo.id_lo, entry.large) ||
-        (tg_gui_photo_fetch.active &&
-         tg_gui_photo_fetch.large == entry.large &&
-         tg_gui_photo_fetch.photo.id_hi == entry.photo.id_hi &&
-         tg_gui_photo_fetch.photo.id_lo == entry.photo.id_lo)) {
+        (!entry.require_jpeg &&
+         tg_gui_photo_canonical_cache_exists(
+             entry.photo.id_hi, entry.photo.id_lo, entry.large))) {
         return 0;
+    }
+    if (tg_gui_photo_fetch.active &&
+        tg_gui_photo_fetch.large == entry.large &&
+        tg_gui_photo_fetch.photo.id_hi == entry.photo.id_hi &&
+        tg_gui_photo_fetch.photo.id_lo == entry.photo.id_lo) {
+        return 1;
     }
     for (i = 0; i < tg_gui_photo_queue_count; ++i) {
         if (tg_gui_photo_queue[i].large == entry.large &&
@@ -10474,6 +10478,77 @@ int tg_gui_session_request_viewer_photo(unsigned long id_hi,
     if (!tg_gui_photo_cache_exists(id_hi, id_lo, 1) &&
         !tg_gui_photo_canonical_cache_exists(id_hi, id_lo, 1)) {
         tg_gui_photo_queue_offer(photo, 1);
+    }
+    return 0;
+}
+
+int tg_gui_session_request_photo_jpeg(unsigned long id_hi,
+                                      unsigned long id_lo, int large)
+{
+    tg_mtproto_photo_meta *photo;
+    tg_gui_photo_queue_entry entry;
+    int i;
+
+    large = large ? 1 : 0;
+    if (tg_gui_photo_cache_exists(id_hi, id_lo, large)) {
+        return 2;
+    }
+    if (tg_gui_photo_fetch.active && tg_gui_photo_fetch.large == large &&
+        tg_gui_photo_fetch.photo.id_hi == id_hi &&
+        tg_gui_photo_fetch.photo.id_lo == id_lo) {
+        return 1;
+    }
+    for (i = 0; i < tg_gui_photo_queue_count; ++i) {
+        if (tg_gui_photo_queue[i].large == large &&
+            tg_gui_photo_queue[i].photo.id_hi == id_hi &&
+            tg_gui_photo_queue[i].photo.id_lo == id_lo) {
+            tg_gui_photo_queue[i].require_jpeg = 1;
+            return 1;
+        }
+    }
+    photo = tg_gui_photo_catalog_find(id_hi, id_lo);
+    if (photo == 0 || tg_gui_photo_cache_paused ||
+        !tg_gui_photo_prepare_queue_entry(photo, large, &entry)) {
+        return 0;
+    }
+    entry.require_jpeg = 1;
+    return tg_gui_photo_queue_insert(&entry) ? 1 : 0;
+}
+
+int tg_gui_session_photo_fetch_progress(unsigned long id_hi,
+                                        unsigned long id_lo, int large,
+                                        unsigned long *done,
+                                        unsigned long *total)
+{
+    int i;
+
+    if (done != 0) {
+        *done = 0UL;
+    }
+    if (total != 0) {
+        *total = 0UL;
+    }
+    large = large ? 1 : 0;
+    if (tg_gui_photo_fetch.active && tg_gui_photo_fetch.large == large &&
+        tg_gui_photo_fetch.photo.id_hi == id_hi &&
+        tg_gui_photo_fetch.photo.id_lo == id_lo) {
+        if (done != 0) {
+            *done = tg_gui_photo_fetch.offset;
+        }
+        if (total != 0) {
+            *total = tg_gui_photo_fetch.photo.size;
+        }
+        return 1;
+    }
+    for (i = 0; i < tg_gui_photo_queue_count; ++i) {
+        if (tg_gui_photo_queue[i].large == large &&
+            tg_gui_photo_queue[i].photo.id_hi == id_hi &&
+            tg_gui_photo_queue[i].photo.id_lo == id_lo) {
+            if (total != 0) {
+                *total = tg_gui_photo_queue[i].photo.size;
+            }
+            return 1;
+        }
     }
     return 0;
 }
@@ -13900,6 +13975,70 @@ int tg_mtproto_probe_self_test(void)
             puts("probe self-test: viewer photo queue priority wrong");
             return 2;
         }
+        tg_gui_photo_queue_reset();
+    }
+
+    /* Save-as needs the original JPEG, not only the decoded RGB canonical.
+       A .pgc that satisfies painting must therefore not suppress this demand. */
+    {
+        tg_mtproto_photo_meta photo;
+        tg_gui_photo_queue_entry next;
+        char canonical[64];
+        FILE *file;
+        unsigned long done;
+        unsigned long total;
+        int fixture_failed;
+
+        tg_gui_photo_queue_reset();
+        memset(&photo, 0, sizeof(photo));
+        photo.has_photo = 1;
+        photo.id_hi = 0xf00900a5UL;
+        photo.id_lo = 0x5aUL;
+        strcpy(photo.thumb_type, "m");
+        photo.width = photo.height = 64UL;
+        photo.size = 1024UL;
+        photo.has_large = 1;
+        strcpy(photo.large_thumb_type, "x");
+        photo.large_width = photo.large_height = 256UL;
+        photo.large_size = 4096UL;
+        tg_gui_photo_catalog_offer(&photo);
+        (void)mkdir("photos", 0777);
+        if (tg_gui_session_photo_canonical_cache_path(
+                canonical, sizeof(canonical), photo.id_hi, photo.id_lo, 1) !=
+            0) {
+            puts("probe self-test: photo save canonical path failed");
+            return 2;
+        }
+        (void)remove(canonical);
+        file = fopen(canonical, "wb");
+        fixture_failed = file == 0;
+        if (file != 0) {
+            if (fputc(0, file) == EOF) {
+                fixture_failed = 1;
+            }
+            if (fclose(file) != 0) {
+                fixture_failed = 1;
+            }
+        }
+        if (fixture_failed) {
+            (void)remove(canonical);
+            puts("probe self-test: photo save canonical fixture failed");
+            return 2;
+        }
+        done = total = 0UL;
+        if (tg_gui_session_request_photo_jpeg(
+                photo.id_hi, photo.id_lo, 1) != 1 ||
+            !tg_gui_session_photo_fetch_progress(
+                photo.id_hi, photo.id_lo, 1, &done, &total) ||
+            done != 0UL || total != photo.large_size ||
+            !tg_gui_photo_queue_pop(&next) || !next.large ||
+            !next.require_jpeg) {
+            (void)remove(canonical);
+            tg_gui_photo_queue_reset();
+            puts("probe self-test: photo save JPEG demand was suppressed");
+            return 2;
+        }
+        (void)remove(canonical);
         tg_gui_photo_queue_reset();
     }
 

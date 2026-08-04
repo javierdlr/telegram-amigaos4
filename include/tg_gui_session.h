@@ -73,6 +73,16 @@ int tg_gui_session_request_viewer_photo(unsigned long photo_id_hi,
                                         unsigned long *source_w,
                                         unsigned long *source_h);
 
+/* Ensure an original cached JPEG exists even when a decoded canonical cache
+   already satisfies normal painting. Used by Save photo as...: 2 = cached,
+   1 = queued/active, 0 = no metadata. Progress also reports queued work. */
+int tg_gui_session_request_photo_jpeg(unsigned long photo_id_hi,
+                                      unsigned long photo_id_lo, int large);
+int tg_gui_session_photo_fetch_progress(unsigned long photo_id_hi,
+                                        unsigned long photo_id_lo, int large,
+                                        unsigned long *done,
+                                        unsigned long *total);
+
 /* Stable on-disk cache name shared by the session and native window backend.
    `large` selects photos/tgph<id>-l.jpg instead of the inline JPEG. */
 int tg_gui_session_photo_cache_path(char *path, unsigned long path_size,

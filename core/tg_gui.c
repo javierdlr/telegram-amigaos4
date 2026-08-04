@@ -3044,6 +3044,11 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
             ids[n] = TG_GUI_CTX_DOWNLOAD;
             ++n;
         }
+        if (m->has_photo) {
+            labels[n] = "Save photo as...";
+            ids[n] = TG_GUI_CTX_SAVE_PHOTO;
+            ++n;
+        }
         if (m->text[0] != '\0') {
             labels[n] = "Copy text";
             ids[n] = TG_GUI_CTX_COPY;
@@ -3066,6 +3071,62 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
     ids[n] = TG_GUI_CTX_SENDFILE;
     ++n;
     return n;
+}
+
+int tg_gui_photo_default_filename(char *out, unsigned long out_size,
+                                  unsigned long photo_id_hi,
+                                  unsigned long photo_id_lo)
+{
+    unsigned long short_id;
+    char name[40];
+    unsigned long length;
+
+    if (out == 0 || out_size == 0UL ||
+        (photo_id_hi == 0UL && photo_id_lo == 0UL)) {
+        return 1;
+    }
+    short_id = photo_id_lo != 0UL ? photo_id_lo : photo_id_hi;
+    sprintf(name, "photo-%08lx.jpg", short_id);
+    length = (unsigned long)strlen(name);
+    if (length + 1UL > out_size) {
+        out[0] = '\0';
+        return 1;
+    }
+    memcpy(out, name, length + 1UL);
+    return 0;
+}
+
+int tg_gui_photo_build_destination(char *out, unsigned long out_size,
+                                   const char *drawer, const char *name)
+{
+    unsigned long drawer_len;
+    unsigned long name_len;
+    int slash;
+
+    if (out == 0 || out_size == 0UL || drawer == 0 || name == 0 ||
+        drawer[0] == '\0' || name[0] == '\0') {
+        return 1;
+    }
+    drawer_len = (unsigned long)strlen(drawer);
+    name_len = (unsigned long)strlen(name);
+    slash = drawer[drawer_len - 1UL] != ':' &&
+            drawer[drawer_len - 1UL] != '/';
+    if (drawer_len + (slash ? 1UL : 0UL) + name_len + 1UL > out_size) {
+        out[0] = '\0';
+        return 1;
+    }
+    memcpy(out, drawer, drawer_len);
+    if (slash) {
+        out[drawer_len++] = '/';
+    }
+    memcpy(out + drawer_len, name, name_len + 1UL);
+    return 0;
+}
+
+int tg_gui_photo_save_allowed(int destination_exists,
+                              int overwrite_confirmed)
+{
+    return !destination_exists || overwrite_confirmed;
 }
 
 /* Measures the popup width from the labels the CURRENT state would show: the
@@ -3709,26 +3770,56 @@ int tg_gui_self_test(void)
         int i;
         int saw_saved;
         int saw_picker;
+        int saw_photo_save;
 
         state.ctx_msg = 0;
         state.messages[0].id = 123UL;
         state.messages[0].is_own = 1;
         state.messages[0].has_document = 1;
+        state.messages[0].has_photo = 1;
         count = tg_gui_context_items(&state, labels, ids);
         saw_saved = 0;
         saw_picker = 0;
+        saw_photo_save = 0;
         for (i = 0; i < count; ++i) {
             if (ids[i] == TG_GUI_CTX_FORWARD_SAVED) {
                 saw_saved = 1;
             } else if (ids[i] == TG_GUI_CTX_FORWARD_TO) {
                 saw_picker = 1;
+            } else if (ids[i] == TG_GUI_CTX_SAVE_PHOTO) {
+                saw_photo_save = 1;
             }
         }
         state.messages[0].id = 0UL;
         state.messages[0].is_own = 0;
         state.messages[0].has_document = 0;
-        if (count != TG_GUI_CTX_ITEMS_MAX || !saw_saved || !saw_picker) {
+        state.messages[0].has_photo = 0;
+        if (count != TG_GUI_CTX_ITEMS_MAX || !saw_saved || !saw_picker ||
+            !saw_photo_save) {
             puts("gui self-test: forwarding context items missing");
+            return 2;
+        }
+    }
+
+    /* Save-as naming/path joining is platform-neutral. Existing destinations
+       are rejected until the requester explicitly confirms replacement. */
+    {
+        char name[40];
+        char path[80];
+
+        if (tg_gui_photo_default_filename(name, sizeof(name), 0x11UL,
+                                          0x1234UL) != 0 ||
+            strcmp(name, "photo-00001234.jpg") != 0 ||
+            tg_gui_photo_build_destination(path, sizeof(path),
+                                           "RAM:Downloads", name) != 0 ||
+            strcmp(path, "RAM:Downloads/photo-00001234.jpg") != 0 ||
+            tg_gui_photo_build_destination(path, sizeof(path),
+                                           "RAM:", name) != 0 ||
+            strcmp(path, "RAM:photo-00001234.jpg") != 0 ||
+            tg_gui_photo_save_allowed(1, 0) ||
+            !tg_gui_photo_save_allowed(1, 1) ||
+            !tg_gui_photo_save_allowed(0, 0)) {
+            puts("gui self-test: photo save-as path policy mismatch");
             return 2;
         }
     }

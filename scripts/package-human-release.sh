@@ -240,6 +240,10 @@ Using the GUI
 - Click a photo to open a fixed-size viewer with a larger copy. It appears first
   as one complete coarse image, then refines through sharper quality passes;
   the same window is reused. The larger cache has a -l.jpg suffix in photos/.
+- Right-click a photo (or its [Photo] label) and choose "Save photo as..." to
+  keep the original JPEG under any drawer and name. Press S in the open viewer
+  for the same requester. An uncached photo is fetched first; replacing an
+  existing file always requires confirmation.
 - On a slower machine, uncheck "Settings > Inline photos" in the Telegram menu.
   The conversation returns to lightweight [Photo] labels and does no background
   photo fetch or decode work. Click an individual [Photo] label to load only
@@ -401,6 +405,10 @@ Usare la GUI
   grande. Appare subito intera e sgranata, poi si rifinisce con passate sempre
   piu' nitide; la stessa finestra viene riutilizzata. La copia grande in
   photos/ ha il suffisso -l.jpg.
+- Click destro su una foto (o sulla sua etichetta [Photo]) e scegli
+  "Save photo as..." per salvare il JPEG originale con drawer e nome a scelta.
+  Nel viewer premi S per aprire lo stesso requester. Se la foto non e' in cache
+  viene prima scaricata; la sostituzione di un file esistente chiede conferma.
 - Su una macchina lenta togli la spunta da "Settings > Inline photos" nel menu
   Telegram. La conversazione torna alle leggere etichette [Photo] e non avvia
   download o decodifiche in background. Clicca una singola [Photo] per caricare

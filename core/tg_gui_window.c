@@ -857,6 +857,14 @@ typedef struct tg_gui_photo_viewer {
     char title[TG_GUI_NAME_MAX];
 } tg_gui_photo_viewer;
 
+typedef struct tg_gui_photo_save_job {
+    int pending;
+    int last_percent;
+    unsigned long id_hi;
+    unsigned long id_lo;
+    char destination[256];
+} tg_gui_photo_save_job;
+
 static tg_gui_photo_slot tg_gui_photo_slots[TG_GUI_PHOTO_SLOTS];
 static unsigned long tg_gui_photo_use_clock;
 static tg_gui_photo_request tg_gui_photo_requests[TG_GUI_PHOTO_REQUESTS];
@@ -5143,6 +5151,19 @@ static int tg_gui_amiga_confirm_delete(struct Window *win)
     return (int)tg_gui_amiga_easyreq_args(win, &es);
 }
 
+/* Save requesters never replace an existing photo without an explicit yes. */
+static int tg_gui_amiga_confirm_photo_overwrite(struct Window *win)
+{
+    struct EasyStruct es;
+
+    es.es_StructSize = (ULONG)sizeof(struct EasyStruct);
+    es.es_Flags = 0UL;
+    es.es_Title = (STRPTR)"Replace photo";
+    es.es_TextFormat = (STRPTR)"That file already exists. Replace it?";
+    es.es_GadgetFormat = (STRPTR)"Replace|Cancel";
+    return (int)tg_gui_amiga_easyreq_cancel_args(win, &es);
+}
+
 /* Cache clear is destructive only for reproducible thumbnails/canonical files;
    ESC maps to No through the same requester loop used by JPEG drop choices. */
 static int tg_gui_amiga_confirm_clear_photo_cache(struct Window *win)
@@ -5418,6 +5439,315 @@ static void tg_gui_window_pick_download_dir(tg_gui_state *state,
         tg_gui_window_copy(state->status, sizeof(state->status), line);
         tg_gui_window_paint(state, backend);
     }
+}
+
+static int tg_gui_photo_file_exists(const char *path)
+{
+    FILE *file;
+
+    if (path == 0 || path[0] == '\0') {
+        return 0;
+    }
+    file = fopen(path, "rb");
+    if (file == 0) {
+        return 0;
+    }
+    fclose(file);
+    return 1;
+}
+
+static int tg_gui_photo_cached_jpeg(char *path, unsigned long path_size,
+                                    unsigned long id_hi,
+                                    unsigned long id_lo, int large_only)
+{
+    if (tg_gui_session_photo_cache_path(path, path_size, id_hi, id_lo, 1) ==
+            0 &&
+        tg_gui_photo_file_exists(path)) {
+        return 1;
+    }
+    if (!large_only &&
+        tg_gui_session_photo_cache_path(path, path_size, id_hi, id_lo, 0) ==
+            0 &&
+        tg_gui_photo_file_exists(path)) {
+        return 1;
+    }
+    path[0] = '\0';
+    return 0;
+}
+
+/* Copy through a sibling temporary file. When replacing, keep a backup until
+   the final rename succeeds so a disk error cannot destroy the old file. */
+static int tg_gui_photo_copy_atomic(const char *source,
+                                    const char *destination)
+{
+    FILE *in;
+    FILE *out;
+    unsigned char *buffer;
+    char part[272];
+    char backup[272];
+    unsigned long destination_len;
+    int existed;
+    int moved_old;
+    int failed;
+
+    if (source == 0 || destination == 0 || source[0] == '\0' ||
+        destination[0] == '\0') {
+        return 1;
+    }
+    if (strcmp(source, destination) == 0) {
+        return 0;
+    }
+    destination_len = (unsigned long)strlen(destination);
+    if (destination_len + 6UL >= sizeof(part)) {
+        return 1;
+    }
+    sprintf(part, "%s.part", destination);
+    sprintf(backup, "%s.bak", destination);
+    in = fopen(source, "rb");
+    if (in == 0) {
+        return 1;
+    }
+    (void)remove(part);
+    out = fopen(part, "wb");
+    if (out == 0) {
+        fclose(in);
+        return 1;
+    }
+    buffer = (unsigned char *)malloc(8192U);
+    failed = buffer == 0;
+    while (!failed) {
+        size_t got;
+
+        got = fread(buffer, 1, 8192U, in);
+        if (got == 0U) {
+            if (ferror(in)) {
+                failed = 1;
+            }
+            break;
+        }
+        if (fwrite(buffer, 1, got, out) != got) {
+            failed = 1;
+        }
+    }
+    free(buffer);
+    if (fclose(in) != 0) {
+        failed = 1;
+    }
+    if (fclose(out) != 0) {
+        failed = 1;
+    }
+    if (failed) {
+        (void)remove(part);
+        return 1;
+    }
+    existed = tg_gui_photo_file_exists(destination);
+    moved_old = 0;
+    if (existed) {
+        (void)remove(backup);
+        if (rename(destination, backup) != 0) {
+            (void)remove(part);
+            return 1;
+        }
+        moved_old = 1;
+    }
+    if (rename(part, destination) != 0) {
+        if (moved_old) {
+            (void)rename(backup, destination);
+        }
+        (void)remove(part);
+        return 1;
+    }
+    if (moved_old) {
+        (void)remove(backup);
+    }
+    return 0;
+}
+
+/* 1 selected, 0 cancelled, -1 requester/path failure. */
+static int tg_gui_photo_pick_destination(struct Window *win,
+                                         unsigned long id_hi,
+                                         unsigned long id_lo,
+                                         char *destination,
+                                         unsigned long destination_size)
+{
+    struct FileRequester *req;
+    char name[40];
+    int selected;
+    int result;
+
+    destination[0] = '\0';
+    if (tg_gui_photo_default_filename(name, sizeof(name), id_hi, id_lo) != 0) {
+        return -1;
+    }
+    AslBase = OpenLibrary((CONST_STRPTR)"asl.library", 38L);
+    if (AslBase == 0) {
+        return -1;
+    }
+#if defined(__amigaos4__)
+    IAsl = (struct AslIFace *)GetInterface(AslBase, "main", 1L, 0);
+    if (IAsl == 0) {
+        CloseLibrary(AslBase);
+        AslBase = 0;
+        return -1;
+    }
+#endif
+    req = (struct FileRequester *)AllocAslRequestTags(
+        ASL_FileRequest, ASLFR_Window, TG_GUI_TAG(win), ASLFR_TitleText,
+        TG_GUI_TAG("Save photo as"), ASLFR_DoSaveMode, TRUE,
+        ASLFR_InitialDrawer, TG_GUI_TAG(tg_gui_session_download_dir()),
+        ASLFR_InitialFile, TG_GUI_TAG(name), TAG_DONE);
+    selected = req != 0 && AslRequestTags(req, TAG_DONE);
+    result = 0;
+    if (selected) {
+        if (tg_gui_photo_build_destination(
+                destination, destination_size,
+                (const char *)req->fr_Drawer,
+                (const char *)req->fr_File) != 0) {
+            result = -1;
+        } else if (tg_gui_photo_file_exists(destination) &&
+                   !tg_gui_photo_save_allowed(
+                       1, tg_gui_amiga_confirm_photo_overwrite(win) == 1)) {
+            destination[0] = '\0';
+            result = 0;
+        } else {
+            result = 1;
+        }
+    }
+    if (req != 0) {
+        FreeAslRequest(req);
+    }
+#if defined(__amigaos4__)
+    DropInterface((struct Interface *)IAsl);
+    IAsl = 0;
+#endif
+    CloseLibrary(AslBase);
+    AslBase = 0;
+    return result;
+}
+
+static void tg_gui_photo_save_status(tg_gui_state *state,
+                                     tg_gui_backend *backend,
+                                     const char *text)
+{
+    tg_gui_window_copy(state->status, sizeof(state->status), text);
+    tg_gui_window_paint(state, backend);
+}
+
+static void tg_gui_photo_save_begin(tg_gui_state *state,
+                                    struct Window *win,
+                                    tg_gui_backend *backend,
+                                    tg_gui_photo_save_job *job,
+                                    unsigned long id_hi,
+                                    unsigned long id_lo)
+{
+    char source[64];
+    char line[192];
+    int picked;
+
+    if (job->pending) {
+        tg_gui_photo_save_status(state, backend,
+                                 "A photo save is already running");
+        return;
+    }
+    if (tg_gui_session_transfer_busy()) {
+        tg_gui_photo_save_status(state, backend,
+                                 "A transfer is already running");
+        return;
+    }
+    picked = tg_gui_photo_pick_destination(
+        win, id_hi, id_lo, job->destination, sizeof(job->destination));
+    if (picked == 0) {
+        return;
+    }
+    if (picked < 0) {
+        tg_gui_photo_save_status(state, backend,
+                                 "Could not open the save requester");
+        return;
+    }
+    if (tg_gui_photo_cached_jpeg(source, sizeof(source), id_hi, id_lo, 0)) {
+        if (tg_gui_photo_copy_atomic(source, job->destination) == 0) {
+            sprintf(line, "Saved: %.180s", job->destination);
+        } else {
+            strcpy(line, "Could not save that photo");
+        }
+        tg_gui_photo_save_status(state, backend, line);
+        return;
+    }
+    if (tg_gui_session_request_photo_jpeg(id_hi, id_lo, 1) == 0) {
+        tg_gui_photo_save_status(state, backend,
+                                 "That photo is not available now");
+        return;
+    }
+    job->pending = 1;
+    job->last_percent = -1;
+    job->id_hi = id_hi;
+    job->id_lo = id_lo;
+    tg_gui_photo_save_status(state, backend,
+                             "Fetching photo... (ESC cancels)");
+}
+
+static int tg_gui_photo_save_tick(tg_gui_state *state,
+                                  tg_gui_backend *backend,
+                                  tg_gui_photo_save_job *job)
+{
+    char source[64];
+    char line[192];
+    unsigned long done;
+    unsigned long total;
+    unsigned long percent;
+    int pending;
+
+    if (!job->pending) {
+        return 0;
+    }
+    if (tg_gui_photo_cached_jpeg(source, sizeof(source), job->id_hi,
+                                 job->id_lo, 1)) {
+        if (tg_gui_photo_copy_atomic(source, job->destination) == 0) {
+            sprintf(line, "Saved: %.180s", job->destination);
+        } else {
+            strcpy(line, "Could not save that photo");
+        }
+        memset(job, 0, sizeof(*job));
+        tg_gui_photo_save_status(state, backend, line);
+        return 1;
+    }
+    pending = tg_gui_session_request_photo_jpeg(job->id_hi, job->id_lo, 1);
+    if (pending == 0) {
+        memset(job, 0, sizeof(*job));
+        tg_gui_photo_save_status(state, backend,
+                                 "That photo is not available now");
+        return 1;
+    }
+    done = total = 0UL;
+    if (tg_gui_session_photo_fetch_progress(
+            job->id_hi, job->id_lo, 1, &done, &total) && total != 0UL) {
+        if (total > 42949672UL) {
+            percent = done / (total / 100UL);
+        } else {
+            percent = (done * 100UL) / total;
+        }
+        if (percent > 100UL) {
+            percent = 100UL;
+        }
+        if ((int)percent != job->last_percent) {
+            job->last_percent = (int)percent;
+            sprintf(line, "Fetching photo... %lu%% (ESC cancels)", percent);
+            tg_gui_photo_save_status(state, backend, line);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void tg_gui_photo_save_cancel(tg_gui_state *state,
+                                     tg_gui_backend *backend,
+                                     tg_gui_photo_save_job *job)
+{
+    if (!job->pending) {
+        return;
+    }
+    memset(job, 0, sizeof(*job));
+    tg_gui_photo_save_status(state, backend, "Photo save cancelled");
 }
 
 static int tg_gui_window_path_is_jpeg(const char *path)
@@ -6740,7 +7070,8 @@ static int tg_gui_photo_viewer_decode_tick(tg_gui_photo_viewer *viewer,
 
 static void tg_gui_photo_viewer_drain(tg_gui_photo_viewer *viewer,
                                       int *photo_tick,
-                                      int *interactive_event)
+                                      int *interactive_event,
+                                      int *save_requested)
 {
     struct IntuiMessage *msg;
     int close_requested;
@@ -6768,6 +7099,11 @@ static void tg_gui_photo_viewer_drain(tg_gui_photo_viewer *viewer,
             (msg_class == IDCMP_VANILLAKEY && msg_code == 27U) ||
             (msg_class == IDCMP_RAWKEY && msg_code == 0x45U)) {
             close_requested = 1;
+        } else if (msg_class == IDCMP_VANILLAKEY &&
+                   (msg_code == 's' || msg_code == 'S')) {
+            if (save_requested != 0) {
+                *save_requested = 1;
+            }
         } else if (msg_class == IDCMP_REFRESHWINDOW) {
             tg_gui_photo_viewer_refresh(viewer);
         }
@@ -6797,6 +7133,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 {
     tg_gui_amiga_ctx ctx;
     tg_gui_photo_viewer viewer;
+    tg_gui_photo_save_job photo_save;
     tg_gui_backend backend;
     int init_w;
     int init_h;
@@ -6874,6 +7211,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
 
     memset(&ctx, 0, sizeof(ctx));
     memset(&viewer, 0, sizeof(viewer));
+    memset(&photo_save, 0, sizeof(photo_save));
     ctx.photo_dither = state->photo_dither;
     own_scr = 0;
     tg_gui_window_load_geom(&init_w, &init_h, &init_x, &init_y, &init_own);
@@ -7277,6 +7615,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         int photo_resume_turn;
         int photo_background_turn;
         int viewer_dirty;
+        int viewer_save_requested;
         ULONG wake_signals;
 
         session_dirty = 0;
@@ -7288,6 +7627,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
         photo_resume_turn = 0;
         photo_background_turn = 0;
         viewer_dirty = 0;
+        viewer_save_requested = 0;
         wake_signals = 0UL;
         if (older_cooldown > 0) {
             older_cooldown -= 1;
@@ -7318,7 +7658,14 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             }
         }
         tg_gui_photo_viewer_drain(&viewer, &photo_tick,
-                                  &interactive_event);
+                                  &interactive_event,
+                                  &viewer_save_requested);
+        if (viewer_save_requested && viewer.ctx.window != 0 &&
+            (viewer.slot.id_hi != 0UL || viewer.slot.id_lo != 0UL)) {
+            tg_gui_photo_save_begin(state, viewer.ctx.window, &backend,
+                                    &photo_save, viewer.slot.id_hi,
+                                    viewer.slot.id_lo);
+        }
         while ((msg = (struct IntuiMessage *)GetMsg(ctx.window->UserPort)) !=
                0) {
             ULONG msg_class;
@@ -7448,6 +7795,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                     tg_gui_window_copy(state->status, sizeof(state->status),
                                        "Cancelling...");
                     tg_gui_window_paint(state, &backend);
+                } else if (photo_save.pending) {
+                    tg_gui_log("window: close gadget = cancel photo save");
+                    tg_gui_photo_save_cancel(state, &backend, &photo_save);
                 } else {
                     tg_gui_log("window: close gadget");
                     done = 1;
@@ -7460,6 +7810,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                 tg_gui_window_copy(state->status, sizeof(state->status),
                                    "Cancelling...");
                 tg_gui_window_paint(state, &backend);
+            } else if (msg_class == IDCMP_VANILLAKEY && msg_code == 27 &&
+                       photo_save.pending) {
+                tg_gui_photo_save_cancel(state, &backend, &photo_save);
             } else if (msg_class == IDCMP_VANILLAKEY &&
                        state->mode != TG_GUI_MODE_CHAT) {
                 /* A login screen owns the keyboard until the session opens. */
@@ -8688,6 +9041,13 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                 state, &backend, 1, drc,
                                 tg_gui_session_last_transfer_error());
                         }
+                    } else if (it == TG_GUI_CTX_SAVE_PHOTO && m != 0 &&
+                               m->has_photo &&
+                               (m->photo_id_hi != 0UL ||
+                                m->photo_id_lo != 0UL)) {
+                        tg_gui_photo_save_begin(
+                            state, ctx.window, &backend, &photo_save,
+                            m->photo_id_hi, m->photo_id_lo);
                     } else if (it == TG_GUI_CTX_COPY && m != 0 &&
                                m->text[0] != '\0') {
                         static char ctxsel[TG_GUI_MSG_TEXT_MAX];
@@ -9638,6 +9998,9 @@ static int tg_gui_run_window_once(tg_gui_state *state)
             tg_gui_session_photo_step(stdout)) {
             session_dirty = 1;
             viewer_dirty = 1;
+        }
+        if (tg_gui_photo_save_tick(state, &backend, &photo_save)) {
+            session_dirty = 1;
         }
         /* Decode only on a permitted background turn. The budget begins at the
            old conservative slice and adapts from measured DateStamp time. A

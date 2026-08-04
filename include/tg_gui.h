@@ -471,9 +471,19 @@ int tg_gui_context_menu_measure(const tg_gui_state *state,
 #define TG_GUI_CTX_COPY 5
 #define TG_GUI_CTX_FORWARD_SAVED 6
 #define TG_GUI_CTX_FORWARD_TO 7
+#define TG_GUI_CTX_SAVE_PHOTO 8
 /* "Download drawer..." remains menu-only (issue #11): a preference, not a
    message action. TG_MENU_DLDIR carries that separate command. */
-#define TG_GUI_CTX_ITEMS_MAX 8
+#define TG_GUI_CTX_ITEMS_MAX 9
+
+/* Pure helpers shared by the native save requester and host self-test. */
+int tg_gui_photo_default_filename(char *out, unsigned long out_size,
+                                  unsigned long photo_id_hi,
+                                  unsigned long photo_id_lo);
+int tg_gui_photo_build_destination(char *out, unsigned long out_size,
+                                   const char *drawer, const char *name);
+int tg_gui_photo_save_allowed(int destination_exists,
+                              int overwrite_confirmed);
 
 /* 1 when the currently selected sidebar row is the pinned Saved Messages
    (self) chat -- the row whose index carries TG_GUI_SAVED_PEER_INDEX. There

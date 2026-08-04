@@ -8,6 +8,11 @@ unless noted.
 ## [Unreleased]
 
 ### Added
+- Photo messages now offer `Save photo as...` from their context menu whether
+  inline display is enabled or not. The fixed-size viewer exposes the same
+  action on the `S` key; both use a save requester, prefer the best cached
+  original JPEG, fetch the viewer-size JPEG on demand when necessary and ask
+  before replacing an existing file.
 - `Settings` now includes a persistent photo-cache limit (10, 50 or 200 MiB,
   or Unlimited; default 50 MiB) and a confirmed `Clear photo cache` action.
   The client catalogs `photos/` incrementally during idle time, prunes the
