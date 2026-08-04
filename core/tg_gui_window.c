@@ -80,8 +80,6 @@ struct Library *IconBase = 0;
 #if defined(__amigaos4__)
 struct WorkbenchIFace *IWorkbench = 0;
 struct IconIFace *IIcon = 0;
-#endif
-#if defined(__amigaos4__)
 struct AslIFace *IAsl = 0;
 #endif
 
@@ -119,12 +117,10 @@ typedef struct timerequest tg_gui_timereq;
 /* OS4 keeps the FileInfoBlock API behind explicit OBSOLETE* interface
    entries; the classic lanes still expose the original names directly. */
 #if defined(__amigaos4__)
-#define TG_GUI_DOS_EXAMINE(lock, fib) OBSOLETEExamine((lock), (fib))
-#define TG_GUI_DOS_EXNEXT(lock, fib) OBSOLETEExNext((lock), (fib))
-#else
+#include <dos/obsolete.h>
+#endif
 #define TG_GUI_DOS_EXAMINE(lock, fib) Examine((lock), (fib))
 #define TG_GUI_DOS_EXNEXT(lock, fib) ExNext((lock), (fib))
-#endif
 
 /* The modern lanes ship cybergraphics.library headers as part of their SDK.
    Classic OS3 deliberately stays vendor-header-free, but uses the same
@@ -4877,10 +4873,15 @@ static unsigned long tg_gui_clip_read_text(char *out, unsigned long out_size)
    (an issue #5 follow-up); the MENUPICK handler keys off GTMENUITEM_USERDATA,
    so item positions are free to move. */
 static struct NewMenu tg_gui_newmenu[] = {
+/* Project */
     { NM_TITLE, (STRPTR)"Telegram", 0, 0, 0, 0 },
-    { NM_ITEM,  (STRPTR)"About...", 0, 0, 0, (APTR)TG_MENU_ABOUT },
-    { NM_ITEM,  (STRPTR)"Help...",  0, 0, 0, (APTR)TG_MENU_HELP },
-    { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
+      (APTR)TG_MENU_ICONIFY },
+    { NM_ITEM,  (STRPTR)"About...", 0, 0, 0,
+      (APTR)TG_MENU_ABOUT },
+    { NM_ITEM,  (STRPTR)"Help...",  0, 0, 0,
+      (APTR)TG_MENU_HELP },
+    { NM_ITEM,  NM_BARLABEL, 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Remove chat from list", (STRPTR)"R", 0, 0,
       (APTR)TG_MENU_REMOVE },
     { NM_ITEM,  (STRPTR)"Reload chat list", 0, 0, 0,
@@ -4889,33 +4890,10 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_SENDFILE },
     { NM_ITEM,  (STRPTR)"Send photo...", (STRPTR)"P", 0, 0,
       (APTR)TG_MENU_SENDPHOTO },
-    { NM_ITEM,  (STRPTR)"Iconify", (STRPTR)"I", 0, 0,
-      (APTR)TG_MENU_ICONIFY },
-    { NM_ITEM,  (STRPTR)"Own screen", 0, CHECKIT | MENUTOGGLE, 0,
-      (APTR)TG_MENU_OWNSCREEN },
-    { NM_ITEM,  (STRPTR)"Settings", 0, 0, 0, 0 },
-    { NM_SUB,   (STRPTR)"Download drawer...", 0, 0, 0,
-      (APTR)TG_MENU_DLDIR },
-    { NM_SUB,   (STRPTR)"Inline photos", 0, CHECKIT | MENUTOGGLE, 0,
-      (APTR)TG_MENU_INLINEPHOTOS },
-    { NM_SUB,   (STRPTR)"Photo dithering: Full", 0,
-      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_FULL },
-    { NM_SUB,   (STRPTR)"Photo dithering: Light", 0,
-      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_LIGHT },
-    { NM_SUB,   (STRPTR)"Photo dithering: Off", 0,
-      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_OFF },
-    { NM_SUB,   (STRPTR)"Photo cache limit: 10 MB", 0,
-      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_10 },
-    { NM_SUB,   (STRPTR)"Photo cache limit: 50 MB", 0,
-      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_50 },
-    { NM_SUB,   (STRPTR)"Photo cache limit: 200 MB", 0,
-      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_200 },
-    { NM_SUB,   (STRPTR)"Photo cache limit: Unlimited", 0,
-      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_UNLIMITED },
-    { NM_SUB,   (STRPTR)"Clear photo cache...", 0, 0, 0,
-      (APTR)TG_MENU_CACHE_CLEAR },
-    { NM_ITEM,  (STRPTR)NM_BARLABEL, 0, 0, 0, 0 },
-    { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0, (APTR)TG_MENU_QUIT },
+    { NM_ITEM,  NM_BARLABEL, 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Quit", (STRPTR)"Q", 0, 0,
+      (APTR)TG_MENU_QUIT },
+/* Edit */
     { NM_TITLE, (STRPTR)"Edit", 0, 0, 0, 0 },
     { NM_ITEM,  (STRPTR)"Cut", (STRPTR)"X", 0, 0,
       (APTR)TG_MENU_CUT },
@@ -4923,6 +4901,35 @@ static struct NewMenu tg_gui_newmenu[] = {
       (APTR)TG_MENU_COPY },
     { NM_ITEM,  (STRPTR)"Paste", (STRPTR)"V", 0, 0,
       (APTR)TG_MENU_PASTE },
+/* Settings */
+    { NM_TITLE, (STRPTR)"Settings", 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Use own screen", 0, CHECKIT | MENUTOGGLE, 0,
+      (APTR)TG_MENU_OWNSCREEN },
+    { NM_ITEM,  (STRPTR)"Download drawer...", 0, 0, 0,
+      (APTR)TG_MENU_DLDIR },
+    { NM_ITEM,  NM_BARLABEL, 0, 0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Show inline photos", 0, CHECKIT | MENUTOGGLE, 0,
+      (APTR)TG_MENU_INLINEPHOTOS },
+    { NM_ITEM,  (STRPTR)"Photo dithering", 0, 0, 0, 0 },
+    { NM_SUB,   (STRPTR)"Full", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_FULL },
+    { NM_SUB,   (STRPTR)"Light", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_LIGHT },
+    { NM_SUB,   (STRPTR)"Off", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_DITHER_OFF },
+    { NM_ITEM,  (STRPTR)"Photo cache limit", 0, 0, 0, 0 },
+    { NM_SUB,   (STRPTR)"10 MB", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_10 },
+    { NM_SUB,   (STRPTR)"50 MB", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_50 },
+    { NM_SUB,   (STRPTR)"200 MB", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_200 },
+    { NM_SUB,   (STRPTR)"Unlimited", 0,
+      CHECKIT | MENUTOGGLE, 0, (APTR)TG_MENU_CACHE_UNLIMITED },
+    { NM_SUB,   NM_BARLABEL, 0, 0, 0, 0 },
+    { NM_SUB,   (STRPTR)"Clear cache...", 0, 0, 0,
+      (APTR)TG_MENU_CACHE_CLEAR },
+
     { NM_END,   0, 0, 0, 0, 0 }
 };
 
