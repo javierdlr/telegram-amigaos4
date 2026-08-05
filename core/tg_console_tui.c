@@ -1550,6 +1550,58 @@ FILE *tg_console_tui_capture_begin(FILE *fallback)
     return capture != 0 ? capture : fallback;
 }
 
+/* Staging buffers that feed the transcript used to DROP everything past
+   their capacity, so a long message arrived cut (field report 2026-08-06,
+   a multi-paragraph test message on a 68000). Flush the full buffer as its
+   own transcript line instead -- breaking at a word boundary when one is
+   near the end -- and carry the remainder over with the wrap indent, so the
+   message keeps reading as one paragraph. Returns the new length. */
+#define TG_TUI_SPLIT_LOOKBACK 64UL
+
+unsigned long tg_console_tui_line_push(FILE *stream, char *line,
+                                       unsigned long capacity,
+                                       unsigned long length, char ch)
+{
+    unsigned long cut;
+    unsigned long moved;
+    unsigned long i;
+    char saved;
+
+    if (line == 0 ||
+        capacity < TG_TUI_SPLIT_LOOKBACK + TG_TUI_WRAP_INDENT + 4UL) {
+        return length; /* pathological capacity: behave as before */
+    }
+    if (length + 1UL < capacity) {
+        line[length] = ch;
+        return length + 1UL;
+    }
+    cut = length;
+    for (i = 0UL; i < TG_TUI_SPLIT_LOOKBACK && i + 1UL < length; ++i) {
+        if (line[length - 1UL - i] == ' ') {
+            cut = length - 1UL - i;
+            break;
+        }
+    }
+    saved = line[cut];
+    line[cut] = '\0';
+    tg_console_tui_line(stream, line);
+    line[cut] = saved;
+    if (line[cut] == ' ') {
+        ++cut; /* the break consumed that space */
+    }
+    moved = length - cut;
+    memmove(line + TG_TUI_WRAP_INDENT, line + cut, (size_t)moved);
+    for (i = 0UL; i < TG_TUI_WRAP_INDENT; ++i) {
+        line[i] = ' ';
+    }
+    length = moved + TG_TUI_WRAP_INDENT;
+    if (length + 1UL < capacity) {
+        line[length] = ch;
+        ++length;
+    }
+    return length;
+}
+
 void tg_console_tui_capture_end(FILE *capture, FILE *fallback)
 {
     char line[512];
@@ -1577,10 +1629,8 @@ void tg_console_tui_capture_end(FILE *capture, FILE *fallback)
             }
             continue;
         }
-        if (length + 1UL < sizeof(line)) {
-            line[length] = (char)ch;
-            ++length;
-        }
+        length = tg_console_tui_line_push(fallback, line, sizeof(line),
+                                          length, (char)ch);
     }
     fclose(capture);
 }
@@ -1796,6 +1846,107 @@ static int tg_tui_composer_incremental_self_test(void)
     return ok;
 }
 
+/* A message longer than the staging buffer must reach the transcript whole,
+   split across logical lines with the wrap indent -- never truncated. */
+static int tg_tui_line_push_self_test(void)
+{
+    static char source[901];
+    static char rebuilt[1400];
+    char line[512];
+    FILE *stream;
+    const char *stream_path;
+    unsigned long i;
+    unsigned long length;
+    unsigned long start;
+    unsigned long emitted;
+    unsigned long pos;
+    unsigned int saved_rows;
+    unsigned int saved_columns;
+    int saved_active;
+    int ok;
+
+#if defined(__AROS__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
+    defined(__MORPHOS) || defined(__amigaos3__) || defined(__m68k__)
+    stream_path = "T:tg-tui-push-self-test.tmp";
+    (void)remove(stream_path);
+    stream = fopen(stream_path, "w+");
+#else
+    stream_path = 0;
+    stream = tmpfile();
+#endif
+    if (stream == 0) {
+        puts("tui layout self-test: temporary stream unavailable");
+        return 0;
+    }
+    for (i = 0UL; i < 900UL; ++i) {
+        source[i] = (i % 10UL) == 9UL
+                        ? ' '
+                        : (char)('a' + (int)((i / 10UL) % 26UL));
+    }
+    source[899] = 'z'; /* never end on a space: it would vanish in the split */
+    source[900] = '\0';
+
+    saved_rows = tg_tui_rows;
+    saved_columns = tg_tui_columns;
+    saved_active = tg_tui_active;
+    tg_tui_rows = 14U;
+    tg_tui_columns = 40U;
+    tg_tui_active = 1;
+
+    start = tg_tui_backlog_total;
+    length = 0UL;
+    for (i = 0UL; i < 900UL; ++i) {
+        length = tg_console_tui_line_push(stream, line, sizeof(line), length,
+                                          source[i]);
+    }
+    line[length] = '\0';
+    tg_console_tui_line(stream, line);
+    emitted = tg_tui_backlog_total - start;
+
+    pos = 0UL;
+    ok = emitted >= 2UL; /* 900 chars cannot fit one 512-byte line */
+    for (i = 0UL; ok && i < emitted; ++i) {
+        const char *part;
+
+        part = tg_tui_backlog[(start + i) % TG_TUI_BACKLOG_LINES];
+        if (i > 0UL) {
+            unsigned int skipped;
+
+            for (skipped = 0U; skipped < TG_TUI_WRAP_INDENT &&
+                               *part == ' '; ++skipped) {
+                ++part; /* the indent this split added */
+            }
+            if (skipped != TG_TUI_WRAP_INDENT) {
+                ok = 0;
+                break;
+            }
+            if (pos + 1UL < sizeof(rebuilt)) {
+                rebuilt[pos++] = ' '; /* the space the break consumed */
+            }
+        }
+        while (*part != '\0' && pos + 1UL < sizeof(rebuilt)) {
+            rebuilt[pos++] = *part++;
+        }
+    }
+    rebuilt[pos] = '\0';
+    if (ok && strcmp(rebuilt, source) != 0) {
+        ok = 0;
+    }
+
+    tg_tui_rows = saved_rows;
+    tg_tui_columns = saved_columns;
+    tg_tui_active = saved_active;
+    tg_tui_composer_cache_valid = 0;
+    fclose(stream);
+    if (stream_path != 0) {
+        (void)remove(stream_path);
+    }
+    if (!ok) {
+        puts("tui layout self-test: long line lost text in the split");
+    }
+    return ok;
+}
+
 int tg_console_tui_layout_self_test(void)
 {
     static const char words[] =
@@ -1877,7 +2028,10 @@ int tg_console_tui_layout_self_test(void)
     if (!tg_tui_composer_incremental_self_test()) {
         return 2;
     }
-    puts("tui layout self-test: ok (wrap + incremental 1/2/3-row composer)");
+    if (!tg_tui_line_push_self_test()) {
+        return 2;
+    }
+    puts("tui layout self-test: ok (wrap + incremental composer + long lines)");
     return 0;
 }
 

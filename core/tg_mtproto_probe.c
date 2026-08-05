@@ -227,6 +227,10 @@ static FILE *tg_mtproto_open_quiet_stream(FILE *fallback);
 static void tg_mtproto_close_quiet_stream(FILE *quiet, FILE *fallback);
 static void tg_mtproto_quiet_tmp_sweep(void);
 static void tg_mtproto_replay_quiet_stream(FILE *quiet, FILE *fallback);
+static int tg_chat_notify_gunzip(const unsigned char *body,
+                                 unsigned long body_length,
+                                 const unsigned char **out,
+                                 unsigned long *out_length);
 
 static int tg_mtproto_production_endpoint_for_dc(unsigned long dc_id,
                                                  const char **host,
@@ -1521,6 +1525,32 @@ static int tg_mtproto_send_encrypted_query_limited(
             if (response_constructor ==
                     TG_MTPROTO_BAD_MSG_NOTIFICATION_CONSTRUCTOR ||
                 response_constructor == TG_MTPROTO_BAD_SERVER_SALT_CONSTRUCTOR) {
+                continue;
+            }
+            if (response_constructor ==
+                    TG_MTPROTO_GZIP_PACKED_CONSTRUCTOR) {
+                /* A standalone push -- typically `updates` carrying a LONG
+                   incoming message -- arrives gzip-compressed at the top
+                   level of the decrypted body. The notify harvest above
+                   already unpacks it; here it only has to be recognised as
+                   an async update instead of being rejected, which turned
+                   any send that raced such a push into "Could not send
+                   message" (field report 2026-08-06, ctor 0x3072cfa1). */
+                const unsigned char *unpacked;
+                unsigned long unpacked_length;
+
+                if (tg_chat_notify_gunzip(decrypted.body,
+                                          decrypted.body_length,
+                                          &unpacked, &unpacked_length) &&
+                    unpacked_length >= 4UL &&
+                    tg_mtproto_read_u32_le(unpacked) ==
+                        TG_MTPROTO_RPC_RESULT_CONSTRUCTOR) {
+                    /* Our own result, compressed whole: unpacking it here
+                       would alias the shared scratch buffer, so fail softly
+                       and let the caller reopen and re-ask cleanly. */
+                    sprintf(tg_mtproto_query_fail, "gzipped rpc result");
+                    return TG_MTPROTO_QUERY_SOFT_FAIL;
+                }
                 continue;
             }
             if (response_constructor != TG_MTPROTO_MSG_CONTAINER_CONSTRUCTOR &&
@@ -9093,10 +9123,9 @@ static void tg_mtproto_replay_quiet_stream_length(FILE *quiet,
                     line_length = 0UL;
                     continue;
                 }
-                if (line_length + 1UL < sizeof(line)) {
-                    line[line_length] = buffer[i];
-                    ++line_length;
-                }
+                line_length = tg_console_tui_line_push(
+                    tg_chat_tui_stream, line, sizeof(line), line_length,
+                    buffer[i]);
             }
             remaining -= (long)chunk;
         }

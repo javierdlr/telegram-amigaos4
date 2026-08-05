@@ -60,6 +60,14 @@ void tg_console_tui_input_caret(FILE *stream,
                                 unsigned long pending_length,
                                 unsigned long pending_caret);
 
+/* Appends one character to a transcript staging buffer, flushing it as a
+   transcript line (at a word boundary when possible, remainder carried over
+   with the wrap indent) instead of dropping the tail when it is full.
+   Returns the new length. */
+unsigned long tg_console_tui_line_push(FILE *stream, char *line,
+                                       unsigned long capacity,
+                                       unsigned long length, char ch);
+
 /* Flicker-free caret-at-end fast paths (slow 68000 consoles): echo one new
    character / rub one out without the full row repaint. Return 1 when done,
    0 when the caller must fall back to tg_console_tui_input(). The length is
