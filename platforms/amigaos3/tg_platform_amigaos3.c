@@ -1505,7 +1505,12 @@ int tg_platform_workbench_tui_console(void)
 {
     BPTR con;
 
-    con = Open((CONST_STRPTR)"CON:20/20/640/440/Telegram Amiga TUI/CLOSE/WAIT",
+    /* CLOSE keeps the in-chat close gadget (raw event 11 = clean quit). No
+       WAIT: its dismissal depends on con-handler behaviour that plain ROM
+       3.1 never delivered (two field reports); the farewell pause is ours
+       now -- the teardown waits for one keypress, then the window dies
+       deterministically with the last Close(). */
+    con = Open((CONST_STRPTR)"CON:20/20/640/440/Telegram Amiga TUI/CLOSE",
                MODE_OLDFILE);
     if (con == 0) {
         return 0;
@@ -1545,19 +1550,15 @@ void tg_platform_workbench_tui_console_close(void)
         return; /* console never opened (CLI launch or open failure) */
     }
     tg_wb_drop_disarm();
-    /* The farewell asks for one click on the close gadget. Do not rely on
-       the con-handler dismissing the WAIT window by itself (the plain ROM
-       3.1 handler never did, two field reports 2026-08-05): CONSUME that
-       click ourselves. In cooked mode the CLOSE-flag console answers a
-       close click with EOF, so read until it arrives, then drop every
-       handle; the WAIT window dies with the last Close(). */
+    /* Farewell pause under OUR control (plain ROM 3.1 never dismissed a
+       WAIT window, two field reports): one keypress -- or a close-click
+       EOF where the handler provides it -- ends the pause, then every
+       handle goes and the window dies with the last Close(). */
     SetMode(Input(), 0);
     {
         char ch;
 
-        while (Read(Input(), &ch, 1) > 0) {
-            /* keystrokes before the click are discarded */
-        }
+        (void)Read(Input(), &ch, 1);
     }
     /* Close the freopen'd "*" stdio streams -- nothing may print after
        this point -- then put the original process plumbing back and

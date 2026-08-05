@@ -158,12 +158,12 @@ static int tg_main_body(int argc, char **argv)
                 tg_gui_log("diag: tg_app_run returned");
 #endif
 
-                /* Farewell hint on the WAIT console: the window stays so the
-                   last output remains readable, and (when quit came from the
-                   close gadget) that first click was consumed as the quit
-                   event -- tell the user one more click dismisses it. */
+                /* Farewell hint: the console teardown holds the window open
+                   for one last look and waits for a single keypress (a
+                   close-click EOF also counts where the handler sends one),
+                   then the window closes for real. */
                 printf("\n--- Telegram Amiga closed. "
-                       "Click the window's close gadget to dismiss. ---\n");
+                       "Press any key to dismiss this window. ---\n");
                 fflush(stdout);
 #ifdef TG_DIAG_TRACE
                 tg_gui_log("diag: farewell printed");

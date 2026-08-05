@@ -1324,7 +1324,7 @@ int tg_platform_workbench_tui_console(void)
 {
     BPTR con;
 
-    con = Open((CONST_STRPTR)"CON:20/20/640/440/Telegram Amiga TUI/CLOSE/WAIT",
+    con = Open((CONST_STRPTR)"CON:20/20/640/440/Telegram Amiga TUI/CLOSE",
                MODE_OLDFILE);
     if (con == 0) {
         return 0;
@@ -1364,11 +1364,22 @@ void tg_platform_workbench_tui_console_close(void)
         return; /* console never opened (CLI launch or open failure) */
     }
     tg_wb_drop_disarm();
-    /* Put the original process plumbing back BEFORE closing our handle, so
-       nothing keeps referencing the console we are about to release. The
-       stdio streams freopen'd onto "*" are closed by the C runtime at exit;
-       once this handle goes too the con-handler can honour the CLOSE gadget
-       (WAIT keeps the window readable until that click). */
+    /* Farewell pause under OUR control (the plain ROM 3.1 con-handler never
+       dismissed a WAIT window; the same deterministic scheme runs on every
+       lane): one keypress -- or a close-click EOF where the handler sends
+       one -- ends the pause, then every handle goes and the window dies
+       with the last Close(). */
+    SetMode(Input(), 0);
+    {
+        char ch;
+
+        (void)Read(Input(), &ch, 1);
+    }
+    fflush(stdout);
+    fflush(stderr);
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
     SelectInput(tg_wb_tui_old_in);
     SelectOutput(tg_wb_tui_old_out);
     SetConsoleTask(tg_wb_tui_old_ct);
