@@ -426,7 +426,12 @@ int tg_console_tui_enter(FILE *stream, const char *status_text)
        events: resizes arrive on stdin as CSI 12;...| reports (turned into a
        pending-resize flag) and a close-gadget click as CSI 11;...| (turned
        into a clean quit by the line editor). */
-    fputs(TG_UI_CSI "11;12{", stream);
+    /* One class per sequence: the original ROM 3.1 console handler mishandles
+       the combined "11;12{" subscription (field report 2026-08-05: close
+       gadget dead on a plain 3.1 68000). Single-class sequences register
+       fine on every console flavour, so send one per class. */
+    fputs(TG_UI_CSI "11{", stream);
+    fputs(TG_UI_CSI "12{", stream);
     tg_tui_paint_chrome(stream, status_text);
     return 1;
 }
@@ -575,7 +580,8 @@ void tg_console_tui_leave(FILE *stream)
     }
     tg_tui_active = 0;
     tg_tui_resize_flag = 0;
-    fputs(TG_UI_CSI "11;12}", stream); /* unsubscribe CLOSE+NEWSIZE raw events */
+    fputs(TG_UI_CSI "11}", stream); /* unsubscribe CLOSE raw events */
+    fputs(TG_UI_CSI "12}", stream); /* unsubscribe NEWSIZE raw events */
     tg_tui_goto(stream, tg_tui_rows, 1U);
     fputs(TG_UI_CSI "0m\n", stream);
     fflush(stream);
