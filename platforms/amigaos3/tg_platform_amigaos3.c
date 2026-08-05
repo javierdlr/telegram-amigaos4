@@ -1545,11 +1545,17 @@ void tg_platform_workbench_tui_console_close(void)
         return; /* console never opened (CLI launch or open failure) */
     }
     tg_wb_drop_disarm();
-    /* Put the original process plumbing back BEFORE closing our handle, so
-       nothing keeps referencing the console we are about to release. The
-       stdio streams freopen'd onto "*" are closed by the C runtime at exit;
-       once this handle goes too the con-handler can honour the CLOSE gadget
-       (WAIT keeps the window readable until that click). */
+    /* Every handle to the console must go before the WAIT window's close
+       gadget can dismiss it, and trusting the C runtime's exit path was not
+       enough on a plain ROM 3.1 68000 (field report 2026-08-05: the click
+       stayed dead after the farewell). Close the freopen'd "*" stdio streams
+       HERE -- nothing may print after this call -- then put the original
+       process plumbing back and release our own handle. */
+    fflush(stdout);
+    fflush(stderr);
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
     SelectInput(tg_wb_tui_old_in);
     SelectOutput(tg_wb_tui_old_out);
     SetConsoleTask(tg_wb_tui_old_ct);

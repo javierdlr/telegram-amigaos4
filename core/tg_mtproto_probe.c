@@ -11925,6 +11925,13 @@ int tg_mtproto_auth_chat_file(const char *host,
                 (unsigned long)(poll_now - chat_last_poll) < watch_seconds) {
                 continue;
             }
+            if (tg_platform_stdin_readable(0UL)) {
+                /* A keystroke is already queued: starting a poll now would
+                   freeze the editor for the whole round trip (seconds on a
+                   7 MHz 68000) and then spit the buffered keys out at once.
+                   Serve the keyboard first; the poll runs on a quiet pass. */
+                continue;
+            }
             chat_last_poll = poll_now;
             quiet = chat_quiet;
             tg_mtproto_reset_quiet_stream(quiet, stream);
