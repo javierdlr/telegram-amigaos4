@@ -87,6 +87,28 @@ client:
 - Minimal local persistence
 - Packaging for the supported platforms
 
+## Planned: two-step verification on slow 68k
+
+Signing in with Two-Step Verification derives the key with PBKDF2 (100000
+iterations of SHA-512). On a stock 14 MHz 68020 that is roughly forty
+minutes, and Telegram expires the SRP challenge long before it ends, so the
+password can never be checked (a field report from a 68020 saw exactly that:
+no error, just an expired session at the end of the wait).
+
+The wait itself cannot shrink much -- the HMAC midstates are already
+precomputed, so each iteration is down to two block transforms. What can
+change is the ORDER. The slow derivation depends only on the password and
+the account salts, both stable; only srp_id and srp_B expire. So:
+
+1. fetch `account.getPassword`, keep the salts;
+2. run the PBKDF2 derivation;
+3. fetch `account.getPassword` again for a fresh srp_id and srp_B;
+4. compute the SRP proof (short exponents, comparatively quick) and send
+   `auth.checkPassword` straight away.
+
+That turns a guaranteed failure into a long but completable login. It needs
+`tg_mtproto_srp_make_proof` split into a derivation step and a proof step.
+
 ## Initial Non-Goals
 
 - End-to-end encryption for secret chats

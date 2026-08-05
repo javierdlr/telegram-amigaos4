@@ -130,6 +130,13 @@ TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2
    TelegramAmiga-TUI: it reuses that login and goes straight to the chats.
    The same account stays usable on both machines.
 
+If your account has Two-Step Verification, pick a machine that is genuinely
+fast for step 1: a 68030 or better, an emulator with JIT, or a PPC/AROS
+system. Checking the cloud password derives a key with 100000 iterations of
+SHA-512, about forty minutes on a stock 68020 -- long enough for Telegram to
+expire the challenge, so the login never completes there. Turning Two-Step
+Verification off for the few minutes of the login also works.
+
 Why not log in here? The first login runs a Diffie-Hellman key exchange:
 it is the heaviest thing this program does, and a plain 68000 cannot
 finish it comfortably. The program says so and lets you try anyway, but
@@ -144,6 +151,14 @@ the route above is the supported one."
 3. Scompatta questo drawer su un volume SCRIVIBILE e fai doppio click su
    TelegramAmiga-TUI: riusa quel login e va dritto alle chat. Lo stesso
    account resta utilizzabile su entrambe le macchine.
+
+Se il tuo account ha la verifica in due passaggi, per il punto 1 scegli una
+macchina davvero veloce: un 68030 o superiore, un emulatore con JIT oppure
+un sistema PPC/AROS. Il controllo della password cloud deriva una chiave con
+100000 iterazioni di SHA-512, circa quaranta minuti su un 68020 liscio: il
+tempo che Telegram faccia scadere la richiesta, e li' l'accesso non si
+completa. In alternativa disattiva la verifica in due passaggi per i pochi
+minuti dell'accesso.
 
 Perche' non accedere qui? Il primo login esegue uno scambio di chiavi
 Diffie-Hellman: e' la cosa piu' pesante che il programma faccia, e un
