@@ -205,7 +205,9 @@ typedef struct tg_gui_state {
     int chat_scroll_to_sel; /* one-shot: next paint scrolls the list to selected_chat */
     int transcript_scroll; /* PIXELS scrolled up from the newest-pinned bottom (0 = newest) */
     int input_h;           /* composer box height (px), cached by the painter for the hit-test */
-    int inline_photos;     /* persistent GUI preference; default on */
+    int inline_photos;     /* resolved GUI preference for this run */
+    int inline_photos_explicit; /* user saved an on/off choice */
+    int inline_photos_default_resolved; /* hardware default sampled this run */
     int photo_dither;      /* TG_GUI_PHOTO_DITHER_*; default full */
     unsigned long photo_cache_limit_mb; /* 0 unlimited; default 50 MiB */
     /* Scrollbar geometry the painter caches each frame for the event loop's
@@ -401,18 +403,27 @@ int tg_gui_input_layout_height(const tg_gui_state *state,
 int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
                     int x, int y);
 
-/* Persistent photo preferences. The first line remains exactly "on"/"off"
-   so older builds can read files written by newer ones; newer keys follow as
-   key=value lines. Missing or malformed values use ON + FULL dithering and a
-   50 MiB photo-cache limit. A zero cache limit means unlimited. */
+/* Persistent photo preferences. The first line is "on"/"off" after an
+   explicit user toggle, or "auto" while the hardware-sensitive default has
+   never been overridden. Older builds treat "auto" as their historical ON.
+   Newer key=value lines follow. Missing or malformed values use ON + FULL
+   dithering and a 50 MiB photo-cache limit. A zero cache limit means
+   unlimited. */
 #define TG_GUI_PHOTO_CACHE_DEFAULT_MB 50UL
 #define TG_GUI_PHOTO_CACHE_UNLIMITED_MB 0UL
 void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
+                                   int *inline_photos_explicit,
                                    int *photo_dither,
                                    unsigned long *photo_cache_limit_mb);
 int tg_gui_photo_preferences_save(const char *path, int inline_photos,
+                                  int inline_photos_explicit,
                                   int photo_dither,
                                   unsigned long photo_cache_limit_mb);
+/* Pure policy: explicit user choice always wins. Otherwise only classic OS3
+   disables inline photos when either a 68040-class CPU or RTG is missing. */
+int tg_gui_inline_photos_resolve(int explicit_choice, int explicit_value,
+                                 int classic_os3, int cpu_at_least_040,
+                                 int has_rtg);
 /* Compatibility wrappers for callers interested only in the first line. */
 int tg_gui_inline_photos_load(const char *path);
 int tg_gui_inline_photos_save(const char *path, int enabled);

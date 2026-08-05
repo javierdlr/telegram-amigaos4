@@ -244,7 +244,9 @@ Using the GUI
   keep the original JPEG under any drawer and name. Press S in the open viewer
   for the same requester. An uncached photo is fetched first; replacing an
   existing file always requires confirmation.
-- On a slower machine, uncheck "Settings > Inline photos" in the Telegram menu.
+- On AmigaOS 3, the first-run default is off when no RTG screen is available or
+  the CPU is below a 68040; every explicit toggle overrides that default and is
+  remembered. On any slower machine, uncheck "Settings > Inline photos".
   The conversation returns to lightweight [Photo] labels and does no background
   photo fetch or decode work. Click an individual [Photo] label to load only
   that image in the viewer. The choice is remembered for the next run.
@@ -409,7 +411,10 @@ Usare la GUI
   "Save photo as..." per salvare il JPEG originale con drawer e nome a scelta.
   Nel viewer premi S per aprire lo stesso requester. Se la foto non e' in cache
   viene prima scaricata; la sostituzione di un file esistente chiede conferma.
-- Su una macchina lenta togli la spunta da "Settings > Inline photos" nel menu
+- Su AmigaOS 3 il primo avvio parte senza foto inline quando non e' disponibile
+  uno schermo RTG oppure la CPU e' inferiore al 68040; ogni scelta esplicita
+  sostituisce il default e resta memorizzata. Su una macchina lenta togli la
+  spunta da "Settings > Inline photos" nel menu
   Telegram. La conversazione torna alle leggere etichette [Photo] e non avvia
   download o decodifiche in background. Clicca una singola [Photo] per caricare
   solo quella immagine nel viewer. La scelta resta memorizzata al riavvio.

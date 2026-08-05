@@ -297,6 +297,45 @@ static void tg_gui_amiga_close_cybergraphics(void)
 }
 #endif
 
+/* Resolve the adaptive default only after Intuition has selected the actual
+   screen. An explicit saved choice never enters this path. The result stays in
+   memory for the whole run, including iconify/own-screen reopen cycles. */
+static void tg_gui_window_resolve_inline_default(tg_gui_state *state,
+                                                 struct Window *window)
+{
+#if defined(__amigaos3__)
+    ULONG depth;
+    int cpu_at_least_040;
+    int has_rtg;
+
+    if (state == 0 || window == 0 || state->inline_photos_explicit ||
+        state->inline_photos_default_resolved) {
+        return;
+    }
+    depth = GetBitMapAttr(window->WScreen->RastPort.BitMap, BMA_DEPTH);
+    cpu_at_least_040 =
+        SysBase != 0 &&
+        (SysBase->AttnFlags & (AFF_68040 | AFF_68060)) != 0;
+    has_rtg = depth > 8UL || tg_gui_amiga_open_cybergraphics();
+    state->inline_photos = tg_gui_inline_photos_resolve(
+        0, state->inline_photos, 1, cpu_at_least_040, has_rtg);
+    state->inline_photos_default_resolved = 1;
+    tg_gui_session_set_inline_photos(state->inline_photos);
+    if (!state->inline_photos) {
+        if (!has_rtg && !cpu_at_least_040) {
+            tg_gui_log("photo: inline default off (no RTG / cpu < 040)");
+        } else if (!has_rtg) {
+            tg_gui_log("photo: inline default off (no RTG)");
+        } else {
+            tg_gui_log("photo: inline default off (cpu < 040)");
+        }
+    }
+#else
+    (void)state;
+    (void)window;
+#endif
+}
+
 /* Core GUI libraries share the window lifetime. Keep the required
    Intuition/Graphics pair and the optional GadTools menu in one symmetric
    owner so every OS4 interface is dropped before its base is closed. ASL and
@@ -7380,6 +7419,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     }
 
     ctx.rport = ctx.window->RPort;
+    tg_gui_window_resolve_inline_default(state, ctx.window);
     if (own_scr != 0 && own_scr->RastPort.Font != 0) {
         /* SA_SysFont sets the SCREEN font, but a window RastPort still comes up
            with the fixed-width DefaultFont (autodoc caveat) -- adopt the screen
@@ -8615,12 +8655,15 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                                                             &backend);
                         } else if (ud == (APTR)TG_MENU_INLINEPHOTOS) {
                             state->inline_photos = !state->inline_photos;
+                            state->inline_photos_explicit = 1;
+                            state->inline_photos_default_resolved = 1;
                             tg_gui_session_set_inline_photos(
                                 state->inline_photos);
                             tg_gui_photo_slots_reset();
                             if (tg_gui_photo_preferences_save(
                                     "data/telegram-photos.txt",
                                     state->inline_photos,
+                                    state->inline_photos_explicit,
                                     state->photo_dither,
                                     state->photo_cache_limit_mb) != 0) {
                                 tg_gui_window_copy(state->status,
@@ -8663,6 +8706,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             if (tg_gui_photo_preferences_save(
                                     "data/telegram-photos.txt",
                                     state->inline_photos,
+                                    state->inline_photos_explicit,
                                     state->photo_dither,
                                     state->photo_cache_limit_mb) != 0) {
                                 tg_gui_window_copy(
@@ -8696,6 +8740,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                             if (tg_gui_photo_preferences_save(
                                     "data/telegram-photos.txt",
                                     state->inline_photos,
+                                    state->inline_photos_explicit,
                                     state->photo_dither,
                                     state->photo_cache_limit_mb) != 0) {
                                 tg_gui_window_copy(

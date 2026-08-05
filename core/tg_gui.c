@@ -81,39 +81,76 @@ static unsigned long tg_gui_photo_cache_limit_parse(const char *value)
     return TG_GUI_PHOTO_CACHE_DEFAULT_MB;
 }
 
+static int tg_gui_photo_pref_word(const char *value, const char *word)
+{
+    unsigned long i;
+
+    if (value == 0 || word == 0) {
+        return 0;
+    }
+    i = 0UL;
+    while (word[i] != '\0' && value[i] != '\0') {
+        char actual;
+        char expected;
+
+        actual = value[i];
+        expected = word[i];
+        if (actual >= 'A' && actual <= 'Z') {
+            actual = (char)(actual - 'A' + 'a');
+        }
+        if (expected >= 'A' && expected <= 'Z') {
+            expected = (char)(expected - 'A' + 'a');
+        }
+        if (actual != expected) {
+            return 0;
+        }
+        ++i;
+    }
+    return word[i] == '\0' &&
+           (value[i] == '\0' || value[i] == '\r' || value[i] == '\n');
+}
+
 void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
+                                   int *inline_photos_explicit,
                                    int *photo_dither,
                                    unsigned long *photo_cache_limit_mb)
 {
     FILE *file;
     char value[64];
     int enabled;
+    int explicit_choice;
     int dither;
     unsigned long cache_limit;
+    int first_line;
 
     enabled = 1;
+    explicit_choice = 0;
     dither = TG_GUI_PHOTO_DITHER_FULL;
     cache_limit = TG_GUI_PHOTO_CACHE_DEFAULT_MB;
     file = (path != 0 && path[0] != '\0') ? fopen(path, "rb") : 0;
     if (file != 0) {
-        value[0] = '\0';
-        if (fgets(value, sizeof(value), file) != 0 &&
-            (value[0] == 'o' || value[0] == 'O') &&
-            (value[1] == 'f' || value[1] == 'F') &&
-            (value[2] == 'f' || value[2] == 'F')) {
-            enabled = 0;
-        }
+        first_line = 1;
         while (fgets(value, sizeof(value), file) != 0) {
-            if (strncmp(value, "dither=", 7UL) == 0) {
+            if (first_line && tg_gui_photo_pref_word(value, "on")) {
+                enabled = 1;
+                explicit_choice = 1;
+            } else if (first_line && tg_gui_photo_pref_word(value, "off")) {
+                enabled = 0;
+                explicit_choice = 1;
+            } else if (strncmp(value, "dither=", 7UL) == 0) {
                 dither = tg_gui_photo_dither_parse(value + 7);
             } else if (strncmp(value, "cache_limit=", 12UL) == 0) {
                 cache_limit = tg_gui_photo_cache_limit_parse(value + 12);
             }
+            first_line = 0;
         }
         fclose(file);
     }
     if (inline_photos != 0) {
         *inline_photos = enabled;
+    }
+    if (inline_photos_explicit != 0) {
+        *inline_photos_explicit = explicit_choice;
     }
     if (photo_dither != 0) {
         *photo_dither = dither;
@@ -124,6 +161,7 @@ void tg_gui_photo_preferences_load(const char *path, int *inline_photos,
 }
 
 int tg_gui_photo_preferences_save(const char *path, int inline_photos,
+                                  int inline_photos_explicit,
                                   int photo_dither,
                                   unsigned long photo_cache_limit_mb)
 {
@@ -154,7 +192,10 @@ int tg_gui_photo_preferences_save(const char *path, int inline_photos,
     } else {
         sprintf(cache_limit, "%lu", photo_cache_limit_mb);
     }
-    failed = fputs(inline_photos ? "on\n" : "off\n", file) == EOF ||
+    failed = fputs(inline_photos_explicit
+                       ? (inline_photos ? "on\n" : "off\n")
+                       : "auto\n",
+                   file) == EOF ||
              fputs("dither=", file) == EOF || fputs(dither, file) == EOF ||
              fputc('\n', file) == EOF ||
              fputs("cache_limit=", file) == EOF ||
@@ -178,7 +219,7 @@ int tg_gui_inline_photos_load(const char *path)
 {
     int enabled;
 
-    tg_gui_photo_preferences_load(path, &enabled, 0, 0);
+    tg_gui_photo_preferences_load(path, &enabled, 0, 0, 0);
     return enabled;
 }
 
@@ -187,8 +228,22 @@ int tg_gui_inline_photos_save(const char *path, int enabled)
     int dither;
     unsigned long cache_limit;
 
-    tg_gui_photo_preferences_load(path, 0, &dither, &cache_limit);
-    return tg_gui_photo_preferences_save(path, enabled, dither, cache_limit);
+    tg_gui_photo_preferences_load(path, 0, 0, &dither, &cache_limit);
+    return tg_gui_photo_preferences_save(path, enabled, 1, dither,
+                                         cache_limit);
+}
+
+int tg_gui_inline_photos_resolve(int explicit_choice, int explicit_value,
+                                 int classic_os3, int cpu_at_least_040,
+                                 int has_rtg)
+{
+    if (explicit_choice) {
+        return explicit_value ? 1 : 0;
+    }
+    if (classic_os3 && (!cpu_at_least_040 || !has_rtg)) {
+        return 0;
+    }
+    return 1;
 }
 
 static int tg_gui_photo_cache_older(const tg_gui_photo_cache_item *a,
@@ -3901,30 +3956,49 @@ int tg_gui_self_test(void)
         }
     }
 
-    /* The old first-line format remains readable, while the extended format
-       persists both settings and defaults safely when no file exists. */
+    /* The old first-line format remains readable. "auto" preserves dither and
+       cache choices without turning the hardware default into a user choice. */
     {
         const char *pref = "tg-gui-photos-selftest.txt";
         FILE *file;
         int enabled;
+        int explicit_choice;
         int dither;
         unsigned long cache_limit;
 
         (void)remove(pref);
-        tg_gui_photo_preferences_load(pref, &enabled, &dither, &cache_limit);
-        if (!enabled || dither != TG_GUI_PHOTO_DITHER_FULL ||
+        tg_gui_photo_preferences_load(pref, &enabled, &explicit_choice,
+                                      &dither, &cache_limit);
+        if (!enabled || explicit_choice ||
+            dither != TG_GUI_PHOTO_DITHER_FULL ||
             cache_limit != TG_GUI_PHOTO_CACHE_DEFAULT_MB ||
             tg_gui_photo_preferences_save(
-                pref, 0, TG_GUI_PHOTO_DITHER_LIGHT, 200UL) != 0) {
+                pref, 1, 0, TG_GUI_PHOTO_DITHER_LIGHT, 200UL) != 0) {
             (void)remove(pref);
             puts("gui self-test: photo preference default/save mismatch");
             return 2;
         }
-        tg_gui_photo_preferences_load(pref, &enabled, &dither, &cache_limit);
-        if (enabled || dither != TG_GUI_PHOTO_DITHER_LIGHT ||
+        tg_gui_photo_preferences_load(pref, &enabled, &explicit_choice,
+                                      &dither, &cache_limit);
+        if (!enabled || explicit_choice ||
+            dither != TG_GUI_PHOTO_DITHER_LIGHT ||
             cache_limit != 200UL) {
             (void)remove(pref);
             puts("gui self-test: photo preference round-trip mismatch");
+            return 2;
+        }
+        if (tg_gui_photo_preferences_save(
+                pref, 0, 1, TG_GUI_PHOTO_DITHER_OFF, 10UL) != 0) {
+            (void)remove(pref);
+            puts("gui self-test: explicit photo preference save failed");
+            return 2;
+        }
+        tg_gui_photo_preferences_load(pref, &enabled, &explicit_choice,
+                                      &dither, &cache_limit);
+        if (enabled || !explicit_choice ||
+            dither != TG_GUI_PHOTO_DITHER_OFF || cache_limit != 10UL) {
+            (void)remove(pref);
+            puts("gui self-test: explicit photo preference mismatch");
             return 2;
         }
         file = fopen(pref, "wb");
@@ -3933,7 +4007,7 @@ int tg_gui_self_test(void)
             puts("gui self-test: old photo preference fixture failed");
             return 2;
         }
-        enabled = fputs("on\n", file) != EOF;
+        enabled = fputs("On\n", file) != EOF;
         if (fclose(file) != 0) {
             enabled = 0;
         }
@@ -3942,14 +4016,51 @@ int tg_gui_self_test(void)
             puts("gui self-test: old photo preference fixture failed");
             return 2;
         }
-        tg_gui_photo_preferences_load(pref, &enabled, &dither, &cache_limit);
-        if (!enabled || dither != TG_GUI_PHOTO_DITHER_FULL ||
+        tg_gui_photo_preferences_load(pref, &enabled, &explicit_choice,
+                                      &dither, &cache_limit);
+        if (!enabled || !explicit_choice ||
+            dither != TG_GUI_PHOTO_DITHER_FULL ||
             cache_limit != TG_GUI_PHOTO_CACHE_DEFAULT_MB) {
             (void)remove(pref);
             puts("gui self-test: old photo preference compatibility failed");
             return 2;
         }
         (void)remove(pref);
+    }
+
+    /* Hardware default matrix. Explicit OFF and ON win everywhere; without a
+       choice, only classic OS3 needs both a 040-class CPU and RTG. */
+    {
+        int explicit_choice;
+        int value;
+        int classic_os3;
+        int cpu_040;
+        int has_rtg;
+
+        for (explicit_choice = 0; explicit_choice <= 1; ++explicit_choice) {
+            for (value = 0; value <= 1; ++value) {
+                for (classic_os3 = 0; classic_os3 <= 1; ++classic_os3) {
+                    for (cpu_040 = 0; cpu_040 <= 1; ++cpu_040) {
+                        for (has_rtg = 0; has_rtg <= 1; ++has_rtg) {
+                            int expected;
+                            int actual;
+
+                            expected = explicit_choice
+                                           ? value
+                                           : !(classic_os3 &&
+                                               (!cpu_040 || !has_rtg));
+                            actual = tg_gui_inline_photos_resolve(
+                                explicit_choice, value, classic_os3, cpu_040,
+                                has_rtg);
+                            if (actual != expected) {
+                                puts("gui self-test: inline default matrix mismatch");
+                                return 2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /* Disk-cache policy is portable: protected visible photos survive even

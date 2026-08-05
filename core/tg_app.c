@@ -4021,6 +4021,7 @@ int tg_app_run(int argc, char **argv)
         gui.theme = TG_GUI_THEME_DARK;
         tg_gui_photo_preferences_load("data/telegram-photos.txt",
                                       &gui.inline_photos,
+                                      &gui.inline_photos_explicit,
                                       &gui.photo_dither,
                                       &gui.photo_cache_limit_mb);
         gui.selected_msg = -1; /* no transcript row highlighted at start */

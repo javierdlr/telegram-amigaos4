@@ -33,8 +33,9 @@ unless noted.
   larger bounded Telegram image, keeps a separate `-l.jpg` disk cache and
   reveals the JPEG progressively without evicting transcript photo slots.
 - The GUI now has a persistent `Settings > Inline photos` toggle. It defaults
-  to on; disabling it restores the lightweight text-only `[Photo]` bubbles
-  without starting background photo fetch or decode work.
+  to on except on AmigaOS 3 systems without RTG or with a CPU below a 68040;
+  every explicit choice wins over the hardware default. Disabling it restores
+  lightweight `[Photo]` bubbles without background photo fetch or decode work.
 - A message can now be forwarded to Saved Messages from its GUI context menu.
   The TUI provides `/forward` for the latest message and `/forward <id>` for an
   explicit Telegram message ID. Forwarding uses the layer-214
@@ -51,6 +52,10 @@ unless noted.
   photos above 10 MiB are sent as documents with explicit status feedback.
 
 ### Changed
+- AmigaOS 3 chooses the first-run `Inline photos` default from the active
+  screen and CPU: it starts disabled without RTG or below a 68040. This
+  automatic value is never written to disk, so hardware upgrades are detected;
+  an explicit user toggle remains persistent in either direction.
 - AmigaOS 3.x now discovers `cybergraphics.library` at runtime and sends
   inline-photo and viewer RGB888 rows directly to compatible true-colour RTG
   screens. AGA and systems without a validated CyberGraphX target keep the
