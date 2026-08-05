@@ -6,8 +6,8 @@
 # Build the human-facing release packages for Telegram Amiga.
 # Version comes from include/tg_version.h (override with VERSION=... if needed).
 #
-# Each package contains ONLY the program (one binary), its two self-launching
-# icons (TelegramAmiga = GUI, TelegramAmiga-TUI = console; no launcher scripts),
+# Each package contains ONLY the program (one binary), its self-launching icon
+# (plus the TelegramAmiga-TUI console icon on the 68k line only; no scripts),
 # the PUBLIC Telegram API app credentials and per-architecture IT/EN manuals.
 # No user session is ever bundled: telegram-auth.bin and the peer cache are
 # created locally by the user on first login (see the manual).
@@ -57,6 +57,70 @@ if [ "$AMINET" = "1" ]; then rm -rf "$AMINET_ROOT"; mkdir -p "$AMINET_ROOT"; fi
 # requirements_en / requirements_it / notes_en / notes_it are filled per
 # platform; the rest of each manual is shared.
 fill_platform_text() {
+    # From 0.0.9 the TUI icon ships only with the 68k package; elsewhere the
+    # same binary starts the text client from the Shell, and the manuals say
+    # how. tui_icon drives both the packaging and the manual wording.
+    case "$1" in
+    "AmigaOS 3.x") tui_icon=1 ;;
+    *) tui_icon=0 ;;
+    esac
+    if [ "$tui_icon" = "1" ]; then
+        launchers_title_en="Two launchers
+-------------"
+        launchers_title_it="I due launcher
+--------------"
+        tui_entry_en="- TelegramAmiga-TUI -- a full-screen text/console client for low-end or mouse-less
+  setups. Both share the same login and the same saved session."
+        tui_entry_it="- TelegramAmiga-TUI -- un client testuale a schermo intero per macchine leggere o
+  senza mouse. Condividono lo stesso login e la stessa sessione salvata."
+        first_start_en="1. Unpack the drawer and double-click TelegramAmiga (or TelegramAmiga-TUI)."
+        first_start_it="1. Scompatta il drawer e fai doppio click su TelegramAmiga (o TelegramAmiga-TUI)."
+        readme_programs="  TelegramAmiga  - graphical (Intuition), with scrollbars + mouse.
+  TelegramAmiga-TUI  - text-mode / console."
+        readme_start="Quick start: copy this drawer to a WRITABLE volume, then double-click
+TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA)."
+        aminet_programs="Two programs share one engine and one saved login:
+
+  TelegramAmiga  - the native Intuition/GadTools GUI: chat list with real
+                 profile-picture avatars, message bubbles, scrollbars,
+                 mouse wheel, context menus.
+  TelegramAmiga-TUI  - the text/console client, at home on a 68030 with a
+                 serial console or an ssh session."
+    else
+        launchers_title_en="One icon, two clients
+---------------------"
+        launchers_title_it="Un'icona, due client
+--------------------"
+        tui_entry_en="- The text/console client is the SAME program: this package ships the GUI
+  icon only, because that is what these machines want. If you prefer the
+  full-screen text client, start it from a Shell, from inside the drawer:
+      TelegramAmiga --mtproto-start-file data/telegram-api.txt telegram-auth.bin
+        data/phone-code-hash.txt data/telegram-peers.txt
+  (one single line). Add \"Protect TelegramAmiga +e\" once if the Shell
+  refuses to run it. Both share the same login and the same saved session."
+        tui_entry_it="- Il client testuale e' lo STESSO programma: questo pacchetto porta solo
+  l'icona della GUI, perche' e' quella che serve su queste macchine. Se
+  preferisci il client testuale a schermo intero, avvialo da Shell dentro
+  il drawer:
+      TelegramAmiga --mtproto-start-file data/telegram-api.txt telegram-auth.bin
+        data/phone-code-hash.txt data/telegram-peers.txt
+  (tutto su una riga sola). Se la Shell si rifiuta di eseguirlo, dai una
+  volta \"Protect TelegramAmiga +e\". Login e sessione salvata sono gli stessi."
+        first_start_en="1. Unpack the drawer and double-click TelegramAmiga."
+        first_start_it="1. Scompatta il drawer e fai doppio click su TelegramAmiga."
+        readme_programs="  TelegramAmiga  - graphical (Intuition), with scrollbars + mouse.
+                   The same program also runs the text/console client from a
+                   Shell (see the manual)."
+        readme_start="Quick start: copy this drawer to a WRITABLE volume, then double-click
+TelegramAmiga. First run signs you in (phone -> code -> 2FA)."
+        aminet_programs="One program, two faces, one engine and one saved login:
+
+  TelegramAmiga  - the native Intuition/GadTools GUI: chat list with real
+                 profile-picture avatars, message bubbles, scrollbars,
+                 mouse wheel, context menus. This package ships its icon.
+                 The same binary also runs a full-screen text/console client
+                 from a Shell -- the manual gives the command line."
+    fi
     case "$1" in
     "AmigaOS 3.x")
         # = 32 KiB part x 4000 parts. KEEP IN SYNC with TG_GUI_DL_CHUNK
@@ -143,13 +207,11 @@ Telegram Amiga - $2 - alpha $VERSION
 ========================================
 
 A from-scratch, native Telegram (MTProto) client. Zero dependencies: no MUI,
-no ixemul, no AmiSSL. Two clients, one engine:
+no ixemul, no AmiSSL. One engine:
 
-  TelegramAmiga  - graphical (Intuition), with scrollbars + mouse.
-  TelegramAmiga-TUI  - text-mode / console.
+$readme_programs
 
-Quick start: copy this drawer to a WRITABLE volume, then double-click
-TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2FA).
+$readme_start
 
 Highlights in this build: message photos appear first as an instant blurred
 preview, refine progressively, and reuse a decoded-pixel cache when reopened;
@@ -189,12 +251,10 @@ System requirements
 -------------------
 $req_en
 
-Two launchers
--------------
+$launchers_title_en
 - TelegramAmiga -- the native Intuition/GadTools GUI (chat list + conversation).
   Double-click it: it starts the GUI directly, with no flashing console window.
-- TelegramAmiga-TUI -- a full-screen text/console client for low-end or mouse-less
-  setups. Both share the same login and the same saved session.
+$tui_entry_en
   Long transcript lines wrap by words on narrow screens; continuation rows are
   indented. The composer grows to three rows, and Shift+Up/Down scrolls by
   complete logical messages.
@@ -209,7 +269,7 @@ Two launchers
 
 First start (logging in)
 ------------------------
-1. Unpack the drawer and double-click TelegramAmiga (or TelegramAmiga-TUI).
+$first_start_en
 2. If there is no saved login, a login panel appears. Enter your phone number
    in full international form (for example +39 333 1234567), then the code
    Telegram sends you. If your account has a cloud password (2FA), type it on
@@ -359,12 +419,10 @@ Requisiti di sistema
 --------------------
 $req_it
 
-I due launcher
---------------
+$launchers_title_it
 - TelegramAmiga -- la GUI nativa Intuition/GadTools (lista chat + conversazione).
   Doppio click: avvia direttamente la GUI, senza finestra console che lampeggia.
-- TelegramAmiga-TUI -- un client testuale a schermo intero per macchine leggere o
-  senza mouse. Condividono lo stesso login e la stessa sessione salvata.
+$tui_entry_it
   Le righe lunghe vanno a capo per parole sugli schermi stretti, con un piccolo
   rientro nelle continuazioni. Il composer cresce fino a tre righe e
   Shift+Su/Giu scorre per messaggi logici completi.
@@ -379,7 +437,7 @@ I due launcher
 
 Primo avvio (accesso)
 ---------------------
-1. Scompatta il drawer e fai doppio click su TelegramAmiga (o TelegramAmiga-TUI).
+$first_start_it
 2. Se non c'e' un login salvato, compare il pannello di accesso. Inserisci il
    numero di telefono in formato internazionale completo (es. +39 333 1234567),
    poi il codice che Telegram ti invia. Se il tuo account ha una password cloud
@@ -611,13 +669,7 @@ factor login are implemented inside the program. Zero external
 dependencies -- no MUI, no ixemul.library, no AmiSSL, no TCP helper
 beyond your system's own bsdsocket stack.
 
-Two programs share one engine and one saved login:
-
-  TelegramAmiga  - the native Intuition/GadTools GUI: chat list with real
-                 profile-picture avatars, message bubbles, scrollbars,
-                 mouse wheel, context menus.
-  TelegramAmiga-TUI  - the text/console client, at home on a 68030 with a
-                 serial console or an ssh session.
+$aminet_programs
 
 WHAT CAN I ACTUALLY DO WITH IT?
 -------------------------------
@@ -728,8 +780,14 @@ package_one() {
     # binary opens a CON: window and runs the console client. No IconX, no shell
     # scripts.
     cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
-    : > "$dest/TelegramAmiga-TUI"
-    cp "$ROOT_DIR/assets/TelegramAmiga-TUI.info" "$dest/TelegramAmiga-TUI.info"
+    # From 0.0.9 (Michele) the TUI icon ships ONLY on the 68k line, where a
+    # console client is what those machines actually want. The PPC and x86
+    # packages carry the GUI icon alone; their manuals explain the Shell
+    # command for anyone who still wants the text client.
+    if [ "$expected" = "amigaos3" ]; then
+        : > "$dest/TelegramAmiga-TUI"
+        cp "$ROOT_DIR/assets/TelegramAmiga-TUI.info" "$dest/TelegramAmiga-TUI.info"
+    fi
     mkdir -p "$dest/data"
     cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/data/telegram-api.txt"
 
