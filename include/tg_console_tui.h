@@ -41,17 +41,24 @@ int tg_console_tui_active(void);
 /* Rewrites the top status bar (clipped to the window width). */
 void tg_console_tui_status(FILE *stream, const char *status_text);
 
-/* Appends one already-rendered line (no newline) to the transcript region,
-   scrolling it. Bytes are written as-is, so callers may embed colour role
-   sequences; keep one visual line per call. */
+/* Appends one logical line (no newline) to the transcript region. It wraps by
+   words at paint time, so resize reflows the backlog without losing text.
+   Bytes are written as-is and colour role sequences consume no columns. */
 void tg_console_tui_line(FILE *stream, const char *text);
 
-/* Positions the cursor at the input row and redraws prompt + pending input
-   (clipped to the window width). */
+/* Redraws prompt + pending input. The composer grows to three video rows and
+   then shows a bounded tail viewport. The ordinary entry point places the
+   caret at the end; the explicit variant keeps an editor caret coherent across
+   wrapped rows. */
 void tg_console_tui_input(FILE *stream,
                           const char *prompt,
                           const char *pending,
                           unsigned long pending_length);
+void tg_console_tui_input_caret(FILE *stream,
+                                const char *prompt,
+                                const char *pending,
+                                unsigned long pending_length,
+                                unsigned long pending_caret);
 
 /* Flicker-free caret-at-end fast paths (slow 68000 consoles): echo one new
    character / rub one out without the full row repaint. Return 1 when done,
@@ -91,10 +98,14 @@ void tg_console_tui_note_resize(void);
 int tg_console_tui_resize_pending(void);
 int tg_console_tui_resize(FILE *stream, const char *status_text);
 
-/* Scrollback: pages the transcript view through the in-memory backlog.
-   direction > 0 goes back in time, < 0 toward live; the separator row
-   doubles as the indicator and any chrome repaint returns to live. */
+/* Scrollback: pages the transcript view by logical messages through the
+   in-memory backlog. Their video-row count is recalculated at paint time.
+   direction > 0 goes back in time, < 0 toward live; the separator row doubles
+   as the indicator and any chrome repaint returns to live. */
 void tg_console_tui_scroll(FILE *stream, int direction);
+
+/* Automated pure-layout golden used by the chat-render self-test. */
+int tg_console_tui_layout_self_test(void);
 
 /* Interactive diagnostic for --console-tui-test. */
 int tg_console_tui_self_test(FILE *stream);

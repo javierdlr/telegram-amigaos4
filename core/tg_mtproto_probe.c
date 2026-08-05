@@ -9191,24 +9191,6 @@ static void tg_chat_history_add(const char *text)
  * the message history and Up/Down there is simply swallowed. In cooked fallback
  * mode (raw == 0) it just accumulates the line as before, without echo.
  */
-/* After repainting the TUI input row (which leaves the hardware cursor at the end
-   of the visible text), pull the cursor back to the caret so LEFT/RIGHT show where
-   the next edit lands. TUI-only; one short CSI move, no SGR -> safe on MorphOS. */
-static void tg_chat_tui_place_caret(FILE *stream, unsigned long line_length,
-                                    unsigned long caret)
-{
-    unsigned long back;
-
-    if (caret > line_length) {
-        caret = line_length;
-    }
-    back = line_length - caret;
-    if (back > 0UL) {
-        fprintf(stream, TG_UI_CSI "%luD", back);
-        fflush(stream);
-    }
-}
-
 static int tg_mtproto_chat_read_line_edit(char *line,
                                           unsigned long line_size,
                                           unsigned long *line_length,
@@ -9270,11 +9252,9 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                     ++(*line_length);
                     tg_chat_caret = c + 1UL;
                 }
-                tg_console_tui_input(tg_chat_tui_stream,
-                                     tg_console_tui_prompt(), line,
-                                     *line_length);
-                tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
-                                        tg_chat_caret);
+                tg_console_tui_input_caret(
+                    tg_chat_tui_stream, tg_console_tui_prompt(), line,
+                    *line_length, tg_chat_caret);
             }
         }
         return rc;
@@ -9352,11 +9332,9 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                                                    *line_length)) {
                     /* caret-at-end rubout: no repaint, no flicker */
                 } else {
-                    tg_console_tui_input(tg_chat_tui_stream,
-                                         tg_console_tui_prompt(), line,
-                                         *line_length);
-                    tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
-                                            tg_chat_caret);
+                    tg_console_tui_input_caret(
+                        tg_chat_tui_stream, tg_console_tui_prompt(), line,
+                        *line_length, tg_chat_caret);
                 }
             }
         } else if (*line_length > 0UL) {
@@ -9424,21 +9402,23 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 direction = (int)(unsigned char)ch;
             }
             if (direction == 'C') {
-                /* cursor RIGHT (TUI only): step the caret toward the end and
-                   nudge the hardware cursor one column right (no full redraw). */
+                /* A wrapped composer needs an absolute row/column repaint when
+                   the caret crosses a visual-line boundary. */
                 if (tg_console_tui_active() && tg_chat_tui_stream != 0 &&
                     tg_chat_caret < *line_length) {
                     ++tg_chat_caret;
-                    fputs(TG_UI_CSI "C", tg_chat_tui_stream);
-                    fflush(tg_chat_tui_stream);
+                    tg_console_tui_input_caret(
+                        tg_chat_tui_stream, tg_console_tui_prompt(), line,
+                        *line_length, tg_chat_caret);
                 }
             } else if (direction == 'D') {
-                /* cursor LEFT (TUI only): step the caret toward the start. */
+                /* LEFT follows the same wrapped-row layout as RIGHT. */
                 if (tg_console_tui_active() && tg_chat_tui_stream != 0 &&
                     tg_chat_caret > 0UL) {
                     --tg_chat_caret;
-                    fputs(TG_UI_CSI "D", tg_chat_tui_stream);
-                    fflush(tg_chat_tui_stream);
+                    tg_console_tui_input_caret(
+                        tg_chat_tui_stream, tg_console_tui_prompt(), line,
+                        *line_length, tg_chat_caret);
                 }
             } else if (direction == '|' && fkey == 12UL) {
                 /* Window NEWSIZE raw event: let the chat loop repaint the
@@ -9538,11 +9518,9 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                                             *line_length, ch)) {
                 /* caret-at-end echo: no repaint, no flicker */
             } else {
-                tg_console_tui_input(tg_chat_tui_stream,
-                                     tg_console_tui_prompt(), line,
-                                     *line_length);
-                tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
-                                        tg_chat_caret);
+                tg_console_tui_input_caret(
+                    tg_chat_tui_stream, tg_console_tui_prompt(), line,
+                    *line_length, tg_chat_caret);
             }
         } else {
             line[*line_length] = ch;
@@ -9595,9 +9573,9 @@ static int tg_mtproto_chat_prompt_line(const char *prompt,
         if (tg_console_tui_resize_pending() && tg_chat_tui_stream != 0) {
             if (tg_console_tui_resize(tg_chat_tui_stream,
                                       " Telegram Amiga ")) {
-                tg_console_tui_input(tg_chat_tui_stream,
-                                     tg_console_tui_prompt(), out,
-                                     line_length);
+                tg_console_tui_input_caret(
+                    tg_chat_tui_stream, tg_console_tui_prompt(), out,
+                    line_length, tg_chat_caret);
             }
         }
         /* Drive the same editor as the main loop so the prompt echoes and
@@ -9944,6 +9922,9 @@ int tg_mtproto_chat_render_self_test(void)
             printf("chat render self-test: reply quote MISMATCH: %s\n", qbuf);
             return 2;
         }
+    }
+    if (tg_console_tui_layout_self_test() != 0) {
+        return 2;
     }
     puts("chat render self-test: ok (transcript renderer golden)");
     return 0;
@@ -11194,8 +11175,9 @@ static void tg_mtproto_chat_show_prompt(FILE *stream,
             fclose(capture);
             tg_console_tui_set_prompt(prompt_text);
         }
-        tg_console_tui_input(tg_chat_tui_stream, tg_console_tui_prompt(),
-                             pending, pending_length);
+        tg_console_tui_input_caret(
+            tg_chat_tui_stream, tg_console_tui_prompt(), pending,
+            pending_length, tg_chat_caret);
         return;
     }
     tg_mtproto_chat_redraw_input(stream, own_label, peer_label, pending,

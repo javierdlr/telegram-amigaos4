@@ -195,6 +195,9 @@ Two launchers
   Double-click it: it starts the GUI directly, with no flashing console window.
 - TelegramAmiga-TUI -- a full-screen text/console client for low-end or mouse-less
   setups. Both share the same login and the same saved session.
+  Long transcript lines wrap by words on narrow screens; continuation rows are
+  indented. The composer grows to three rows, and Shift+Up/Down scrolls by
+  complete logical messages.
   To quit it: /quit, Ctrl+C, or the window's close gadget. The window then
   stays so you can read the last lines: one more click on the close gadget
   dismisses it.
@@ -362,6 +365,9 @@ I due launcher
   Doppio click: avvia direttamente la GUI, senza finestra console che lampeggia.
 - TelegramAmiga-TUI -- un client testuale a schermo intero per macchine leggere o
   senza mouse. Condividono lo stesso login e la stessa sessione salvata.
+  Le righe lunghe vanno a capo per parole sugli schermi stretti, con un piccolo
+  rientro nelle continuazioni. Il composer cresce fino a tre righe e
+  Shift+Su/Giu scorre per messaggi logici completi.
   Per uscire: /quit, Ctrl+C o il gadget di chiusura della finestra. La
   finestra poi resta aperta per farti leggere le ultime righe: un altro
   click sul gadget la congeda.

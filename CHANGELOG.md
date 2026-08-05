@@ -11,6 +11,10 @@ unless noted.
   in T: and are cleaned up at startup and exit.
 
 ### Added
+- The full-screen TUI now word-wraps transcript messages on narrow consoles,
+  with indented continuation lines and hard breaks for overlong words. Its
+  composer grows from one to three screen rows before reverting to a bounded
+  tail view, while scrollback continues to move by logical messages.
 - Photo messages now offer `Save photo as...` from their context menu whether
   inline display is enabled or not. The fixed-size viewer exposes the same
   action on the `S` key; both use a save requester, prefer the best cached
