@@ -53,6 +53,18 @@ void tg_console_tui_input(FILE *stream,
                           const char *pending,
                           unsigned long pending_length);
 
+/* Flicker-free caret-at-end fast paths (slow 68000 consoles): echo one new
+   character / rub one out without the full row repaint. Return 1 when done,
+   0 when the caller must fall back to tg_console_tui_input(). The length is
+   the pending length AFTER the edit. */
+int tg_console_tui_input_append(FILE *stream,
+                                const char *prompt,
+                                unsigned long pending_length,
+                                char ch);
+int tg_console_tui_input_backspace(FILE *stream,
+                                   const char *prompt,
+                                   unsigned long pending_length);
+
 /* Leaves the layout: moves below the status area and restores attributes. */
 void tg_console_tui_leave(FILE *stream);
 

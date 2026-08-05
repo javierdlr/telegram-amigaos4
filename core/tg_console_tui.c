@@ -505,6 +505,79 @@ void tg_console_tui_line(FILE *stream, const char *text)
     fflush(stream);
 }
 
+/* Visible column count of a prompt, honouring the same rules as the painter
+   below (colour sequences and control bytes take no columns). */
+static unsigned int tg_tui_prompt_columns(const char *prompt)
+{
+    unsigned int printed = 0U;
+
+    if (prompt == 0) {
+        return 0U;
+    }
+    while (*prompt != '\0') {
+        if (*prompt == (char)0x9b ||
+            (*prompt == (char)0x1b && prompt[1] == '[')) {
+            if (*prompt == (char)0x1b) {
+                ++prompt;
+            }
+            ++prompt;
+            while (*prompt != '\0' &&
+                   !((unsigned char)*prompt >= 0x40U &&
+                     (unsigned char)*prompt <= 0x7eU)) {
+                ++prompt;
+            }
+            if (*prompt != '\0') {
+                ++prompt;
+            }
+            continue;
+        }
+        if ((unsigned char)*prompt >= 0x20U) {
+            ++printed;
+        }
+        ++prompt;
+    }
+    return printed;
+}
+
+/* Fast caret-at-end echo: on a 7 MHz 68000 the full clear-and-repaint of the
+   input row flashes on every keystroke (field report 2026-08-05). When the
+   whole line still fits the row, the hardware cursor already rests right
+   after the text, so echoing the new character is enough. Returns 0 when the
+   caller must fall back to the full repaint (row scrolled, control char). */
+int tg_console_tui_input_append(FILE *stream,
+                                const char *prompt,
+                                unsigned long pending_length,
+                                char ch)
+{
+    if (stream == 0 || !tg_tui_active || (unsigned char)ch < 0x20U) {
+        return 0;
+    }
+    if (tg_tui_prompt_columns(prompt) + pending_length + 2UL >
+        (unsigned long)tg_tui_columns) {
+        return 0; /* tail-scroll mode: only the repaint knows the window */
+    }
+    fputc(ch, stream);
+    fflush(stream);
+    return 1;
+}
+
+/* Fast caret-at-end backspace: same conditions as the append above. */
+int tg_console_tui_input_backspace(FILE *stream,
+                                   const char *prompt,
+                                   unsigned long pending_length)
+{
+    if (stream == 0 || !tg_tui_active) {
+        return 0;
+    }
+    if (tg_tui_prompt_columns(prompt) + pending_length + 3UL >
+        (unsigned long)tg_tui_columns) {
+        return 0; /* the repaint must re-reveal the scrolled-out head */
+    }
+    fputs("\b \b", stream);
+    fflush(stream);
+    return 1;
+}
+
 void tg_console_tui_input(FILE *stream,
                           const char *prompt,
                           const char *pending,

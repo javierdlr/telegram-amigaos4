@@ -83,6 +83,9 @@ static char tg_mtproto_query_fail[64];
  * forever.
  */
 #define TG_MTPROTO_CHAT_STALL_LIMIT 3UL
+/* Seconds of keyboard quiet before a parked draft lets background polls
+   resume (they stay fully suspended while keys are actually flowing). */
+#define TG_MTPROTO_CHAT_DRAFT_QUIET_SECONDS 5UL
 #define TG_MTPROTO_CHAT_OPEN_HISTORY_ATTEMPTS 3U
 /* First login on OS3 can be slow, but a blocking recv() must not leave the
    user staring at progress dots for minutes. This is deliberately wider than
@@ -9343,11 +9346,18 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 changed = 1;
             }
             if (changed) {
-                tg_console_tui_input(tg_chat_tui_stream,
-                                     tg_console_tui_prompt(), line,
-                                     *line_length);
-                tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
-                                        tg_chat_caret);
+                if (ch != 127 && tg_chat_caret == *line_length &&
+                    tg_console_tui_input_backspace(tg_chat_tui_stream,
+                                                   tg_console_tui_prompt(),
+                                                   *line_length)) {
+                    /* caret-at-end rubout: no repaint, no flicker */
+                } else {
+                    tg_console_tui_input(tg_chat_tui_stream,
+                                         tg_console_tui_prompt(), line,
+                                         *line_length);
+                    tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
+                                            tg_chat_caret);
+                }
             }
         } else if (*line_length > 0UL) {
             --(*line_length);
@@ -9521,10 +9531,19 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 fputs(TG_CHAT_SLASH_HINT_TEXT, hint_cap);
                 tg_console_tui_capture_end(hint_cap, stream);
             }
-            tg_console_tui_input(tg_chat_tui_stream,
-                                 tg_console_tui_prompt(), line, *line_length);
-            tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
-                                    tg_chat_caret);
+            if (tg_chat_caret == *line_length &&
+                (!use_history || ch != '/' || *line_length != 1UL) &&
+                tg_console_tui_input_append(tg_chat_tui_stream,
+                                            tg_console_tui_prompt(),
+                                            *line_length, ch)) {
+                /* caret-at-end echo: no repaint, no flicker */
+            } else {
+                tg_console_tui_input(tg_chat_tui_stream,
+                                     tg_console_tui_prompt(), line,
+                                     *line_length);
+                tg_chat_tui_place_caret(tg_chat_tui_stream, *line_length,
+                                        tg_chat_caret);
+            }
         } else {
             line[*line_length] = ch;
             ++(*line_length);
@@ -11606,6 +11625,9 @@ int tg_mtproto_auth_chat_file(const char *host,
     int chat_raw;
     int have_replay;
     time_t chat_last_poll;
+    time_t chat_draft_key;          /* wall clock of the last draft keystroke */
+    unsigned long chat_draft_len;   /* draft state at the previous editor exit */
+    unsigned long chat_draft_caret;
     static const char label[] = "chat";
     static const char peer_limit[] = "5";
 
@@ -11797,6 +11819,9 @@ int tg_mtproto_auth_chat_file(const char *host,
     /* Heavy accounts must reach the prompt before any blocking history read. */
     peer_history_ready = 0;
     chat_last_poll = (time_t)0;
+    chat_draft_key = (time_t)0;
+    chat_draft_len = 0UL;
+    chat_draft_caret = 0UL;
     prev_peer_index[0] = '\0';
     prev_peer_label[0] = '\0';
     line_length = 0UL;
@@ -11864,14 +11889,35 @@ int tg_mtproto_auth_chat_file(const char *host,
             /* In raw mode rc==0 also fires after every keystroke, not just on
                the watch timeout. Throttle on wall-clock so fast typing does
                not turn into a poll per keypress. */
+            /* Draft keystroke tracker: the editor also returns on its wake
+               timeout, so only a CHANGE in the pending line counts as
+               keyboard activity. An empty line clears the tracker. */
+            if (line_length == 0UL) {
+                chat_draft_key = (time_t)0;
+                chat_draft_len = 0UL;
+                chat_draft_caret = 0UL;
+            } else if (line_length != chat_draft_len ||
+                       tg_chat_caret != chat_draft_caret) {
+                chat_draft_len = line_length;
+                chat_draft_caret = tg_chat_caret;
+                chat_draft_key = time(0);
+            }
             if (line_length > 0UL) {
-                /* A draft is being composed: skip background polls entirely.
-                   Since updates ride the session, every poll grew heavy
-                   (update parsing, gunzip) and on a 68030/25 the round
-                   trips wedged themselves between keystrokes -- the field
-                   report read "characters take too long to appear". Polls
-                   resume the moment the line is sent or cleared. */
-                continue;
+                /* A draft is being composed: hold background polls while the
+                   user is actually typing (a 68030/25 field report read
+                   "characters take too long to appear" when round trips
+                   wedged between keystrokes). But not FOREVER: a parked
+                   draft used to suppress replies entirely (68000 field
+                   report 2026-08-05), so once the keyboard has been quiet
+                   for a few seconds the normal poll cadence resumes. */
+                poll_now = time(0);
+                if (poll_now == (time_t)-1 ||
+                    chat_draft_key == (time_t)0 ||
+                    poll_now < chat_draft_key ||
+                    (unsigned long)(poll_now - chat_draft_key) <
+                        TG_MTPROTO_CHAT_DRAFT_QUIET_SECONDS) {
+                    continue;
+                }
             }
             poll_now = time(0);
             if (poll_now != (time_t)-1 && chat_last_poll != (time_t)0 &&
