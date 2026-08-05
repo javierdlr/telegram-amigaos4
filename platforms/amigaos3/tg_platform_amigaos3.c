@@ -1545,12 +1545,23 @@ void tg_platform_workbench_tui_console_close(void)
         return; /* console never opened (CLI launch or open failure) */
     }
     tg_wb_drop_disarm();
-    /* Every handle to the console must go before the WAIT window's close
-       gadget can dismiss it, and trusting the C runtime's exit path was not
-       enough on a plain ROM 3.1 68000 (field report 2026-08-05: the click
-       stayed dead after the farewell). Close the freopen'd "*" stdio streams
-       HERE -- nothing may print after this call -- then put the original
-       process plumbing back and release our own handle. */
+    /* The farewell asks for one click on the close gadget. Do not rely on
+       the con-handler dismissing the WAIT window by itself (the plain ROM
+       3.1 handler never did, two field reports 2026-08-05): CONSUME that
+       click ourselves. In cooked mode the CLOSE-flag console answers a
+       close click with EOF, so read until it arrives, then drop every
+       handle; the WAIT window dies with the last Close(). */
+    SetMode(Input(), 0);
+    {
+        char ch;
+
+        while (Read(Input(), &ch, 1) > 0) {
+            /* keystrokes before the click are discarded */
+        }
+    }
+    /* Close the freopen'd "*" stdio streams -- nothing may print after
+       this point -- then put the original process plumbing back and
+       release our own handle. */
     fflush(stdout);
     fflush(stderr);
     fclose(stdin);

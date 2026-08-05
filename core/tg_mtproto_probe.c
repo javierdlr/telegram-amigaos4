@@ -11628,6 +11628,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     time_t chat_draft_key;          /* wall clock of the last draft keystroke */
     unsigned long chat_draft_len;   /* draft state at the previous editor exit */
     unsigned long chat_draft_caret;
+    int chat_line_consumed;         /* a dispatched line awaits its reset */
     static const char label[] = "chat";
     static const char peer_limit[] = "5";
 
@@ -11822,6 +11823,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     chat_draft_key = (time_t)0;
     chat_draft_len = 0UL;
     chat_draft_caret = 0UL;
+    chat_line_consumed = 0;
     prev_peer_index[0] = '\0';
     prev_peer_label[0] = '\0';
     line_length = 0UL;
@@ -11842,6 +11844,17 @@ int tg_mtproto_auth_chat_file(const char *host,
                                         0UL, tg_chat_input_raw);
     }
     for (;;) {
+        if (chat_line_consumed) {
+            /* The previous iteration dispatched this line (message sent or
+               command run). The dispatcher re-measured line_length to do its
+               work, so without this reset the next keystroke would edit the
+               GHOST of the sent message (68000 field report 2026-08-05), and
+               the stale length kept the draft guard suppressing polls. */
+            chat_line_consumed = 0;
+            line[0] = '\0';
+            line_length = 0UL;
+            tg_chat_caret = 0UL;
+        }
         if (tg_console_tui_resize_pending()) {
             if (tg_console_tui_resize(stream, " Telegram Amiga ")) {
                 tg_mtproto_chat_tui_status(peer_label);
@@ -12052,6 +12065,7 @@ int tg_mtproto_auth_chat_file(const char *host,
            message text is unaffected beyond the trailing blanks nobody wants. */
         tg_mtproto_trim_line(line);
         line_length = (unsigned long)strlen(line);
+        chat_line_consumed = 1; /* reset at the next loop top, after dispatch */
         if (strcmp(line, "/quit") == 0 || strcmp(line, "quit") == 0) {
             tg_mtproto_chat_print_system_line(stream, "Bye.");
             tg_mtproto_close_quiet_stream(chat_quiet, stream);
