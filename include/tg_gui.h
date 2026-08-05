@@ -107,8 +107,11 @@ struct tg_gui_backend {
 #define TG_GUI_MAX_CHATS 128
 #endif
 #endif
+#ifndef TG_GUI_MAX_MESSAGES /* overridable: the 68000 LOWMEM build shrinks the
+                               backlog to fit a 4 MB fast-RAM machine */
 #define TG_GUI_MAX_MESSAGES 100 /* deeper backlog at open (was 64); the open
                                    getHistory loads ~90, leaving room for live ones */
+#endif
 #define TG_GUI_NAME_MAX 48
 #define TG_GUI_TEXT_MAX 256
 

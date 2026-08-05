@@ -153,10 +153,12 @@ static char tg_mtproto_query_fail[64];
    messages (non-m68k) with the referenced users/chats can unpack past 64 KiB on
    a busy group; size it to 128 KiB there. m68k fetches 30 and keeps 64 KiB to
    respect its tighter box. Pairs with TG_MTPROTO_REPLY_RECV_MAX below. */
+#ifndef TG_MTPROTO_GZIP_UNPACKED_MAX /* overridable: LOWMEM halves it */
 #if defined(__m68k__)
 #define TG_MTPROTO_GZIP_UNPACKED_MAX 65536UL
 #else
 #define TG_MTPROTO_GZIP_UNPACKED_MAX 131072UL
+#endif
 #endif
 /* Receive buffer for one decrypted reply frame handed to recv_abridged_packet.
    The old 32 KiB was sized for a 5-message page; the deep-backlog open now asks
@@ -164,7 +166,9 @@ static char tg_mtproto_query_fail[64];
    recv_abridged_packet rejected it ("Could not read messages now") and the chat
    loaded few/no messages. Size it to the page we actually request. */
 #if defined(__m68k__)
+#ifndef TG_MTPROTO_REPLY_RECV_MAX /* overridable: LOWMEM shrinks the reply box */
 #define TG_MTPROTO_REPLY_RECV_MAX 49152U
+#endif
 #else
 #define TG_MTPROTO_REPLY_RECV_MAX 131072U
 #endif
@@ -16113,10 +16117,12 @@ static int tg_gui_avfetch_n = 0;
    was briefly halved to 32 KB to fit a TOTAL-time query budget; that budget is
    now idle-based, so it is back to 64 KB with the rest -- twice the speed on a
    fast link, and its 72 KB buffers already hold it. */
+#ifndef TG_GUI_DL_CHUNK /* overridable: LOWMEM shrinks body and chunk together */
 #if defined(__m68k__)
 #define TG_GUI_DL_CHUNK 32768UL   /* 32 KB, within the 40 KB decrypted body */
 #else
 #define TG_GUI_DL_CHUNK 65536UL   /* 64 KB, within the 72 KB decrypted body */
+#endif
 #endif
 /* Per-chunk retries before a download gives up. A long transfer over a flaky
    link (phone hotspot, PLIP, a busy DC) loses the odd chunk; re-asking for the
@@ -16125,10 +16131,12 @@ static int tg_gui_avfetch_n = 0;
 /* Write buffer for the file being downloaded: a few chunks' worth, so the
    drive is touched in big blocks. m68k keeps it modest (its whole BSS is
    the tight budget), the others can afford more. */
+#ifndef TG_GUI_DL_WBUF /* overridable: LOWMEM pairs it with the small chunk */
 #if defined(__m68k__)
 #define TG_GUI_DL_WBUF (64UL * 1024UL)
 #else
 #define TG_GUI_DL_WBUF (128UL * 1024UL)
+#endif
 #endif
 
 /* Where downloads land (0.0.8, tester request: an 030 owner wanted them in

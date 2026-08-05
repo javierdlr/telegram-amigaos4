@@ -18,7 +18,10 @@
    ~512 round-trips instead of ~2000 (an interminable, machine-locking download
    on a Vampire), still modest static RAM for a stock A1200. */
 #if defined(__m68k__)
+#ifndef TG_MTPROTO_ENCRYPTED_BODY_MAX /* overridable: the 68000 LOWMEM build
+                                         trades body size for fast RAM */
 #define TG_MTPROTO_ENCRYPTED_BODY_MAX 40960U
+#endif
 #else
 #define TG_MTPROTO_ENCRYPTED_BODY_MAX 73728U
 #endif

@@ -361,7 +361,10 @@ typedef struct tg_mtproto_messages_summary {
     int is_channel_messages;
 } tg_mtproto_messages_summary;
 
+#ifndef TG_MTPROTO_MESSAGE_TEXT_MAX /* overridable: the 68000 LOWMEM build
+                                       shrinks the per-message text buffer */
 #define TG_MTPROTO_MESSAGE_TEXT_MAX 4096U
+#endif
 /* How many messages one getHistory read parses into the static list (TWO live
    instances). This caps the GUI open-backlog -- it was 8, far too few. Each entry
    is ~4KB, so the list is sized per-platform to respect the 8MB OS3 budget while

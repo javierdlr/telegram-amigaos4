@@ -9,9 +9,18 @@
 #include "tg_net.h"
 #include "tg_tls.h"
 
+#if defined(TG_LOWMEM)
+/* 68000 LOWMEM build for 4 MB fast-RAM machines: half a megabyte of stack is
+   enough for the chat loop with an existing session; only the very first
+   login (DH) was ever proven to need the full megabyte. */
+#define TG_PLATFORM_SAFE_STACK_SIZE 524288UL
+#define TG_PLATFORM_SAFE_STACK_MIN 409600UL
+#define TG_PLATFORM_SAFE_STACK_COOKIE "$STACK:524288"
+#else
 #define TG_PLATFORM_SAFE_STACK_SIZE 1048576UL
 #define TG_PLATFORM_SAFE_STACK_MIN 819200UL
 #define TG_PLATFORM_SAFE_STACK_COOKIE "$STACK:1048576"
+#endif
 
 typedef int (*tg_platform_entry_fn)(int argc, char **argv);
 
