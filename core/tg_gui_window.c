@@ -5083,46 +5083,6 @@ static LONG tg_gui_amiga_easyreq_args(struct Window *win, struct EasyStruct *es)
 /* EasyRequestArgs does not map ESC to its rightmost gadget. This small
    requester loop preserves the standard gadget return values while making
    raw ESC an explicit zero (Cancel) on every Intuition-compatible target. */
-/* Which button was pressed, by POSITION rather than by GadgetID. AmigaOS
-   numbers requester gadgets 1,2,...,N left to right with the RIGHTMOST one 0;
-   a reimplementation is free to number them the other way, and with two
-   buttons both conventions agree -- which is why "Photo|File" always worked
-   and "Photo|File|Cancel" started sending photos as files on MorphOS (field
-   report 2026-08-06). Counting how many buttons sit to the left of the one
-   that was hit needs no convention at all. System gadgets (drag bar and
-   friends) are skipped. Returns the classic numbering, so callers are
-   unchanged. */
-static LONG tg_gui_amiga_req_button(struct Window *req, struct Gadget *hit)
-{
-    struct Gadget *g;
-    LONG left_of = 0L;
-    LONG total = 0L;
-
-    if (req == 0 || hit == 0) {
-        return 0L;
-    }
-    for (g = req->FirstGadget; g != 0; g = g->NextGadget) {
-        if ((g->GadgetType & GTYP_SYSGADGET) != 0) {
-            continue;
-        }
-        ++total;
-        if (g != hit && g->LeftEdge < hit->LeftEdge) {
-            ++left_of;
-        }
-    }
-    if (total <= 0L) {
-        return 0L;
-    }
-    if (tg_gui_log_is_enabled()) {
-        char line[80];
-
-        sprintf(line, "req: button %ld of %ld (id %ld)", (long)left_of + 1L,
-                (long)total, (long)hit->GadgetID);
-        tg_gui_log(line);
-    }
-    return (left_of + 1L == total) ? 0L : left_of + 1L;
-}
-
 static LONG tg_gui_amiga_easyreq_cancel_args(struct Window *win,
                                              struct EasyStruct *es)
 {
@@ -5137,28 +5097,34 @@ static LONG tg_gui_amiga_easyreq_cancel_args(struct Window *win,
     requester = BuildEasyRequestArgs(win, es, IDCMP_RAWKEY, 0);
     result = requester == (struct Window *)1 ? 1L : 0L;
     if (requester != 0 && requester != (struct Window *)1) {
-        int done;
-        struct IntuiMessage *msg;
+        /* SysReqHandler owns the gadget mapping. Reading it ourselves (from
+           the gadget id, then from the button geometry) sent MorphOS photos
+           out as files: only the system knows how ITS requester gadgets are
+           laid out and numbered. The documented return is the classic
+           1,2,...,N left to right with the rightmost 0 -- exactly what the
+           callers expect. -1 means our IDCMP_RAWKEY arrived without
+           satisfying the requester: a key press, ESC among them, so it
+           cancels (the sole reason this loop exists instead of a plain
+           EasyRequestArgs). */
+        ULONG idcmp;
 
-        done = 0;
-        while (!done) {
-            WaitPort(requester->UserPort);
-            while ((msg = (struct IntuiMessage *)GetMsg(
-                        requester->UserPort)) != 0) {
-                if (msg->Class == IDCMP_GADGETUP) {
-                    result = tg_gui_amiga_req_button(
-                        requester, (struct Gadget *)msg->IAddress);
-                    done = 1;
-                } else if (msg->Class == IDCMP_RAWKEY && msg->Code == 0x45U) {
-                    result = 0L;
-                    done = 1;
-                }
-                ReplyMsg((struct Message *)msg);
+        for (;;) {
+            idcmp = IDCMP_RAWKEY;
+            result = SysReqHandler(requester, &idcmp, TRUE);
+            if (result >= 0L) {
+                break;
             }
+            if (result == -1L) {
+                result = 0L; /* keystroke -> cancel */
+                break;
+            }
+            /* -2: input that did not satisfy the requester; keep waiting. */
         }
-        while ((msg = (struct IntuiMessage *)GetMsg(
-                    requester->UserPort)) != 0) {
-            ReplyMsg((struct Message *)msg);
+        if (tg_gui_log_is_enabled()) {
+            char line[48];
+
+            sprintf(line, "req: result %ld", (long)result);
+            tg_gui_log(line);
         }
     }
     FreeSysRequest(requester);
