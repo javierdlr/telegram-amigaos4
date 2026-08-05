@@ -109,6 +109,22 @@ the account salts, both stable; only srp_id and srp_B expire. So:
 That turns a guaranteed failure into a long but completable login. It needs
 `tg_mtproto_srp_make_proof` split into a derivation step and a proof step.
 
+## Planned: photo speed under AfA_OS
+
+Same PiStorm board, two operating systems, two very different speeds: photo
+loading under AmiKit (which runs AfA_OS) is noticeably slower than on a
+Vampire, while CaffeineOS on that same PiStorm is quick. The hardware is
+therefore innocent; something in the AfA_OS graphics path is costing us.
+
+First step is cheap and decisive: run both with `--gui-live-debug` and
+compare which replay path each one reports. If AmiKit logs the pen path
+where CaffeineOS logs the CyberGraphX one, the RGB888 self-check is failing
+under AfA_OS and the fix belongs there (why it fails, and whether the window
+RastPort is usable when the off-screen buffer is not). If both report the
+same path, the cost is elsewhere -- most likely in the AfA bitmap-text
+compatibility work, which already replaces Text() with BltTemplate glyph
+runs and is the one thing this configuration does differently.
+
 ## Initial Non-Goals
 
 - End-to-end encryption for secret chats
