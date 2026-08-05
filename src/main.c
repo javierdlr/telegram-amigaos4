@@ -162,8 +162,10 @@ static int tg_main_body(int argc, char **argv)
                    for one last look and waits for a single keypress (a
                    close-click EOF also counts where the handler sends one),
                    then the window closes for real. */
+                /* The pause reads the cooked (line-buffered) console, so
+                   only RETURN ends it -- say exactly that. */
                 printf("\n--- Telegram Amiga closed. "
-                       "Press any key to dismiss this window. ---\n");
+                       "Press RETURN to dismiss this window. ---\n");
                 fflush(stdout);
 #ifdef TG_DIAG_TRACE
                 tg_gui_log("diag: farewell printed");
