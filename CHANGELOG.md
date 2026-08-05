@@ -116,6 +116,10 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- TUI composer threshold crossings now repaint only the separator and the
+  one-to-three composer rows, restoring just the transcript rows that become
+  visible again. Direct character echo and rubout remain active on wrapped
+  composer rows, so narrow 68000 consoles no longer flash or pause per key.
 - Local five-lane test packaging now creates AROS media only with Rock Ridge
   plus Joliet, verifies the executable inside every archive and ISO, rejects
   reused volume labels and keeps the macOS hybrid path limited to AmigaOS 4.

@@ -66,10 +66,12 @@ void tg_console_tui_input_caret(FILE *stream,
    the pending length AFTER the edit. */
 int tg_console_tui_input_append(FILE *stream,
                                 const char *prompt,
+                                const char *pending,
                                 unsigned long pending_length,
                                 char ch);
 int tg_console_tui_input_backspace(FILE *stream,
                                    const char *prompt,
+                                   const char *pending,
                                    unsigned long pending_length);
 
 /* Leaves the layout: moves below the status area and restores attributes. */

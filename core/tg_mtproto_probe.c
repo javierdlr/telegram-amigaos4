@@ -9329,6 +9329,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 if (ch != 127 && tg_chat_caret == *line_length &&
                     tg_console_tui_input_backspace(tg_chat_tui_stream,
                                                    tg_console_tui_prompt(),
+                                                   line,
                                                    *line_length)) {
                     /* caret-at-end rubout: no repaint, no flicker */
                 } else {
@@ -9515,6 +9516,7 @@ static int tg_mtproto_chat_read_line_edit(char *line,
                 (!use_history || ch != '/' || *line_length != 1UL) &&
                 tg_console_tui_input_append(tg_chat_tui_stream,
                                             tg_console_tui_prompt(),
+                                            line,
                                             *line_length, ch)) {
                 /* caret-at-end echo: no repaint, no flicker */
             } else {

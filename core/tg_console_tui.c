@@ -18,6 +18,7 @@ static int tg_tui_resize_flag = 0;
 static unsigned int tg_tui_rows = 0U;
 static unsigned int tg_tui_columns = 0U;
 static unsigned int tg_tui_composer_rows = 1U;
+static int tg_tui_composer_cache_valid = 0;
 
 /* Status is row 1. The composer grows upward from the last row and keeps one
    separator row between itself and the transcript. */
@@ -26,6 +27,18 @@ static unsigned int tg_tui_composer_rows = 1U;
 #define TG_TUI_MIN_COLUMNS 20U
 #define TG_TUI_COMPOSER_MAX_ROWS 3U
 #define TG_TUI_WRAP_INDENT 2U
+
+static unsigned int tg_tui_region_rows_for(unsigned int composer_rows)
+{
+    unsigned int separator;
+    unsigned int bottom;
+
+    separator = tg_tui_rows - composer_rows;
+    bottom = separator - 1U;
+    return bottom >= TG_TUI_REGION_TOP
+               ? bottom - TG_TUI_REGION_TOP + 1U
+               : 0U;
+}
 
 static unsigned int tg_tui_separator_row(void)
 {
@@ -39,12 +52,7 @@ static unsigned int tg_tui_region_bottom(void)
 
 static unsigned int tg_tui_region_rows(void)
 {
-    unsigned int bottom;
-
-    bottom = tg_tui_region_bottom();
-    return bottom >= TG_TUI_REGION_TOP
-               ? bottom - TG_TUI_REGION_TOP + 1U
-               : 0U;
+    return tg_tui_region_rows_for(tg_tui_composer_rows);
 }
 
 static unsigned int tg_tui_composer_top(void)
@@ -470,6 +478,7 @@ void tg_console_tui_status(FILE *stream, const char *status_text)
     if (stream == 0 || !tg_tui_active) {
         return;
     }
+    tg_tui_composer_cache_valid = 0;
     tg_tui_goto(stream, 1U, 1U);
     tg_console_ui_role(stream, TG_UI_ROLE_NOTIFY);
     tg_tui_clipped_line(stream, status_text != 0 ? status_text : "");
@@ -493,9 +502,64 @@ void tg_console_tui_set_enabled(int enabled)
 #ifndef TG_TUI_BACKLOG_WIDTH
 #define TG_TUI_BACKLOG_WIDTH 512U
 #endif
+#define TG_TUI_HIDDEN_ROWS (TG_TUI_COMPOSER_MAX_ROWS - 1U)
+#define TG_TUI_SAVED_ROW_WIDTH (TG_TUI_BACKLOG_WIDTH + 16U)
 
 static char tg_tui_backlog[TG_TUI_BACKLOG_LINES][TG_TUI_BACKLOG_WIDTH];
 static unsigned long tg_tui_backlog_total = 0UL;
+static char tg_tui_hidden_rows[TG_TUI_HIDDEN_ROWS][TG_TUI_SAVED_ROW_WIDTH];
+static unsigned int tg_tui_hidden_row_count = 0U;
+static char tg_tui_tail_rows[TG_TUI_HIDDEN_ROWS][TG_TUI_SAVED_ROW_WIDTH];
+static unsigned int tg_tui_tail_row_count = 0U;
+
+typedef struct tg_tui_repaint_metrics {
+    unsigned long full_region_rows;
+    unsigned long transition_rows;
+    unsigned long composer_repaints;
+    unsigned long fast_edits;
+    unsigned long slow_edits;
+} tg_tui_repaint_metrics;
+
+static tg_tui_repaint_metrics tg_tui_metrics;
+
+static void tg_tui_tail_clear(void)
+{
+    tg_tui_tail_row_count = 0U;
+}
+
+static void tg_tui_tail_push(const char *text)
+{
+    unsigned int i;
+
+    if (tg_tui_tail_row_count == TG_TUI_HIDDEN_ROWS) {
+        for (i = 1U; i < TG_TUI_HIDDEN_ROWS; ++i) {
+            memcpy(tg_tui_tail_rows[i - 1U], tg_tui_tail_rows[i],
+                   sizeof(tg_tui_tail_rows[0]));
+        }
+        --tg_tui_tail_row_count;
+    }
+    strncpy(tg_tui_tail_rows[tg_tui_tail_row_count],
+            text != 0 ? text : "", sizeof(tg_tui_tail_rows[0]) - 1U);
+    tg_tui_tail_rows[tg_tui_tail_row_count]
+                    [sizeof(tg_tui_tail_rows[0]) - 1U] = '\0';
+    ++tg_tui_tail_row_count;
+}
+
+static int tg_tui_tail_pop(char *out, unsigned long out_size)
+{
+    if (out == 0 || out_size == 0UL || tg_tui_tail_row_count == 0U) {
+        if (out != 0 && out_size > 0UL) {
+            out[0] = '\0';
+        }
+        return 0;
+    }
+    --tg_tui_tail_row_count;
+    strncpy(out, tg_tui_tail_rows[tg_tui_tail_row_count], out_size - 1UL);
+    out[out_size - 1UL] = '\0';
+    return 1;
+}
+
+static void tg_tui_tail_push_piece(const tg_tui_wrap_piece *piece);
 
 static void tg_tui_backlog_record(const char *text)
 {
@@ -526,6 +590,7 @@ static void tg_tui_draw_transcript_piece(FILE *stream,
     tg_tui_goto(stream, tg_tui_region_bottom(), 1U);
     fputs(TG_UI_CSI "L", stream);
     tg_tui_wrapped_piece(stream, piece);
+    tg_tui_tail_push_piece(piece);
 }
 
 /* The drawing half of tg_console_tui_line (no recording). One logical line
@@ -553,15 +618,13 @@ static unsigned long tg_tui_backlog_available(void)
                : tg_tui_backlog_total;
 }
 
-static unsigned long tg_tui_view_offset_max(void)
+static unsigned long tg_tui_view_offset_max_for_region(unsigned int region)
 {
     unsigned long avail = tg_tui_backlog_available();
     unsigned long rows;
     unsigned long kept;
     unsigned long index;
-    unsigned int region;
 
-    region = tg_tui_region_rows();
     if (region == 0U || avail == 0UL) {
         return 0UL;
     }
@@ -575,6 +638,276 @@ static unsigned long tg_tui_view_offset_max(void)
         ++kept;
     }
     return avail > kept ? avail - kept : 0UL;
+}
+
+static unsigned long tg_tui_view_offset_max(void)
+{
+    return tg_tui_view_offset_max_for_region(tg_tui_region_rows());
+}
+
+static void tg_tui_saved_row_put(char *out,
+                                 unsigned long out_size,
+                                 unsigned long *length,
+                                 char ch)
+{
+    if (*length + 1UL < out_size) {
+        out[*length] = ch;
+        ++(*length);
+    }
+}
+
+/* Serialises one already-wrapped video row. This is only used for the two
+   transcript rows a growing composer temporarily covers. */
+static void tg_tui_copy_wrapped_piece(const tg_tui_wrap_piece *piece,
+                                      char *out,
+                                      unsigned long out_size)
+{
+    const char *p;
+    const char *after;
+    unsigned long length;
+    unsigned int i;
+
+    if (out == 0 || out_size == 0UL) {
+        return;
+    }
+    length = 0UL;
+    p = piece->line_start;
+    while (p < piece->start) {
+        after = tg_tui_after_csi(p);
+        if (after != 0 && after <= piece->start) {
+            while (p < after) {
+                tg_tui_saved_row_put(out, out_size, &length, *p++);
+            }
+        } else {
+            ++p;
+        }
+    }
+    for (i = 0U; i < piece->indent; ++i) {
+        tg_tui_saved_row_put(out, out_size, &length, ' ');
+    }
+    p = piece->start;
+    while (p < piece->end) {
+        after = tg_tui_after_csi(p);
+        if (after != 0 && after <= piece->end) {
+            while (p < after) {
+                tg_tui_saved_row_put(out, out_size, &length, *p++);
+            }
+            continue;
+        }
+        if ((unsigned char)*p >= 0x20U) {
+            tg_tui_saved_row_put(out, out_size, &length, *p);
+        }
+        ++p;
+    }
+    out[length] = '\0';
+}
+
+static void tg_tui_tail_push_piece(const tg_tui_wrap_piece *piece)
+{
+    char row[TG_TUI_SAVED_ROW_WIDTH];
+
+    tg_tui_copy_wrapped_piece(piece, row, sizeof(row));
+    tg_tui_tail_push(row);
+}
+
+/* Copies one visual row from the backlog as if `region` rows were visible.
+   It follows the same bottom-up selection as tg_tui_redraw_region but emits
+   only the requested row, so composer transitions stay O(1) in screen rows. */
+static void tg_tui_copy_virtual_region_row(unsigned int region,
+                                           unsigned int wanted_row,
+                                           char *out,
+                                           unsigned long out_size)
+{
+    unsigned long avail;
+    unsigned long view_offset;
+    unsigned long selected;
+    unsigned long remaining;
+    unsigned long skip_oldest;
+    unsigned long back;
+    unsigned long i;
+    unsigned long row;
+
+    if (out == 0 || out_size == 0UL) {
+        return;
+    }
+    out[0] = '\0';
+    if (region == 0U || wanted_row >= region) {
+        return;
+    }
+    avail = tg_tui_backlog_available();
+    view_offset = tg_tui_view_offset;
+    if (view_offset > tg_tui_view_offset_max_for_region(region)) {
+        view_offset = tg_tui_view_offset_max_for_region(region);
+    }
+    selected = 0UL;
+    remaining = (unsigned long)region;
+    skip_oldest = 0UL;
+    back = view_offset;
+    while (back < avail && remaining > 0UL) {
+        unsigned long index;
+        unsigned long pieces;
+
+        index = tg_tui_backlog_total - 1UL - back;
+        pieces = tg_tui_wrap_count(
+            tg_tui_backlog[index % TG_TUI_BACKLOG_LINES],
+            tg_tui_wrap_width());
+        ++selected;
+        if (pieces >= remaining) {
+            skip_oldest = pieces - remaining;
+            remaining = 0UL;
+            break;
+        }
+        remaining -= pieces;
+        ++back;
+    }
+    if ((unsigned long)wanted_row < remaining) {
+        return;
+    }
+    row = remaining;
+    for (i = selected; i > 0UL; --i) {
+        unsigned long logical_back;
+        unsigned long index;
+        unsigned long piece_index;
+        unsigned long skip;
+        tg_tui_wrap_iter iter;
+        tg_tui_wrap_piece piece;
+
+        logical_back = view_offset + i - 1UL;
+        index = tg_tui_backlog_total - 1UL - logical_back;
+        skip = (i == selected) ? skip_oldest : 0UL;
+        piece_index = 0UL;
+        tg_tui_wrap_init(
+            &iter, tg_tui_backlog[index % TG_TUI_BACKLOG_LINES],
+            tg_tui_wrap_width());
+        while (tg_tui_wrap_next(&iter, &piece)) {
+            if (piece_index >= skip) {
+                if (row == (unsigned long)wanted_row) {
+                    tg_tui_copy_wrapped_piece(&piece, out, out_size);
+                    return;
+                }
+                ++row;
+            }
+            ++piece_index;
+        }
+    }
+}
+
+static void tg_tui_paint_separator(FILE *stream)
+{
+    tg_tui_goto(stream, tg_tui_separator_row(), 1U);
+    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
+    tg_tui_clipped_line(stream,
+                        tg_tui_view_offset > 0UL
+                            ? "---- older messages -- Shift+Down: back to "
+                              "live ----------------------------------"
+                            : "----------------------------------------------"
+                              "----------------------------------");
+    tg_console_ui_reset(stream);
+}
+
+static void tg_tui_paint_saved_row(FILE *stream,
+                                   unsigned int row,
+                                   const char *text)
+{
+    tg_tui_goto(stream, row, 1U);
+    tg_tui_clipped_line(stream, text != 0 ? text : "");
+    tg_console_ui_reset(stream);
+}
+
+/* Replays one row that was covered by a growing composer through the current
+   transcript geometry. New messages can then scroll normally without losing
+   the covered tail or requiring a full-region rebuild. */
+static void tg_tui_scroll_saved_row(FILE *stream, const char *text)
+{
+    tg_tui_goto(stream, TG_TUI_REGION_TOP, 1U);
+    fputs(TG_UI_CSI "M", stream);
+    tg_tui_goto(stream, tg_tui_region_bottom(), 1U);
+    fputs(TG_UI_CSI "L", stream);
+    tg_tui_paint_saved_row(stream, tg_tui_region_bottom(), text);
+    tg_tui_tail_push(text);
+}
+
+static void tg_tui_flush_hidden_rows(FILE *stream)
+{
+    unsigned int i;
+
+    /* The most recently hidden row is the oldest of the covered tail, so the
+       LIFO order is also the chronological order required by scrolling. */
+    for (i = tg_tui_hidden_row_count; i > 0U; --i) {
+        tg_tui_scroll_saved_row(stream, tg_tui_hidden_rows[i - 1U]);
+    }
+    tg_tui_hidden_row_count = 0U;
+}
+
+/* Changes only the rows whose role changes between transcript, separator and
+   composer. This keeps a 1/2/3-row threshold crossing independent of screen
+   height, which is essential on slow console.device implementations. */
+static void tg_tui_transition_composer(FILE *stream,
+                                       unsigned int old_rows,
+                                       unsigned int new_rows)
+{
+    unsigned int delta;
+    unsigned int i;
+    unsigned int old_region;
+    unsigned int new_region;
+    unsigned int saved_rows;
+    unsigned int missing_rows;
+
+    if (old_rows == new_rows) {
+        return;
+    }
+    old_region = tg_tui_region_rows_for(old_rows);
+    if (new_rows > old_rows) {
+        delta = new_rows - old_rows;
+        for (i = 0U; i < delta &&
+                         tg_tui_hidden_row_count < TG_TUI_HIDDEN_ROWS;
+             ++i) {
+            (void)tg_tui_tail_pop(
+                tg_tui_hidden_rows[tg_tui_hidden_row_count],
+                sizeof(tg_tui_hidden_rows[0]));
+            ++tg_tui_hidden_row_count;
+        }
+        tg_tui_composer_rows = new_rows;
+    } else {
+        delta = old_rows - new_rows;
+        saved_rows = tg_tui_hidden_row_count < delta
+                         ? tg_tui_hidden_row_count
+                         : delta;
+        missing_rows = delta - saved_rows;
+        tg_tui_composer_rows = new_rows;
+        new_region = tg_tui_region_rows();
+        if (missing_rows > 0U) {
+            /* Messages or scroll operations may already have consumed part
+               of the saved tail. Grow the remaining rows at the top, where
+               the older backlog becomes visible, without moving the tail. */
+            tg_tui_goto(stream, TG_TUI_REGION_TOP, 1U);
+            for (i = 0U; i < missing_rows; ++i) {
+                fputs(TG_UI_CSI "L", stream);
+            }
+            for (i = 0U; i < missing_rows; ++i) {
+                char restored[TG_TUI_SAVED_ROW_WIDTH];
+
+                tg_tui_copy_virtual_region_row(new_region, i, restored,
+                                               sizeof(restored));
+                tg_tui_paint_saved_row(stream, TG_TUI_REGION_TOP + i,
+                                       restored);
+            }
+        }
+        for (i = 0U; i < saved_rows; ++i) {
+            --tg_tui_hidden_row_count;
+            tg_tui_paint_saved_row(
+                stream,
+                TG_TUI_REGION_TOP + missing_rows + old_region + i,
+                tg_tui_hidden_rows[tg_tui_hidden_row_count]);
+            tg_tui_tail_push(
+                tg_tui_hidden_rows[tg_tui_hidden_row_count]);
+        }
+    }
+    tg_tui_paint_separator(stream);
+    ++tg_tui_metrics.transition_rows; /* separator */
+    if (new_rows < old_rows) {
+        tg_tui_metrics.transition_rows += (unsigned long)delta;
+    }
 }
 
 /* Redraws the whole transcript region from the backlog at the current view
@@ -595,6 +928,10 @@ static void tg_tui_redraw_region(FILE *stream)
     if (region == 0U) {
         return;
     }
+    tg_tui_hidden_row_count = 0U;
+    tg_tui_tail_clear();
+    tg_tui_composer_cache_valid = 0;
+    tg_tui_metrics.full_region_rows += (unsigned long)region;
     if (tg_tui_view_offset > tg_tui_view_offset_max()) {
         tg_tui_view_offset = tg_tui_view_offset_max();
     }
@@ -646,20 +983,13 @@ static void tg_tui_redraw_region(FILE *stream)
             if (piece_index >= skip && row <= tg_tui_region_bottom()) {
                 tg_tui_goto(stream, row, 1U);
                 tg_tui_wrapped_piece(stream, &piece);
+                tg_tui_tail_push_piece(&piece);
                 ++row;
             }
             ++piece_index;
         }
     }
-    tg_tui_goto(stream, tg_tui_separator_row(), 1U);
-    tg_console_ui_role(stream, TG_UI_ROLE_SYSTEM);
-    tg_tui_clipped_line(stream,
-                        tg_tui_view_offset > 0UL
-                            ? "---- older messages -- Shift+Down: back to "
-                              "live ----------------------------------"
-                            : "----------------------------------------------"
-                              "----------------------------------");
-    tg_console_ui_reset(stream);
+    tg_tui_paint_separator(stream);
     fflush(stream);
 }
 
@@ -671,6 +1001,7 @@ void tg_console_tui_scroll(FILE *stream, int direction)
     if (stream == 0 || !tg_tui_active || tg_tui_rows < 4U) {
         return;
     }
+    tg_tui_composer_cache_valid = 0;
     /* Scroll by logical messages. Their wrapped video-row count is resolved
        afresh at paint time, so a resize reflows the same history. */
     step = (unsigned long)tg_tui_region_rows() / 2UL;
@@ -733,6 +1064,7 @@ int tg_console_tui_enter(FILE *stream, const char *status_text)
     tg_tui_rows = rows;
     tg_tui_columns = columns;
     tg_tui_composer_rows = 1U;
+    tg_tui_composer_cache_valid = 0;
     tg_tui_active = 1;
     tg_tui_resize_flag = 0;
     /* Subscribe to the console's NEWSIZE (12) and CLOSEWINDOW (11) raw
@@ -800,6 +1132,7 @@ void tg_console_tui_line(FILE *stream, const char *text)
     if (stream == 0 || !tg_tui_active) {
         return;
     }
+    tg_tui_composer_cache_valid = 0;
     /* Scroll the transcript region: drop its top row (everything below
        shifts up, input row included), then re-open a blank row just above
        the separator so the chrome returns to its place. The line is also
@@ -814,72 +1147,11 @@ void tg_console_tui_line(FILE *stream, const char *text)
         }
         return;
     }
+    if (tg_tui_hidden_row_count > 0U) {
+        tg_tui_flush_hidden_rows(stream);
+    }
     tg_tui_draw_transcript_line(stream, text);
     fflush(stream);
-}
-
-/* Visible column count of a prompt, honouring the same rules as the painter
-   below (colour sequences and control bytes take no columns). */
-static unsigned int tg_tui_prompt_columns(const char *prompt)
-{
-    const char *after;
-    unsigned int printed = 0U;
-
-    if (prompt == 0) {
-        return 0U;
-    }
-    while (*prompt != '\0') {
-        after = tg_tui_after_csi(prompt);
-        if (after != 0) {
-            prompt = after;
-            continue;
-        }
-        if ((unsigned char)*prompt >= 0x20U) {
-            ++printed;
-        }
-        ++prompt;
-    }
-    return printed;
-}
-
-/* Fast caret-at-end echo: on a 7 MHz 68000 the full clear-and-repaint of the
-   input row flashes on every keystroke (field report 2026-08-05). When the
-   whole line still fits the row, the hardware cursor already rests right
-   after the text, so echoing the new character is enough. Returns 0 when the
-   caller must fall back to the full repaint (row scrolled, control char). */
-int tg_console_tui_input_append(FILE *stream,
-                                const char *prompt,
-                                unsigned long pending_length,
-                                char ch)
-{
-    if (stream == 0 || !tg_tui_active || tg_tui_composer_rows != 1U ||
-        (unsigned char)ch < 0x20U) {
-        return 0;
-    }
-    if (tg_tui_prompt_columns(prompt) + pending_length + 2UL >
-        (unsigned long)tg_tui_columns) {
-        return 0; /* tail-scroll mode: only the repaint knows the window */
-    }
-    fputc(ch, stream);
-    fflush(stream);
-    return 1;
-}
-
-/* Fast caret-at-end backspace: same conditions as the append above. */
-int tg_console_tui_input_backspace(FILE *stream,
-                                   const char *prompt,
-                                   unsigned long pending_length)
-{
-    if (stream == 0 || !tg_tui_active || tg_tui_composer_rows != 1U) {
-        return 0;
-    }
-    if (tg_tui_prompt_columns(prompt) + pending_length + 3UL >
-        (unsigned long)tg_tui_columns) {
-        return 0; /* the repaint must re-reveal the scrolled-out head */
-    }
-    fputs("\b \b", stream);
-    fflush(stream);
-    return 1;
 }
 
 #define TG_TUI_INPUT_TEXT_MAX 640U
@@ -999,6 +1271,169 @@ static void tg_tui_make_composer_plan(const char *text,
     }
 }
 
+typedef struct tg_tui_composer_layout {
+    tg_tui_composer_plan plan;
+    unsigned long visible_start[TG_TUI_COMPOSER_MAX_ROWS];
+    unsigned int visible_count;
+} tg_tui_composer_layout;
+
+#define TG_TUI_CACHED_PROMPT_MAX 96U
+
+typedef struct tg_tui_composer_cache {
+    tg_tui_composer_layout layout;
+    char prompt[TG_TUI_CACHED_PROMPT_MAX];
+    unsigned long pending_length;
+    unsigned long pending_caret;
+} tg_tui_composer_cache;
+
+static tg_tui_composer_cache tg_tui_composer_cache_state;
+
+static void tg_tui_make_composer_layout(const char *text,
+                                        unsigned long caret_offset,
+                                        unsigned int width,
+                                        tg_tui_composer_layout *layout)
+{
+    tg_tui_wrap_iter iter;
+    tg_tui_wrap_piece piece;
+    unsigned long piece_index;
+
+    memset(layout, 0, sizeof(*layout));
+    tg_tui_make_composer_plan(text, caret_offset, width, &layout->plan);
+    piece_index = 0UL;
+    tg_tui_wrap_init(&iter, text, width);
+    while (tg_tui_wrap_next(&iter, &piece)) {
+        if (piece_index >= layout->plan.first_piece &&
+            piece_index < layout->plan.first_piece +
+                              (unsigned long)layout->plan.rows &&
+            layout->visible_count < TG_TUI_COMPOSER_MAX_ROWS) {
+            layout->visible_start[layout->visible_count] =
+                (unsigned long)(piece.start - text);
+            ++layout->visible_count;
+        }
+        ++piece_index;
+    }
+}
+
+static void tg_tui_store_composer_cache(
+    const char *prompt,
+    unsigned long pending_length,
+    unsigned long pending_caret,
+    const tg_tui_composer_layout *layout)
+{
+    const char *safe_prompt;
+
+    safe_prompt = prompt != 0 ? prompt : "";
+    strncpy(tg_tui_composer_cache_state.prompt, safe_prompt,
+            sizeof(tg_tui_composer_cache_state.prompt) - 1U);
+    tg_tui_composer_cache_state
+        .prompt[sizeof(tg_tui_composer_cache_state.prompt) - 1U] = '\0';
+    tg_tui_composer_cache_state.pending_length = pending_length;
+    tg_tui_composer_cache_state.pending_caret = pending_caret;
+    tg_tui_composer_cache_state.layout = *layout;
+    tg_tui_composer_cache_valid = 1;
+}
+
+static int tg_tui_cached_prompt_matches(const char *prompt)
+{
+    return strcmp(tg_tui_composer_cache_state.prompt,
+                  prompt != 0 ? prompt : "") == 0;
+}
+
+/* Fast caret-at-end echo on any composer row. The cached layout proves that
+   the hardware cursor is already at the end; only the boundary character
+   that creates a new visual row falls back to the bounded repaint. */
+int tg_console_tui_input_append(FILE *stream,
+                                const char *prompt,
+                                const char *pending,
+                                unsigned long pending_length,
+                                char ch)
+{
+    tg_tui_composer_plan *plan;
+
+    if (stream == 0 || !tg_tui_active || pending == 0 ||
+        pending_length == 0UL || (unsigned char)ch < 0x20U ||
+        !tg_tui_composer_cache_valid ||
+        !tg_tui_cached_prompt_matches(prompt) ||
+        tg_tui_composer_cache_state.pending_caret !=
+            tg_tui_composer_cache_state.pending_length ||
+        pending_length !=
+            tg_tui_composer_cache_state.pending_length + 1UL ||
+        pending[pending_length - 1UL] != ch) {
+        if (stream != 0 && tg_tui_active) {
+            ++tg_tui_metrics.slow_edits;
+        }
+        return 0;
+    }
+    plan = &tg_tui_composer_cache_state.layout.plan;
+    if (plan->rows != tg_tui_composer_rows ||
+        plan->caret_column > tg_tui_wrap_width()) {
+        ++tg_tui_metrics.slow_edits;
+        return 0;
+    }
+    fputc(ch, stream);
+    fflush(stream);
+    tg_tui_composer_cache_state.pending_length = pending_length;
+    tg_tui_composer_cache_state.pending_caret = pending_length;
+    ++plan->caret_column;
+    ++tg_tui_metrics.fast_edits;
+    return 1;
+}
+
+/* A rubout remains O(1) while the wrapped piece starts and viewport stay put.
+   Removing the boundary character may pull a word onto the preceding row, so
+   that case is detected from fresh geometry and uses the transition painter. */
+int tg_console_tui_input_backspace(FILE *stream,
+                                   const char *prompt,
+                                   const char *pending,
+                                   unsigned long pending_length)
+{
+    char text[TG_TUI_INPUT_TEXT_MAX];
+    unsigned long caret_offset;
+    tg_tui_composer_layout next;
+    tg_tui_composer_plan *old_plan;
+    unsigned int i;
+
+    if (stream == 0 || !tg_tui_active ||
+        !tg_tui_composer_cache_valid ||
+        !tg_tui_cached_prompt_matches(prompt) ||
+        tg_tui_composer_cache_state.pending_caret !=
+            tg_tui_composer_cache_state.pending_length ||
+        tg_tui_composer_cache_state.pending_length != pending_length + 1UL) {
+        if (stream != 0 && tg_tui_active) {
+            ++tg_tui_metrics.slow_edits;
+        }
+        return 0;
+    }
+    (void)tg_tui_build_input_text(text, prompt, pending, pending_length,
+                                  pending_length, &caret_offset);
+    tg_tui_make_composer_layout(text, caret_offset, tg_tui_wrap_width(),
+                                &next);
+    old_plan = &tg_tui_composer_cache_state.layout.plan;
+    if (next.plan.rows != old_plan->rows ||
+        next.plan.total_pieces != old_plan->total_pieces ||
+        next.plan.first_piece != old_plan->first_piece ||
+        next.plan.caret_piece != old_plan->caret_piece ||
+        next.visible_count !=
+            tg_tui_composer_cache_state.layout.visible_count ||
+        old_plan->caret_column != next.plan.caret_column + 1U) {
+        ++tg_tui_metrics.slow_edits;
+        return 0;
+    }
+    for (i = 0U; i < next.visible_count; ++i) {
+        if (next.visible_start[i] !=
+            tg_tui_composer_cache_state.layout.visible_start[i]) {
+            ++tg_tui_metrics.slow_edits;
+            return 0;
+        }
+    }
+    fputs("\b \b", stream);
+    fflush(stream);
+    tg_tui_store_composer_cache(prompt, pending_length, pending_length,
+                                &next);
+    ++tg_tui_metrics.fast_edits;
+    return 1;
+}
+
 void tg_console_tui_input_caret(FILE *stream,
                                 const char *prompt,
                                 const char *pending,
@@ -1010,7 +1445,8 @@ void tg_console_tui_input_caret(FILE *stream,
     unsigned long piece_index;
     unsigned int row;
     unsigned int old_rows;
-    tg_tui_composer_plan plan;
+    tg_tui_composer_layout layout;
+    tg_tui_composer_plan *plan;
     tg_tui_wrap_iter iter;
     tg_tui_wrap_piece piece;
 
@@ -1019,23 +1455,26 @@ void tg_console_tui_input_caret(FILE *stream,
     }
     (void)tg_tui_build_input_text(text, prompt, pending, pending_length,
                                   pending_caret, &caret_offset);
-    tg_tui_make_composer_plan(text, caret_offset, tg_tui_wrap_width(), &plan);
+    tg_tui_make_composer_layout(text, caret_offset, tg_tui_wrap_width(),
+                                &layout);
+    plan = &layout.plan;
     old_rows = tg_tui_composer_rows;
-    tg_tui_composer_rows = plan.rows;
-    if (old_rows != tg_tui_composer_rows) {
-        /* Only a 1/2/3-row threshold crossing changes transcript geometry. */
-        tg_tui_redraw_region(stream);
+    if (old_rows != plan->rows) {
+        tg_tui_transition_composer(stream, old_rows, plan->rows);
+    } else {
+        tg_tui_composer_rows = plan->rows;
     }
     for (row = tg_tui_composer_top(); row <= tg_tui_rows; ++row) {
         tg_tui_goto(stream, row, 1U);
         fputs(TG_UI_CSI "K", stream);
     }
+    tg_tui_metrics.composer_repaints += (unsigned long)plan->rows;
     row = tg_tui_composer_top();
     piece_index = 0UL;
     tg_tui_wrap_init(&iter, text, tg_tui_wrap_width());
     while (tg_tui_wrap_next(&iter, &piece)) {
-        if (piece_index >= plan.first_piece &&
-            piece_index < plan.first_piece + (unsigned long)plan.rows) {
+        if (piece_index >= plan->first_piece &&
+            piece_index < plan->first_piece + (unsigned long)plan->rows) {
             tg_tui_goto(stream, row, 1U);
             tg_tui_wrapped_piece(stream, &piece);
             ++row;
@@ -1043,9 +1482,11 @@ void tg_console_tui_input_caret(FILE *stream,
         ++piece_index;
     }
     row = tg_tui_composer_top() +
-          (unsigned int)(plan.caret_piece - plan.first_piece);
-    tg_tui_goto(stream, row, plan.caret_column);
+          (unsigned int)(plan->caret_piece - plan->first_piece);
+    tg_tui_goto(stream, row, plan->caret_column);
     fflush(stream);
+    tg_tui_store_composer_cache(prompt, pending_length, pending_caret,
+                                &layout);
 }
 
 void tg_console_tui_input(FILE *stream,
@@ -1065,6 +1506,9 @@ void tg_console_tui_leave(FILE *stream)
     tg_tui_active = 0;
     tg_tui_resize_flag = 0;
     tg_tui_composer_rows = 1U;
+    tg_tui_composer_cache_valid = 0;
+    tg_tui_hidden_row_count = 0U;
+    tg_tui_tail_clear();
     fputs(TG_UI_CSI "11}", stream); /* unsubscribe CLOSE raw events */
     fputs(TG_UI_CSI "12}", stream); /* unsubscribe NEWSIZE raw events */
     tg_tui_goto(stream, tg_tui_rows, 1U);
@@ -1200,6 +1644,158 @@ static int tg_tui_expect_wrap(const char *label,
     return 1;
 }
 
+static int tg_tui_composer_incremental_self_test(void)
+{
+    FILE *stream;
+    const char *stream_path;
+    char pending[64];
+    unsigned long length;
+    unsigned long transitions;
+    unsigned int old_rows;
+    unsigned int saved_rows;
+    unsigned int saved_columns;
+    unsigned int saved_composer_rows;
+    unsigned int saved_hidden_count;
+    unsigned int saved_tail_count;
+    unsigned int final_composer_rows;
+    int saved_active;
+    int saved_cache_valid;
+    int tail_ok;
+    int ok;
+    tg_tui_repaint_metrics saved_metrics;
+    tg_tui_repaint_metrics test_metrics;
+    tg_tui_composer_cache saved_cache;
+    char saved_hidden[TG_TUI_HIDDEN_ROWS][TG_TUI_SAVED_ROW_WIDTH];
+    char saved_tail[TG_TUI_HIDDEN_ROWS][TG_TUI_SAVED_ROW_WIDTH];
+
+#if defined(__AROS__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
+    defined(__MORPHOS) || defined(__amigaos3__) || defined(__m68k__)
+    stream_path = "T:tg-tui-layout-self-test.tmp";
+    (void)remove(stream_path);
+    stream = fopen(stream_path, "w+");
+#else
+    stream_path = 0;
+    stream = tmpfile();
+#endif
+    if (stream == 0) {
+        puts("tui layout self-test: temporary stream unavailable");
+        return 0;
+    }
+    saved_rows = tg_tui_rows;
+    saved_columns = tg_tui_columns;
+    saved_composer_rows = tg_tui_composer_rows;
+    saved_hidden_count = tg_tui_hidden_row_count;
+    saved_tail_count = tg_tui_tail_row_count;
+    saved_active = tg_tui_active;
+    saved_cache_valid = tg_tui_composer_cache_valid;
+    saved_metrics = tg_tui_metrics;
+    saved_cache = tg_tui_composer_cache_state;
+    memcpy(saved_hidden, tg_tui_hidden_rows, sizeof(saved_hidden));
+    memcpy(saved_tail, tg_tui_tail_rows, sizeof(saved_tail));
+
+    tg_tui_rows = 14U;
+    tg_tui_columns = 20U;
+    tg_tui_composer_rows = 1U;
+    tg_tui_hidden_row_count = 0U;
+    tg_tui_tail_row_count = 0U;
+    tg_tui_active = 1;
+    tg_tui_composer_cache_valid = 0;
+    memset(&tg_tui_metrics, 0, sizeof(tg_tui_metrics));
+    strcpy(pending, "xxxx");
+    length = 4UL;
+    transitions = 0UL;
+
+    tg_tui_tail_push("older");
+    tg_tui_tail_push("newer");
+    tg_tui_transition_composer(stream, 1U, 3U);
+    tg_tui_transition_composer(stream, 3U, 1U);
+    tail_ok = tg_tui_hidden_row_count == 0U &&
+              tg_tui_tail_row_count == 2U &&
+              strcmp(tg_tui_tail_rows[0], "older") == 0 &&
+              strcmp(tg_tui_tail_rows[1], "newer") == 0;
+    tg_tui_tail_clear();
+    tg_tui_tail_push("older");
+    tg_tui_tail_push("newer");
+    tg_tui_composer_rows = 2U;
+    tg_tui_hidden_row_count = 0U;
+    tg_tui_transition_composer(stream, 2U, 3U);
+    tg_tui_transition_composer(stream, 3U, 1U);
+    tail_ok = tail_ok && tg_tui_hidden_row_count == 0U &&
+              tg_tui_tail_row_count == 2U &&
+              strcmp(tg_tui_tail_rows[0], "older") == 0 &&
+              strcmp(tg_tui_tail_rows[1], "newer") == 0;
+    tg_tui_composer_rows = 1U;
+    tg_tui_hidden_row_count = 0U;
+    tg_tui_tail_clear();
+    tg_tui_composer_cache_valid = 0;
+    tg_console_tui_input(stream, "", pending, length);
+    memset(&tg_tui_metrics, 0, sizeof(tg_tui_metrics));
+
+    while (length < 45UL) {
+        old_rows = tg_tui_composer_rows;
+        pending[length] = 'x';
+        ++length;
+        pending[length] = '\0';
+        if (!tg_console_tui_input_append(stream, "", pending, length,
+                                         'x')) {
+            tg_console_tui_input(stream, "", pending, length);
+        }
+        if (tg_tui_composer_rows != old_rows) {
+            ++transitions;
+        }
+    }
+    while (length > 4UL) {
+        old_rows = tg_tui_composer_rows;
+        --length;
+        pending[length] = '\0';
+        if (!tg_console_tui_input_backspace(stream, "", pending,
+                                            length)) {
+            tg_console_tui_input(stream, "", pending, length);
+        }
+        if (tg_tui_composer_rows != old_rows) {
+            ++transitions;
+        }
+    }
+    ok = tail_ok && strcmp(pending, "xxxx") == 0 &&
+         tg_tui_composer_rows == 1U &&
+         transitions == 4UL && tg_tui_metrics.full_region_rows == 0UL &&
+         tg_tui_metrics.transition_rows == 6UL &&
+         tg_tui_metrics.fast_edits > 0UL &&
+         tg_tui_metrics.slow_edits == 4UL &&
+         tg_tui_metrics.composer_repaints == 8UL &&
+         tg_tui_metrics.transition_rows +
+                 tg_tui_metrics.composer_repaints <=
+             16UL;
+    test_metrics = tg_tui_metrics;
+    final_composer_rows = tg_tui_composer_rows;
+
+    tg_tui_rows = saved_rows;
+    tg_tui_columns = saved_columns;
+    tg_tui_composer_rows = saved_composer_rows;
+    tg_tui_hidden_row_count = saved_hidden_count;
+    tg_tui_tail_row_count = saved_tail_count;
+    tg_tui_active = saved_active;
+    tg_tui_composer_cache_valid = saved_cache_valid;
+    tg_tui_metrics = saved_metrics;
+    tg_tui_composer_cache_state = saved_cache;
+    memcpy(tg_tui_hidden_rows, saved_hidden, sizeof(saved_hidden));
+    memcpy(tg_tui_tail_rows, saved_tail, sizeof(saved_tail));
+    fclose(stream);
+    if (stream_path != 0) {
+        (void)remove(stream_path);
+    }
+    if (!ok) {
+        printf("tui layout self-test: incremental composer mismatch "
+               "(transitions=%lu full=%lu changed=%lu composer=%lu "
+               "fast=%lu slow=%lu final_rows=%u final_len=%lu tail=%d)\n",
+               transitions, test_metrics.full_region_rows,
+               test_metrics.transition_rows, test_metrics.composer_repaints,
+               test_metrics.fast_edits, test_metrics.slow_edits,
+               final_composer_rows, length, tail_ok);
+    }
+    return ok;
+}
+
 int tg_console_tui_layout_self_test(void)
 {
     static const char words[] =
@@ -1278,7 +1874,10 @@ int tg_console_tui_layout_self_test(void)
         puts("tui layout self-test: composer shrink mismatch");
         return 2;
     }
-    puts("tui layout self-test: ok (40/53/80 wrap + 1/2/3-row composer)");
+    if (!tg_tui_composer_incremental_self_test()) {
+        return 2;
+    }
+    puts("tui layout self-test: ok (wrap + incremental 1/2/3-row composer)");
     return 0;
 }
 
