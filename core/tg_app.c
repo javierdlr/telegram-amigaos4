@@ -239,6 +239,42 @@ static int tg_run_mtproto_start_file(const char *api_file,
         } else {
             puts("Saved login is not usable. Starting login wizard.");
         }
+#if defined(TG_LOWMEM)
+        /* Plain-68000 build: the first login runs a Diffie-Hellman exchange,
+           by far the heaviest thing this program does, and this profile
+           reserves half the usual stack. Rather than let it grind or die,
+           spell out the supported route before trying anything. */
+        {
+            char answer[16];
+
+            puts("");
+            puts("--------------------------------------------------------");
+            puts("FIRST LOGIN ON A 68000: PLEASE READ");
+            puts("");
+            puts("Signing in for the first time needs a Diffie-Hellman key");
+            puts("exchange. On a plain 68000 that takes a very long time and");
+            puts("may run out of stack. Do it once elsewhere instead:");
+            puts("");
+            puts(" 1. Run Telegram Amiga on a faster Amiga (68020 or better)");
+            puts("    or in an emulator (WinUAE, FS-UAE, vAmiga) using the");
+            puts("    standard package, and log in there.");
+            puts(" 2. Copy telegram-auth.bin from that drawer into THIS");
+            puts("    drawer, next to TelegramAmiga. Copying");
+            puts("    data/telegram-peers.txt too brings your chat list.");
+            puts(" 3. Start this program again: it reuses that login and");
+            puts("    goes straight to the chats.");
+            puts("");
+            puts("The same account works from both machines at once.");
+            puts("");
+            puts("Press RETURN to attempt the login here anyway,");
+            puts("or Ctrl+C to quit and follow the steps above.");
+            puts("--------------------------------------------------------");
+            fflush(stdout);
+            if (fgets(answer, (int)sizeof(answer), stdin) == 0) {
+                return 2; /* console closed: nothing sensible left to do */
+            }
+        }
+#endif
 #ifdef TG_DIAG_TRACE
         tg_gui_log("diag: entering login wizard (network + DH)");
 #endif

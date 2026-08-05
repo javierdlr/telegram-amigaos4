@@ -26,6 +26,9 @@ VERSION=${VERSION:-0.0.0}
 md5of() { if command -v md5 >/dev/null 2>&1; then md5 -q "$1"; else md5sum "$1" | awk '{print $1}'; fi; }
 
 AMIGAOS3_BINARY=${AMIGAOS3_BINARY:-"$ROOT_DIR/build/amigaos3-clib2/TelegramAmiga"}
+# Plain-68000 variant (A500/A600/A1000/CDTV class): built with M68K_CPU=68000
+# and the LOWMEM caps. Packaged only when that binary exists.
+AMIGAOS3_68000_BINARY=${AMIGAOS3_68000_BINARY:-"$ROOT_DIR/build/amigaos3-68000/TelegramAmiga"}
 MORPHOS_BINARY=${MORPHOS_BINARY:-"$ROOT_DIR/build/morphos-cross/TelegramAmiga"}
 AMIGAOS4_BINARY=${AMIGAOS4_BINARY:-"$ROOT_DIR/build/amigaos4/TelegramAmiga"}
 AROS_I386_BINARY=${AROS_I386_BINARY:-"$ROOT_DIR/build/aros-i386-abiv0/TelegramAmiga"}
@@ -61,9 +64,16 @@ fill_platform_text() {
     # same binary starts the text client from the Shell, and the manuals say
     # how. tui_icon drives both the packaging and the manual wording.
     case "$1" in
-    "AmigaOS 3.x") tui_icon=1 ;;
-    *) tui_icon=0 ;;
+    "AmigaOS 3.x (68000)") tui_icon=1; gui_icon=0 ;;
+    "AmigaOS 3.x") tui_icon=1; gui_icon=1 ;;
+    *) tui_icon=0; gui_icon=1 ;;
     esac
+    gui_entry_en="- TelegramAmiga -- the native Intuition/GadTools GUI (chat list + conversation).
+  Double-click it: it starts the GUI directly, with no flashing console window.
+"
+    gui_entry_it="- TelegramAmiga -- la GUI nativa Intuition/GadTools (lista chat + conversazione).
+  Doppio click: avvia direttamente la GUI, senza finestra console che lampeggia.
+"
     if [ "$tui_icon" = "1" ]; then
         launchers_title_en="Two launchers
 -------------"
@@ -73,8 +83,20 @@ fill_platform_text() {
   setups. Both share the same login and the same saved session."
         tui_entry_it="- TelegramAmiga-TUI -- un client testuale a schermo intero per macchine leggere o
   senza mouse. Condividono lo stesso login e la stessa sessione salvata."
-        first_start_en="1. Unpack the drawer and double-click TelegramAmiga (or TelegramAmiga-TUI)."
-        first_start_it="1. Scompatta il drawer e fai doppio click su TelegramAmiga (o TelegramAmiga-TUI)."
+        first_start_en="1. Unpack the drawer and double-click TelegramAmiga (or TelegramAmiga-TUI).
+2. If there is no saved login, a login panel appears. Enter your phone number
+   in full international form (for example +39 333 1234567), then the code
+   Telegram sends you. If your account has a cloud password (2FA), type it on
+   the masked screen (if you do NOT have one, just press Enter to continue).
+3. The client logs in and writes telegram-auth.bin in this drawer. After that
+   it reuses the saved login -- you are not asked for the phone/code again."
+        first_start_it="1. Scompatta il drawer e fai doppio click su TelegramAmiga (o TelegramAmiga-TUI).
+2. Se non c'e' un login salvato, compare il pannello di accesso. Inserisci il
+   numero di telefono in formato internazionale completo (es. +39 333 1234567),
+   poi il codice che Telegram ti invia. Se il tuo account ha una password cloud
+   (2FA), digitala sulla schermata mascherata (se NON ce l'hai, premi Invio).
+3. Il client accede e scrive telegram-auth.bin in questo drawer. Da li' in poi
+   riusa il login salvato -- non ti richiede piu' telefono/codice."
         readme_programs="  TelegramAmiga  - graphical (Intuition), with scrollbars + mouse.
   TelegramAmiga-TUI  - text-mode / console."
         readme_start="Quick start: copy this drawer to a WRITABLE volume, then double-click
@@ -86,6 +108,61 @@ TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2
                  mouse wheel, context menus.
   TelegramAmiga-TUI  - the text/console client, at home on a 68030 with a
                  serial console or an ssh session."
+        if [ "$gui_icon" = "0" ]; then
+            launchers_title_en="One launcher
+------------"
+            launchers_title_it="Un solo launcher
+----------------"
+            tui_entry_en="- TelegramAmiga-TUI -- the full-screen text/console client. This package
+  ships ONLY that icon: the Intuition GUI is too heavy for a plain 68000,
+  so the text client is the way in here."
+            tui_entry_it="- TelegramAmiga-TUI -- il client testuale a schermo intero. Questo
+  pacchetto porta SOLO quell'icona: la GUI Intuition e' troppo pesante per
+  un 68000 liscio, qui si usa il client testuale."
+            first_start_en="1. On a FASTER Amiga (68020 or better) or in an emulator (WinUAE,
+   FS-UAE, vAmiga), install the standard AmigaOS 3.x package and log in
+   there: phone number, the code Telegram sends you, and the cloud
+   password (2FA) if your account has one.
+2. Copy telegram-auth.bin from that drawer into THIS drawer, next to
+   TelegramAmiga-TUI. Copy data/telegram-peers.txt too if you want your
+   chat list ready. NEVER share telegram-auth.bin with anyone.
+3. Unpack this drawer on a WRITABLE volume and double-click
+   TelegramAmiga-TUI: it reuses that login and goes straight to the chats.
+   The same account stays usable on both machines.
+
+Why not log in here? The first login runs a Diffie-Hellman key exchange:
+it is the heaviest thing this program does, and a plain 68000 cannot
+finish it comfortably. The program says so and lets you try anyway, but
+the route above is the supported one."
+            first_start_it="1. Su un Amiga PIU' POTENTE (68020 o superiore) o in un emulatore
+   (WinUAE, FS-UAE, vAmiga), installa il pacchetto AmigaOS 3.x standard e
+   accedi li': numero di telefono, codice che Telegram ti invia e password
+   cloud (2FA) se il tuo account ne ha una.
+2. Copia telegram-auth.bin da quel drawer dentro QUESTO drawer, accanto a
+   TelegramAmiga-TUI. Copia anche data/telegram-peers.txt se vuoi la lista
+   chat gia' pronta. NON condividere MAI telegram-auth.bin con nessuno.
+3. Scompatta questo drawer su un volume SCRIVIBILE e fai doppio click su
+   TelegramAmiga-TUI: riusa quel login e va dritto alle chat. Lo stesso
+   account resta utilizzabile su entrambe le macchine.
+
+Perche' non accedere qui? Il primo login esegue uno scambio di chiavi
+Diffie-Hellman: e' la cosa piu' pesante che il programma faccia, e un
+68000 liscio non riesce a portarla a termine comodamente. Il programma te
+lo dice e ti lascia comunque provare, ma la via sopra e' quella
+supportata."
+            readme_programs="  TelegramAmiga-TUI  - the text/console client (the only icon here:
+                       the GUI needs a 68020 or better)."
+            readme_start="Quick start: copy this drawer to a WRITABLE volume. FIRST log in on a
+faster Amiga or an emulator and copy telegram-auth.bin here (see below),
+then double-click TelegramAmiga-TUI."
+            gui_entry_en=""
+            gui_entry_it=""
+            aminet_programs="One text/console client, built for the plain 68000:
+
+  TelegramAmiga-TUI  - the full-screen text client. The Intuition GUI
+                 needs a 68020 or better, so this package ships the
+                 console face alone."
+        fi
     else
         launchers_title_en="One icon, two clients
 ---------------------"
@@ -106,8 +183,20 @@ TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2
         data/phone-code-hash.txt data/telegram-peers.txt
   (tutto su una riga sola). Se la Shell si rifiuta di eseguirlo, dai una
   volta \"Protect TelegramAmiga +e\". Login e sessione salvata sono gli stessi."
-        first_start_en="1. Unpack the drawer and double-click TelegramAmiga."
-        first_start_it="1. Scompatta il drawer e fai doppio click su TelegramAmiga."
+        first_start_en="1. Unpack the drawer and double-click TelegramAmiga.
+2. If there is no saved login, a login panel appears. Enter your phone number
+   in full international form (for example +39 333 1234567), then the code
+   Telegram sends you. If your account has a cloud password (2FA), type it on
+   the masked screen (if you do NOT have one, just press Enter to continue).
+3. The client logs in and writes telegram-auth.bin in this drawer. After that
+   it reuses the saved login -- you are not asked for the phone/code again."
+        first_start_it="1. Scompatta il drawer e fai doppio click su TelegramAmiga.
+2. Se non c'e' un login salvato, compare il pannello di accesso. Inserisci il
+   numero di telefono in formato internazionale completo (es. +39 333 1234567),
+   poi il codice che Telegram ti invia. Se il tuo account ha una password cloud
+   (2FA), digitala sulla schermata mascherata (se NON ce l'hai, premi Invio).
+3. Il client accede e scrive telegram-auth.bin in questo drawer. Da li' in poi
+   riusa il login salvato -- non ti richiede piu' telefono/codice."
         readme_programs="  TelegramAmiga  - graphical (Intuition), with scrollbars + mouse.
                    The same program also runs the text/console client from a
                    Shell (see the manual)."
@@ -122,6 +211,57 @@ TelegramAmiga. First run signs you in (phone -> code -> 2FA)."
                  from a Shell -- the manual gives the command line."
     fi
     case "$1" in
+    "AmigaOS 3.x (68000)")
+        upload_limit="125 MiB"
+        req_en="- A plain 68000 Amiga (A500 / A600 / A1000 / A2000 / CDTV) with AmigaOS
+  2.x/3.x, a TCP/IP stack providing bsdsocket.library (Roadshow, AmiTCP,
+  Miami) and an internet connection.
+- About 2.5 MB of free FAST RAM. This build is trimmed for such machines:
+  shorter chat list, smaller history pages, 2 KB per message.
+- IMPORTANT: sign in ONCE on a faster Amiga or an emulator and copy
+  telegram-auth.bin here (see \"First start\" below). The first login runs a
+  Diffie-Hellman exchange that a 68000 cannot complete comfortably."
+        notes_en="Notes for the plain 68000
+-------------------------
+- The graphical client is NOT part of this package: Intuition drawing plus
+  photo decoding needs a 68020 or better. Use the standard AmigaOS 3.x
+  package there.
+- Preparing the login elsewhere: install the normal package on a 68020+
+  Amiga or in WinUAE/FS-UAE/vAmiga, log in, then copy telegram-auth.bin (and
+  data/telegram-peers.txt for the chat list) into this drawer. The same
+  account can stay logged in on both machines.
+- Limits of this profile: 12 chats in the list, 8 messages per page, message
+  text up to 2 KB, downloads in 16 KB chunks. Everything else works as on any
+  other Amiga: send and receive, files, replies, edits, read receipts.
+- Long messages wrap by words; the composer grows to three rows. Quit with
+  /quit, Ctrl+C or the close gadget, then RETURN dismisses the window."
+        req_it="- Un Amiga con 68000 liscio (A500 / A600 / A1000 / A2000 / CDTV) con
+  AmigaOS 2.x/3.x, uno stack TCP/IP che fornisca bsdsocket.library
+  (Roadshow, AmiTCP, Miami) e una connessione internet.
+- Circa 2,5 MB di FAST RAM libera. Questa build e' ridotta apposta per
+  queste macchine: lista chat piu' corta, pagine di storia piu' piccole,
+  2 KB per messaggio.
+- IMPORTANTE: fai l'accesso UNA VOLTA su un Amiga piu' potente o in un
+  emulatore e copia qui telegram-auth.bin (vedi \"Primo avvio\"). Il primo
+  login esegue uno scambio di chiavi Diffie-Hellman che un 68000 non riesce
+  a portare a termine comodamente."
+        notes_it="Note per il 68000 liscio
+------------------------
+- Il client grafico NON fa parte di questo pacchetto: il disegno Intuition
+  piu' la decodifica delle foto richiedono un 68020 o superiore. Su quelle
+  macchine usa il pacchetto AmigaOS 3.x standard.
+- Preparare il login altrove: installa il pacchetto normale su un Amiga
+  68020+ o in WinUAE/FS-UAE/vAmiga, accedi, poi copia telegram-auth.bin (e
+  data/telegram-peers.txt per avere la lista chat) dentro questo drawer. Lo
+  stesso account puo' restare connesso su entrambe le macchine.
+- Limiti di questo profilo: 12 chat in lista, 8 messaggi per pagina, testo
+  fino a 2 KB per messaggio, download a blocchi da 16 KB. Il resto funziona
+  come su qualsiasi Amiga: invio e ricezione, file, risposte, modifiche,
+  conferme di lettura.
+- I messaggi lunghi vanno a capo per parole e il composer cresce fino a tre
+  righe. Per uscire: /quit, Ctrl+C o il gadget di chiusura, poi RETURN
+  congeda la finestra."
+        ;;
     "AmigaOS 3.x")
         # = 32 KiB part x 4000 parts. KEEP IN SYNC with TG_GUI_DL_CHUNK
         # (core/tg_mtproto_probe.c): this said "31 MiB" long after the m68k
@@ -252,9 +392,7 @@ System requirements
 $req_en
 
 $launchers_title_en
-- TelegramAmiga -- the native Intuition/GadTools GUI (chat list + conversation).
-  Double-click it: it starts the GUI directly, with no flashing console window.
-$tui_entry_en
+$gui_entry_en$tui_entry_en
   Long transcript lines wrap by words on narrow screens; continuation rows are
   indented. The composer grows to three rows, and Shift+Up/Down scrolls by
   complete logical messages.
@@ -270,12 +408,6 @@ $tui_entry_en
 First start (logging in)
 ------------------------
 $first_start_en
-2. If there is no saved login, a login panel appears. Enter your phone number
-   in full international form (for example +39 333 1234567), then the code
-   Telegram sends you. If your account has a cloud password (2FA), type it on
-   the masked screen (if you do NOT have one, just press Enter to continue).
-3. The client logs in and writes telegram-auth.bin in this drawer. After that
-   it reuses the saved login -- you are not asked for the phone/code again.
 
 Using the GUI
 -------------
@@ -420,9 +552,7 @@ Requisiti di sistema
 $req_it
 
 $launchers_title_it
-- TelegramAmiga -- la GUI nativa Intuition/GadTools (lista chat + conversazione).
-  Doppio click: avvia direttamente la GUI, senza finestra console che lampeggia.
-$tui_entry_it
+$gui_entry_it$tui_entry_it
   Le righe lunghe vanno a capo per parole sugli schermi stretti, con un piccolo
   rientro nelle continuazioni. Il composer cresce fino a tre righe e
   Shift+Su/Giu scorre per messaggi logici completi.
@@ -438,12 +568,6 @@ $tui_entry_it
 Primo avvio (accesso)
 ---------------------
 $first_start_it
-2. Se non c'e' un login salvato, compare il pannello di accesso. Inserisci il
-   numero di telefono in formato internazionale completo (es. +39 333 1234567),
-   poi il codice che Telegram ti invia. Se il tuo account ha una password cloud
-   (2FA), digitala sulla schermata mascherata (se NON ce l'hai, premi Invio).
-3. Il client accede e scrive telegram-auth.bin in questo drawer. Da li' in poi
-   riusa il login salvato -- non ti richiede piu' telefono/codice.
 
 Usare la GUI
 ------------
@@ -771,6 +895,9 @@ package_one() {
     rm -rf "$dest"
     mkdir -p "$dest"
 
+    # Per-lane text and icon policy first: the icon block below reads gui_icon.
+    fill_platform_text "$platform"
+
     cp "$binary" "$dest/TelegramAmiga"
     # Self-launching, script-free (papiosaur / Easy2Install suggestion). Two
     # byte-identical flashless icons (DefaultTool = TelegramAmiga, Stack 1 MiB)
@@ -779,7 +906,9 @@ package_one() {
     # TelegramAmiga-TUI.info owns a 0-byte marker whose name carries "TUI" -> the
     # binary opens a CON: window and runs the console client. No IconX, no shell
     # scripts.
-    cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
+    if [ "$gui_icon" != "0" ]; then
+        cp "$ROOT_DIR/assets/TelegramAmiga.info" "$dest/TelegramAmiga.info"
+    fi
     # From 0.0.9 (Michele) the TUI icon ships ONLY on the 68k line, where a
     # console client is what those machines actually want. The PPC and x86
     # packages carry the GUI icon alone; their manuals explain the Shell
@@ -791,7 +920,6 @@ package_one() {
     mkdir -p "$dest/data"
     cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/data/telegram-api.txt"
 
-    fill_platform_text "$platform"
     write_readme "$dest/README.txt" "$platform"
     write_manual_en "$dest/Manual-EN.txt" "$platform"
     write_manual_it "$dest/Manuale-IT.txt" "$platform"
@@ -880,6 +1008,7 @@ package_one "MorphOS" "$MORPHOS_BINARY" "morphos" "morphos"
 package_one "AmigaOS 4.x" "$AMIGAOS4_BINARY" "amigaos4" "amigaos4"
 package_one "AROS i386 ABIv0" "$AROS_I386_BINARY" "aros-i386" "aros-i386"
 package_one "AROS x86_64" "$AROS_X86_64_BINARY" "aros-x86_64" "aros-x86_64"
+package_one "AmigaOS 3.x (68000)" "$AMIGAOS3_68000_BINARY" "amigaos3-68000" "amigaos3"
 
 # --- checksums ---------------------------------------------------------------
 ( cd "$PACKAGE_ROOT" && ls Telegram-*-"$DATE_STAMP".zip >/dev/null 2>&1 &&
