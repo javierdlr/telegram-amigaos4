@@ -5876,8 +5876,11 @@ static void tg_gui_window_send_file_mode(tg_gui_state *state,
         req = (struct FileRequester *)AllocAslRequestTags(
             ASL_FileRequest, ASLFR_Window, (unsigned long)win,
             ASLFR_TitleText, (unsigned long)"Send photo to this chat",
-            ASLFR_DoPatterns, TRUE, ASLFR_AcceptPattern,
-            (unsigned long)"#?.jp#?g", TAG_DONE);
+            /* InitialPattern rather than AcceptPattern (issue #13,
+               javierdlr): the pattern then SHOWS in the requester's gadget,
+               so the user can see what is being filtered and widen it. */
+            ASLFR_DoPatterns, TRUE, ASLFR_InitialPattern,
+            (unsigned long)"#?.(jpg|jpeg)", TAG_DONE);
     } else {
         req = (struct FileRequester *)AllocAslRequestTags(
             ASL_FileRequest, ASLFR_Window, (unsigned long)win,
