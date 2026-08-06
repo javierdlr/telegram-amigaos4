@@ -29,6 +29,51 @@ __attribute__((used))
 static const char tg_amiga_stack_cookie[] = TG_PLATFORM_SAFE_STACK_COOKIE;
 
 
+/* This 68k build uses 68020 instructions (the 32x32 multiply among them), so
+   on a plain 68000 the very first one is an illegal instruction and the user
+   gets a bare "#80000004" alert with nothing to act on. Every package ships a
+   binary named TelegramAmiga, so picking the wrong archive is easy: say so in
+   words instead, and point at the package that does run there. */
+#if defined(__amigaos3__) && !defined(TG_LOWMEM)
+#include <exec/execbase.h>
+#include <proto/exec.h>
+#include <proto/intuition.h>
+#include <intuition/intuition.h>
+
+static int tg_main_cpu_is_supported(int workbench)
+{
+    struct Library *ib;
+    struct EasyStruct es;
+
+    if ((SysBase->AttnFlags & AFF_68020) != 0) {
+        return 1;
+    }
+    if (!workbench) {
+        puts("This build needs a 68020 or better CPU.");
+        puts("Use the AmigaOS 3.x (68000) package on this machine.");
+        return 0;
+    }
+    ib = OpenLibrary((CONST_STRPTR)"intuition.library", 36L);
+    if (ib != 0) {
+        struct IntuitionBase *saved = IntuitionBase;
+
+        IntuitionBase = (struct IntuitionBase *)ib;
+        es.es_StructSize = (ULONG)sizeof(es);
+        es.es_Flags = 0UL;
+        es.es_Title = (STRPTR)"Telegram Amiga";
+        es.es_TextFormat =
+            (STRPTR)"This build needs a 68020 or better CPU.\n\n"
+                    "On a plain 68000 use the AmigaOS 3.x (68000)\n"
+                    "package instead: it is built for this machine.";
+        es.es_GadgetFormat = (STRPTR)"OK";
+        (void)EasyRequestArgs(0, &es, 0, 0);
+        IntuitionBase = saved;
+        CloseLibrary(ib);
+    }
+    return 0;
+}
+#endif
+
 /* Scan the WBStartup arg names for "TUI" (case-insensitive). Amiga-only; the
    host build has no Workbench and returns 0. Defensive: any null -> GUI. */
 #if defined(__amigaos3__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
@@ -93,6 +138,11 @@ static int tg_main_body(int argc, char **argv)
      * so this is fail-safe: if a runtime ever does not zero argc, the feature
      * simply does not activate.
      */
+#if defined(__amigaos3__) && !defined(TG_LOWMEM)
+    if (!tg_main_cpu_is_supported(argc == 0)) {
+        return 20;
+    }
+#endif
     if (argc == 0) {
         /* Workbench: pick GUI vs TUI from the launch icon's name. A tool icon
            for the binary launches the GUI; the TUI ships as a project icon
