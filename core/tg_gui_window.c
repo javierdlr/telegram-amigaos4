@@ -9168,6 +9168,10 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                            send a file to the open chat, same as the menubar
                            "Send file..." item. */
                         tg_gui_window_send_file(state, ctx.window, &backend);
+                    } else if (it == TG_GUI_CTX_SENDPHOTO) {
+                        /* Its photo twin, so both ways of sending sit where
+                           the conversation is instead of only in the menus. */
+                        tg_gui_window_send_photo(state, ctx.window, &backend);
                     }
                     tg_gui_window_paint(state, &backend);
                 } else if (msg_code == SELECTUP) {

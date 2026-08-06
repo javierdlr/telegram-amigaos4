@@ -3125,6 +3125,9 @@ static int tg_gui_context_items(const tg_gui_state *state, const char **labels,
     labels[n] = "Send file...";
     ids[n] = TG_GUI_CTX_SENDFILE;
     ++n;
+    labels[n] = "Send photo...";
+    ids[n] = TG_GUI_CTX_SENDPHOTO;
+    ++n;
     return n;
 }
 
