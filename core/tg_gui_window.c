@@ -5651,7 +5651,11 @@ static int tg_gui_photo_pick_destination(struct Window *win,
         ASL_FileRequest, ASLFR_Window, TG_GUI_TAG(win), ASLFR_TitleText,
         TG_GUI_TAG("Save photo as"), ASLFR_DoSaveMode, TRUE,
         ASLFR_InitialDrawer, TG_GUI_TAG(tg_gui_session_download_dir()),
-        ASLFR_InitialFile, TG_GUI_TAG(name), TAG_DONE);
+        ASLFR_InitialFile, TG_GUI_TAG(name),
+        /* Same visible pattern as the send side (issue #13): what lands here
+           is a JPEG, so the drawer listing shows the photos already saved. */
+        ASLFR_DoPatterns, TRUE,
+        ASLFR_InitialPattern, TG_GUI_TAG("#?.(jpg|jpeg)"), TAG_DONE);
     selected = req != 0 && AslRequestTags(req, TAG_DONE);
     result = 0;
     if (selected) {
