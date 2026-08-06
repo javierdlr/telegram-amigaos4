@@ -74,6 +74,36 @@ static int tg_main_cpu_is_supported(int workbench)
 }
 #endif
 
+/* One line describing the machine this build actually landed on: CPU flags,
+   the stack it really got and the largest free memory block. A field report
+   then answers by itself the two questions a bare Guru cannot: is this the
+   right binary for this CPU, and was memory tight when it died. */
+#if defined(TG_DIAG_TRACE) && defined(__amigaos3__)
+#include <exec/execbase.h>
+#include <exec/memory.h>
+#include <proto/exec.h>
+
+static const char *tg_diag_machine_line(void)
+{
+    static char line[128];
+    struct Task *task;
+    unsigned long stack;
+
+    task = FindTask(0);
+    stack = 0UL;
+    if (task != 0 && task->tc_SPUpper != 0 && task->tc_SPLower != 0) {
+        stack = (unsigned long)((unsigned char *)task->tc_SPUpper -
+                                (unsigned char *)task->tc_SPLower);
+    }
+    sprintf(line,
+            "diag: attnflags 0x%04lx stack %lu fast-largest %lu chip-largest %lu",
+            (unsigned long)SysBase->AttnFlags, stack,
+            (unsigned long)AvailMem(MEMF_FAST | MEMF_LARGEST),
+            (unsigned long)AvailMem(MEMF_CHIP | MEMF_LARGEST));
+    return line;
+}
+#endif
+
 /* Scan the WBStartup arg names for "TUI" (case-insensitive). Amiga-only; the
    host build has no Workbench and returns 0. Defensive: any null -> GUI. */
 #if defined(__amigaos3__) || defined(__amigaos4__) || defined(__MORPHOS__) || \
@@ -161,6 +191,7 @@ static int tg_main_body(int argc, char **argv)
            reached main" from "died at step N". */
         tg_gui_log_enable();
         tg_gui_log("diag: main, workbench launch");
+        tg_gui_log(tg_diag_machine_line());
 #endif
         tt = tg_platform_wb_tui_mode(argv);
         want_tui = (tt >= 0) ? tt : tg_main_wb_wants_tui(argv);
