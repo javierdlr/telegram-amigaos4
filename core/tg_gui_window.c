@@ -5052,7 +5052,12 @@ static const char tg_gui_about_text[] =
     "A native Telegram client for AmigaOS,\n"
     "MorphOS and AROS.\n\n"
     "by Michele Dipace\n"
-    "michele.dipace@kaffeine.net";
+    "michele.dipace@kaffeine.net\n\n"
+    "Contributions: Javier de las Rivas (javierdlr)\n\n"
+    "And thanks to the testers around the world\n"
+    "who run this on real hardware and send back\n"
+    "what they find. This client is what it is\n"
+    "because of them.";
 
 static const char tg_gui_help_text[] =
     "Chat selection:\n"

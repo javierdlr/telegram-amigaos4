@@ -551,6 +551,10 @@ Advanced: the bundled data/telegram-api.txt holds public Telegram API app
 credentials. Advanced users may replace it with their own (two lines: api_id
 then api_hash).
 
+Contributions: Javier de las Rivas (javierdlr).
+Thanks to the testers around the world who run this on real hardware and
+send back what they find -- this client is what it is because of them.
+
 License: MIT -- a non-commercial community project. Diary:
 https://androidlab.it/en/telegram-amiga-mtproto-client-development-diary/
 EOF
@@ -715,6 +719,10 @@ di accesso, password e messaggi privati.
 
 Avanzato: il data/telegram-api.txt incluso contiene credenziali API pubbliche. Gli
 utenti avanzati possono sostituirlo col proprio (due righe: api_id poi api_hash).
+
+Contributi: Javier de las Rivas (javierdlr).
+Grazie ai tester sparsi per il mondo che lo provano su hardware vero e
+raccontano quello che trovano: questo client e' com'e' grazie a loro.
 
 Licenza: MIT -- progetto di comunita' non commerciale. Diario:
 https://androidlab.it/telegram-amiga-diario-sviluppo-client-mtproto/
