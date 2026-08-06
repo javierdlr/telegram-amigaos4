@@ -486,8 +486,9 @@ Using the GUI
   @username, Esc closes, typing narrows the matches.
 - FILES: a message carrying a file shows as [File: name (size)]. Right-click
   it and pick Download -- the file lands in the downloads/ drawer. To send
-  one, open the chat and use the Telegram menu's "Send file..." (Amiga+F):
-  a standard file requester picks it, up to $upload_limit on this build.
+  one, use "Send file..." (Amiga+F) from the Telegram menu or from the
+  right-click menu in the conversation, where "Send photo..." sits next to
+  it: a standard file requester picks it, up to $upload_limit on this build.
   You can also DROP a file icon on the window to send it. Transfers show
   the percentage and speed in the status line and ESC cancels them, while
   the client stays usable -- keep chatting while a file moves.
@@ -648,9 +649,10 @@ Usare la GUI
   @username, Esc chiude, digitando filtri i risultati.
 - FILE: un messaggio con allegato appare come [File: nome (dimensione)].
   Click destro -> Download e il file finisce nel cassetto downloads/. Per
-  inviarne uno: apri la chat e usa "Send file..." nel menu Telegram
-  (Amiga+F): lo scegli dal requester di sistema, fino a $upload_limit su
-  questa build. Puoi anche TRASCINARE l'icona di un file sulla finestra.
+  inviarne uno usa "Send file..." (Amiga+F) dal menu Telegram oppure dal
+  menu del click destro nella conversazione, dove accanto trovi anche
+  "Send photo...": lo scegli dal requester di sistema, fino a $upload_limit
+  su questa build. Puoi anche TRASCINARE l'icona di un file sulla finestra.
   Durante i trasferimenti vedi percentuale e velocita' nella riga di stato,
   ESC annulla, e il client resta usabile: puoi continuare a chattare.
   Per scaricare altrove (un cassetto in RAM: e' molto piu' rapido su
