@@ -462,7 +462,7 @@ Using the GUI
   existing file always requires confirmation.
 - On AmigaOS 3, the first-run default is off when no RTG screen is available or
   the CPU is below a 68040; every explicit toggle overrides that default and is
-  remembered. On any slower machine, uncheck "Settings > Inline photos".
+  remembered. On any slower machine, uncheck "Settings > Show inline photos".
   The conversation returns to lightweight [Photo] labels and does no background
   photo fetch or decode work. Click an individual [Photo] label to load only
   that image in the viewer. The choice is remembered for the next run.
@@ -474,7 +474,7 @@ Using the GUI
 - "Settings > Photo cache limit" keeps photos/ bounded at 10, 50 or 200 MB
   (50 MB by default); Unlimited is available when disk space is not a concern.
   Old files are removed during idle time, while photos currently on screen stay
-  available. "Clear photo cache..." asks for confirmation, deletes only
+  available. "Settings > Clear cache..." asks for confirmation, deletes only
   photos/ (never avatars/) and keeps already displayed photos on screen.
 - To send a JPEG as a Telegram photo, use "Send photo..." in the Telegram menu
   (Amiga+P). Dropping a .jpg/.jpeg on the GUI asks Photo, File or Cancel; ESC
@@ -623,7 +623,7 @@ Usare la GUI
 - Su AmigaOS 3 il primo avvio parte senza foto inline quando non e' disponibile
   uno schermo RTG oppure la CPU e' inferiore al 68040; ogni scelta esplicita
   sostituisce il default e resta memorizzata. Su una macchina lenta togli la
-  spunta da "Settings > Inline photos" nel menu
+  spunta da "Settings > Show inline photos" nel menu
   Telegram. La conversazione torna alle leggere etichette [Photo] e non avvia
   download o decodifiche in background. Clicca una singola [Photo] per caricare
   solo quella immagine nel viewer. La scelta resta memorizzata al riavvio.
@@ -635,7 +635,7 @@ Usare la GUI
 - "Settings > Photo cache limit" mantiene photos/ entro 10, 50 o 200 MB
   (50 MB predefiniti); Unlimited e' disponibile quando lo spazio disco non e'
   un problema. I file piu' vecchi vengono rimossi durante i momenti inattivi,
-  mentre le foto gia' visibili restano a schermo. "Clear photo cache..." chiede
+  mentre le foto gia' visibili restano a schermo. "Settings > Clear cache..." chiede
   conferma, svuota solo photos/ (mai avatars/) e conserva le immagini mostrate.
 - Per inviare un JPEG come vera foto Telegram usa "Send photo..." nel menu
   Telegram (Amiga+P). Trascinando un .jpg/.jpeg sulla GUI puoi scegliere Photo,
