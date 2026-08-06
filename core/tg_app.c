@@ -4020,9 +4020,11 @@ int tg_app_run(int argc, char **argv)
         return tg_run_platform_rng_test();
     }
 
+#if !defined(TG_NO_GUI)
     if (config.run_gui_self_test) {
         return tg_gui_self_test();
     }
+#endif
 
     if (config.run_chat_engine_self_test) {
         return tg_chat_engine_self_test();
@@ -4036,10 +4038,23 @@ int tg_app_run(int argc, char **argv)
         return tg_mtproto_chat_list_self_test();
     }
 
+#if !defined(TG_NO_GUI)
     if (config.run_gui_driver_self_test) {
         return tg_gui_driver_self_test();
     }
+#endif
 
+#if defined(TG_NO_GUI)
+    /* TUI-only build (the plain-68000 package): every GUI entry point is
+       compiled out so the linker drops the window, the renderer, the chat
+       driver and the JPEG decoder -- about 300 KB of code and statics that
+       a 68000 would never use. */
+    if (config.run_gui_window || config.run_gui_live || config.run_gui_chats ||
+        config.run_gui_chats_live) {
+        puts("This build has no GUI: it is the text-client package.");
+        return 2;
+    }
+#else
     if (config.run_gui_window) {
         tg_gui_state gui_demo;
 
@@ -4227,6 +4242,7 @@ int tg_app_run(int argc, char **argv)
         }
         return tg_gui_run_window(&gui);
     }
+#endif /* !TG_NO_GUI */
 
     if (config.run_console_ui_test) {
         return tg_mtproto_console_ui_test(stdout);

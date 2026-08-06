@@ -1583,8 +1583,16 @@ void tg_platform_workbench_tui_console_close(void)
    (gui_window.o owns them); we open them only when still closed and close
    only what we opened. */
 
+#if defined(TG_NO_GUI)
+/* Text-only build: the GUI window that normally owns these two bases is not
+   linked in, but the console still offers Workbench drag-and-drop, so they
+   live here instead. */
+struct Library *WorkbenchBase = 0;
+struct Library *IconBase = 0;
+#else
 extern struct Library *WorkbenchBase; /* owned by core/tg_gui_window.c */
 extern struct Library *IconBase;
+#endif
 
 static const char *tg_wb_drop_diag = "not armed";
 static unsigned long tg_wb_drop_polls = 0;

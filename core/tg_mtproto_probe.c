@@ -41,6 +41,26 @@
 #include "tg_gui.h"
 #include "tg_gui_driver.h"
 #include "tg_gui_session.h"
+
+#if defined(TG_NO_GUI)
+/* TUI-only build (plain-68000 package): the window, the renderer, the chat
+   driver and the JPEG decoder are not linked in, so the handful of calls
+   this file makes into them become inert. Everything they drive -- inline
+   photos, avatars, the sidebar model -- is GUI-only anyway. */
+#define tg_gui_window_avatar_invalidate(id_hi, id_lo) ((void)0)
+#define tg_gui_window_photo_cache_file_changed(path) ((void)0)
+#define tg_gui_window_photo_cache_file_removed(path) ((void)0)
+#define tg_avatar_expand_stripped(src, len, out, cap, out_len) (1)
+#define tg_gui_chat_driver_bind(gui, state, chat_driver) ((void)0)
+#define tg_gui_driver_append_own(gui, text, own, snippet, sent_id) ((void)0)
+#define tg_gui_driver_set_read_outbox_max(gui, read_max) (0)
+#define tg_gui_driver_reset_read_outbox(gui) ((void)0)
+#define tg_gui_driver_has_unseen_own(gui) (0)
+#define tg_gui_driver_update_text(gui, message_id, text) (0)
+#define tg_gui_driver_update_text_utf8(gui, message_id, text) (0)
+#define tg_gui_driver_remove_by_id(gui, message_id) (0)
+#define tg_gui_driver_mark_photo_ready(gui, id_hi, id_lo) (0)
+#endif
 #include "tg_net.h"
 #include "tg_platform.h"
 
@@ -9966,7 +9986,14 @@ int tg_mtproto_chat_render_self_test(void)
    still alive. The GUI event loop later downloads at most one chunk per turn;
    paints only ever read a completed photos/tgph*.jpg. Newest visible photos
    win if the bounded queue fills. */
-#if defined(__m68k__)
+#if defined(TG_NO_GUI)
+/* Text-only build: nothing ever displays a photo, so the catalogue and the
+   queues shrink to the smallest legal size instead of holding 48 entries of
+   photo metadata for a client that cannot show them. */
+#define TG_GUI_PHOTO_QUEUE_MAX 1
+#define TG_GUI_PHOTO_TRIED_MAX 1
+#define TG_GUI_PHOTO_CATALOG_MAX 1
+#elif defined(__m68k__)
 #define TG_GUI_PHOTO_QUEUE_MAX 8
 #define TG_GUI_PHOTO_TRIED_MAX 24
 #define TG_GUI_PHOTO_CATALOG_MAX 48

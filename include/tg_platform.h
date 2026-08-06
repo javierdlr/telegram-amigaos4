@@ -10,12 +10,15 @@
 #include "tg_tls.h"
 
 #if defined(TG_LOWMEM)
-/* 68000 LOWMEM build for 4 MB fast-RAM machines: half a megabyte of stack is
-   enough for the chat loop with an existing session; only the very first
-   login (DH) was ever proven to need the full megabyte. */
-#define TG_PLATFORM_SAFE_STACK_SIZE 524288UL
-#define TG_PLATFORM_SAFE_STACK_MIN 409600UL
-#define TG_PLATFORM_SAFE_STACK_COOKIE "$STACK:524288"
+/* 68000 LOWMEM build for 4 MB fast-RAM machines. The full megabyte was only
+   ever needed by the first login (the DH exchange), which this package tells
+   users to perform on a faster machine; with the GUI compiled out as well,
+   the text client's deepest paths are the MTProto parsers. 384 KB leaves
+   them a wide margin and hands a further 128 KB back to a machine whose
+   WiFi driver has already taken most of its fast RAM. */
+#define TG_PLATFORM_SAFE_STACK_SIZE 393216UL
+#define TG_PLATFORM_SAFE_STACK_MIN 327680UL
+#define TG_PLATFORM_SAFE_STACK_COOKIE "$STACK:393216"
 #else
 #define TG_PLATFORM_SAFE_STACK_SIZE 1048576UL
 #define TG_PLATFORM_SAFE_STACK_MIN 819200UL

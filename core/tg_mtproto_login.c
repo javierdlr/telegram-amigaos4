@@ -5512,9 +5512,11 @@ int tg_mtproto_login_self_test(void)
     if (tg_entity_marker_self_test() != 0) {
         return 2;
     }
+#if !defined(TG_NO_GUI)
     if (tg_avatar_self_test() != 0) {
         return 2;
     }
+#endif
     /* F9 chunk 2: the document label formatter (name + human size). */
     {
         tg_mtproto_document_meta d;

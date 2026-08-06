@@ -231,16 +231,19 @@ TelegramAmiga. First run signs you in (phone -> code -> 2FA)."
         req_en="- A plain 68000 Amiga (A500 / A600 / A1000 / A2000 / CDTV) with AmigaOS
   2.x/3.x, a TCP/IP stack providing bsdsocket.library (Roadshow, AmiTCP,
   Miami) and an internet connection.
-- About 2.5 MB of free FAST RAM. This build is trimmed for such machines:
-  shorter chat list, smaller history pages, 2 KB per message.
+- About 2 MB of free FAST RAM. This build is trimmed for such machines: the
+  graphical client is not compiled in at all, and the chat list, history
+  pages and message text are smaller than on the other packages.
 - IMPORTANT: sign in ONCE on a faster Amiga or an emulator and copy
   telegram-auth.bin here (see \"First start\" below). The first login runs a
   Diffie-Hellman exchange that a 68000 cannot complete comfortably."
         notes_en="Notes for the plain 68000
 -------------------------
-- The graphical client is NOT part of this package: Intuition drawing plus
-  photo decoding needs a 68020 or better. Use the standard AmigaOS 3.x
-  package there.
+- The graphical client is NOT in this package at all -- not merely without
+  an icon: window, renderer and JPEG decoder are left out of the build, which
+  is where most of the memory saving comes from. Intuition drawing plus photo
+  decoding needs a 68020 or better anyway; use the standard AmigaOS 3.x
+  package on such a machine.
 - Preparing the login elsewhere: install the normal package on a 68020+
   Amiga or in WinUAE/FS-UAE/vAmiga, log in, then copy telegram-auth.bin (and
   data/telegram-peers.txt for the chat list) into this drawer. The same
@@ -253,17 +256,20 @@ TelegramAmiga. First run signs you in (phone -> code -> 2FA)."
         req_it="- Un Amiga con 68000 liscio (A500 / A600 / A1000 / A2000 / CDTV) con
   AmigaOS 2.x/3.x, uno stack TCP/IP che fornisca bsdsocket.library
   (Roadshow, AmiTCP, Miami) e una connessione internet.
-- Circa 2,5 MB di FAST RAM libera. Questa build e' ridotta apposta per
-  queste macchine: lista chat piu' corta, pagine di storia piu' piccole,
-  2 KB per messaggio.
+- Circa 2 MB di FAST RAM libera. Questa build e' ridotta apposta per queste
+  macchine: il client grafico non e' proprio compilato dentro, e lista chat,
+  pagine di storia e testo dei messaggi sono piu' piccoli che negli altri
+  pacchetti.
 - IMPORTANTE: fai l'accesso UNA VOLTA su un Amiga piu' potente o in un
   emulatore e copia qui telegram-auth.bin (vedi \"Primo avvio\"). Il primo
   login esegue uno scambio di chiavi Diffie-Hellman che un 68000 non riesce
   a portare a termine comodamente."
         notes_it="Note per il 68000 liscio
 ------------------------
-- Il client grafico NON fa parte di questo pacchetto: il disegno Intuition
-  piu' la decodifica delle foto richiedono un 68020 o superiore. Su quelle
+- Il client grafico NON e' in questo pacchetto, e non solo come icona:
+  finestra, renderer e decoder JPEG sono esclusi dalla build, ed e' da li'
+  che arriva gran parte del risparmio di memoria. Il disegno Intuition e la
+  decodifica delle foto vogliono comunque un 68020 o superiore: su quelle
   macchine usa il pacchetto AmigaOS 3.x standard.
 - Preparare il login altrove: installa il pacchetto normale su un Amiga
   68020+ o in WinUAE/FS-UAE/vAmiga, accedi, poi copia telegram-auth.bin (e
