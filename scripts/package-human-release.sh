@@ -934,9 +934,18 @@ package_one() {
     # console client is what those machines actually want. The PPC and x86
     # packages carry the GUI icon alone; their manuals explain the Shell
     # command for anyone who still wants the text client.
-    if [ "$expected" = "amigaos3" ]; then
+    if [ "$tui_icon" = "1" ]; then
         : > "$dest/TelegramAmiga-TUI"
-        cp "$ROOT_DIR/assets/TelegramAmiga-TUI.info" "$dest/TelegramAmiga-TUI.info"
+        if [ "$gui_icon" = "0" ]; then
+            # 68000 package: the icon must ask for the same 384 KB the binary's
+            # cookie does, or a Workbench launch would reserve the full
+            # megabyte and hand back the memory this build just saved.
+            cp "$ROOT_DIR/assets/TelegramAmiga-TUI-68000.info" \
+               "$dest/TelegramAmiga-TUI.info"
+        else
+            cp "$ROOT_DIR/assets/TelegramAmiga-TUI.info" \
+               "$dest/TelegramAmiga-TUI.info"
+        fi
     fi
     mkdir -p "$dest/data"
     cp "$ROOT_DIR/assets/public-telegram-api.txt" "$dest/data/telegram-api.txt"
