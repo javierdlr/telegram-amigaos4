@@ -5,6 +5,24 @@
 
 #include "tg_net.h"
 #include "tg_platform.h"
+#ifdef TG_DIAG_TRACE
+/* Field diagnosis (68000 lane): the gap between "session loaded" and the
+   first history line covers DNS, connect, the first send and the first
+   reply. Naming each one turns "it crashes with the network on" into a
+   single line that says which call never came back. */
+#include <stdio.h>
+#include "tg_gui_session.h"
+static void tg_net_diag(const char *what, unsigned long n)
+{
+    char line[80];
+
+    sprintf(line, "net: %.40s %lu", what, n);
+    tg_gui_log(line);
+}
+#define TG_NET_DIAG(what, n) tg_net_diag((what), (unsigned long)(n))
+#else
+#define TG_NET_DIAG(what, n) ((void)0)
+#endif
 
 static unsigned long tg_connect_timeout_seconds = 0;
 
@@ -37,7 +55,15 @@ tg_net_status tg_net_connect(tg_net_connection *connection, const char *host, co
     }
 
     tg_net_connection_init(connection);
-    return tg_platform_tcp_connect(connection, host, port, error_buffer, error_buffer_size);
+    TG_NET_DIAG("connect begin", 0);
+    {
+        tg_net_status st;
+
+        st = tg_platform_tcp_connect(connection, host, port, error_buffer,
+                                     error_buffer_size);
+        TG_NET_DIAG("connect done rc", (unsigned long)st);
+        return st;
+    }
 }
 
 tg_net_status tg_net_send(tg_net_connection *connection, const void *data,
@@ -54,8 +80,15 @@ tg_net_status tg_net_send(tg_net_connection *connection, const void *data,
         return TG_NET_CLOSED;
     }
 
-    return tg_platform_tcp_send(connection, data, byte_count, bytes_sent,
-                                error_buffer, error_buffer_size);
+    TG_NET_DIAG("send begin", byte_count);
+    {
+        tg_net_status st;
+
+        st = tg_platform_tcp_send(connection, data, byte_count, bytes_sent,
+                                  error_buffer, error_buffer_size);
+        TG_NET_DIAG("send done rc", (unsigned long)st);
+        return st;
+    }
 }
 
 tg_net_status tg_net_recv(tg_net_connection *connection, void *buffer,
@@ -72,8 +105,16 @@ tg_net_status tg_net_recv(tg_net_connection *connection, void *buffer,
         return TG_NET_CLOSED;
     }
 
-    return tg_platform_tcp_recv(connection, buffer, buffer_size, bytes_received,
-                                error_buffer, error_buffer_size);
+    TG_NET_DIAG("recv begin", buffer_size);
+    {
+        tg_net_status st;
+
+        st = tg_platform_tcp_recv(connection, buffer, buffer_size,
+                                  bytes_received, error_buffer,
+                                  error_buffer_size);
+        TG_NET_DIAG("recv done rc", (unsigned long)st);
+        return st;
+    }
 }
 
 int tg_net_poll_readable(tg_net_connection *connection,
