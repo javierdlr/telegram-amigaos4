@@ -5,7 +5,7 @@ AmigaOS 3.x, AmigaOS 4.x, MorphOS and AROS (i386/x86_64).
 Dates use YYYY-MM-DD. Each release ships on all five platform lanes
 unless noted.
 
-## [Unreleased]
+## [0.0.9] - 2026-08-07
 
 - Temporary quiet-log files no longer litter the program drawer: they live
   in T: and are cleaned up at startup and exit.
