@@ -156,6 +156,12 @@ static int tg_main_finish(int result)
 
 static int tg_main_body(int argc, char **argv)
 {
+#ifdef TG_DIAG_TRACE
+    /* Diagnostic build: arm the crash-safe trail for EVERY launch, not just
+       the Workbench one. A machine booted without its startup-sequence has no
+       Workbench at all, and that is exactly the run whose log we want. */
+    tg_gui_log_enable();
+#endif
     /*
      * Workbench launch (icon double-click): the Amiga C runtimes (clib2 on
      * m68k/OS4, libnix on MorphOS, AROS) call main() with argc == 0 and the
