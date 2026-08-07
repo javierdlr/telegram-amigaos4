@@ -111,6 +111,16 @@ That turns a guaranteed failure into a long but completable login. It needs
 
 ## Planned: photo speed under AfA_OS
 
+Rows are handed to cybergraphics in blocks of 8 on the 68k line, which took
+the per-slice cost from 220-820 ms down to 0-20 ms on a Vampire. AmiKit still
+shows a tail of slow slices (180-620 ms), so the per-call overhead there is
+higher than elsewhere. First move, cheap and mechanical: raise
+TG_GUI_PHOTO_REPLAY_ROWS from 8 to 16 on m68k (about 12 KB more of staging
+buffer) and measure again from the log's "pace replay budget" lines. If the
+tail survives that, the cost is not the call count and the investigation
+below is the real answer.
+
+
 Same PiStorm board, two operating systems, two very different speeds: photo
 loading under AmiKit (which runs AfA_OS) is noticeably slower than on a
 Vampire, while CaffeineOS on that same PiStorm is quick. The hardware is
