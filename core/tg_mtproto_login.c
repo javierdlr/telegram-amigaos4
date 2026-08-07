@@ -5409,6 +5409,7 @@ int tg_mtproto_is_auth_authorization_constructor(unsigned long constructor)
 
 /* Directly exercises tg_apply_entity_markers, including the UTF-16 -> UTF-8
    offset mapping that the TL-level "*group* reply" case does not reach. */
+#if !defined(TG_NO_SELFTEST)
 static int tg_entity_marker_case(const char *in, const tg_msg_entity *ents,
                                  int count, const char *expect)
 {
@@ -6982,6 +6983,7 @@ int tg_mtproto_login_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 tg_mtproto_tl_status tg_mtproto_read_update_message_text(
     tg_mtproto_tl_reader *reader,

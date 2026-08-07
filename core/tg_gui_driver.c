@@ -634,6 +634,7 @@ void tg_gui_chat_driver_bind(tg_gui_chat_driver *gui, tg_gui_state *state,
 
 /* --- self-test ---------------------------------------------------------- */
 
+#if !defined(TG_NO_SELFTEST)
 static void tg_gui_driver_emit(tg_chat_driver *driver, unsigned long epoch,
                                int has_time, int is_out, int is_group,
                                const char *peer_label, const char *own_label,
@@ -1095,3 +1096,4 @@ int tg_gui_driver_self_test(void)
     puts("gui driver self-test: ok (messages + chat list + receipts)");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

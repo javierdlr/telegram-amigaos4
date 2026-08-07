@@ -765,6 +765,7 @@ int tg_mtproto_pbkdf2_hmac_sha512(const unsigned char *password,
     return 0;
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_crypto_self_test(void)
 {
     static const unsigned char abc[] = { 'a', 'b', 'c' };
@@ -849,3 +850,4 @@ int tg_mtproto_crypto_self_test(void)
     }
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

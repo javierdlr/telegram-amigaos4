@@ -369,6 +369,7 @@ const tg_mtproto_fingerprint *tg_mtproto_select_fingerprint(
     return 0;
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_auth_self_test(void)
 {
     static const unsigned char expected_nonce[16] = {
@@ -426,3 +427,4 @@ int tg_mtproto_auth_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

@@ -29,6 +29,7 @@ const tg_mtproto_dc_option *tg_mtproto_dc_by_id(int id)
     return 0;
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_dc_self_test(void)
 {
     const tg_mtproto_dc_option *dc;
@@ -53,3 +54,4 @@ int tg_mtproto_dc_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

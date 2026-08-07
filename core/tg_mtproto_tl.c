@@ -268,6 +268,7 @@ const char *tg_mtproto_tl_status_name(tg_mtproto_tl_status status)
     }
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_tl_self_test(void)
 {
     static const unsigned char nonce[16] = {
@@ -342,3 +343,4 @@ int tg_mtproto_tl_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

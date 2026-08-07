@@ -74,6 +74,7 @@ tg_mtproto_tl_status tg_mtproto_write_intermediate_packet(
     return tg_mtproto_tl_write_raw(writer, payload, payload_length);
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_transport_self_test(void)
 {
     static const unsigned char payload[] = {
@@ -126,3 +127,4 @@ int tg_mtproto_transport_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

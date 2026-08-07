@@ -21,6 +21,7 @@
 #include "tg_mtproto_tl.h"
 #include "tg_mtproto_transport.h"
 
+#if !defined(TG_NO_SELFTEST)
 typedef int (*tg_mtproto_self_test_fn)(void);
 
 static int tg_mtproto_run_self_test_step(const char *name,
@@ -156,3 +157,4 @@ int tg_mtproto_self_test_heavy(void)
     puts("mtproto heavy self-test: ok");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

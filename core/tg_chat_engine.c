@@ -76,6 +76,7 @@ void tg_chat_engine_init(tg_chat_engine *engine)
     tg_chat_notify_reset(&engine->notify, 0);
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_chat_engine_self_test(void)
 {
     tg_chat_engine engine;
@@ -149,3 +150,4 @@ int tg_chat_engine_self_test(void)
     puts("chat engine self-test: ok (cursor, diff, notify dedupe + overflow)");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

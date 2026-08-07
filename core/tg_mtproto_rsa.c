@@ -1079,6 +1079,7 @@ int tg_mtproto_verify_dh_gen_ok(const tg_mtproto_set_client_dh_answer *answer,
     return memcmp(answer->new_nonce_hash, digest + 4U, 16U) == 0;
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_rsa_self_test(void)
 {
     static const unsigned char aes_key[32] = {
@@ -1336,3 +1337,4 @@ int tg_mtproto_rsa_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

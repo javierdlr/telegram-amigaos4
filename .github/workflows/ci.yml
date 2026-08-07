@@ -42,3 +42,13 @@ jobs:
         run: |
           make -f Makefile.host clean
           make -f Makefile.host all CFLAGS="-Wall -Wextra -Werror -O2"
+      - name: Build with self-tests stripped (TG_NO_SELFTEST, -Werror)
+        # Guards the stripped-release path: a new self-test helper left
+        # outside its TG_NO_SELFTEST region shows up here as an unused
+        # function, not on a release build months later.
+        run: |
+          CPPFLAGS=-DTG_NO_SELFTEST=1 make -f Makefile.host all \
+            TARGET=build/host-stripped/TelegramAmiga \
+            CFLAGS="-Wall -Wextra -Werror -O2"
+          ./build/host-stripped/TelegramAmiga --mtproto-self-test 2>&1 | \
+            grep -F 'Self-tests are not compiled into this build.'

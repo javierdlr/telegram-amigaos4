@@ -901,6 +901,7 @@ int tg_avatar_decode_stripped(const unsigned char *stripped,
     return tg_avatar_decode_jpeg(jpeg, jpeg_len, dst_rgb, dw, dh);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static unsigned long tg_avatar_self_test_hash(const unsigned char *data,
                                                unsigned long size)
 {
@@ -1252,3 +1253,4 @@ int tg_avatar_self_test(void)
     puts("avatar self-test: ok (template 623 bytes, patch h/w, FFD9 tail)");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

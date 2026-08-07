@@ -464,6 +464,7 @@ static int tg_run_telegram_tls_status(void)
     return 0;
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_http_post_self_test(void)
 {
     static const char body[] = "{\"chat_id\":123,\"text\":\"Hello from Amiga\"}";
@@ -502,6 +503,7 @@ static int tg_run_http_post_self_test(void)
     printf("http post body: %s\n", request + request_length - body_length);
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_run_json_test(const tg_config *config)
 {
@@ -1192,6 +1194,7 @@ static int tg_run_telegram_json_test(const tg_config *config)
     return tg_run_telegram_json_test_text(config->telegram_json_test_input);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_telegram_json_self_test(void)
 {
     static const char ok_sample[] = "{\"ok\":true,\"result\":{\"id\":123,\"is_bot\":true}}";
@@ -1209,6 +1212,7 @@ static int tg_run_telegram_json_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_run_telegram_path_test(const tg_config *config)
 {
@@ -1231,6 +1235,7 @@ static int tg_run_telegram_path_test(const tg_config *config)
     return 0;
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_telegram_http_test_text(const char *http_response)
 {
     tg_telegram_status telegram_status;
@@ -1286,6 +1291,7 @@ static int tg_run_telegram_http_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_run_telegram_token_file_path_test(const tg_config *config)
 {
@@ -1437,6 +1443,7 @@ static int tg_run_telegram_preflight(const tg_config *config)
     return 0;
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_telegram_get_me_self_test(void)
 {
     static const char get_me_response[] =
@@ -1465,6 +1472,7 @@ static int tg_run_telegram_get_me_self_test(void)
     tg_print_telegram_response(&result.response.api);
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static void tg_print_bot_error(const char *label, tg_bot_status bot_status,
                                const tg_bot_call_result *result,
@@ -1544,6 +1552,7 @@ static int tg_run_telegram_get_me_default(const tg_config *config)
     return tg_run_telegram_get_me_path(resolved_path);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_telegram_get_updates_self_test(void)
 {
     static const char updates_response[] =
@@ -1625,6 +1634,7 @@ static int tg_run_telegram_get_updates_self_test(void)
     puts("telegram getUpdates empty self-test: ok");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_print_get_updates_summaries(const tg_bot_call_result *result,
                                           unsigned long max_updates)
@@ -1718,6 +1728,7 @@ static int tg_run_telegram_get_updates_default(const tg_config *config)
         resolved_path, config->telegram_get_updates_default_offset);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_telegram_read_once_state_self_test(void)
 {
     static const char offset_file_path[] = "telegram-read-once-self-test.tmp";
@@ -1821,6 +1832,7 @@ static int tg_run_telegram_read_once_state_self_test(void)
     printf("telegram next offset: %s\n", next_offset);
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_run_telegram_read_once_state_paths(const char *token_file_path,
                                                  const char *offset_file_path,
@@ -2119,6 +2131,7 @@ static int tg_run_telegram_inbox(const tg_config *config)
         config->chat_state_file_path);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_telegram_inbox_self_test(void)
 {
     static const char log_file_path[] = "telegram-inbox-self-test.log";
@@ -2225,6 +2238,7 @@ static int tg_run_telegram_inbox_self_test(void)
     puts("telegram inbox self-test: ok");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_run_telegram_inbox_default(const tg_config *config)
 {
@@ -2760,6 +2774,7 @@ static int tg_run_telegram_human_chat(const tg_config *config)
     return tg_text_client_run_human(&text_client_config);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_telegram_console_self_test(void)
 {
     char line[64];
@@ -2890,7 +2905,9 @@ static int tg_run_telegram_offset_state_self_test(void)
     puts("telegram offset state self-test: ok");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
+#if !defined(TG_NO_SELFTEST)
 typedef struct tg_client_state_self_test_context {
     unsigned long count;
 } tg_client_state_self_test_context;
@@ -3298,6 +3315,7 @@ static int tg_run_telegram_echo_once_self_test(void)
     printf("telegram echo body bytes: %lu\n", body_length);
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_run_telegram_echo_once_paths(const char *token_file_path,
                                            const char *offset)
@@ -3640,6 +3658,7 @@ static int tg_run_telegram_echo_loop_default(const tg_config *config)
         config->telegram_echo_loop_default_max_iterations);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_run_telegram_send_message_self_test(void)
 {
     static const char send_response[] =
@@ -3700,6 +3719,7 @@ static int tg_run_telegram_send_message_self_test(void)
     tg_print_telegram_response(&result.response.api);
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_run_telegram_send_message_path(const char *token_file_path,
                                              const char *chat_id,
@@ -4008,9 +4028,41 @@ int tg_app_run(int argc, char **argv)
         return tg_run_http_test(&config);
     }
 
+#if defined(TG_NO_SELFTEST)
+    /* Stripped build: the offline self-tests are compiled out (CI runs them
+       on the host binary; on a release binary they are dead weight, felt the
+       most on the 68000 package). Field diagnostics stay in: --net-test,
+       --http-test, --https-test, --platform-rng-test, --mtproto-2fa-bench.
+       Saying so beats silently ignoring the flag. */
+    if (config.run_http_post_self_test || config.run_gui_self_test ||
+        config.run_chat_engine_self_test || config.run_chat_render_self_test ||
+        config.run_chat_list_self_test || config.run_gui_driver_self_test ||
+        config.run_console_ui_test || config.run_console_tui_test ||
+        config.run_mtproto_self_test || config.run_mtproto_self_test_fast ||
+        config.run_mtproto_self_test_heavy ||
+        config.run_telegram_json_self_test ||
+        config.run_telegram_http_self_test ||
+        config.run_telegram_get_me_self_test ||
+        config.run_telegram_get_updates_self_test ||
+        config.run_telegram_read_once_state_self_test ||
+        config.run_telegram_inbox_self_test ||
+        config.run_telegram_offset_state_self_test ||
+        config.run_telegram_console_self_test ||
+        config.run_telegram_client_state_self_test ||
+        config.run_telegram_client_self_test ||
+        config.run_telegram_text_client_self_test ||
+        config.run_telegram_echo_once_self_test ||
+        config.run_telegram_send_message_self_test) {
+        puts("Self-tests are not compiled into this build.");
+        return 2;
+    }
+#endif /* TG_NO_SELFTEST */
+
+#if !defined(TG_NO_SELFTEST)
     if (config.run_http_post_self_test) {
         return tg_run_http_post_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_https_test) {
         return tg_run_https_test(&config);
@@ -4020,6 +4072,7 @@ int tg_app_run(int argc, char **argv)
         return tg_run_platform_rng_test();
     }
 
+#if !defined(TG_NO_SELFTEST)
 #if !defined(TG_NO_GUI)
     if (config.run_gui_self_test) {
         return tg_gui_self_test();
@@ -4043,6 +4096,7 @@ int tg_app_run(int argc, char **argv)
         return tg_gui_driver_self_test();
     }
 #endif
+#endif /* !TG_NO_SELFTEST */
 
 #if defined(TG_NO_GUI)
     /* TUI-only build (the plain-68000 package): every GUI entry point is
@@ -4244,6 +4298,7 @@ int tg_app_run(int argc, char **argv)
     }
 #endif /* !TG_NO_GUI */
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_console_ui_test) {
         return tg_mtproto_console_ui_test(stdout);
     }
@@ -4263,6 +4318,7 @@ int tg_app_run(int argc, char **argv)
     if (config.run_mtproto_self_test_heavy) {
         return tg_mtproto_self_test_heavy();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_mtproto_2fa_bench) {
         return tg_mtproto_2fa_bench(stdout);
@@ -4620,17 +4676,21 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_json_test(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_json_self_test) {
         return tg_run_telegram_json_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_path_test) {
         return tg_run_telegram_path_test(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_http_self_test) {
         return tg_run_telegram_http_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_token_file_path_test) {
         return tg_run_telegram_token_file_path_test(&config);
@@ -4644,9 +4704,11 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_preflight(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_get_me_self_test) {
         return tg_run_telegram_get_me_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_get_me) {
         return tg_run_telegram_get_me(&config);
@@ -4656,9 +4718,11 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_get_me_default(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_get_updates_self_test) {
         return tg_run_telegram_get_updates_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_get_updates) {
         return tg_run_telegram_get_updates(&config);
@@ -4668,9 +4732,11 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_get_updates_default(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_read_once_state_self_test) {
         return tg_run_telegram_read_once_state_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_read_once_state) {
         return tg_run_telegram_read_once_state(&config);
@@ -4688,9 +4754,11 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_read_loop_default(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_inbox_self_test) {
         return tg_run_telegram_inbox_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_inbox) {
         return tg_run_telegram_inbox(&config);
@@ -4732,25 +4800,35 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_manual_client_default(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_offset_state_self_test) {
         return tg_run_telegram_offset_state_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_console_self_test) {
         return tg_run_telegram_console_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_client_state_self_test) {
         return tg_run_telegram_client_state_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_client_self_test) {
         return tg_run_telegram_client_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_text_client_self_test) {
         return tg_text_client_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_client) {
         return tg_run_telegram_client(&config);
@@ -4776,9 +4854,11 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_chats_default(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_echo_once_self_test) {
         return tg_run_telegram_echo_once_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_echo_once) {
         return tg_run_telegram_echo_once(&config);
@@ -4804,9 +4884,11 @@ int tg_app_run(int argc, char **argv)
         return tg_run_telegram_echo_loop_default(&config);
     }
 
+#if !defined(TG_NO_SELFTEST)
     if (config.run_telegram_send_message_self_test) {
         return tg_run_telegram_send_message_self_test();
     }
+#endif /* !TG_NO_SELFTEST */
 
     if (config.run_telegram_send_message) {
         return tg_run_telegram_send_message(&config);

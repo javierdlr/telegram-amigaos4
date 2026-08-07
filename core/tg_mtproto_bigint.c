@@ -687,6 +687,7 @@ unsigned long tg_mtproto_bigint_trim(
     return offset;
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_bigint_self_test(void)
 {
     unsigned char a[TG_MTPROTO_BIGINT_SIZE];
@@ -741,6 +742,7 @@ int tg_mtproto_bigint_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 #if defined(TG_PROVIDE_MULDI3) && TG_PROVIDE_MULDI3
 /*

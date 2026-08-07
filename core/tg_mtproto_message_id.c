@@ -37,6 +37,7 @@ void tg_mtproto_client_message_id(unsigned long unix_time,
     out->lo = current.lo;
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_message_id_self_test(void)
 {
     tg_mtproto_message_id last;
@@ -64,3 +65,4 @@ int tg_mtproto_message_id_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

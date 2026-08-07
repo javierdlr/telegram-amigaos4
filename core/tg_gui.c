@@ -509,6 +509,7 @@ typedef struct tg_gui_photo_preview_test {
     int quality_commits;
 } tg_gui_photo_preview_test;
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_gui_photo_preview_test_prepare(void *context, int index)
 {
     tg_gui_photo_preview_test *test;
@@ -520,6 +521,7 @@ static int tg_gui_photo_preview_test_prepare(void *context, int index)
     test->preview_only[index] = 1U;
     return 1;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static void tg_gui_copy(char *dest, unsigned long size, const char *src)
 {
@@ -3458,6 +3460,7 @@ typedef struct tg_gui_record {
     int forbidden_hits;    /* how many draw_text calls contained `forbidden` */
 } tg_gui_record;
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_gui_rec_width(tg_gui_backend *backend)
 {
     return ((tg_gui_record *)backend->context)->width;
@@ -4264,3 +4267,4 @@ int tg_gui_self_test(void)
            record.photos, record.texts, record.width, record.height);
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

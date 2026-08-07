@@ -30,6 +30,7 @@ static unsigned long tg_read_le32(const unsigned char *data)
            (((unsigned long)data[3]) << 24);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static void tg_store_le32(unsigned char *data, unsigned long value)
 {
     data[0] = (unsigned char)(value & 0xffUL);
@@ -37,6 +38,7 @@ static void tg_store_le32(unsigned char *data, unsigned long value)
     data[2] = (unsigned char)((value >> 16) & 0xffUL);
     data[3] = (unsigned char)((value >> 24) & 0xffUL);
 }
+#endif /* !TG_NO_SELFTEST */
 
 static void tg_mtproto_aes_key_iv(
     const unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH],
@@ -287,6 +289,7 @@ tg_mtproto_tl_status tg_mtproto_decrypt_encrypted_message(
                                                   auth_key, 8U, out);
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_encrypted_self_test(void)
 {
     unsigned char auth_key[TG_MTPROTO_AUTH_KEY_LENGTH];
@@ -389,3 +392,4 @@ int tg_mtproto_encrypted_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

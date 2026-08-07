@@ -400,6 +400,7 @@ const char *tg_mtproto_session_status_name(tg_mtproto_session_status status)
     }
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_session_self_test(void)
 {
     static const char path[] = "mtproto-session-self-test.tmp";
@@ -497,3 +498,4 @@ int tg_mtproto_session_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

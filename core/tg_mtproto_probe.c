@@ -7366,6 +7366,7 @@ static void tg_mtproto_print_peer_cache_public(const char *path, FILE *stream,
     fprintf(stream, "0. Saved Messages (your cloud drawer)\n");
 }
 
+#if !defined(TG_NO_SELFTEST)
 static const char tg_chat_list_golden[] =
     "Single chats:\n"
     "1. Mario Rossi\n"
@@ -7455,6 +7456,7 @@ int tg_mtproto_chat_list_self_test(void)
     puts("chat list self-test: ok (grouped chat-list golden)");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 static int tg_mtproto_load_self_cache_label(const char *path,
                                             char *label_buffer,
@@ -9838,6 +9840,7 @@ static void tg_chat_console_on_message(void *ctx,
    and asserts the captured bytes match a recorded golden. This pins the
    model/view seam byte-for-byte across the chat-engine extraction steps that
    reroute it (history split, tick body, command dispatch). */
+#if !defined(TG_NO_SELFTEST)
 static const char tg_chat_render_golden[] =
     "[22:13] Mario: Ciao\n"
     "[22:18] Io: Tutto bene?\n"
@@ -9980,6 +9983,7 @@ int tg_mtproto_chat_render_self_test(void)
     puts("chat render self-test: ok (transcript renderer golden)");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 /* --- 0.0.9 inline-photo cache queue ------------------------------------
    History parsing offers compact Photo metadata here while the response is
@@ -13666,6 +13670,7 @@ int tg_mtproto_req_dh_probe(const char *host, const char *port,
     return 2;
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_gui_hidden_projection_self_test(void);
 
 int tg_mtproto_probe_self_test(void)
@@ -14441,6 +14446,7 @@ int tg_mtproto_console_ui_test(FILE *stream)
     fflush(stream);
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 /* --- Live GUI session bridge (slice 3) --------------------------------------
  *
@@ -14729,6 +14735,7 @@ static int tg_gui_chat_list_project(const char *cache_path,
     return out;
 }
 
+#if !defined(TG_NO_SELFTEST)
 static int tg_gui_hidden_projection_self_test(void)
 {
     static const char cache_path[] = "tg-hidden-cache-selftest.tmp";
@@ -14780,6 +14787,7 @@ static int tg_gui_hidden_projection_self_test(void)
     }
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
 
 int tg_gui_session_open(const char *api_file, const char *auth_file,
                         const char *peer_cache_file, tg_gui_state *state,

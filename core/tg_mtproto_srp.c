@@ -221,6 +221,7 @@ tg_mtproto_tl_status tg_mtproto_srp_make_proof(
                                         TG_SRP_PBKDF2_ITERATIONS, out);
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_srp_self_test(void)
 {
     tg_mtproto_password_summary password;
@@ -280,3 +281,4 @@ int tg_mtproto_srp_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

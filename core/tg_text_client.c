@@ -1185,6 +1185,7 @@ int tg_text_client_run_human(const tg_text_client_config *client_config)
     }
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_text_client_self_test(void)
 {
     static const char chat_state_file_path[] =
@@ -1320,3 +1321,4 @@ int tg_text_client_self_test(void)
     puts("telegram text client self-test: ok");
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

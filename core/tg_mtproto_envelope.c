@@ -35,6 +35,7 @@ tg_mtproto_tl_status tg_mtproto_write_plain_message(
     return tg_mtproto_tl_write_raw(writer, payload, payload_length);
 }
 
+#if !defined(TG_NO_SELFTEST)
 int tg_mtproto_envelope_self_test(void)
 {
     static const unsigned char req_pq_multi[] = {
@@ -64,3 +65,4 @@ int tg_mtproto_envelope_self_test(void)
 
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */

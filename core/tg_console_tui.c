@@ -1635,6 +1635,7 @@ void tg_console_tui_capture_end(FILE *capture, FILE *fallback)
     fclose(capture);
 }
 
+#if !defined(TG_NO_SELFTEST)
 static void tg_tui_collect_wrap(const char *text,
                                 unsigned int columns,
                                 char *out,
@@ -2132,3 +2133,4 @@ int tg_console_tui_self_test(FILE *stream)
     fputs("tui-test: done\n", stream);
     return 0;
 }
+#endif /* !TG_NO_SELFTEST */
