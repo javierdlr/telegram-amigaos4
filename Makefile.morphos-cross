@@ -32,6 +32,17 @@ CFLAGS += -DTG_ENABLE_GZIP_PUFF=1 -Ithird_party/puff
 SRC += core/tg_avatar.c third_party/tjpgd/tjpgd.c third_party/puff/puff.c
 endif
 
+# Release lanes ship without the offline self-tests (decision 2026-08-07):
+# CI runs the full suite on the host binary, so on an Amiga they are only
+# dead weight (roughly 15 percent of the binary). NO_SELFTEST=0 compiles
+# them back in for a debugging build. The field diagnostics (--net-test,
+# --http-test, --https-test, --platform-rng-test, --mtproto-2fa-bench)
+# are always compiled in either way.
+NO_SELFTEST ?= 1
+ifeq ($(NO_SELFTEST),1)
+CFLAGS += -DTG_NO_SELFTEST=1
+endif
+
 .PHONY: all clean
 
 all: $(TARGET)

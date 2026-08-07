@@ -89,6 +89,19 @@ O2_OBJS := $(OBJDIR)/core/tg_mtproto_rsa.o $(OBJDIR)/core/tg_mtproto_crypto.o \
            $(OBJDIR)/core/tg_mtproto_srp.o $(OBJDIR)/core/tg_mtproto_encrypted.o
 $(O2_OBJS): OPT := -O2
 
+# Release lanes ship without the offline self-tests (decision 2026-08-07):
+# CI runs the full suite on the host binary, so on an Amiga they are only
+# dead weight (roughly 15 percent of the binary; 84 KB on the 68000
+# package, where load size is the fight). Applies to the 68060 lane and
+# every 68000 variant alike. NO_SELFTEST=0 compiles them back in for a
+# debugging build. The field diagnostics (--net-test, --http-test,
+# --https-test, --platform-rng-test, --mtproto-2fa-bench) are always
+# compiled in either way.
+NO_SELFTEST ?= 1
+ifeq ($(NO_SELFTEST),1)
+CFLAGS += -DTG_NO_SELFTEST=1
+endif
+
 # Extra defines for one-off builds (diagnostics, experiments) WITHOUT
 # overriding CFLAGS from the command line -- doing that drops every
 # "CFLAGS +=" above (gzip/puff, clib2, the m68k asm switch) and produces a
