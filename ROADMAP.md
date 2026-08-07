@@ -109,6 +109,25 @@ the account salts, both stable; only srp_id and srp_B expire. So:
 That turns a guaranteed failure into a long but completable login. It needs
 `tg_mtproto_srp_make_proof` split into a derivation step and a proof step.
 
+## Planned: two MorphOS popup glitches
+
+Both reported from the field on 0.0.9 and both about the right-click popup
+living next to inline photos.
+
+1. Opening the popup beside a photo draws it BEHIND the picture. The window
+   paint composes the popup last for exactly this reason, but the photo
+   replay is a separate pass that writes straight to the window RastPort
+   (the CyberGraphX path) after the blit, so it lands on top. The popup
+   needs to be excluded from the replay's dirty rectangles, or repainted
+   after them.
+2. On an own screen, right-clicking in the conversation to pick an entry
+   makes the chat flicker. The popup path repaints more than it needs to
+   there; the transcript should keep its pixels while only the popup area
+   is composed.
+
+Neither affects the other lanes, where the replay goes through the friend
+bitmap before the blit rather than to the window.
+
 ## Planned: photo speed under AfA_OS
 
 Rows are handed to cybergraphics in blocks of 8 on the 68k line, which took
