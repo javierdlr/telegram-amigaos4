@@ -853,9 +853,9 @@ received file (right-click -> Download) or send one from disk, up to
 $upload_limit on this build, including files over 10 MiB.
 Photos appear immediately as blurred previews, refine from a bounded download
 and reuse decoded pixels from disk when reopened. Click one for a larger
-progressive viewer, or disable inline loading on a slower machine and open only
-the images you choose. Forward one message to Saved Messages in a click, or
-choose another destination through chat search.
+progressive viewer, or disable inline loading on a slower machine and open
+only the images you choose. Forward one message to Saved Messages in a
+click, or choose another destination through chat search.
 Use the pinned Saved Messages chat as a cloud transfer drawer between the
 Amiga and your phone or PC. Reply to a specific message (right-click it).
 Edit or delete your own messages. See
@@ -892,8 +892,10 @@ Bug reports and wishes are very welcome -- testers on real hardware
 (A1200s, A4000s, Pegasos, Sam, FPGA machines) are what moves this
 project forward.
 
-  Source + issues:    $REPO_URL
-  Development diary:  $DIARY_URL
+  Source + issues:
+  $REPO_URL
+  Development diary:
+  $DIARY_URL
 EOF
 }
 
