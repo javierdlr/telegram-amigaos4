@@ -7,9 +7,6 @@ unless noted.
 
 ## [0.0.9] - 2026-08-07
 
-- Temporary quiet-log files no longer litter the program drawer: they live
-  in T: and are cleaned up at startup and exit.
-
 ### Added
 - The full-screen TUI now word-wraps transcript messages on narrow consoles,
   with indented continuation lines and hard breaks for overlong words. Its
@@ -116,6 +113,8 @@ unless noted.
   return to the sidebar when opened, without an online search or cache reload.
 
 ### Fixed
+- Temporary quiet-log files no longer litter the program drawer: they live
+  in T: and are cleaned up at startup and exit.
 - TUI composer threshold crossings now repaint only the separator and the
   one-to-three composer rows, restoring just the transcript rows that become
   visible again. Direct character echo and rubout remain active on wrapped
