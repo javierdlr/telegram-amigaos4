@@ -137,6 +137,26 @@ the target page's metadata, so pages without usable metadata show none
 This moves link previews out of the Tier 4 "degrade to a link line"
 non-goal on the strength of the field reports.
 
+## Planned: captions when sending photos
+
+Requested alongside the 0.0.9 feedback: let the user attach a caption to
+a photo they send. The wire side is already there; both media writers
+(photo and document) call `messages.sendMedia` with an empty caption
+string today, so the protocol work is filling one field the client
+already sends, plus the composer's existing UTF-8 conversion. Received
+captions already render under the inline photo. The real work is the
+input surface:
+
+- GUI: whatever sits in the composer when the photo send is confirmed
+  becomes the caption, after a one-line confirm requester when the
+  composer is not empty (so an unrelated draft is never swallowed).
+  Applies to Send photo..., the context-menu entry and the Workbench
+  drop alike; the status line says when a caption went along.
+- TUI: `/photo <path> [caption words...]`, everything after the path is
+  the caption.
+- The over-10-MiB fallback that sends a photo as a document carries the
+  same caption.
+
 ## Planned: two MorphOS popup glitches
 
 Both reported from the field on 0.0.9 and both about the right-click popup
