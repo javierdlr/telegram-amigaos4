@@ -34,13 +34,20 @@ verify() {
     arch=$(file "$TMP/bin" | grep -c "$archpat" || true)
     leak=$(unzip -l "$TMP/$tag.zip" | grep -icE "telegram-(auth|peers|seed|password|token)|phone-code-hash" || true)
     icon=$(unzip -p "$TMP/$tag.zip" "*/TelegramAmiga.info" 2>/dev/null | strings | grep -c "^TelegramAmiga$" || true)
+    # Since 0.0.9 the TUI marker and its icon ship on the 68k lane only (the
+    # other platforms reach the TUI from a Shell), so the expected file count
+    # is one higher there. Everything else is identical on every lane.
     files=$(unzip -l "$TMP/$tag.zip" | grep -cE "Manual-EN.txt|Manuale-IT.txt|/TelegramAmiga$|/TelegramAmiga-TUI$|telegram-api.txt" || true)
+    case $tag in
+    os3-*) want_files=5 ;;
+    *)     want_files=4 ;;
+    esac
     ok=1
     [ "$want" = "$got" ] || { echo "FAIL $tag: published binary $got != local build $want"; ok=0; }
     [ "$arch" -ge 1 ]    || { echo "FAIL $tag: wrong architecture"; ok=0; }
     [ "$leak" = 0 ]      || { echo "FAIL $tag: SESSION FILE LEAK"; ok=0; }
     [ "$icon" -ge 1 ]    || { echo "FAIL $tag: TelegramAmiga.info not flashless"; ok=0; }
-    [ "$files" = 5 ]     || { echo "FAIL $tag: $files/5 expected files"; ok=0; }
+    [ "$files" = "$want_files" ] || { echo "FAIL $tag: $files/$want_files expected files"; ok=0; }
     if [ "$ok" = 1 ]; then echo "OK   $tag  [bin $(printf %.8s "$got")]"; else fail=1; fi
 }
 
