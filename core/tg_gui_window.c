@@ -115,7 +115,9 @@ typedef struct timerequest tg_gui_timereq;
 #include <proto/dos.h>
 
 /* OS4 keeps the FileInfoBlock API behind explicit OBSOLETE* interface
-   entries; the classic lanes still expose the original names directly. */
+   entries. Its own <dos/obsolete.h> maps the classic names onto them, which
+   beats redefining them here (javierdlr, PR #12); the other lanes expose the
+   original names directly and need no header at all. */
 #if defined(__amigaos4__)
 #include <dos/obsolete.h>
 #endif
