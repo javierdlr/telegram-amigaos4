@@ -3224,7 +3224,18 @@ static int tg_gui_photo_cgx_self_check(tg_gui_amiga_ctx *ctx,
 }
 #endif
 
-/* Replay canonical RGB888 through cybergraphics one scaled row at a time.
+/* How many scaled rows are staged before handing them to cybergraphics in one
+   call. One row per call cost 220-820 ms per slice on a 68k with P96/AfA (the
+   library overhead dwarfed the pixel work, field report 2026-08-07): the
+   photo crawled and the pacer, seeing slow slices, shrank its budget on top.
+   A block of rows turns that into one call per block. */
+#if defined(__m68k__)
+#define TG_GUI_PHOTO_REPLAY_ROWS 8
+#else
+#define TG_GUI_PHOTO_REPLAY_ROWS 16
+#endif
+
+/* Replay canonical RGB888 through cybergraphics in blocks of scaled rows.
    Horizontal/vertical nearest scaling is CPU-cheap and never touches JPEG or
    the pen allocator. The target can be either the friend bitmap or the real
    window RastPort. */
@@ -3234,8 +3245,10 @@ static int tg_gui_photo_draw_truecolor_target(
     tg_gui_rect rect, int x0, int y0, int x1, int y1)
 {
 #if defined(TG_GUI_HAVE_CYBERGRAPHICS)
-    static unsigned char row[TG_GUI_PHOTO_REPLAY_CAP * 3];
+    static unsigned char rows[TG_GUI_PHOTO_REPLAY_CAP * 3 *
+                              TG_GUI_PHOTO_REPLAY_ROWS];
     int y;
+    int chunk_x;
 
     if (!ctx->photo_truecolor || slot->rgb == 0 || CyberGfxBase == 0 ||
         !tg_gui_photo_cgx_self_check(ctx, target, origin_x, origin_y,
@@ -3245,42 +3258,50 @@ static int tg_gui_photo_draw_truecolor_target(
     if (x1 <= x0) {
         return 0;
     }
-    for (y = y0; y < y1; ++y) {
-        int sy;
-        int chunk_x;
+    for (chunk_x = x0; chunk_x < x1; chunk_x += TG_GUI_PHOTO_REPLAY_CAP) {
+        int width;
 
-        sy = ((y - rect.y) * slot->h) / rect.h;
-        for (chunk_x = x0; chunk_x < x1;
-             chunk_x += TG_GUI_PHOTO_REPLAY_CAP) {
-            int width;
-            int x;
+        width = x1 - chunk_x;
+        if (width > TG_GUI_PHOTO_REPLAY_CAP) {
+            width = TG_GUI_PHOTO_REPLAY_CAP;
+        }
+        for (y = y0; y < y1; y += TG_GUI_PHOTO_REPLAY_ROWS) {
+            int block;
+            int i;
 
-            width = x1 - chunk_x;
-            if (width > TG_GUI_PHOTO_REPLAY_CAP) {
-                width = TG_GUI_PHOTO_REPLAY_CAP;
+            block = y1 - y;
+            if (block > TG_GUI_PHOTO_REPLAY_ROWS) {
+                block = TG_GUI_PHOTO_REPLAY_ROWS;
             }
-            for (x = 0; x < width; ++x) {
-                int sx;
-                const unsigned char *src;
+            for (i = 0; i < block; ++i) {
+                unsigned char *dst;
+                int sy;
+                int x;
 
-                sx = (((chunk_x + x) - rect.x) * slot->w) / rect.w;
-                src = slot->rgb +
-                      (((unsigned long)sy * (unsigned long)slot->w +
-                        (unsigned long)sx) * 3UL);
-                row[x * 3] = src[0];
-                row[x * 3 + 1] = src[1];
-                row[x * 3 + 2] = src[2];
+                sy = (((y + i) - rect.y) * slot->h) / rect.h;
+                dst = rows + ((unsigned long)i * (unsigned long)width * 3UL);
+                for (x = 0; x < width; ++x) {
+                    int sx;
+                    const unsigned char *src;
+
+                    sx = (((chunk_x + x) - rect.x) * slot->w) / rect.w;
+                    src = slot->rgb +
+                          (((unsigned long)sy * (unsigned long)slot->w +
+                            (unsigned long)sx) * 3UL);
+                    dst[x * 3] = src[0];
+                    dst[x * 3 + 1] = src[1];
+                    dst[x * 3 + 2] = src[2];
+                }
+                if (tg_gui_profile_active) {
+                    ++tg_gui_profile_photo_rgb_rows;
+                }
             }
             if (tg_gui_cgx_write_pixel_array(
-                    row, 0, 0, (UWORD)(width * 3), target,
-                    (UWORD)(origin_x + chunk_x),
-                    (UWORD)(origin_y + y),
-                    (UWORD)width, 1, RECTFMT_RGB) == 0UL) {
+                    rows, 0, 0, (UWORD)(width * 3), target,
+                    (UWORD)(origin_x + chunk_x), (UWORD)(origin_y + y),
+                    (UWORD)width, (UWORD)block, RECTFMT_RGB) == 0UL) {
                 return 0;
             }
-        }
-        if (tg_gui_profile_active) {
-            ++tg_gui_profile_photo_rgb_rows;
         }
     }
     return 1;
