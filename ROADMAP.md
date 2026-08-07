@@ -109,6 +109,34 @@ the account salts, both stable; only srp_id and srp_B expire. So:
 That turns a guaranteed failure into a long but completable login. It needs
 `tg_mtproto_srp_make_proof` split into a derivation step and a proof step.
 
+## Planned: link previews (0.0.10 headline candidate)
+
+First field feedback on 0.0.9: link previews pasted into chats show up
+for some links and not for others. The ones that appear are not link
+previews at all; they are real attached photos with a caption (the usual
+news-channel format), which the inline-photo pipeline renders. A bare
+pasted link arrives as `messageMediaWebPage`, which the client currently
+skips entirely, by design; the bubble shows only the clickable URL.
+
+Plan, in order:
+
+1. Parse `messageMediaWebPage` (TL constructors verified against the
+   layer-214 schema first): show the page title or site name plus the
+   first description line under the message text. The TUI shows the
+   title line only.
+2. When the preview carries a photo, feed it to the existing bounded
+   photo pipeline (stripped preview, incremental fetch, disk cache), so
+   the image costs nothing new and obeys the same inline-photos setting.
+3. Optional, only if the cycle has room: handle `updateWebPage`, so a
+   preview the server generates late still reaches an open chat.
+
+Even complete, previews will stay per-link: the server builds them from
+the target page's metadata, so pages without usable metadata show none
+(`webPageEmpty`, same as official clients), pending ones arrive later
+(`webPagePending`), and a sender can disable the preview per message.
+This moves link previews out of the Tier 4 "degrade to a link line"
+non-goal on the strength of the field reports.
+
 ## Planned: two MorphOS popup glitches
 
 Both reported from the field on 0.0.9 and both about the right-click popup
