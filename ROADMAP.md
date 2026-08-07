@@ -137,6 +137,14 @@ the target page's metadata, so pages without usable metadata show none
 This moves link previews out of the Tier 4 "degrade to a link line"
 non-goal on the strength of the field reports.
 
+## Planned: GitHub link in About
+
+The About requester credits the author, the contributors and the
+testers, but never says where the project lives. Add the repository URL
+(https://github.com/kaffeine1/telegram-amiga) so a user who wants to
+report something or fetch a newer build reads the address right there;
+it is the same place the manuals and the Aminet readme already point to.
+
 ## Planned: captions when sending photos
 
 Requested alongside the 0.0.9 feedback: let the user attach a caption to
