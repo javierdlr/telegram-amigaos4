@@ -115,10 +115,30 @@ TelegramAmiga (or TelegramAmiga-TUI). First run signs you in (phone -> code -> 2
 ----------------"
             tui_entry_en="- TelegramAmiga-TUI -- the full-screen text/console client. This package
   ships ONLY that icon: the Intuition GUI is too heavy for a plain 68000,
-  so the text client is the way in here."
+  so the text client is the way in here.
+- From a Shell instead of the icon: TelegramAmiga-TUI is a 0-byte marker,
+  not a program, so running it gives \"file is not executable\". Run the
+  binary with the same arguments the icon uses, from inside the drawer:
+      stack 393216
+      TelegramAmiga --mtproto-start-file data/telegram-api.txt
+        telegram-auth.bin data/phone-code-hash.txt data/telegram-peers.txt
+  (the command is one single line). The stack line is needed once per
+  Shell: a Shell hands out 4096 bytes by default, and the program says so
+  rather than crashing. Add \"Protect TelegramAmiga +e\" once if the Shell
+  refuses to run it."
             tui_entry_it="- TelegramAmiga-TUI -- il client testuale a schermo intero. Questo
   pacchetto porta SOLO quell'icona: la GUI Intuition e' troppo pesante per
-  un 68000 liscio, qui si usa il client testuale."
+  un 68000 liscio, qui si usa il client testuale.
+- Da Shell invece che dall'icona: TelegramAmiga-TUI e' un marker da 0 byte,
+  non un programma, quindi lanciarlo da' \"file is not executable\". Esegui
+  il binario con gli stessi argomenti che usa l'icona, dentro il drawer:
+      stack 393216
+      TelegramAmiga --mtproto-start-file data/telegram-api.txt
+        telegram-auth.bin data/phone-code-hash.txt data/telegram-peers.txt
+  (il comando e' tutto su una riga sola). La riga stack serve una volta per
+  Shell: una Shell ne assegna 4096 byte di default, e il programma te lo
+  dice invece di crashare. Se la Shell si rifiuta di eseguirlo, dai una
+  volta \"Protect TelegramAmiga +e\"."
             first_start_en="1. On a FASTER Amiga (68020 or better) or in an emulator (WinUAE,
    FS-UAE, vAmiga), install the standard AmigaOS 3.x package and log in
    there: phone number, the code Telegram sends you, and the cloud

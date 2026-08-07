@@ -112,9 +112,15 @@ int tg_platform_run_with_safe_stack(tg_platform_entry_fn entry,
         current_size = (unsigned long)((unsigned char *)task->tc_SPUpper -
                                        (unsigned char *)task->tc_SPLower);
         if (current_size < TG_PLATFORM_SAFE_STACK_MIN) {
+            /* Say the real number for THIS build (the 68000 profile asks
+               for less) and how to get it: a bare "needs 1 MiB" left a
+               field tester stuck at a 4096-byte Shell prompt. */
             fprintf(stderr,
-                    "Telegram Amiga needs a 1 MiB stack; current stack is %lu bytes.\n",
-                    current_size);
+                    "Telegram Amiga needs a %lu byte stack; this one is %lu.\n"
+                    "In a Shell type \"stack %lu\" once, then run it again,\n"
+                    "or start it from its icon, which sets the stack for you.\n",
+                    (unsigned long)TG_PLATFORM_SAFE_STACK_SIZE, current_size,
+                    (unsigned long)TG_PLATFORM_SAFE_STACK_SIZE);
             return 20;
         }
     }
