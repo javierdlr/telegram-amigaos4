@@ -165,6 +165,44 @@ input surface:
 - The over-10-MiB fallback that sends a photo as a document carries the
   same caption.
 
+## Planned: video messages, details and hand off to a player
+
+A video arrives today as a plain `[File]` with its name and size, which
+tells the user nothing about what a slow line is about to spend minutes
+on. Three things make it a real message, and most of the machinery is
+already in the tree:
+
+- The still frame, inline. `tg_mtproto_read_document` already walks the
+  document's `thumbs` vector and skips each entry; picking the best one
+  instead hands a normal photo to the 0.0.9 pipeline, stripped preview
+  included, under the existing Inline photos preference.
+- A details line: duration and resolution from `documentAttributeVideo`
+  (only the filename attribute is parsed today) next to the size and the
+  format, which is free because the parser already reads the mime type
+  and nobody uses it.
+- Download and play: fetch with the same bounded, cancellable engine as
+  any other file, then hand the result to a player command the user sets
+  once, through the same SystemTags path that opens links since 0.0.8.
+
+The split is not 68k against PPC, it is what the player on that machine
+can decode. AmigaOS 4, MorphOS and AROS play what Telegram sends, so
+there the feature is complete. Fast 68k systems (an accelerated 040 or
+060, Vampire, PiStorm) play the formats they were always good at, which
+is what RiVA exists for; H.264 is out of their reach, so they get the
+frame, the details and the download, and play whatever their own player
+handles. One implementation, each machine takes what it can.
+
+No codec and no transcoding goes into the client: that is a different
+program, several times this one's size, against the zero-dependency
+rule. A hosted transcoder was considered and dropped on purpose. It
+would cost real money in proportion to how popular it got, it would make
+the project an intermediary for whatever users pushed through it, it
+would end the claim that nothing of ours ever sees your media, and it
+would make the headline feature die the day the bill went unpaid. The
+conversion recipe belongs with the user instead: the download drawer is
+configurable onto a network share, and Saved Messages already works as a
+two-way drawer between the Amiga and a machine that has the CPU.
+
 ## Planned: update notice, and later self-update
 
 A user asked for automatic update download and install, the way another
