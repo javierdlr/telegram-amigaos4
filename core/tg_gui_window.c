@@ -579,6 +579,19 @@ static int tg_gui_amiga_line_height(tg_gui_backend *backend)
     return ((tg_gui_amiga_ctx *)backend->context)->line_h;
 }
 
+/* Baseline to top of the glyph cell, straight from the RastPort's font, so the
+   caret covers the letters instead of floating above them on systems whose
+   default font is taller than topaz 8. */
+static int tg_gui_amiga_font_ascent(tg_gui_backend *backend)
+{
+    const tg_gui_amiga_ctx *ctx = (const tg_gui_amiga_ctx *)backend->context;
+
+    if (ctx == 0 || ctx->rport == 0 || ctx->rport->Font == 0) {
+        return 0; /* renderer falls back to its own approximation */
+    }
+    return (int)ctx->rport->Font->tf_Baseline;
+}
+
 static unsigned long tg_gui_amiga_font_char_index(const struct TextFont *font,
                                                    unsigned int c)
 {
@@ -7555,6 +7568,7 @@ static int tg_gui_run_window_once(tg_gui_state *state)
     backend.width = tg_gui_amiga_width;
     backend.height = tg_gui_amiga_height;
     backend.line_height = tg_gui_amiga_line_height;
+    backend.font_ascent = tg_gui_amiga_font_ascent;
     backend.text_width = tg_gui_amiga_text_width;
     backend.fill_rect = tg_gui_amiga_fill_rect;
     backend.avatar_fill = tg_gui_amiga_avatar_fill;

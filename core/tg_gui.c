@@ -26,6 +26,13 @@
 #define TG_GUI_WRAP_MAX_LINES 256
 #endif
 
+/* Air between the "Replying to..." strip and the composer below it (field
+   request: the strip read as glued to the box). The reserved band grows by the
+   same amount, so the strip rises without reaching into the transcript, and
+   every consumer of the geometry -- paint, hit test, mention popup -- reads it
+   from here. */
+#define TG_GUI_REPLY_LIFT 3
+
 /* Custom-drawn vertical scrollbar geometry (no GadTools propgadget, so it is
    identical on every backend). TG_GUI_SCROLLBAR_W lives in tg_gui.h, shared
    with the event loop's knob hit-test. */
@@ -715,6 +722,32 @@ static tg_gui_rect tg_gui_make_rect(int x, int y, int w, int h)
    draw to a single RastPort with no per-column clip, so an unclipped long
    preview would bleed straight across the sidebar boundary into the
    conversation pane. */
+/* The blinking caret, aligned to the glyph cell of the line it sits on.
+   Text is drawn from its BASELINE, so a caret positioned from the line box
+   alone floats above the letters by the font's descender depth: invisible with
+   topaz 8, obvious with a tall default font (MorphOS field report, 0.0.9).
+   Backends that expose the font ascent get an exact fit; the others keep the
+   previous approximation. */
+static void tg_gui_draw_caret(tg_gui_backend *backend, int pen, int x,
+                              int baseline)
+{
+    int lh = backend->line_height(backend);
+    int ascent;
+    int h;
+
+    if (lh <= 0) {
+        return;
+    }
+    /* line_height carries the leading; the glyph cell itself is what the
+       caret should cover. */
+    h = (lh > 2) ? (lh - 2) : lh;
+    ascent = (backend->font_ascent != 0) ? backend->font_ascent(backend) : h;
+    if (ascent <= 0 || ascent > lh) {
+        ascent = h;
+    }
+    backend->fill_rect(backend, pen, tg_gui_make_rect(x, baseline - ascent, 2, h));
+}
+
 static void tg_gui_draw_clipped(tg_gui_backend *backend, int pen, int x,
                                 int baseline, const char *text, int max_w)
 {
@@ -896,7 +929,7 @@ int tg_gui_mention_click(const tg_gui_state *state, tg_gui_backend *backend,
     bx = sidebar_w + 8;
     by = box_top - bh - 2;
     if (state->reply_to_id != 0UL) {
-        by -= (lh + 4);
+        by -= (lh + 4 + TG_GUI_REPLY_LIFT);
     }
     if (bx + bw > width - 8) {
         bw = width - 8 - bx;
@@ -1047,8 +1080,7 @@ static void tg_gui_paint_search_box(const tg_gui_state *state,
             sc = qlen;
         }
         cx = 10 + backend->text_width(backend, state->search_query, sc) + 1;
-        backend->fill_rect(backend, TG_GUI_PEN_TEXT,
-                           tg_gui_make_rect(cx, sbase - lh + 2, 2, lh));
+        tg_gui_draw_caret(backend, TG_GUI_PEN_TEXT, cx, sbase);
     }
 }
 
@@ -2029,7 +2061,9 @@ static int tg_gui_input_h(const tg_gui_state *state, tg_gui_backend *backend,
 {
     int h = (tg_gui_input_rows(state, backend, width, sidebar_w) * lh) + 14;
     if (state->reply_to_id != 0UL) {
-        h += lh + 4; /* room for the "Replying to ..." header strip above the box */
+        /* room for the "Replying to ..." header strip above the box, plus the
+           air that lifts it clear of the composer */
+        h += lh + 4 + TG_GUI_REPLY_LIFT;
     }
     return h;
 }
@@ -2092,16 +2126,30 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
        shrank instead). It shows "<sender>: <snippet>" with an accent quote bar
        on the left and an "X" cancel hot-spot on the right. */
     if (state->reply_to_id != 0UL) {
-        int strip_y = box_top - (lh + 4);
+        int strip_y = box_top - (lh + 4) - TG_GUI_REPLY_LIFT;
+        int strip_h = lh + 2;
+        int glyph_h = (lh > 2) ? (lh - 2) : lh;
+        int ascent = (backend->font_ascent != 0) ? backend->font_ascent(backend)
+                                                 : glyph_h;
+        int strip_base;
         char head[TG_GUI_NAME_MAX + TG_GUI_REPLY_MAX + 4];
         unsigned long hp = 0UL;
         const char *s;
 
+        if (ascent <= 0 || ascent > lh) {
+            ascent = glyph_h;
+        }
+        /* Centre the glyph cell in the strip instead of hanging the text off a
+           line-height guess, which left it sitting on the strip's bottom edge
+           at every font size (field report). With no metrics the arithmetic
+           collapses to the previous baseline, so those backends do not move. */
+        strip_base = strip_y + ((strip_h - glyph_h) / 2) + ascent;
+
         backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                            tg_gui_make_rect(sidebar_w + 8, strip_y,
-                                            width - sidebar_w - 16, lh + 2));
+                                            width - sidebar_w - 16, strip_h));
         backend->fill_rect(backend, TG_GUI_PEN_ACCENT,
-                           tg_gui_make_rect(sidebar_w + 8, strip_y, 3, lh + 2));
+                           tg_gui_make_rect(sidebar_w + 8, strip_y, 3, strip_h));
         s = state->reply_sender;
         while (*s != '\0' && hp + 2UL < sizeof(head)) {
             head[hp++] = *s++;
@@ -2116,8 +2164,8 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
         }
         head[hp] = '\0';
         tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT_DIM, sidebar_w + 16,
-                            strip_y + lh, head, width - sidebar_w - 16 - 26);
-        backend->draw_text(backend, TG_GUI_PEN_TEXT, width - 22, strip_y + lh,
+                            strip_base, head, width - sidebar_w - 16 - 26);
+        backend->draw_text(backend, TG_GUI_PEN_TEXT, width - 22, strip_base,
                            "X", 1UL);
     }
 
@@ -2209,16 +2257,16 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
                                               state->input + starts[line],
                                               caret_off - starts[line]) +
                           1;
-                backend->fill_rect(
-                    backend, TG_GUI_PEN_TEXT,
-                    tg_gui_make_rect(caret_x, box_top + ((line - first) * lh) + 3,
-                                     2, lh));
+                /* Same baseline the line's text was drawn from, just above. */
+                tg_gui_draw_caret(backend, TG_GUI_PEN_TEXT, caret_x,
+                                  box_top + ((line - first) * lh) + lh + 2);
             }
         }
     } else if (state->composing) {
         if (state->cursor_on) {
-            backend->fill_rect(backend, TG_GUI_PEN_TEXT,
-                               tg_gui_make_rect(area_x, box_top + 3, 2, lh));
+            /* Empty composer: the baseline the first typed line will use. */
+            tg_gui_draw_caret(backend, TG_GUI_PEN_TEXT, area_x,
+                              box_top + lh + 2);
         }
     } else {
         backend->draw_text(backend, TG_GUI_PEN_TEXT_DIM, area_x,
@@ -2242,7 +2290,7 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
         int mi;
 
         if (state->reply_to_id != 0UL) {
-            by -= (lh + 4); /* sit above the reply strip */
+            by -= (lh + 4 + TG_GUI_REPLY_LIFT); /* sit above the reply strip */
         }
         if (bx + bw > width - 8) {
             bw = width - 8 - bx;
@@ -2799,7 +2847,8 @@ int tg_gui_hit_test(const tg_gui_state *state, int width, int height, int lh,
     if (y >= content_h - input_h && y < content_h - 4 && x >= sidebar_w) {
         /* When replying, the top line of the region is the "<sender>: <snippet>"
            header; its far-right "X" cancels the reply, the rest just focuses. */
-        if (state->reply_to_id != 0UL && y < content_h - input_h + lh + 4) {
+        if (state->reply_to_id != 0UL &&
+            y < content_h - input_h + lh + 4 + TG_GUI_REPLY_LIFT) {
             if (x >= width - 26) {
                 return TG_GUI_HIT_REPLY_CANCEL;
             }
@@ -3625,6 +3674,7 @@ int tg_gui_self_test(void)
     backend.width = tg_gui_rec_width;
     backend.height = tg_gui_rec_height;
     backend.line_height = tg_gui_rec_line_height;
+    backend.font_ascent = 0; /* recorder: exercise the renderer's fallback */
     backend.text_width = tg_gui_rec_text_width;
     backend.fill_rect = tg_gui_rec_fill;
     backend.avatar_image = 0;

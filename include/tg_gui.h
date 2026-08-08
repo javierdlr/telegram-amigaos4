@@ -83,6 +83,12 @@ struct tg_gui_backend {
     /* Apply a TG_GUI_STYLE_* bitmask to subsequent draw_text calls. NULL on
        backends that render plain (the renderer then just skips the markers). */
     void (*set_style)(tg_gui_backend *backend, int style);
+    /* OPTIONAL: distance from a draw_text baseline to the top of the glyph
+       cell (the font's ascent). Text is placed by baseline, so anything that
+       has to line up WITH the glyphs -- the caret -- needs this instead of
+       guessing from line_height, whose leading and descender depth vary with
+       the font. NULL falls back to the old approximation. */
+    int (*font_ascent)(tg_gui_backend *backend);
     /* OPTIONAL: draw the peer's real avatar (decoded stripped thumb) into rect.
        Returns 1 when it drew, 0 to make the renderer fall back to the classic
        initials square. NULL on backends without image support (host tests). */
