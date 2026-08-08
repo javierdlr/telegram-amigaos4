@@ -165,6 +165,48 @@ input surface:
 - The over-10-MiB fallback that sends a photo as a document carries the
   same caption.
 
+## Planned: update notice, and later self-update
+
+A user asked for automatic update download and install, the way another
+actively developed Amiga program does it. Worth doing, but staged, and
+not through HTTPS: the TLS path is compiled out on every lane
+(`ENABLE_TLS ?= 0`), and switching it on would mean a CA bundle and a
+new attack surface on the slowest machines.
+
+The natural channel is the one the client already speaks. Releases get
+announced on a Telegram channel; resolving a public channel by username
+and reading its history is existing code, and fetching the attachment is
+the same bounded, cancellable, multi-DC download used for any file.
+
+1. Notice only: read the latest published version, compare it with
+   `TG_VERSION`, and say that a newer one exists and where to get it.
+   Nothing is downloaded and nothing is executed, so this carries no new
+   risk and already covers most of the convenience.
+2. Fetch to a drawer: download the new executable next to the current
+   one and let the user put it in place. Still no automatic swap.
+3. Verified self-install, opt-in and off by default.
+
+Step 3 is a remote code path and needs a real trust anchor, not just
+"the right channel": an RSA signature over the binary, verified against
+a public key built into the client. The primitives are already in tree
+(SHA-256 in `tg_mtproto_crypto.c`, the public-exponent modular
+exponentiation in `tg_mtproto_rsa.c`). The cost is operational rather
+than technical: a signing key that has to stay safe for as long as the
+project ships updates.
+
+Amiga specifics for steps 2 and 3: an executable can be replaced while
+it runs, since LoadSeg reads it into memory, but AmigaDOS `Rename` does
+not overwrite, so the sequence is download, verify, keep a backup of the
+current binary, then swap. Updates carry the executable alone, not the
+`.lha`, because the client has no archive extractor and shipping one
+costs size and licensing. On a slow link half a megabyte is minutes, so
+the transfer stays cancellable and off the event loop, like every other
+transfer since 0.0.8.
+
+Timing: step 1 fits the 0.0.10 cycle. Steps 2 and 3 belong after the
+0.1.0 beta, whose gate asks for no known freeze and a quiet cycle, which
+is the worst moment to add a path that installs code.
+
 ## Planned: two MorphOS popup glitches
 
 Both reported from the field on 0.0.9 and both about the right-click popup
