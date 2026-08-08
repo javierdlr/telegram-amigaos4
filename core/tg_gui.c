@@ -722,6 +722,32 @@ static tg_gui_rect tg_gui_make_rect(int x, int y, int w, int h)
    draw to a single RastPort with no per-column clip, so an unclipped long
    preview would bleed straight across the sidebar boundary into the
    conversation pane. */
+/* Baseline that centres one line of text vertically inside a box `box_h` tall
+   starting at `box_y`. draw_text places text by BASELINE, so centring has to
+   work from the font's real ascent: doing it from the line height alone leaves
+   the text low by the descender depth, which grows with the font (unread
+   badges and the reply strip, field reports on 0.0.9). Backends without
+   metrics reproduce the previous approximation. */
+static int tg_gui_centred_baseline(tg_gui_backend *backend, int box_y,
+                                   int box_h)
+{
+    int lh = backend->line_height(backend);
+    int glyph_h;
+    int ascent;
+
+    if (lh <= 0) {
+        return box_y;
+    }
+    /* line_height carries the leading; the glyph cell is what we centre. */
+    glyph_h = (lh > 2) ? (lh - 2) : lh;
+    ascent = (backend->font_ascent != 0) ? backend->font_ascent(backend)
+                                         : glyph_h;
+    if (ascent <= 0 || ascent > lh) {
+        ascent = glyph_h;
+    }
+    return box_y + ((box_h - glyph_h) / 2) + ascent;
+}
+
 /* The blinking caret, aligned to the glyph cell of the line it sits on.
    Text is drawn from its BASELINE, so a caret positioned from the line box
    alone floats above the letters by the font's descender depth: invisible with
@@ -1284,9 +1310,12 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                                        backend, badge,
                                        (unsigned long)strlen(badge))) /
                             2;
+                /* Centred in the pill both ways: horizontally above, and
+                   vertically from the font's own ascent. */
                 backend->draw_text(backend, TG_GUI_PEN_BADGE_TEXT, num_x,
-                                   badge_top + lh, badge,
-                                   (unsigned long)strlen(badge));
+                                   tg_gui_centred_baseline(backend, badge_top,
+                                                           badge_h),
+                                   badge, (unsigned long)strlen(badge));
             }
         }
         y += row_h;
@@ -2128,22 +2157,12 @@ static void tg_gui_paint_input_row(const tg_gui_state *state,
     if (state->reply_to_id != 0UL) {
         int strip_y = box_top - (lh + 4) - TG_GUI_REPLY_LIFT;
         int strip_h = lh + 2;
-        int glyph_h = (lh > 2) ? (lh - 2) : lh;
-        int ascent = (backend->font_ascent != 0) ? backend->font_ascent(backend)
-                                                 : glyph_h;
-        int strip_base;
+        /* Centred in the strip instead of hanging off a line-height guess,
+           which left the text on the strip's bottom edge at every font size. */
+        int strip_base = tg_gui_centred_baseline(backend, strip_y, strip_h);
         char head[TG_GUI_NAME_MAX + TG_GUI_REPLY_MAX + 4];
         unsigned long hp = 0UL;
         const char *s;
-
-        if (ascent <= 0 || ascent > lh) {
-            ascent = glyph_h;
-        }
-        /* Centre the glyph cell in the strip instead of hanging the text off a
-           line-height guess, which left it sitting on the strip's bottom edge
-           at every font size (field report). With no metrics the arithmetic
-           collapses to the previous baseline, so those backends do not move. */
-        strip_base = strip_y + ((strip_h - glyph_h) / 2) + ascent;
 
         backend->fill_rect(backend, TG_GUI_PEN_SURFACE,
                            tg_gui_make_rect(sidebar_w + 8, strip_y,
@@ -2360,7 +2379,8 @@ static void tg_gui_paint_jump_button(tg_gui_backend *backend, int x, int y,
         backend->fill_rect(backend, TG_GUI_PEN_BADGE,
                            tg_gui_make_rect(bx, by, bw, bw));
         backend->draw_text(backend, TG_GUI_PEN_BADGE_TEXT, bx + 2,
-                           by + bw - 2, num, (unsigned long)strlen(num));
+                           tg_gui_centred_baseline(backend, by, bw), num,
+                           (unsigned long)strlen(num));
     }
 }
 
