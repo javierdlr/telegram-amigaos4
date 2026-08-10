@@ -280,6 +280,42 @@ as pictures rather than as attachments.
 Anything we cannot turn into a picture keeps going as a document,
 unchanged.
 
+## Planned: find out what caps transfer speed
+
+A field measurement on MorphOS: a speed test on the same machine and the
+same line reports about 90 Mbit/s with a 6.71 ms round trip, while our
+transfers sit around 320 KB/s, which is 2.6 Mbit/s, under 3 per cent of
+the link. The same ceiling shows on every architecture, which already
+says something: whatever holds us back is ours, not the platform's.
+
+What the code does today. A part is 64 KB (32 KB on m68k). Uploads are
+strictly serial: build the part, send `saveFilePart`, wait for the
+`boolTrue`, then the next one. Downloads are one step better, since
+0.0.8 keeps exactly one chunk prefetched while the current one lands.
+Telegram itself allows parts up to 512 KB and several requests in
+flight.
+
+The arithmetic is the interesting part. 320 KB/s in 64 KB parts is five
+parts a second, so 200 ms per part, against a round trip of under 7 ms.
+The network wait explains about three per cent of that time. So the
+first move is NOT to make the parts bigger or to pipeline harder: it is
+to find out where those 200 ms actually go, the same way the photo
+pacing work did it, by timing each cost centre of one part separately.
+Building the query, our own AES-IGE and SHA-256 over the payload, the
+socket write, the wait for the reply, the read back.
+
+Only then do the fixes follow from the answer. If the wait dominates,
+bigger parts and more requests in flight are the lever, and the upload
+side has no pipelining at all to lose. If our crypto dominates, that is
+a completely different job, and on PPC or a Vampire it eventually means
+using what those chips actually have. Either way the transfer has to
+stay inside the non-blocking pump, because the window must keep
+breathing while a file moves.
+
+No promise about the number that comes out: a retro machine will not
+saturate a 90 Mbit line, and it does not need to. But under three per
+cent of it is not a hardware limit, it is something we are doing.
+
 ## Planned: two MorphOS popup glitches
 
 Both reported from the field on 0.0.9 and both about the right-click popup
