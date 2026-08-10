@@ -5093,7 +5093,9 @@ static const char tg_gui_about_text[] =
     "And thanks to the testers around the world\n"
     "who run this on real hardware and send back\n"
     "what they find. This client is what it is\n"
-    "because of them.";
+    "because of them.\n\n"
+    "Source, issues and new releases:\n"
+    "github.com/kaffeine1/telegram-amiga";
 
 static const char tg_gui_help_text[] =
     "Chat selection:\n"

@@ -1682,10 +1682,34 @@ static int tg_gui_marked_width(tg_gui_backend *backend, const char *text,
     return w;
 }
 
+/* A message joins the run above it when both are incoming, from the same
+   sender, with nothing else (an own message, a day separator, a system line)
+   between them: the sender name then shows only on the first of the run, the
+   way the desktop client groups a busy conversation. Pure derivation from
+   the two neighbours, so every geometry consumer computes the same answer. */
+static int tg_gui_message_grouped(const tg_gui_state *state, int index)
+{
+    const tg_gui_message *m;
+    const tg_gui_message *prev;
+
+    if (state == 0 || index <= 0 || index >= state->message_count) {
+        return 0;
+    }
+    m = &state->messages[index];
+    prev = &state->messages[index - 1];
+    if (m->is_own || m->is_system || prev->is_own || prev->is_system) {
+        return 0;
+    }
+    if (m->sender[0] == '\0' || strcmp(m->sender, prev->sender) != 0) {
+        return 0;
+    }
+    return 1;
+}
+
 static void tg_gui_bubble_geometry(tg_gui_backend *backend,
                                    const tg_gui_message *message, int area_x,
                                    int area_w, int lh, int inline_photos,
-                                   tg_gui_bubble_geom *geo)
+                                   int grouped, tg_gui_bubble_geom *geo)
 {
     int max_bubble_w;
     int widest;
@@ -1764,16 +1788,53 @@ static void tg_gui_bubble_geometry(tg_gui_backend *backend,
     geo->bubble_x = message->is_own ? (area_x + area_w - geo->bubble_w)
                                     : area_x;
     /* lh + lh/2: gap below the sender-name baseline wider than the font
-       descent (see the painter). */
-    geo->header_h = message->is_own ? 0 : (lh + (lh / 2));
+       descent (see the painter). A grouped message drops the name entirely
+       and keeps a hair of air so the run still reads as separate bubbles. */
+    geo->header_h = (message->is_own || grouped) ? 0 : (lh + (lh / 2));
     geo->reply_h = (message->reply_text[0] != '\0') ? lh : 0;
+}
+
+/* The bubble fill with its corners clipped: a three-row step (3,1,1) above
+   and below a full-width body, which reads as a rounded rectangle at every
+   size the transcript produces. Costs four extra fills, no new pens. Each
+   rounded edge is skipped when the viewport clip cut that edge, so a bubble
+   crossing the top or bottom of the transcript stays flush there. */
+static void tg_gui_fill_bubble(tg_gui_backend *backend, int pen, int x,
+                               int top, int w, int h, int round_top,
+                               int round_bottom)
+{
+    int r = 3;
+    int body_top = top;
+    int body_h = h;
+
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    if (w < (2 * r) + 2 || h < (2 * r) + ((round_top && round_bottom) ? r : 1)) {
+        round_top = 0;
+        round_bottom = 0;
+    }
+    if (round_top) {
+        backend->fill_rect(backend, pen, tg_gui_make_rect(x + r, top, w - (2 * r), 1));
+        backend->fill_rect(backend, pen, tg_gui_make_rect(x + 1, top + 1, w - 2, 2));
+        body_top += r;
+        body_h -= r;
+    }
+    if (round_bottom) {
+        backend->fill_rect(backend, pen,
+                           tg_gui_make_rect(x + 1, top + h - r, w - 2, 2));
+        backend->fill_rect(backend, pen,
+                           tg_gui_make_rect(x + r, top + h - 1, w - (2 * r), 1));
+        body_h -= r;
+    }
+    backend->fill_rect(backend, pen, tg_gui_make_rect(x, body_top, w, body_h));
 }
 
 static int tg_gui_paint_bubble(tg_gui_backend *backend,
                                const tg_gui_message *message, int area_x,
                                int area_w, int y, int lh, int top, int bottom,
                                long sel_lo, long sel_hi, int inline_photos,
-                               tg_gui_rect *out_photo)
+                               int grouped, tg_gui_rect *out_photo)
 {
     int style;
     unsigned long starts[TG_GUI_WRAP_MAX_LINES];
@@ -1805,7 +1866,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
         tg_gui_bubble_geom geo;
 
         tg_gui_bubble_geometry(backend, message, area_x, area_w, lh,
-                               inline_photos, &geo);
+                               inline_photos, grouped, &geo);
         pad = geo.pad;
         line_count = geo.line_count;
         for (k = 0; k < line_count; ++k) {
@@ -1855,7 +1916,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
             if (sender_pen < 0 || sender_pen >= TG_GUI_AVATAR_COLORS) {
                 sender_pen = 0;
             }
-            if ((y + lh) <= bottom && y >= top) {
+            if (!grouped && (y + lh) <= bottom && y >= top) {
                 backend->draw_text(backend, sender_pen + TG_GUI_PEN_COUNT,
                                    bubble_x + 2, y + lh, message->sender,
                                    (unsigned long)strlen(message->sender));
@@ -1878,9 +1939,10 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
             fill_bottom = bottom;
         }
         if (fill_bottom > fill_top) {
-            backend->fill_rect(backend, fill_pen,
-                               tg_gui_make_rect(bubble_x, fill_top, bubble_w,
-                                                fill_bottom - fill_top));
+            tg_gui_fill_bubble(backend, fill_pen, bubble_x, fill_top,
+                               bubble_w, fill_bottom - fill_top,
+                               fill_top == y + header_h,
+                               fill_bottom == y + bubble_h);
         }
     }
     if (has_reply) {
@@ -2017,7 +2079,7 @@ static int tg_gui_paint_bubble(tg_gui_backend *backend,
    bottom of the transcript so a fresh send/receive is always visible. */
 static int tg_gui_message_height(tg_gui_backend *backend,
                                  const tg_gui_message *message, int area_w,
-                                 int lh, int inline_photos)
+                                 int lh, int inline_photos, int grouped)
 {
     tg_gui_bubble_geom geo;
     int has_time;
@@ -2027,7 +2089,7 @@ static int tg_gui_message_height(tg_gui_backend *backend,
         return lh + 6;
     }
     tg_gui_bubble_geometry(backend, message, 0, area_w, lh, inline_photos,
-                           &geo);
+                           grouped, &geo);
     has_time = (message->time[0] != '\0');
     /* The status line also shows for an own message's read-receipt mark even
        when it has no timestamp (the optimistic echo). */
@@ -2427,16 +2489,56 @@ static void tg_gui_paint_main(const tg_gui_state *state,
     }
 
     header_h = lh + 10;
-    tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, area_x, lh + 2, state->title,
-                        area_w);
-    /* While the peer is typing, the second header line shows "X is typing..."
-       in the accent colour instead of the static subtitle (Telegram's cue). */
-    if (state->typing[0] != '\0') {
-        tg_gui_draw_clipped(backend, TG_GUI_PEN_ACCENT, area_x, header_h + lh - 2,
-                            state->typing, area_w);
-    } else {
-        tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT_DIM, area_x,
-                            header_h + lh - 2, state->subtitle, area_w);
+    /* The open chat's avatar sits before the title, same drawing as its
+       sidebar row (real image first, initials square as the fallback), so
+       the header answers "which chat am I in" the way the desktop client
+       does (field request). Text shifts right only when a chat is open, so
+       the login/cached states keep their plain layout. */
+    {
+        int text_x = area_x;
+
+        if (state->selected_chat >= 0 &&
+            state->selected_chat < state->chat_count) {
+            const tg_gui_chat *open_chat = &state->chats[state->selected_chat];
+            int av = (2 * lh) - 2;
+
+            if (backend->avatar_image == 0 ||
+                !backend->avatar_image(backend, open_chat->peer_id_hi,
+                                       open_chat->peer_id_lo,
+                                       tg_gui_make_rect(area_x, 4, av, av))) {
+                backend->avatar_fill(backend, open_chat->avatar_color,
+                                     tg_gui_make_rect(area_x, 4, av, av));
+                {
+                    unsigned long ilen =
+                        (unsigned long)strlen(open_chat->initials);
+                    int iw = backend->text_width(backend, open_chat->initials,
+                                                 ilen);
+                    int ix = area_x + ((av - iw) / 2);
+
+                    if (ix < area_x) {
+                        ix = area_x;
+                    }
+                    backend->draw_text(backend, TG_GUI_PEN_TEXT, ix,
+                                       4 + lh + ((lh - 6) / 2),
+                                       open_chat->initials, ilen);
+                }
+            }
+            text_x = area_x + av + 8;
+        }
+        tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT, text_x, lh + 2,
+                            state->title, area_w - (text_x - area_x));
+        /* While the peer is typing, the second header line shows "X is
+           typing..." in the accent colour instead of the static subtitle
+           (Telegram's cue). */
+        if (state->typing[0] != '\0') {
+            tg_gui_draw_clipped(backend, TG_GUI_PEN_ACCENT, text_x,
+                                header_h + lh - 2, state->typing,
+                                area_w - (text_x - area_x));
+        } else {
+            tg_gui_draw_clipped(backend, TG_GUI_PEN_TEXT_DIM, text_x,
+                                header_h + lh - 2, state->subtitle,
+                                area_w - (text_x - area_x));
+        }
     }
 
     input_h = tg_gui_input_h(state, backend, width, sidebar_w, lh);
@@ -2462,7 +2564,8 @@ static void tg_gui_paint_main(const tg_gui_state *state,
         total = 0;
         for (j = 0; j < state->message_count; ++j) {
             total += tg_gui_message_height(backend, &state->messages[j], area_w,
-                                           lh, state->inline_photos);
+                                           lh, state->inline_photos,
+                                           tg_gui_message_grouped(state, j));
         }
         {
             int real_max = (total > avail) ? (total - avail) : 0;
@@ -2556,7 +2659,8 @@ static void tg_gui_paint_main(const tg_gui_state *state,
            click-to-reply hit-test; the bottom is the next row's top. */
         ((tg_gui_state *)state)->msg_top[i] = y;
         h = tg_gui_message_height(backend, message, area_w, lh,
-                                  state->inline_photos);
+                                  state->inline_photos,
+                                  tg_gui_message_grouped(state, i));
         /* Draw only messages intersecting the viewport; each part is clipped to
            [transcript_top, transcript_bottom] inside the bubble. */
         if (y + h > transcript_top && y < transcript_bottom) {
@@ -2606,7 +2710,7 @@ static void tg_gui_paint_main(const tg_gui_state *state,
                 (void)tg_gui_paint_bubble(
                     backend, message, area_x, area_w, y, lh, transcript_top,
                     transcript_bottom, sel_lo, sel_hi, state->inline_photos,
-                    &photo_rect);
+                    tg_gui_message_grouped(state, i), &photo_rect);
                 if (photo_rect.w > 0 && photo_rect.h > 0) {
                     st->photo_x[i] = photo_rect.x;
                     st->photo_y[i] = photo_rect.y;
@@ -2703,7 +2807,8 @@ long tg_gui_transcript_char_at(const tg_gui_state *state,
         return -1;
     }
     tg_gui_bubble_geometry(backend, message, state->tr_area_x,
-                           state->tr_area_w, lh, state->inline_photos, &geo);
+                           state->tr_area_w, lh, state->inline_photos,
+                           tg_gui_message_grouped(state, msg_index), &geo);
     ty = y - (state->msg_top[msg_index] + geo.header_h + geo.reply_h +
               geo.photo_h + geo.photo_gap);
     if (ty < 0) {
@@ -3930,6 +4035,43 @@ int tg_gui_self_test(void)
             puts("gui self-test: forwarding context items missing");
             return 2;
         }
+    }
+
+    /* Sender grouping: a run of incoming messages from one sender shows the
+       name once. Own, system and sender-change neighbours all break the run,
+       and the first message never groups. */
+    {
+        tg_gui_message saved0 = state.messages[0];
+        tg_gui_message saved1 = state.messages[1];
+
+        tg_gui_copy(state.messages[0].sender, sizeof(state.messages[0].sender),
+                    "Mario");
+        tg_gui_copy(state.messages[1].sender, sizeof(state.messages[1].sender),
+                    "Mario");
+        state.messages[0].is_own = 0;
+        state.messages[0].is_system = 0;
+        state.messages[1].is_own = 0;
+        state.messages[1].is_system = 0;
+        if (tg_gui_message_grouped(&state, 0) ||
+            !tg_gui_message_grouped(&state, 1)) {
+            puts("gui self-test: sender grouping run mismatch");
+            return 2;
+        }
+        tg_gui_copy(state.messages[1].sender, sizeof(state.messages[1].sender),
+                    "Luigi");
+        if (tg_gui_message_grouped(&state, 1)) {
+            puts("gui self-test: sender change must break the group");
+            return 2;
+        }
+        tg_gui_copy(state.messages[1].sender, sizeof(state.messages[1].sender),
+                    "Mario");
+        state.messages[0].is_own = 1;
+        if (tg_gui_message_grouped(&state, 1)) {
+            puts("gui self-test: own message above must break the group");
+            return 2;
+        }
+        state.messages[0] = saved0;
+        state.messages[1] = saved1;
     }
 
     /* Save-as naming/path joining is platform-neutral. Existing destinations
