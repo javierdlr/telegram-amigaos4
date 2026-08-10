@@ -6117,6 +6117,9 @@ static int tg_mtproto_load_peer_cache_file(const char *path,
     unsigned long id_lo;
     unsigned long top_message;
     unsigned long unread_count;
+#ifdef TG_DIAG_TRACE
+    unsigned long diag_lines;
+#endif
 
     if (path == 0 || cache == 0) {
         return 2;
@@ -6127,7 +6130,27 @@ static int tg_mtproto_load_peer_cache_file(const char *path,
         return 2;
     }
     public_count = 0UL;
+#ifdef TG_DIAG_TRACE
+    /* A600 hunt: this parse is the hottest suspect in the crash window. A
+       tick every 8 lines costs little on a diag build and, if the run dies
+       mid-file, the last tick says HOW FAR it got -- which line of the
+       tester's own peers file to look at. */
+    diag_lines = 0UL;
+    tg_gui_log("diag: peers file open");
+#define TG_PEERS_DIAG_TICK() \
+    do { \
+        ++diag_lines; \
+        if ((diag_lines & 7UL) == 0UL) { \
+            char diag_msg[40]; \
+            sprintf(diag_msg, "diag: peers line %lu", diag_lines); \
+            tg_gui_log(diag_msg); \
+        } \
+    } while (0)
+#else
+#define TG_PEERS_DIAG_TICK() ((void)0)
+#endif
     while (fgets(line, sizeof(line), file) != 0) {
+        TG_PEERS_DIAG_TICK();
         peer_index = 0UL;
         id_hi = id_lo = top_message = unread_count = 0UL;
         type[0] = hash_text[0] = self_text[0] = bot_text[0] = '\0';
@@ -6198,6 +6221,15 @@ static int tg_mtproto_load_peer_cache_file(const char *path,
         }
     }
     fclose(file);
+#ifdef TG_DIAG_TRACE
+    {
+        char diag_msg[48];
+
+        sprintf(diag_msg, "diag: peers file done, %lu entries", cache->count);
+        tg_gui_log(diag_msg);
+    }
+#endif
+#undef TG_PEERS_DIAG_TICK
     tg_mtproto_recount_peer_cache(cache);
     return cache->count > 0UL || public_count > 0UL ? 0 : 2;
 }
@@ -11745,10 +11777,26 @@ int tg_mtproto_auth_chat_file(const char *host,
 #else
     tg_mtproto_set_session_updates(1);
 #endif
+#ifdef TG_DIAG_TRACE
+    /* A600 hunt, DIAG4: the crashed run's trail ended at "loading saved
+       session" while the screen reached "Loading chats..." -- this stretch
+       had no probes at all. One line per step turns the next field log into
+       the name of the call that never returned. */
+    tg_gui_log("diag: chat console ready");
+#endif
     tg_mtproto_chat_print_system_line(stream, "Loading chats...");
+#ifdef TG_DIAG_TRACE
+    tg_gui_log("diag: loading-chats printed, peers parse begin");
+#endif
     if (tg_mtproto_peer_cache_available(peer_cache_file)) {
+#ifdef TG_DIAG_TRACE
+        tg_gui_log("diag: peers parse done, cache usable");
+#endif
         rc = 0;
     } else {
+#ifdef TG_DIAG_TRACE
+        tg_gui_log("diag: peers parse done, cache NOT usable -> network list");
+#endif
         quiet = tg_mtproto_open_quiet_stream(stream);
         rc = tg_mtproto_auth_list_peers_file(host, port, api_file, auth_file,
                                              dc_id_text, peer_limit,
@@ -11773,7 +11821,13 @@ int tg_mtproto_auth_chat_file(const char *host,
     if (rc != 0) {
         tg_mtproto_chat_print_system_line(stream, "Using cached chats.");
     }
+#ifdef TG_DIAG_TRACE
+    tg_gui_log("diag: printing opening-session");
+#endif
     tg_mtproto_chat_print_system_line(stream, "Opening session...");
+#ifdef TG_DIAG_TRACE
+    tg_gui_log("diag: opening-session printed");
+#endif
     quiet = tg_mtproto_open_quiet_stream(stream);
     rc = tg_mtproto_load_api_id_file(api_file, api_id, sizeof(api_id),
                                      quiet, label);

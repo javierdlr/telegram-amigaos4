@@ -203,7 +203,9 @@ static int tg_main_body(int argc, char **argv)
            reached main" from "died at step N". */
         tg_gui_log_enable();
         tg_gui_log("diag: main, workbench launch");
+#if defined(__amigaos3__)
         tg_gui_log(tg_diag_machine_line());
+#endif
 #endif
         tt = tg_platform_wb_tui_mode(argv);
         want_tui = (tt >= 0) ? tt : tg_main_wb_wants_tui(argv);

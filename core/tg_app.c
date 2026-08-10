@@ -294,15 +294,26 @@ static int tg_run_mtproto_start_file(const char *api_file,
         memset(auth_key, 0, sizeof(auth_key));
     }
     if (session_status != TG_MTPROTO_SESSION_OK) {
+#ifdef TG_DIAG_TRACE
+        /* A600 hunt: a fast clean exit right after "loading saved session"
+           was unexplainable from the log alone -- name the reason. */
+        tg_gui_log("diag: auth file unusable, exiting");
+#endif
         printf("mtproto start: auth-file-unusable %s\n",
                tg_mtproto_session_status_name(session_status));
         return 2;
     }
     if (tg_mtproto_production_endpoint_for_dc(session.dc_id, &host,
                                              &dc_id_text) != 0) {
+#ifdef TG_DIAG_TRACE
+        tg_gui_log("diag: unsupported dc, exiting");
+#endif
         printf("mtproto start: unsupported-dc %lu\n", session.dc_id);
         return 2;
     }
+#ifdef TG_DIAG_TRACE
+    tg_gui_log("diag: session loaded, dc endpoint ok");
+#endif
 
     if (!tg_run_mtproto_peer_cache_exists(peer_cache_file)) {
         puts("Login complete.");
@@ -311,6 +322,9 @@ static int tg_run_mtproto_start_file(const char *api_file,
     }
 
     puts("Opening chat.");
+#ifdef TG_DIAG_TRACE
+    tg_gui_log("diag: entering chat loop");
+#endif
     return tg_mtproto_auth_chat_file(host, "443", api_file, auth_file,
                                      dc_id_text, peer_cache_file, stdout);
 }
