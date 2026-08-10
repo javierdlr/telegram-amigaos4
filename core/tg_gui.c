@@ -748,6 +748,52 @@ static int tg_gui_centred_baseline(tg_gui_backend *backend, int box_y,
     return box_y + ((box_h - glyph_h) / 2) + ascent;
 }
 
+/* Left inset of a disc of diameter h at pixel row y. Doubled coordinates
+   keep the arithmetic integral: the row's centre sits at 2*y+1 of 2*h, and
+   the loop is a tiny integer square root (h is a couple of text lines at
+   most). Shared by every piece of round chrome below. */
+static int tg_gui_round_inset(int y, int h)
+{
+    int dy = (2 * y + 1) - h;
+    int rr = (h * h) - (dy * dy);
+    int dx = 0;
+
+    if (rr <= 0) {
+        return h / 2;
+    }
+    while ((dx + 1) * (dx + 1) <= rr) {
+        ++dx;
+    }
+    return (h - dx) / 2;
+}
+
+/* A pill: fully rounded left and right caps (radius h/2), one fill_rect run
+   per pixel row; with w == h it is a disc. The unread pills, the jump button
+   and its badge read as the desktop client's round chrome without any new
+   backend primitive. A pill narrower than tall keeps the plain box. */
+static void tg_gui_fill_pill(tg_gui_backend *backend, int pen, tg_gui_rect rect)
+{
+    int y;
+
+    if (rect.w <= 0 || rect.h <= 0) {
+        return;
+    }
+    if (rect.w < rect.h) {
+        backend->fill_rect(backend, pen, rect);
+        return;
+    }
+    for (y = 0; y < rect.h; ++y) {
+        int inset = tg_gui_round_inset(y, rect.h);
+        int w = rect.w - (2 * inset);
+
+        if (w > 0) {
+            backend->fill_rect(backend, pen,
+                               tg_gui_make_rect(rect.x + inset, rect.y + y,
+                                                w, 1));
+        }
+    }
+}
+
 /* The blinking caret, aligned to the glyph cell of the line it sits on.
    Text is drawn from its BASELINE, so a caret positioned from the line box
    alone floats above the letters by the font's descender depth: invisible with
@@ -1300,11 +1346,11 @@ static void tg_gui_paint_sidebar(const tg_gui_state *state,
                 /* A chat that just got a notification draws its badge in the
                    accent pen to stand out; the live event loop toggles
                    chat->flash for a true blink. */
-                backend->fill_rect(backend,
-                                   chat->flash ? TG_GUI_PEN_ACCENT
-                                               : TG_GUI_PEN_BADGE,
-                                   tg_gui_make_rect(badge_x, badge_top, badge_w,
-                                                    badge_h));
+                tg_gui_fill_pill(backend,
+                                 chat->flash ? TG_GUI_PEN_ACCENT
+                                             : TG_GUI_PEN_BADGE,
+                                 tg_gui_make_rect(badge_x, badge_top, badge_w,
+                                                  badge_h));
                 num_x = badge_x +
                         (badge_w - backend->text_width(
                                        backend, badge,
@@ -2418,7 +2464,7 @@ static void tg_gui_paint_jump_button(tg_gui_backend *backend, int x, int y,
     int ty = y + (h / 2) - (arm / 2);
     int r;
 
-    backend->fill_rect(backend, TG_GUI_PEN_ACCENT, tg_gui_make_rect(x, y, w, h));
+    tg_gui_fill_pill(backend, TG_GUI_PEN_ACCENT, tg_gui_make_rect(x, y, w, h));
     for (r = 0; r <= arm; ++r) {
         int half = arm - r;      /* wide at top, narrowing to a point downward */
         backend->fill_rect(backend, TG_GUI_PEN_ACCENT_TEXT,
@@ -2438,8 +2484,8 @@ static void tg_gui_paint_jump_button(tg_gui_backend *backend, int x, int y,
             num[0] = (char)('0' + unread);
             num[1] = '\0';
         }
-        backend->fill_rect(backend, TG_GUI_PEN_BADGE,
-                           tg_gui_make_rect(bx, by, bw, bw));
+        tg_gui_fill_pill(backend, TG_GUI_PEN_BADGE,
+                         tg_gui_make_rect(bx, by, bw, bw));
         backend->draw_text(backend, TG_GUI_PEN_BADGE_TEXT, bx + 2,
                            tg_gui_centred_baseline(backend, by, bw), num,
                            (unsigned long)strlen(num));

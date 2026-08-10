@@ -724,12 +724,34 @@ static void tg_gui_amiga_fill_rect(tg_gui_backend *backend, int pen,
     RectFill(ctx->rport, x0, y0, x1, y1);
 }
 
+/* Left inset of a disc of diameter h at pixel row y (doubled coordinates,
+   tiny integer square root). Twin of the renderer's tg_gui_round_inset; the
+   backend keeps its own copy because the renderer's is a different module's
+   static. Avatars draw as discs with it, both the initials fallback and the
+   decoded image, so the corners show the row background exactly like the
+   desktop client's round avatars. */
+static int tg_gui_amiga_disc_inset(int y, int h)
+{
+    int dy = (2 * y + 1) - h;
+    int rr = (h * h) - (dy * dy);
+    int dx = 0;
+
+    if (rr <= 0) {
+        return h / 2;
+    }
+    while ((dx + 1) * (dx + 1) <= rr) {
+        ++dx;
+    }
+    return (h - dx) / 2;
+}
+
 static void tg_gui_amiga_avatar_fill(tg_gui_backend *backend, int color_index,
                                      tg_gui_rect rect)
 {
     tg_gui_amiga_ctx *ctx;
     int x0;
     int y0;
+    int y;
 
     ctx = (tg_gui_amiga_ctx *)backend->context;
     if (rect.w <= 0 || rect.h <= 0) {
@@ -742,7 +764,17 @@ static void tg_gui_amiga_avatar_fill(tg_gui_backend *backend, int color_index,
     y0 = ctx->origin_y + rect.y;
     tg_gui_prim_log("afill", x0, y0, rect.w, rect.h);
     SetAPen(ctx->rport, ctx->avatar_pens[color_index]);
-    RectFill(ctx->rport, x0, y0, x0 + rect.w - 1, y0 + rect.h - 1);
+    /* One RectFill per row, clipped to the disc: the corners keep whatever
+       the row painted underneath (tint, background), no knockout needed. */
+    for (y = 0; y < rect.h; ++y) {
+        int inset = tg_gui_amiga_disc_inset(y, rect.h);
+        int rw = rect.w - (2 * inset);
+
+        if (rw > 0) {
+            RectFill(ctx->rport, x0 + inset, y0 + y,
+                     x0 + inset + rw - 1, y0 + y);
+        }
+    }
 }
 
 /* --- real avatars (decoded stripped thumbs) ------------------------------
@@ -1317,17 +1349,23 @@ static int tg_gui_amiga_avatar_image(tg_gui_backend *backend,
         return 0;
     }
     /* Replay the pen grid scaled to rect (nearest), row by row with
-       run-length RectFills into the current (buffered) RastPort. */
+       run-length RectFills into the current (buffered) RastPort, each row
+       clipped to the disc so the avatar comes out round. */
     for (y = 0; y < rect.h; ++y) {
         int sy = (y * TG_GUI_AV_SZ) / rect.h;
-        int x = 0;
+        int row_inset = tg_gui_amiga_disc_inset(y, rect.h);
+        int row_end = rect.w - row_inset;
+        int x = row_inset;
 
-        while (x < rect.w) {
+        if (row_end <= x) {
+            continue;
+        }
+        while (x < row_end) {
             int sx = (x * TG_GUI_AV_SZ) / rect.w;
             unsigned char p = slot->pen[sy * TG_GUI_AV_SZ + sx];
             int run = x + 1;
 
-            while (run < rect.w &&
+            while (run < row_end &&
                    slot->pen[sy * TG_GUI_AV_SZ +
                              ((run * TG_GUI_AV_SZ) / rect.w)] == p) {
                 ++run;
