@@ -333,6 +333,48 @@ No promise about the number that comes out: a retro machine will not
 saturate a 90 Mbit line, and it does not need to. But under three per
 cent of it is not a hardware limit, it is something we are doing.
 
+## Planned: stickers inline, and emoji that look like emoji
+
+Two field requests that share a renderer.
+
+A sticker arrives as a document, so today it shows as a plain file
+label with a filename, which tells the reader nothing about what was
+sent. Three steps, in order of what they cost:
+
+1. Almost free: `documentAttributeSticker` is already parsed, but its
+   `alt` field, the emoji the sticker stands for, is thrown away by a
+   skip. Reading it instead turns the bubble into the sticker's own
+   emoji rather than `Sticker.webp`.
+2. The picture: a sticker document carries the same `thumbs` vector the
+   inline-photo work already walks, so picking the best entry and
+   handing it to the photo pipeline shows the sticker as a still, under
+   the existing Inline photos preference. Worth checking per sticker
+   type first, since our decoder reads JPEG and not every sticker thumb
+   is one.
+3. Not planned: WEBP, the gzipped Lottie of animated stickers and WEBM
+   video stickers. We have no decoder for any of them, and animation is
+   not what this client is for.
+
+Emoji already do more than they appear to: 112 codepoints are mapped by
+hand to text emoticons, so a grinning face reads as `:D` and a heart as
+`<3`, and symbols with no sensible shape become a neutral placeholder
+instead of a question mark, which would read as lost text. Two separate
+jobs remain, and the less obvious one matters more.
+
+Sending them is impossible today. An Amiga keyboard produces Latin-1,
+so there is no way to type a codepoint the composer can send, and a
+user who receives `:D` cannot answer in kind. A small picker that
+inserts the chosen emoji into the composer closes that, and the rest of
+the road is already there: the send path has converted the composer to
+UTF-8 since the beginning. This comes first.
+
+Drawing them as pictures comes second. The curated list already says
+which ones are worth having, and a small built-in glyph sheet would
+cover them; the cost is not the drawing but the text renderer, which
+would have to break a line into runs to place an image between them.
+That is the code that has hurt us before under AfA_OS, so it gets its
+own hardware pass before anyone calls it done.
+
 ## Planned: two MorphOS popup glitches
 
 Both reported from the field on 0.0.9 and both about the right-click popup
