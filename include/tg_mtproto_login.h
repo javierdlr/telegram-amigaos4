@@ -189,7 +189,8 @@ tg_mtproto_tl_status tg_mtproto_build_upload_save_big_file_part(
     unsigned long data_length);
 
 /* messages.sendMedia#ac55d9c1 with inputMediaUploadedDocument (force_file,
-   filename attribute, empty caption) and inputFile. random_id must be fresh. */
+   filename attribute) and inputFile. caption is UTF-8, NULL/empty for none.
+   random_id must be fresh. */
 tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,
@@ -203,11 +204,13 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
     unsigned long file_parts,
     const char *file_name,
     const char *mime_type,
+    const char *caption,
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 
 /* messages.sendMedia#ac55d9c1 with inputMediaUploadedPhoto#1e287d04 and a
-   small inputFile. Layer 214; JPEG validation happens before this writer. */
+   small inputFile. Layer 214; JPEG validation happens before this writer.
+   caption is UTF-8, NULL/empty for none. */
 tg_mtproto_tl_status tg_mtproto_build_messages_send_media_photo(
     tg_mtproto_tl_writer *writer,
     unsigned long peer_constructor,
@@ -220,6 +223,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_photo(
     unsigned long file_id_lo,
     unsigned long file_parts,
     const char *file_name,
+    const char *caption,
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 
@@ -238,6 +242,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_big_document(
     unsigned long file_parts,
     const char *file_name,
     const char *mime_type,
+    const char *caption,
     unsigned long random_id_hi,
     unsigned long random_id_lo);
 

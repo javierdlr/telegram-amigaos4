@@ -5292,6 +5292,30 @@ static int tg_gui_amiga_choose_jpeg_mode(struct Window *win)
     return (int)tg_gui_amiga_easyreq_cancel_args(win, &es);
 }
 
+/* Photo caption from the composer: when the user confirms a photo send while
+   a draft sits in the composer, offer that text as the caption. Yes empties
+   the composer (the text leaves with the photo); No keeps the draft intact
+   and the photo goes out bare. Returns the caption or NULL. */
+static const char *tg_gui_window_photo_caption(tg_gui_state *state,
+                                               struct Window *win)
+{
+    struct EasyStruct es;
+
+    if (state == 0 || state->input[0] == '\0') {
+        return 0;
+    }
+    es.es_StructSize = (ULONG)sizeof(struct EasyStruct);
+    es.es_Flags = 0UL;
+    es.es_Title = (STRPTR)"Photo caption";
+    es.es_TextFormat =
+        (STRPTR)"Send the message you are typing\nas the photo's caption?";
+    es.es_GadgetFormat = (STRPTR)"Yes|No";
+    if (tg_gui_amiga_easyreq_cancel_args(win, &es) != 1) {
+        return 0;
+    }
+    return state->input;
+}
+
 /* Confirm + remove the selected chat from the sidebar, persist it, then land on
    a neighbouring chat (or an empty transcript if the list is now empty). Shared
    by the menu item and the Del key. No-op outside chat mode / with no selection. */
@@ -5973,8 +5997,19 @@ static void tg_gui_window_send_file_mode(tg_gui_state *state,
     if (path[0] == '\0') {
         return; /* cancelled */
     }
-    rc = as_photo ? tg_gui_session_transfer_start_photo(path, stdout)
-                  : tg_gui_session_transfer_start_upload(path, stdout);
+    {
+        const char *caption = as_photo ? tg_gui_window_photo_caption(state, win)
+                                       : 0;
+
+        rc = as_photo
+                 ? tg_gui_session_transfer_start_photo(path, caption, stdout)
+                 : tg_gui_session_transfer_start_upload(path, stdout);
+        if (rc == 0 && caption != 0) {
+            /* The draft left with the photo: an emptied composer says so. */
+            state->input[0] = '\0';
+            state->input_caret = 0;
+        }
+    }
     if (rc == 0) {
         const char *pn = path;
         const char *pp;
@@ -9911,11 +9946,22 @@ static int tg_gui_run_window_once(tg_gui_state *state)
                         tg_gui_window_paint(state, &backend);
                     } else {
                         as_photo = jpeg_mode == 1;
-                        urc = as_photo
-                            ? tg_gui_session_transfer_start_photo(dropped,
-                                                                  stdout)
-                            : tg_gui_session_transfer_start_upload(dropped,
-                                                                   stdout);
+                        {
+                            const char *dcap =
+                                as_photo ? tg_gui_window_photo_caption(
+                                               state, ctx.window)
+                                         : 0;
+
+                            urc = as_photo
+                                ? tg_gui_session_transfer_start_photo(
+                                      dropped, dcap, stdout)
+                                : tg_gui_session_transfer_start_upload(
+                                      dropped, stdout);
+                            if (urc == 0 && dcap != 0) {
+                                state->input[0] = '\0';
+                                state->input_caret = 0;
+                            }
+                        }
                         if (urc == 0) {
                             /* The progress line below carries the name for the
                                whole transfer -- a one-off "Sending X..." here

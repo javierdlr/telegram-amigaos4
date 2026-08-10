@@ -2209,6 +2209,7 @@ static tg_mtproto_tl_status tg_build_messages_send_media_document_common(
     unsigned long file_parts,
     const char *file_name,
     const char *mime_type,
+    const char *caption,
     unsigned long random_id_hi,
     unsigned long random_id_lo,
     int big_file)
@@ -2269,7 +2270,9 @@ static tg_mtproto_tl_status tg_build_messages_send_media_document_common(
         status = tg_write_string(writer, file_name);
     }
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_write_string(writer, ""); /* message: no caption */
+        /* message: the caption (UTF-8), shown under the attachment. Empty
+           when the sender typed none, exactly as before. */
+        status = tg_write_string(writer, caption != 0 ? caption : "");
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u64(writer, random_id_hi, random_id_lo);
@@ -2290,13 +2293,14 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_document(
     unsigned long file_parts,
     const char *file_name,
     const char *mime_type,
+    const char *caption,
     unsigned long random_id_hi,
     unsigned long random_id_lo)
 {
     return tg_build_messages_send_media_document_common(
         writer, peer_constructor, peer_id_hi, peer_id_lo, access_hash_hi,
         access_hash_lo, has_access_hash, file_id_hi, file_id_lo, file_parts,
-        file_name, mime_type, random_id_hi, random_id_lo, 0);
+        file_name, mime_type, caption, random_id_hi, random_id_lo, 0);
 }
 
 tg_mtproto_tl_status tg_mtproto_build_messages_send_media_photo(
@@ -2311,6 +2315,7 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_photo(
     unsigned long file_id_lo,
     unsigned long file_parts,
     const char *file_name,
+    const char *caption,
     unsigned long random_id_hi,
     unsigned long random_id_lo)
 {
@@ -2352,7 +2357,8 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_photo(
         status = tg_write_string(writer, ""); /* md5: server-side optional */
     }
     if (status == TG_MTPROTO_TL_OK) {
-        status = tg_write_string(writer, ""); /* no caption */
+        /* message: the photo caption (UTF-8); empty when none was typed. */
+        status = tg_write_string(writer, caption != 0 ? caption : "");
     }
     if (status == TG_MTPROTO_TL_OK) {
         status = tg_mtproto_tl_write_u64(writer, random_id_hi, random_id_lo);
@@ -2373,13 +2379,14 @@ tg_mtproto_tl_status tg_mtproto_build_messages_send_media_big_document(
     unsigned long file_parts,
     const char *file_name,
     const char *mime_type,
+    const char *caption,
     unsigned long random_id_hi,
     unsigned long random_id_lo)
 {
     return tg_build_messages_send_media_document_common(
         writer, peer_constructor, peer_id_hi, peer_id_lo, access_hash_hi,
         access_hash_lo, has_access_hash, file_id_hi, file_id_lo, file_parts,
-        file_name, mime_type, random_id_hi, random_id_lo, 1);
+        file_name, mime_type, caption, random_id_hi, random_id_lo, 1);
 }
 
 tg_mtproto_tl_status tg_mtproto_parse_rpc_result(
@@ -5778,7 +5785,7 @@ int tg_mtproto_login_self_test(void)
         tg_mtproto_tl_writer_init(&w, q, sizeof(q));
         if (tg_mtproto_build_messages_send_media_document(
                 &w, TG_PEER_USER_CONSTRUCTOR, 0UL, 1UL, 0UL, 2UL, 1,
-                0x0000deadUL, 0x0000beefUL, 3UL, "b.txt", "text/plain",
+                0x0000deadUL, 0x0000beefUL, 3UL, "b.txt", "text/plain", 0,
                 0x11UL, 0x22UL) != TG_MTPROTO_TL_OK ||
             q[0] != 0xc1U || q[1] != 0xd9U ||        /* sendMedia LAYER 214 */
             q[2] != 0x55U || q[3] != 0xacU ||
@@ -5792,7 +5799,7 @@ int tg_mtproto_login_self_test(void)
         tg_mtproto_tl_writer_init(&w, q, sizeof(q));
         if (tg_mtproto_build_messages_send_media_photo(
                 &w, TG_PEER_USER_CONSTRUCTOR, 0UL, 1UL, 0UL, 2UL, 1,
-                0x0000deadUL, 0x0000beefUL, 3UL, "p.jpg",
+                0x0000deadUL, 0x0000beefUL, 3UL, "p.jpg", 0,
                 0x11UL, 0x22UL) != TG_MTPROTO_TL_OK ||
             w.length != 76UL ||
             q[0] != 0xc1U || q[1] != 0xd9U || q[2] != 0x55U ||
@@ -5809,11 +5816,29 @@ int tg_mtproto_login_self_test(void)
             puts("photo send self-test: sendMedia(photo) layout mismatch");
             return 2;
         }
+        /* Caption run (0.0.91): "Hi!" lands in the message field. A 3-byte
+           TL string is 1 length byte + 3 bytes, already a multiple of four,
+           so it fills exactly the four bytes the empty string used and the
+           random_id stays put. */
+        tg_mtproto_tl_writer_init(&w, q, sizeof(q));
+        if (tg_mtproto_build_messages_send_media_photo(
+                &w, TG_PEER_USER_CONSTRUCTOR, 0UL, 1UL, 0UL, 2UL, 1,
+                0x0000deadUL, 0x0000beefUL, 3UL, "p.jpg", "Hi!",
+                0x11UL, 0x22UL) != TG_MTPROTO_TL_OK ||
+            w.length != 76UL ||
+            q[64] != 0x03U ||
+            q[65] != (unsigned char)'H' ||
+            q[66] != (unsigned char)'i' ||
+            q[67] != (unsigned char)'!' ||
+            q[68] != 0x22U || q[72] != 0x11U) {
+            puts("photo caption self-test: caption bytes mismatch");
+            return 2;
+        }
         tg_mtproto_tl_writer_init(&w, q, sizeof(q));
         if (tg_mtproto_build_messages_send_media_big_document(
                 &w, TG_PEER_USER_CONSTRUCTOR, 0UL, 1UL, 0UL, 2UL, 1,
                 0x0000deadUL, 0x0000beefUL, 9UL, "b.bin",
-                "application/octet-stream", 0x11UL, 0x22UL) !=
+                "application/octet-stream", "Hi!", 0x11UL, 0x22UL) !=
                 TG_MTPROTO_TL_OK ||
             q[36] != 0xb5U || q[37] != 0x0bU ||
             q[38] != 0x4fU || q[39] != 0xfaU) {

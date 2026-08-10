@@ -390,7 +390,7 @@ static int tg_mtproto_file_send(const struct tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
                                 tg_gui_upload_progress_fn progress,
                                 void *progress_data,
-                                int as_photo);
+                                int as_photo, const char *caption);
 /* Live read-receipt sink (5c): the push collector records the most recent
    updateReadHistoryOutbox (which peer read up to which id); the GUI loop applies
    it when the peer matches the open chat. NULL outside a GUI session. */
@@ -12350,11 +12350,14 @@ int tg_mtproto_auth_chat_file(const char *host,
                    tab forms, so a syntax probe can never fall through and be
                    SENT as a literal message. */
                 const char *fpath = cmd_arg;
+                const char *fcaption = 0;
                 char fpath_buf[256];
 
                 /* An icon dropped on the console injects the path QUOTED (the
                    con-handler quotes paths with spaces, Shell-style): accept
-                   "path" by stripping the surrounding double quotes. */
+                   "path" by stripping the surrounding double quotes. Whatever
+                   follows the closing quote (or, for /photo, the first space
+                   of an unquoted path) is the caption. */
                 if (fpath[0] == '"') {
                     unsigned long fl = 0UL;
 
@@ -12364,16 +12367,47 @@ int tg_mtproto_auth_chat_file(const char *host,
                         fpath_buf[fl] = fpath[fl];
                         ++fl;
                     }
+                    if (send_as_photo && fpath[fl] == '"') {
+                        const char *ct = fpath + fl + 1UL;
+
+                        while (*ct == ' ') {
+                            ++ct;
+                        }
+                        if (*ct != '\0') {
+                            fcaption = ct;
+                        }
+                    }
                     fpath_buf[fl] = '\0';
                     fpath = fpath_buf;
+                } else if (send_as_photo) {
+                    unsigned long fl = 0UL;
+
+                    while (fpath[fl] != '\0' && fpath[fl] != ' ' &&
+                           fl + 1UL < sizeof(fpath_buf)) {
+                        fpath_buf[fl] = fpath[fl];
+                        ++fl;
+                    }
+                    if (fpath[fl] == ' ') {
+                        const char *ct = fpath + fl;
+
+                        while (*ct == ' ') {
+                            ++ct;
+                        }
+                        if (*ct != '\0') {
+                            fcaption = ct;
+                        }
+                        fpath_buf[fl] = '\0';
+                        fpath = fpath_buf;
+                    }
                 }
                 if (peer_index[0] == '\0') {
                     tg_mtproto_chat_print_system_line(
                         stream, "Choose a chat first with /peers or /add name.");
                 } else if (*fpath == '\0') {
                     tg_mtproto_chat_print_system_line(
-                        stream, send_as_photo ? "Usage: /photo <jpeg-path>"
-                                              : "Usage: /sendfile <path>");
+                        stream, send_as_photo
+                            ? "Usage: /photo <jpeg-path> [caption]"
+                            : "Usage: /sendfile <path>");
                 } else {
                     tg_mtproto_file_ctx fc;
                     int frc;
@@ -12388,7 +12422,8 @@ int tg_mtproto_auth_chat_file(const char *host,
                         stream, send_as_photo ? "Uploading photo..."
                                               : "Uploading...");
                     frc = tg_mtproto_file_send(&fc, fpath, stream, 0, 0,
-                                               send_as_photo);
+                                               send_as_photo,
+                                               send_as_photo ? fcaption : 0);
                     tui_cap = tg_console_tui_capture_begin(stream);
                     if (frc == 0) {
                         if (send_as_photo &&
@@ -16641,6 +16676,10 @@ typedef struct tg_gui_ul_state {
     unsigned long got;  /* bytes of the CURRENT part held in part_buf */
     int part_loaded;    /* part_buf holds the current (unacknowledged) part */
     int rc;
+    /* UTF-8 caption for the sendMedia, converted at begin(); empty for none.
+       1024 bytes tracks the server's own caption limit for normal accounts.
+       The photo-over-10-MiB document fallback carries it too. */
+    char caption[1024];
 } tg_gui_ul_state;
 
 static tg_gui_ul_state tg_gui_ul;
@@ -16782,6 +16821,7 @@ static int tg_mtproto_jpeg_file_valid(FILE *f)
    != 0 = failed fast with the usual rc codes (1 generic, 2 too big, 3 file,
    5 empty). */
 static int tg_mtproto_upload_begin(const tg_mtproto_file_ctx *fc,
+                                   const char *caption,
                                    const char *path, FILE *stream,
                                    int as_photo)
 {
@@ -16805,6 +16845,33 @@ static int tg_mtproto_upload_begin(const tg_mtproto_file_ctx *fc,
     }
     tg_gui_ul.peer_index_copy[n] = '\0';
     tg_gui_ul.fc.peer_index = tg_gui_ul.peer_index_copy;
+    if (caption != 0 && caption[0] != '\0') {
+#if TG_MTPROTO_DISPLAY_LATIN1
+        /* The composer/console text is ISO-8859-1 (Amiga keymap): encode it
+           for the wire. On overflow keep the raw bytes, the same best-effort
+           the message send path uses. */
+        if (!tg_mtproto_latin1_to_utf8(caption, tg_gui_ul.caption,
+                                       sizeof(tg_gui_ul.caption))) {
+            unsigned long ci;
+
+            for (ci = 0UL; caption[ci] != '\0' &&
+                           ci + 1UL < sizeof(tg_gui_ul.caption); ++ci) {
+                tg_gui_ul.caption[ci] = caption[ci];
+            }
+            tg_gui_ul.caption[ci] = '\0';
+        }
+#else
+        {
+            unsigned long ci;
+
+            for (ci = 0UL; caption[ci] != '\0' &&
+                           ci + 1UL < sizeof(tg_gui_ul.caption); ++ci) {
+                tg_gui_ul.caption[ci] = caption[ci];
+            }
+            tg_gui_ul.caption[ci] = '\0';
+        }
+#endif
+    }
     tg_gui_ul.stream = stream;
     tg_mtproto_query_fail[0] = '\0'; /* fresh reason for this upload */
     tg_gui_ul.f = fopen(path, "rb");
@@ -16921,7 +16988,8 @@ static int tg_mtproto_upload_step(void)
                 &writer, tg_gui_ul.pc, tg_gui_ul.ph, tg_gui_ul.pl,
                 tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
                 tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
-                tg_gui_ul.parts, tg_gui_ul.name, rand_hi, rand_lo);
+                tg_gui_ul.parts, tg_gui_ul.name, tg_gui_ul.caption,
+                rand_hi, rand_lo);
             query_name = "mtproto sendMedia(photo)";
         } else if (tg_gui_ul.big_file) {
             build_status = tg_mtproto_build_messages_send_media_big_document(
@@ -16929,7 +16997,8 @@ static int tg_mtproto_upload_step(void)
                 tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
                 tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
                 tg_gui_ul.parts, tg_gui_ul.name,
-                "application/octet-stream", rand_hi, rand_lo);
+                "application/octet-stream", tg_gui_ul.caption,
+                rand_hi, rand_lo);
             query_name = "mtproto sendMedia(document)";
         } else {
             build_status = tg_mtproto_build_messages_send_media_document(
@@ -16937,7 +17006,8 @@ static int tg_mtproto_upload_step(void)
                 tg_gui_ul.ahh, tg_gui_ul.ahl, tg_gui_ul.hah,
                 tg_gui_ul.file_id_hi, tg_gui_ul.file_id_lo,
                 tg_gui_ul.parts, tg_gui_ul.name,
-                "application/octet-stream", rand_hi, rand_lo);
+                "application/octet-stream", tg_gui_ul.caption,
+                rand_hi, rand_lo);
             query_name = "mtproto sendMedia(document)";
         }
         if (build_status != TG_MTPROTO_TL_OK) {
@@ -17055,11 +17125,11 @@ static int tg_mtproto_file_send(const tg_mtproto_file_ctx *fc,
                                 const char *path, FILE *stream,
                                 tg_gui_upload_progress_fn progress,
                                 void *progress_data,
-                                int as_photo)
+                                int as_photo, const char *caption)
 {
     int brc;
 
-    brc = tg_mtproto_upload_begin(fc, path, stream, as_photo);
+    brc = tg_mtproto_upload_begin(fc, caption, path, stream, as_photo);
     if (brc != 0) {
         return brc;
     }
@@ -18038,7 +18108,8 @@ int tg_gui_session_send_document(const char *path, FILE *stream,
         return 1;
     }
     tg_gui_session_file_ctx(&fc);
-    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data, 0);
+    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data, 0,
+                                0);
 }
 
 int tg_gui_session_send_photo(const char *path, FILE *stream,
@@ -18051,7 +18122,8 @@ int tg_gui_session_send_photo(const char *path, FILE *stream,
         return 1;
     }
     tg_gui_session_file_ctx(&fc);
-    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data, 1);
+    return tg_mtproto_file_send(&fc, path, stream, progress, progress_data, 1,
+                                0);
 }
 
 /* --- 0.0.8 punto 1b: non-blocking transfer API for the GUI event loop. ----
@@ -18097,7 +18169,7 @@ int tg_gui_session_transfer_start_upload(const char *path, FILE *stream)
         return 1;
     }
     tg_gui_session_file_ctx(&fc);
-    rc = tg_mtproto_upload_begin(&fc, path, stream, 0);
+    rc = tg_mtproto_upload_begin(&fc, 0, path, stream, 0);
     if (rc != 0) {
         return rc;
     }
@@ -18105,7 +18177,8 @@ int tg_gui_session_transfer_start_upload(const char *path, FILE *stream)
     return 0;
 }
 
-int tg_gui_session_transfer_start_photo(const char *path, FILE *stream)
+int tg_gui_session_transfer_start_photo(const char *path,
+                                        const char *caption, FILE *stream)
 {
     tg_mtproto_file_ctx fc;
     int rc;
@@ -18114,7 +18187,7 @@ int tg_gui_session_transfer_start_photo(const char *path, FILE *stream)
         return 1;
     }
     tg_gui_session_file_ctx(&fc);
-    rc = tg_mtproto_upload_begin(&fc, path, stream, 1);
+    rc = tg_mtproto_upload_begin(&fc, caption, path, stream, 1);
     if (rc != 0) {
         return rc;
     }

@@ -174,7 +174,11 @@ int tg_gui_session_transfer_busy(void);
 int tg_gui_session_transfer_start_download(unsigned long msg_id,
                                            FILE *stream);
 int tg_gui_session_transfer_start_upload(const char *path, FILE *stream);
-int tg_gui_session_transfer_start_photo(const char *path, FILE *stream);
+/* caption: composer text in the platform charset (Latin-1 on Amiga), NULL or
+   empty for none; converted to UTF-8 inside. It rides the sendMedia of the
+   photo AND of the over-10-MiB document fallback. */
+int tg_gui_session_transfer_start_photo(const char *path,
+                                        const char *caption, FILE *stream);
 /* Describe the current/last upload choice, including a failed start. */
 int tg_gui_session_transfer_requested_photo(void);
 int tg_gui_session_transfer_photo_fallback(void);
