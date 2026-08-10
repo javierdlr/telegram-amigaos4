@@ -53,19 +53,20 @@ client:
   system-coloured menus, chat list reload with a memory of the chats you
   removed, a configurable download drawer, and AfA_OS (AmiKit)
   compatibility. First release cycle with an adversarial review pass.
-- In development (0.0.9): hidden chats now surface directly in the local
-  search filter; forwarding to Saved Messages and to a picker-selected chat
-  is implemented; bounded photo thumbnails render inline through the in-tree
-  JPEG decoder and a geometry-independent cache; and JPEGs can be uploaded as
-  native Telegram photos from the GUI, drop requester or TUI. All changes are
-  on `main` and still require the complete five-lane real-system validation
-  before release.
-  System datatypes remain an optional OS4-side optimization, while the
-  zero-install in-binary decoder stays the portable base path.
-- Then 0.1.0, the first BETA: same program, a different promise. It ships
-  once forwarding and inline photos are in, no known freeze remains on any
-  of the five platforms, an adversarial review pass has run, and a full
-  cycle has gone by without field regressions.
+- Release 0.0.9 (photos): inline photo bubbles fed by an instant blurred
+  preview from Telegram's stripped thumbnail, a progressive viewer, a
+  canonical pixel cache on disk with a size limit and a clear action,
+  pacing measured per cost centre, and JPEG upload as a native photo.
+  Persistent Settings, forwarding to Saved Messages or a chosen chat,
+  hidden chats in local search, and a text client that word-wraps and
+  grows its composer. System datatypes remain an optional OS4-side
+  optimization, while the zero-install in-binary decoder stays the
+  portable base path.
+- Next come the 0.0.9x releases, then 0.1.0, the first BETA: same
+  program, a different promise. It ships once no known freeze remains on
+  any of the five platforms, an adversarial review pass has run, and a
+  full cycle has gone by without field regressions. See "The road to
+  0.1.0" below for what each step carries.
 - Later: per-chat file browser, multi-message selection, archive management.
 - A Bot-API text path stays available as a fallback for tokens/bots.
 - TLS certificate validation has passed a live CA-bundle smoke test on all four
@@ -86,6 +87,50 @@ client:
 - Reading and sending messages
 - Minimal local persistence
 - Packaging for the supported platforms
+
+## The road to 0.1.0
+
+0.0.9 shipped, and 0.1.0 is the first beta. In between come the 0.0.9x
+releases, whose job is to put every new feature in front of real
+machines before the promise changes. The numbering counts up to the
+beta on purpose, so anyone watching can see it coming.
+
+Few large steps rather than many small ones, and for a reason that is
+easy to miss: the beta gate asks for a full cycle with no field
+regressions, and every release restarts that clock. Each one also costs
+five fresh builds, four publishing channels and a validation pass over
+five platforms, so the cost lives in the ritual, not in the code.
+Features are therefore grouped by the work they share.
+
+- **0.0.91, the visible polish.** Already half done on `main`: the
+  self-tests compiled out of every lane, so the binaries are lighter,
+  and the caret, reply strip and unread counts lined up with their
+  text. To come: the repository link in About, grouping consecutive
+  messages from one sender, rounded bubble corners, the avatar in the
+  chat header, and captions on outgoing photos. All low risk, all
+  immediately visible.
+- **0.0.92, media coming in.** Link previews, stickers with their own
+  emoji and still frame, videos with details and a frame. They share
+  the same document parsing and the same photo pipeline, so they are
+  cheaper together than apart.
+- **0.0.93, sending.** The emoji picker with its glyph sheet, and
+  sending images that are not JPEGs, PNG first.
+- **0.0.94, speed and open defects.** Whatever the transfer-ceiling
+  measurement turns up, the two MorphOS popup glitches, photo speed
+  under AfA_OS and two-step verification on a slow 68k.
+- **Room to spare.** The numbering leaves several slots between 0.0.94
+  and the beta on purpose. Field reports arrive faster than plans, and
+  an intermediate release is a normal thing to need, not a sign that
+  something went wrong.
+- **0.1.0, the beta.** No new features: a quiet cycle, an adversarial
+  review pass, and the texts brought up to date.
+
+Two things run outside this list. The plain-68000 crash hunt has its
+own rhythm, since it depends on field logs from one machine. And emoji
+drawn inside the transcript, the part that has to split text runs in
+the renderer, stays late or waits for after the beta: that is the code
+that has hurt us under AfA_OS, and it is the last thing to introduce
+while trying to prove a quiet cycle.
 
 ## Planned: two-step verification on slow 68k
 
@@ -109,7 +154,7 @@ the account salts, both stable; only srp_id and srp_B expire. So:
 That turns a guaranteed failure into a long but completable login. It needs
 `tg_mtproto_srp_make_proof` split into a derivation step and a proof step.
 
-## Planned: link previews (0.0.10 headline candidate)
+## Planned: link previews (0.0.92)
 
 First field feedback on 0.0.9: link previews pasted into chats show up
 for some links and not for others. The ones that appear are not link
@@ -241,7 +286,7 @@ costs size and licensing. On a slow link half a megabyte is minutes, so
 the transfer stays cancellable and off the event loop, like every other
 transfer since 0.0.8.
 
-Timing: step 1 fits the 0.0.10 cycle. Steps 2 and 3 belong after the
+Timing: step 1 fits a 0.0.9x cycle. Steps 2 and 3 belong after the
 0.1.0 beta, whose gate asks for no known freeze and a quiet cycle, which
 is the worst moment to add a path that installs code.
 
