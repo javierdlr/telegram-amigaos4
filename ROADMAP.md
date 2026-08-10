@@ -333,6 +333,50 @@ No promise about the number that comes out: a retro machine will not
 saturate a 90 Mbit line, and it does not need to. But under three per
 cent of it is not a hardware limit, it is something we are doing.
 
+## Design direction: closer to the desktop client
+
+The GUI should read as Telegram to someone who already uses Telegram,
+so the desktop client is the reference for layout, hierarchy and where
+things live. As a reference, not as a source: the note at the end of
+the emoji section applies to pixels as much as to code.
+
+Aiming for the same visual vocabulary is not the same as aiming for the
+same pixels, and on this hardware the difference matters. A paletted
+screen has a pen budget, there is no alpha blending to lean on, the
+font is fixed width, and an AmigaOS 3 window can be 640 by 256. So the
+rule is that the layout and the hierarchy travel, while the chrome gets
+translated: what the desktop does with a gradient and a shadow, we do
+with a pen role and a border, and the low end drops the decoration
+without ever losing the arrangement.
+
+Much of it already lines up: the dark theme, the sidebar of avatars
+with names and unread pills, our own messages right aligned in the
+accent colour against incoming ones on the surface colour, day
+separators, delivery ticks, the typing line, the reply strip over the
+composer and the scroll-to-bottom button carrying its unread count.
+
+The gaps worth closing, cheapest and most visible first:
+
+- Consecutive messages from the same sender still repeat the name.
+  Grouping them the way the desktop does is a small change to the
+  bubble geometry, it is the single most recognisable difference in a
+  busy group, and it buys back vertical space, which on a 640 by 256
+  screen is worth having on its own.
+- The chat header carries no avatar yet. That has its own entry above.
+- Bubbles are plain rectangles. Clipping the four corners costs a
+  handful of pixels and no new pens, and it is most of what makes a
+  bubble read as a bubble.
+- The composer has no attach or emoji buttons, so the actions that the
+  desktop puts in reach live only in menus and the right-click popup.
+- The pen roles were chosen by us. Mapping them onto the desktop's dark
+  palette would cost nothing at runtime and would settle a lot of small
+  inconsistencies at once.
+
+Optional and only where there is room: the desktop puts the sender's
+avatar beside incoming bubbles in groups. That eats horizontal space a
+small screen does not have, so it belongs behind a width check if it
+lands at all.
+
 ## Planned: stickers inline, and emoji that look like emoji
 
 Two field requests that share a renderer.
