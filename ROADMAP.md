@@ -245,6 +245,41 @@ Timing: step 1 fits the 0.0.10 cycle. Steps 2 and 3 belong after the
 0.1.0 beta, whose gate asks for no known freeze and a quiet cycle, which
 is the worst moment to add a path that installs code.
 
+## Planned: send other image formats, PNG first
+
+Only a JPEG can be sent as a photo today. The GUI decides from the file
+extension, and the upload path then checks the magic bytes and the SOF
+segment, refusing anything else with "not a valid JPEG"; every other
+image still goes out as a document, which works but arrives as a file
+rather than a picture.
+
+The upload itself is format agnostic, it is bytes plus
+`inputMediaUploadedPhoto`, so the work splits in two very different
+halves.
+
+PNG is the cheap half and comes first. Telegram accepts it as a photo
+and re-encodes it server side, so the client only has to recognise it
+(the eight-byte signature, then IHDR for the dimensions) and let the
+existing upload run. That means teaching the extension check and the
+validator about a second format instead of hardcoding one, and
+reporting the server's own refusals (`PHOTO_EXT_INVALID`,
+`PHOTO_INVALID_DIMENSIONS`, `IMAGE_PROCESS_FAILED`) by name, the way
+other RPC errors already are.
+
+IFF ILBM is the interesting half, and the one that matters on this
+platform: it is what an Amiga actually produces, and Telegram will
+never accept it. That needs an encoder of our own, which sounds worse
+than it is. A PNG can be written with stored, uncompressed deflate
+blocks, so the whole writer is a CRC32 table, an Adler-32 sum and three
+chunks, with no compressor at all. A palette ILBM maps onto an indexed
+PNG with a PLTE chunk, which keeps a 320x256 screen near 80 KB; the
+truecolour path costs roughly 245 KB for the same size. Both are fine
+to upload, and it would let people send their own screens and artwork
+as pictures rather than as attachments.
+
+Anything we cannot turn into a picture keeps going as a document,
+unchanged.
+
 ## Planned: two MorphOS popup glitches
 
 Both reported from the field on 0.0.9 and both about the right-click popup
