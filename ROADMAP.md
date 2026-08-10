@@ -282,11 +282,14 @@ unchanged.
 
 ## Planned: find out what caps transfer speed
 
-A field measurement on MorphOS: a speed test on the same machine and the
-same line reports about 90 Mbit/s with a 6.71 ms round trip, while our
-transfers sit around 320 KB/s, which is 2.6 Mbit/s, under 3 per cent of
-the link. The same ceiling shows on every architecture, which already
-says something: whatever holds us back is ours, not the platform's.
+A field measurement on MorphOS: a speed test running on that same
+Amiga, over that same stack and that same line, reports about 90 Mbit/s
+with a 6.71 ms round trip, while our transfers sit around 320 KB/s,
+which is 2.6 Mbit/s, under 3 per cent of it. Another Amiga program
+reaching 90 Mbit/s on the machine settles the question of whether
+bsdsocket, the interface or the line can go faster: they can. The same
+ceiling shows on every architecture, which points the same way. What
+holds us back is ours.
 
 What the code does today. A part is 64 KB (32 KB on m68k). Uploads are
 strictly serial: build the part, send `saveFilePart`, wait for the
@@ -304,13 +307,27 @@ pacing work did it, by timing each cost centre of one part separately.
 Building the query, our own AES-IGE and SHA-256 over the payload, the
 socket write, the wait for the reply, the read back.
 
-Only then do the fixes follow from the answer. If the wait dominates,
-bigger parts and more requests in flight are the lever, and the upload
-side has no pipelining at all to lose. If our crypto dominates, that is
-a completely different job, and on PPC or a Vampire it eventually means
-using what those chips actually have. Either way the transfer has to
-stay inside the non-blocking pump, because the window must keep
-breathing while a file moves.
+There is already one suspect worth timing first, because it fits every
+piece of the evidence. `tg_mtproto_recv_exact` loops until it has the
+whole chunk, and each turn of that loop calls the platform receive,
+which on every lane does a `WaitSelect` and then a `recv`. The stack
+hands over what has arrived, typically around an MTU, so a 64 KB chunk
+costs roughly forty-five `WaitSelect` calls, each one a trip through
+the scheduler and back. A few milliseconds apiece is all it takes to
+account for the whole 200 ms, it would scale with bytes rather than
+round trips exactly as observed, and being in shared code it would cap
+every architecture at the same place, which is precisely what the field
+reports say. If that is confirmed, the fix is small: try the receive
+first and only wait when the socket is actually dry, and give the
+socket a bigger receive buffer so each wake brings more.
+
+Whatever the measurement says, the fixes follow the answer. If the wait
+dominates, bigger parts and more requests in flight are the lever, and
+the upload side has no pipelining at all to lose. If our crypto
+dominates, that is a completely different job, and on PPC or a Vampire
+it eventually means using what those chips actually have. Either way
+the transfer has to stay inside the non-blocking pump, because the
+window must keep breathing while a file moves.
 
 No promise about the number that comes out: a retro machine will not
 saturate a 90 Mbit line, and it does not need to. But under three per
