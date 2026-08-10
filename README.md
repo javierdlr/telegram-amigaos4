@@ -25,34 +25,24 @@ Two front-ends share one engine:
 
 ![Telegram Amiga GUI on AmigaOS 4](assets/screenshots/telegram-amiga-gui-os4.png)
 
-Status: **alpha 0.0.8** — everyday direct-message and group chat works on all
-five platforms below. 0.0.8 is transfers 2.0: the client stays fully usable
-while a file moves — keep chatting, switch chats, receive messages — with
-pipelined download chunks, the speed next to the percentage, documents and
-profile photos fetched from any Telegram datacenter, drag-and-drop upload
-onto the chat window, and a download drawer picked from the menu. The
-sidebar search filters your chats as you type, searches your own dialogs
-first (it finds back a chat you removed, even a private group with no
-public username) and browses your complete dialog list from an empty box;
-URLs in messages are blue and clickable, menus follow the system colours,
-the chat list reloads on demand and remembers the chats you removed, and
-AmiKit/AfA_OS systems render text correctly. All that on top of 0.0.7's
-robust big transfers, Copy/Cut/Paste and Edit menu, reply on double-click
-and live remote edits, 0.0.6's file sharing, pinned Saved Messages cloud
-drawer, script-free launch icons, and 0.0.5's real avatars,
-@username autocomplete, remembered window position and optional own screen,
-0.0.4's edit & delete, live read receipts, multi-device sync and system-clock times,
-0.0.3's replies, checkmarks and flicker-free drawing, and 0.0.2's history
-paging, search, badges and chat management.
+Status: **alpha 0.0.9** - everyday direct-message and group chat works on all
+five platforms below. 0.0.9 brings photo messages into the native client:
+instant blurred previews, progressive inline rendering, a larger click-to-open
+viewer, an on-disk pixel cache with size controls, `Save photo as...` and native
+JPEG photo uploads. Inline photos can be disabled on slower machines and start
+disabled by default on low-end AmigaOS 3 systems.
 
-Development on `main` is now preparing 0.0.9: hidden chats stay available in
-the local search, messages can be forwarded to Saved Messages or another chat,
-photo thumbnails appear immediately as blurred previews and refine in place,
-decoded pixels are cached for instant reopen, and compatible RTG screens use a
-truecolour path. A click opens a larger progressive viewer, inline loading can
-be disabled on slower machines, and JPEGs can be sent as native Telegram
-photos. These changes are not part of the 0.0.8 downloads below until all five
-platform lanes complete real-system validation.
+The release also adds forwarding to Saved Messages or another chat, hidden
+chats in local search, persistent photo and download settings, and a full-screen
+TUI that word-wraps narrow displays and grows its composer to three rows. It
+retains 0.0.8's non-blocking multi-datacenter transfers, local-first chat
+search, clickable URLs and AfA_OS compatibility, together with the messaging,
+file sharing, replies, editing, read receipts and avatars delivered by earlier
+releases.
+
+Development on `main` now targets 0.0.91, the first post-0.0.9 visual-polish
+release. Work there is unreleased and remains subject to real-system validation
+on all five platforms; see [ROADMAP.md](ROADMAP.md).
 
 License: MIT — a non-commercial community project, a gift to the Amiga
 community. Development diary:
@@ -65,11 +55,11 @@ per-architecture IT/EN manuals — and **no private files**.
 
 | Platform | CPU | Release |
 |---|---|---|
-| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.8) |
-| AmigaOS 4.x | PPC | [os4-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.8) |
-| MorphOS | PPC | [morphos-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.8) |
-| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.8) |
-| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.8](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.8) |
+| AmigaOS 3.x (68020+) | m68k | [os3-alpha-0.0.9](https://github.com/kaffeine1/telegram-amiga/releases/tag/os3-alpha-0.0.9) |
+| AmigaOS 4.x | PPC | [os4-alpha-0.0.9](https://github.com/kaffeine1/telegram-amiga/releases/tag/os4-alpha-0.0.9) |
+| MorphOS | PPC | [morphos-alpha-0.0.9](https://github.com/kaffeine1/telegram-amiga/releases/tag/morphos-alpha-0.0.9) |
+| AROS i386 (ABIv0) | x86 | [aros-i386-alpha-0.0.9](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-i386-alpha-0.0.9) |
+| AROS x86_64 | x86-64 | [aros-x86_64-alpha-0.0.9](https://github.com/kaffeine1/telegram-amiga/releases/tag/aros-x86_64-alpha-0.0.9) |
 
 All releases: <https://github.com/kaffeine1/telegram-amiga/releases> —
 full history in [CHANGELOG.md](CHANGELOG.md) (also bundled in every package
@@ -112,10 +102,11 @@ Full IT/EN instructions are inside each package.
   updates for messages edited elsewhere, clipboard **Copy/Cut/Paste** with
   text selection (mouse or Shift+arrows), @username autocomplete.
 - Real **profile-picture avatars** (blurred previews instantly, crisp on open).
-- Current `main`: inline message photos with an instant blurred preview, an
-  on-disk decoded-pixel cache and a larger click-to-open viewer; a persistent
-  text-only photo mode for slower machines; forwarding to Saved Messages or
-  another chat; and hidden chats surfaced by local search.
+- **0.0.9 photo support**: inline photos with instant blurred previews, an
+  on-disk decoded-pixel cache, a larger click-to-open viewer and an optional
+  text-only mode for slower machines; send JPEGs as Telegram photos, save
+  received photos to a chosen path, forward messages and find hidden chats in
+  local search.
 - Native GUI scrolling (wheel / scrollbar / arrows / pixel), remembered window
   size and position, optional own screen, Iconify to a Workbench AppIcon, dark
   theme, script-free flashless Workbench launch.
