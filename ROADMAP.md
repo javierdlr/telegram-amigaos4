@@ -363,17 +363,31 @@ jobs remain, and the less obvious one matters more.
 
 Sending them is impossible today. An Amiga keyboard produces Latin-1,
 so there is no way to type a codepoint the composer can send, and a
-user who receives `:D` cannot answer in kind. A small picker that
-inserts the chosen emoji into the composer closes that, and the rest of
-the road is already there: the send path has converted the composer to
-UTF-8 since the beginning. This comes first.
+user who receives `:D` cannot answer in kind. That is the gap to close
+first, with a picker in the spirit of the desktop client: a panel above
+the composer, categories along one edge, a grid to walk with the arrow
+keys, ENTER to insert, ESC to leave, and a row of recently used ones
+that survives between runs like the other preferences. The rest of the
+road already exists, since the send path has converted the composer to
+UTF-8 from the start.
 
-Drawing them as pictures comes second. The curated list already says
-which ones are worth having, and a small built-in glyph sheet would
-cover them; the cost is not the drawing but the text renderer, which
-would have to break a line into runs to place an image between them.
-That is the code that has hurt us before under AfA_OS, so it gets its
-own hardware pass before anyone calls it done.
+The picker also settles the order of the drawing work, because a grid
+is the easy half. Painting a glyph into a cell of a panel needs no text
+layout at all, so a small built-in glyph sheet pays off immediately
+there, and the curated list already says which emoji are worth having.
+Only afterwards comes the hard half, showing them inside the
+transcript, where the renderer has to break a line into runs to place
+an image between them. That is the code that has hurt us before under
+AfA_OS, so it gets its own hardware pass before anyone calls it done.
+
+On borrowing: the desktop client is worth studying for how a feature
+should behave, and that is how it will be used here, as a reference for
+behaviour and layout. Not for code. Telegram Desktop is GPLv3 and this
+project is MIT, so lifting source from it, or porting it line by line,
+is not something we can do. Where facts are needed rather than ideas,
+the safer wells are the published TL schema and TDLib, which carries a
+permissive licence, and for the emoji list and its categories the
+Unicode data files, which is where everyone else gets them anyway.
 
 ## Planned: two MorphOS popup glitches
 
