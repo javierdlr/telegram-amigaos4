@@ -441,7 +441,8 @@ $gui_entry_en$tui_entry_en
   stays so you can read the last lines: one more click on the close gadget
   dismisses it.
   Sending by drag-and-drop: type "/sendfile " for a document or "/photo "
-  for a JPEG photo, then drop the icon straight onto the console window
+  for a JPEG photo (words after the path become the caption), then drop
+  the icon straight onto the console window
   (AmigaOS 3.x, MorphOS, AROS) or onto the "TG drop" Workbench icon (AmigaOS
   4.x, where the system reserves window drops); the path appears in the input
   line, Enter sends.
@@ -606,7 +607,8 @@ $gui_entry_it$tui_entry_it
   finestra poi resta aperta per farti leggere le ultime righe: un altro
   click sul gadget la congeda.
   Per il drag-and-drop scrivi "/sendfile " per un documento oppure "/photo "
-  per una foto JPEG, poi trascina l'icona direttamente sulla finestra console
+  per una foto JPEG (le parole dopo il percorso diventano la didascalia),
+  poi trascina l'icona direttamente sulla finestra console
   (AmigaOS 3.x, MorphOS, AROS) o sull'icona Workbench "TG drop" (AmigaOS 4.x,
   dove i drop sulla finestra sono riservati al sistema); il percorso compare
   nella riga di input, Invio lo spedisce.
