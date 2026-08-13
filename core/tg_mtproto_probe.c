@@ -222,6 +222,20 @@ static char tg_mtproto_query_fail[64];
 #define TG_MTPROTO_TYPING_TTL_SECONDS 6UL
 #define TG_MTPROTO_PHONE_MIGRATE_RC_BASE 40
 
+/* A600 field logs (DIAG4, 2026-08-09): with no usable peers cache the
+   start-up walks the full network chat-list bootstrap, and the machine dies
+   MID-conversation at a different point every run while the PCMCIA wifi
+   leds run hot -- every call of ours returns rc 0 right up to the cut. On
+   the plain-68000 lane, breathe for a second between the bootstrap's
+   network rounds: it spaces the bursts the card and its driver must absorb,
+   costs nothing anywhere else, and doubles as the tester's requested "slow
+   down the initial chat download". No-op on every other build. */
+#if defined(TG_LOWMEM)
+#define TG_MTPROTO_BOOTSTRAP_BREATHER() tg_platform_sleep_seconds(1UL)
+#else
+#define TG_MTPROTO_BOOTSTRAP_BREATHER() ((void)0)
+#endif
+
 typedef struct tg_mtproto_auth_context {
     tg_net_connection connection;
     tg_mtproto_session session;
@@ -11797,6 +11811,7 @@ int tg_mtproto_auth_chat_file(const char *host,
 #ifdef TG_DIAG_TRACE
         tg_gui_log("diag: peers parse done, cache NOT usable -> network list");
 #endif
+        TG_MTPROTO_BOOTSTRAP_BREATHER();
         quiet = tg_mtproto_open_quiet_stream(stream);
         rc = tg_mtproto_auth_list_peers_file(host, port, api_file, auth_file,
                                              dc_id_text, peer_limit,
@@ -11806,6 +11821,7 @@ int tg_mtproto_auth_chat_file(const char *host,
         tg_mtproto_close_quiet_stream(quiet, stream);
     }
     if (rc != 0 && !tg_mtproto_peer_cache_available(peer_cache_file)) {
+        TG_MTPROTO_BOOTSTRAP_BREATHER();
         quiet = tg_mtproto_open_quiet_stream(stream);
         rc = tg_mtproto_auth_list_peers_file(host, port, api_file, auth_file,
                                              dc_id_text, "1",
@@ -11821,6 +11837,7 @@ int tg_mtproto_auth_chat_file(const char *host,
     if (rc != 0) {
         tg_mtproto_chat_print_system_line(stream, "Using cached chats.");
     }
+    TG_MTPROTO_BOOTSTRAP_BREATHER();
 #ifdef TG_DIAG_TRACE
     tg_gui_log("diag: printing opening-session");
 #endif
